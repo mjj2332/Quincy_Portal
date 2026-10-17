@@ -1,0 +1,697 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Quincy Portal design prototype. Fonts load from portal/apps/web/public/fonts by relative path,
+     so open this file from inside the repo checkout. The shared copy on claude.ai inlines them. -->
+<style>body{margin:0}[hidden]{display:none!important}img{max-width:100%}</style>
+<title>Project Header Revamp</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+@font-face{font-family:"Mazius Review";src:url("../../../portal/apps/web/public/fonts/MaziusReview-Regular.otf") format("opentype");font-weight:400;font-display:swap}
+@font-face{font-family:"Apfel Grotezk";src:url("../../../portal/apps/web/public/fonts/ApfelGrotezk-Regular.otf") format("opentype");font-weight:400;font-display:swap}
+@font-face{font-family:"Athelas";src:url("../../../portal/apps/web/public/fonts/Athelas-Regular.ttf") format("truetype");font-weight:400;font-display:swap}
+
+/* Layout: a spec sheet. Each frame is drawn at device size and zoomed to fit its column; notes sit under it. */
+:root{
+  --bg:#ebe7de; --fg:#0a0a0a; --muted:#4d473c; --rule:#cfc7b6; --card:#ffffff; --accent:#2f3b4d; --chip:#f4f0e7;
+  --display:"Mazius Review","Apple Garamond","Times New Roman",serif;
+  --sans:"Apfel Grotezk","Helvetica Neue",Arial,sans-serif;
+  --serif:"Athelas","Charter","Iowan Old Style",Georgia,serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#141413;--fg:#f4f0e7;--muted:#b3aa97;--rule:#3a3937;--card:#1d1c1a;--accent:#a9bad3;--chip:#262522;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#141413;--fg:#f4f0e7;--muted:#b3aa97;--rule:#3a3937;--card:#1d1c1a;--accent:#a9bad3;--chip:#262522;color-scheme:dark}
+
+body{background:var(--bg);color:var(--fg);font:400 15px/1.55 var(--sans)}
+.page{max-width:1320px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:40px 80px;display:grid;gap:64px}
+h1,h2,h3{font-weight:400;text-wrap:balance;margin:0}
+.intro{display:grid;gap:20px;max-width:880px}
+.eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.intro h1{font:400 clamp(40px,6vw,64px)/1.04 var(--display);letter-spacing:-.01em}
+.intro p{margin:0;max-width:68ch;color:var(--muted)}
+.principles{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px 32px;margin:8px 0 0;padding:0;list-style:none}
+.principles li{display:grid;gap:4px;border-top:3px solid var(--fg);padding-top:12px}
+.principles b{font-weight:400;font-size:17px}
+.principles span{color:var(--muted);font-size:14px}
+.figures{display:flex;flex-wrap:wrap;gap:12px 40px;margin-top:4px}
+.figures div{display:grid}
+.figures strong{font:400 32px/1.1 var(--display);font-variant-numeric:tabular-nums}
+.figures span{font-size:13px;color:var(--muted)}
+
+.section{display:grid;gap:28px}
+.section-head{display:grid;gap:6px;border-bottom:1px solid var(--rule);padding-bottom:12px}
+.section-head h2{font:400 36px/1.18 var(--display)}
+.section-head p{margin:0;color:var(--muted);max-width:72ch}
+
+.frames{display:grid;gap:40px}
+.frames.phones{grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:40px 28px}
+.fcard{display:grid;gap:14px;min-width:0;align-content:start}
+.ftitle{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.fid{font:400 13px/1 var(--mono);background:var(--fg);color:var(--bg);padding:4px 7px;border-radius:4px}
+.ftitle h3{font-size:17px}
+.fit{width:100%;min-width:0;overflow:hidden}
+.fit > .frame{transform-origin:0 0}
+.notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px 32px;margin:0;padding:0;list-style:none;font-size:14px;color:var(--muted)}
+.notes li{padding-left:14px;position:relative}
+.notes li::before{content:"";position:absolute;left:0;top:.65em;width:6px;height:1px;background:var(--muted)}
+.notes b{color:var(--fg);font-weight:400}
+.phones .notes{grid-template-columns:1fr}
+
+.live-wrap{display:grid;grid-template-columns:minmax(0,412px) minmax(0,1fr);gap:40px;align-items:start}
+.live-copy{display:grid;gap:12px;max-width:52ch}
+.live-copy p{margin:0;color:var(--muted)}
+.live-copy ol{margin:0;padding-left:20px;color:var(--muted);display:grid;gap:6px}
+@media (max-width:760px){.live-wrap{grid-template-columns:1fr}}
+
+table.map{border-collapse:collapse;width:100%;min-width:760px;font-size:14px}
+.map-scroll{overflow-x:auto}
+.map th,.map td{text-align:left;vertical-align:top;padding:10px 12px;border-bottom:1px solid var(--rule)}
+.map th{font-weight:400;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.map td:first-child{font-family:var(--mono);font-size:13px;white-space:nowrap}
+.map code,.decisions code{font:13px var(--mono);background:var(--chip);padding:1px 5px;border-radius:4px}
+.decisions{display:grid;gap:14px;margin:0;padding-left:22px;max-width:80ch}
+.decisions li::marker{font-family:var(--mono);color:var(--muted)}
+.decisions b{font-weight:400;font-size:16px;display:block}
+.decisions span{color:var(--muted);font-size:14px}
+
+/* ============ The app depiction: Quincy tokens, always light (the Portal ships light only) ============ */
+.q{
+  --q-paper-000:#fff;--q-paper-050:#faf8f2;--q-paper-100:#f4f0e7;--q-paper-200:#ece6d8;
+  --q-greige-200:#cfc7b6;--q-greige-300:#b3aa97;--q-greige-400:#8f8775;--q-greige-600:#4d473c;
+  --q-ink:#0a0a0a;--q-ink-700:#232323;
+  --q-positive:#3f5b3a;--q-caution:#9a6a1f;--q-caution-text:#7b5519;--q-critical:#7a2420;--q-info:#2f3b4d;
+  --q-hair:var(--q-greige-200);
+  --q-shadow-sm:0 1px 2px rgba(10,10,10,.06);--q-shadow-md:0 8px 24px rgba(10,10,10,.10);--q-shadow-lg:0 24px 64px rgba(10,10,10,.16);
+  --q-ease:cubic-bezier(0.22,1,0.36,1);
+  font:400 14px/1.4 var(--sans);color:var(--q-ink);color-scheme:light;
+  position:relative;overflow:hidden;background:var(--q-paper-050);
+}
+.q *{box-sizing:border-box}
+:where(.q) button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer;text-align:left}
+:where(.q) p{margin:0}
+.ic{flex:none;display:block}
+.sdot{width:7px;height:7px;border-radius:50%;flex:none;display:inline-block}
+.sdot.hatch{background-image:repeating-linear-gradient(45deg,transparent 0 1.5px,rgba(255,255,255,.7) 1.5px 3px)!important}
+.bdg{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:20px;padding:0 6px;border-radius:4px;font:400 12px/1 var(--mono);font-variant-numeric:tabular-nums;background:var(--q-paper-200);color:var(--q-ink)}
+.bdg.ink{background:var(--q-ink);color:var(--q-paper-050)}
+.bdg.crit{background:var(--q-critical);color:#fff}
+.bdg.caution{background:#f3e7d2;color:var(--q-caution-text);font-family:var(--sans)}
+.bdg.critical-l{background:#f3dcda;color:var(--q-critical);font-family:var(--sans)}
+.bdg.pos{background:#e2eadf;color:var(--q-positive);font-family:var(--sans)}
+.bdg.neutral{background:var(--q-paper-200);color:var(--q-greige-600);font-family:var(--sans)}
+.av{width:28px;height:28px;border-radius:50%;display:inline-grid;place-items:center;font-size:12px;background:var(--q-paper-200);color:var(--q-ink);flex:none}
+.av.a2{background:#e2e6ec}.av.a3{background:#efe3d0}
+.avs{display:inline-flex}
+.avs .av{box-shadow:0 0 0 2px var(--q-paper-000)}
+.avs .av+.av{margin-left:-7px}
+
+/* buttons */
+.qb{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 12px;border:1px solid var(--q-hair);border-radius:4px;background:var(--q-paper-000);white-space:nowrap;transition:background-color .15s,border-color .15s}
+.qb:hover{background:var(--q-paper-100);border-color:var(--q-greige-300)}
+.qb.ghost{border-color:transparent;background:transparent}
+.qb.ghost:hover{background:var(--q-paper-100)}
+.qb.icon{width:40px;padding:0;justify-content:center}
+.qb.open{border-color:var(--q-ink);box-shadow:0 0 0 1px var(--q-ink)}
+.qb .chev{color:var(--q-greige-400)}
+.qb.primary{background:var(--q-ink);color:var(--q-paper-050);border-color:var(--q-ink)}
+.qb.team{padding-left:6px}
+.qb.warn{border-color:#d9c3a0;background:#fbf4e8;color:var(--q-caution-text)}
+.qb.lock{color:var(--q-greige-600);background:var(--q-paper-100)}
+.vr{width:1px;height:24px;background:var(--q-hair);flex:none}
+
+/* desktop shell */
+.d-frame{display:flex;background:var(--q-paper-050)}
+.d-rail{width:56px;flex:none;display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:8px}
+.d-logo{font:400 26px/1 var(--display);height:40px;display:grid;place-items:center;margin-bottom:12px}
+.d-nav,.d-rail-foot{display:flex;flex-direction:column;gap:4px;align-items:center}
+.d-rail-foot{margin-top:auto}
+.d-rail .rb{width:40px;height:40px;display:grid;place-items:center;border-radius:8px;color:var(--q-greige-600)}
+.d-rail .rb.on{background:var(--q-paper-200);color:var(--q-ink)}
+.d-col{flex:1;min-width:0;margin:8px 8px 8px 0;background:var(--q-paper-000);box-shadow:var(--q-shadow-sm);position:relative;overflow:hidden;display:flex;flex-direction:column}
+.d-shell{height:50px;flex:none;display:flex;align-items:center;gap:8px;padding:0 20px;border-bottom:1px solid var(--q-paper-200)}
+.crumb{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--q-greige-600);min-width:0}
+.crumb .sep{width:8px;height:2px;border-radius:2px;background:rgba(10,10,10,.3);flex:none}
+.crumb .cur{color:var(--q-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* project header — desktop */
+.ph{padding:20px 32px 0;border-bottom:1px solid var(--q-hair);display:grid;gap:14px;background:var(--q-paper-000);flex:none}
+.ph-a{display:flex;align-items:center;justify-content:space-between;gap:16px 24px;flex-wrap:wrap}
+.ph-id{display:grid;gap:4px;min-width:0}
+.ph-titleline{display:flex;align-items:baseline;gap:12px;min-width:0;flex-wrap:wrap}
+.ph-title{font:400 28px/1.18 var(--display);letter-spacing:-.01em;margin:0}
+.ph-sub{font-size:14px;color:var(--q-greige-600)}
+.ph-meta{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--q-greige-600);flex-wrap:wrap}
+.ph-meta .dot{color:var(--q-greige-300)}
+.ph-notes{display:inline-flex;align-items:center;gap:5px;color:var(--q-ink)!important;text-decoration:underline;text-decoration-color:var(--q-greige-300);text-underline-offset:3px}
+.ph-cluster{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ph-b{display:flex;align-items:center;gap:8px;min-width:0}
+.tabs{display:flex;gap:24px;flex:1;min-width:0;overflow:hidden}
+.tab{display:inline-flex;align-items:center;gap:8px;height:44px;color:var(--q-greige-600);position:relative;white-space:nowrap;flex:none}
+.tab.on{color:var(--q-ink)}
+.tab.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--q-ink)}
+.ph.tablet .ph-a{display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
+.ph.tablet .ph-cluster .push{margin-left:auto}
+.ph.tablet .tabs{-webkit-mask-image:linear-gradient(90deg,#000 88%,transparent);mask-image:linear-gradient(90deg,#000 88%,transparent)}
+
+/* condensed sticky bar */
+.ph-condensed{display:flex;align-items:center;gap:20px;padding:0 32px;border-bottom:1px solid var(--q-hair);background:var(--q-paper-000);box-shadow:0 4px 12px rgba(10,10,10,.05);flex:none;position:relative;z-index:2}
+.ph-condensed .ctitle{display:flex;align-items:center;gap:8px;font:400 18px/1 var(--display);white-space:nowrap;padding-right:20px;border-right:1px solid var(--q-hair);height:28px}
+
+/* work area */
+.worktools{display:flex;align-items:center;gap:8px;padding:14px 32px;border-bottom:1px solid var(--q-hair);background:var(--q-paper-050);flex:none}
+.chip{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border:1px solid var(--q-hair);border-radius:999px;background:var(--q-paper-000);font-size:13px;white-space:nowrap;flex:none}
+.chip.on{background:var(--q-ink);color:var(--q-paper-050);border-color:var(--q-ink)}
+.chip .n{font:12px var(--mono);opacity:.7}
+.worktools .grow{flex:1}
+.worktools .prog{font-size:13px;color:var(--q-greige-600)}
+.grid{display:grid;gap:14px;padding:20px 32px;align-content:start}
+.tile{display:grid;gap:6px}
+.ph-img{aspect-ratio:3/2;border-radius:2px;position:relative;overflow:hidden}
+.tile .cap{display:flex;justify-content:space-between;font:12px var(--mono);color:var(--q-greige-600)}
+.p1{background:linear-gradient(180deg,#c9d3db 0 42%,#d8cfbf 42% 78%,#8f9a7a 78%)}
+.p2{background:linear-gradient(180deg,#d9d4cc 0 30%,#efe9df 30% 70%,#b9ab95 70%)}
+.p3{background:linear-gradient(180deg,#2f3b4d 0 46%,#c79a5b 46% 52%,#4d473c 52% 82%,#3a3937 82%)}
+.p4{background:linear-gradient(160deg,#ece6d8 0 55%,#cfc7b6 55% 75%,#8f8775 75%)}
+.p5{background:linear-gradient(180deg,#b9c7cf 0 38%,#f4f0e7 38% 74%,#a7b08f 74%)}
+.p6{background:linear-gradient(180deg,#e4ded0 0 20%,#fff 20% 64%,#b3aa97 64%)}
+.ph-img::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent 0 30%,rgba(255,255,255,.08) 30% 31%,transparent 31% 62%,rgba(0,0,0,.05) 62% 63%,transparent 63%)}
+
+/* scrim + desktop sheet */
+.scrim{position:absolute;inset:0;background:rgba(10,10,10,.32);z-index:5}
+.d-sheet{position:absolute;top:0;right:0;bottom:0;width:440px;background:var(--q-paper-000);box-shadow:var(--q-shadow-lg);z-index:6;display:flex;flex-direction:column}
+.d-sheet header{display:flex;align-items:flex-start;gap:12px;padding:24px 24px 18px;border-bottom:1px solid var(--q-hair)}
+.d-sheet header .t{flex:1;display:grid;gap:4px}
+.d-sheet header h2{font:400 28px/1.18 var(--display)}
+.d-sheet .body{flex:1;overflow:auto;padding:0 24px;display:grid;align-content:start}
+.d-sheet footer{display:flex;gap:8px;padding:16px 24px;border-top:1px solid var(--q-hair);flex-wrap:wrap}
+.qlabel{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--q-greige-600)}
+.dsec{display:grid;gap:12px;padding:20px 0;border-bottom:1px solid var(--q-paper-200)}
+.dsec:last-child{border-bottom:0}
+.dsec-h{display:flex;align-items:center;justify-content:space-between}
+.dl{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px 12px;margin:0;font-size:14px}
+.dl dt{color:var(--q-greige-600)}
+.dl dd{margin:0}
+.notesbox{font:400 16px/1.6 var(--serif);color:var(--q-ink-700);background:var(--q-paper-100);padding:14px 16px;border-left:0}
+.mono{font:13px var(--mono)}
+.link{color:var(--q-info);text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--q-greige-300);font-size:13px}
+
+/* popovers */
+.anchor{position:relative;display:inline-flex}
+.pop{position:absolute;top:calc(100% + 6px);z-index:8;background:var(--q-paper-000);border:1px solid var(--q-hair);border-radius:8px;box-shadow:var(--q-shadow-md);width:320px;display:grid}
+.pop.right{right:0}
+.pop .ph2{display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px}
+.search{display:flex;align-items:center;gap:8px;height:40px;margin:0 12px 6px;padding:0 10px;border:1px solid var(--q-ink);border-radius:4px;color:var(--q-greige-600);font-size:14px}
+.search .typed{color:var(--q-ink)}
+.caret{display:inline-block;width:1px;height:18px;background:var(--q-ink);margin-left:-6px}
+.grp{padding:6px 6px 8px;border-top:1px solid var(--q-paper-200)}
+.grp .qlabel{padding:6px 10px 4px;display:block}
+.opt{display:flex;align-items:center;gap:10px;min-height:44px;padding:6px 10px;border-radius:4px;width:100%}
+.opt.hl{background:var(--q-paper-100)}
+.opt .who{flex:1;display:grid;min-width:0}
+.opt .who small{font-size:12px;color:var(--q-greige-600)}
+.opt .ck{color:var(--q-ink)}
+.pop .foot{padding:10px 16px 14px;border-top:1px solid var(--q-paper-200);font-size:12px;color:var(--q-greige-600)}
+.field{display:grid;gap:6px}
+.field .box{display:flex;align-items:center;justify-content:space-between;height:40px;padding:0 12px;border:1px solid var(--q-hair);border-radius:4px;font-size:14px;background:var(--q-paper-000)}
+.toggles{display:flex;flex-wrap:wrap;gap:6px}
+.tg{height:32px;padding:0 12px;border:1px solid var(--q-hair);border-radius:4px;font-size:13px;display:inline-flex;align-items:center;gap:6px}
+.tg.on{background:var(--q-ink);color:var(--q-paper-050);border-color:var(--q-ink)}
+.menu{width:240px;padding:6px}
+.mi{display:flex;align-items:center;gap:10px;min-height:36px;padding:0 10px;border-radius:4px;font-size:14px;width:100%}
+.mi:hover,.mi.hl{background:var(--q-paper-100)}
+.msep{height:1px;background:var(--q-paper-200);margin:6px 4px}
+
+/* state rows */
+.states{display:grid;gap:0;background:var(--q-paper-000)}
+.srow{display:grid;grid-template-columns:200px minmax(0,1fr);align-items:center;gap:24px;padding:14px 24px;border-bottom:1px solid var(--q-paper-200)}
+.srow:last-child{border-bottom:0}
+.srow .lab{font-size:13px;color:var(--q-greige-600)}
+
+/* ============ phone ============ */
+.dev{width:390px;height:844px;border-radius:48px;background:var(--q-paper-050);position:relative;overflow:hidden;box-shadow:0 0 0 10px #1b1a18,0 0 0 11px #3a3937;margin:11px}
+.dev-wrap{width:100%;max-width:412px;min-width:0}
+.safe-top{height:54px;flex:none;position:relative;background:var(--q-paper-000)}
+.island{position:absolute;top:11px;left:50%;width:124px;height:36px;margin-left:-62px;border-radius:20px;background:#0a0a0a;z-index:30}
+.home{position:absolute;bottom:8px;left:50%;width:134px;height:5px;margin-left:-67px;border-radius:3px;background:#0a0a0a;z-index:40}
+.screen{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--q-paper-050)}
+.m-shell{height:50px;flex:none;display:flex;align-items:center;gap:4px;padding:0 4px;background:var(--q-paper-000);position:relative;z-index:3}
+.m-shell .ib{width:44px;height:44px;display:grid;place-items:center;border-radius:8px;flex:none}
+.m-shell .mid{flex:1;min-width:0;display:flex;align-items:center;position:relative;height:44px}
+.m-parent{display:inline-flex;align-items:center;gap:4px;font-size:15px;color:var(--q-greige-600);height:44px;padding-right:8px}
+.m-ttl{display:inline-flex;align-items:center;gap:6px;height:44px;max-width:100%;font:400 18px/1 var(--display);white-space:nowrap;min-width:0}
+.m-ttl span{overflow:hidden;text-overflow:ellipsis}
+.m-bar{display:flex;align-items:center;gap:4px;min-height:62px;padding:8px 6px 10px 16px;background:var(--q-paper-000);flex:none}
+.m-bar-main{flex:1;min-width:0;display:flex;align-items:center;gap:12px;min-height:44px}
+.m-vr{width:1px;height:28px;background:var(--q-hair);flex:none;margin-left:4px}
+.m-wb{width:44px;height:44px;display:grid;place-items:center;border-radius:8px;flex:none}
+.m-bar .txt{flex:1;min-width:0;display:grid;gap:4px}
+.m-bar .big{font:400 22px/1.15 var(--display);letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.m-sub{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--q-greige-600);white-space:nowrap;overflow:hidden}
+.m-sub .sep{color:var(--q-greige-300)}
+.m-sub .due{color:var(--q-caution-text)}
+.m-sub .nt{display:inline-flex;align-items:center;gap:3px;color:var(--q-ink)}
+.m-more{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;background:var(--q-paper-100);border:1px solid var(--q-hair);flex:none}
+.m-tabs{display:flex;align-items:center;background:var(--q-paper-000);border-bottom:1px solid var(--q-hair);flex:none;position:relative;z-index:2}
+.m-tabs .tabs{padding-left:16px;gap:22px;overflow-x:auto;scrollbar-width:none;-webkit-mask-image:linear-gradient(90deg,#000 85%,transparent);mask-image:linear-gradient(90deg,#000 85%,transparent)}
+.m-tabs .tabs::-webkit-scrollbar{display:none}
+.m-tabs .ib{width:44px;height:44px;display:grid;place-items:center;flex:none}
+.m-tabs.stuck{box-shadow:0 4px 12px rgba(10,10,10,.06)}
+.m-work{display:flex;gap:8px;padding:12px 16px;overflow:hidden;flex:none}
+.m-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:0 16px 16px}
+.m-grid .tile .cap{font-size:11px}
+.m-body{flex:1;min-height:0;overflow:hidden;position:relative}
+.m-scroll{overflow-y:auto;height:100%;overscroll-behavior:contain;scrollbar-width:none}
+.m-scroll::-webkit-scrollbar{display:none}
+.m-scroll .m-tabs{position:sticky;top:0}
+
+/* bottom sheet */
+.m-scrim{position:absolute;inset:0;background:rgba(10,10,10,.36);z-index:20}
+.m-sheet{position:absolute;left:0;right:0;bottom:0;top:96px;background:var(--q-paper-050);border-radius:14px 14px 0 0;z-index:21;display:flex;flex-direction:column;box-shadow:var(--q-shadow-lg);overflow:hidden}
+.m-sheet.kb{bottom:291px;top:64px}
+.handle{width:36px;height:5px;border-radius:3px;background:var(--q-greige-300);margin:8px auto 0;flex:none}
+.sh-head{display:flex;align-items:flex-start;gap:8px;padding:10px 8px 14px 20px;flex:none}
+.sh-head .t{flex:1;display:grid;gap:2px;min-width:0;padding-top:6px}
+.sh-head h2{font:400 26px/1.15 var(--display);letter-spacing:-.01em}
+.sh-head .s{font-size:14px;color:var(--q-greige-600)}
+.sh-head .x{width:44px;height:44px;display:grid;place-items:center;border-radius:50%;flex:none}
+.sh-nav{display:flex;align-items:center;gap:4px;padding:6px 8px 10px;flex:none;position:relative;min-height:56px}
+.sh-nav .back{display:inline-flex;align-items:center;gap:2px;height:44px;padding:0 8px 0 4px;color:var(--q-info);font-size:15px}
+.sh-nav h2{position:absolute;left:50%;transform:translateX(-50%);font:400 18px/1 var(--display);white-space:nowrap}
+.sh-nav .x{margin-left:auto;width:44px;height:44px;display:grid;place-items:center}
+.sh-body{flex:1;min-height:0;overflow-y:auto;padding-bottom:40px;scrollbar-width:none}
+.sh-body::-webkit-scrollbar{display:none}
+.sh-foot{flex:none;display:flex;gap:8px;padding:12px 16px 34px;border-top:1px solid var(--q-hair);background:var(--q-paper-000)}
+.sh-foot .qb{flex:1;justify-content:center;height:48px;font-size:15px}
+.glabel{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--q-greige-600);padding:16px 20px 8px;display:block}
+.group{background:var(--q-paper-000);border-top:1px solid var(--q-hair);border-bottom:1px solid var(--q-hair)}
+.row{display:flex;align-items:center;gap:12px;min-height:52px;padding:6px 12px 6px 20px;width:100%;position:relative}
+.row+.row::before{content:"";position:absolute;top:0;left:20px;right:0;height:1px;background:var(--q-paper-200)}
+.row .k{width:92px;flex:none;color:var(--q-greige-600);font-size:15px}
+.row .v{flex:1;min-width:0;display:flex;align-items:center;gap:8px;font-size:15px;justify-content:flex-end;text-align:right}
+.row .v .tx{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .cv{color:var(--q-greige-400)}
+.row.static .v{padding-right:22px}
+.m-notes{margin:0 16px;font:400 16px/1.6 var(--serif);color:var(--q-ink-700);background:var(--q-paper-000);border:1px solid var(--q-hair);padding:14px 16px}
+.acts{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:20px 16px 8px}
+.acts .qb{height:48px;justify-content:center;font-size:15px}
+.acts .wide{grid-column:1/-1}
+.radio{width:22px;height:22px;border-radius:50%;border:1.5px solid var(--q-greige-300);display:grid;place-items:center;flex:none;margin-left:auto}
+.radio.on{border-color:var(--q-ink)}
+.radio.on::after{content:"";width:10px;height:10px;border-radius:50%;background:var(--q-ink)}
+.row .lbl{display:flex;align-items:center;gap:10px;font-size:16px}
+.m-field{display:grid;gap:6px;padding:0 16px}
+.m-field .box{height:48px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;background:var(--q-paper-000);border:1px solid var(--q-hair);border-radius:4px;font-size:16px}
+.m-search{display:flex;align-items:center;gap:8px;height:44px;margin:0 16px 4px;padding:0 12px;background:var(--q-paper-000);border:1.5px solid var(--q-ink);border-radius:4px;font-size:16px}
+.kbd{position:absolute;left:0;right:0;bottom:0;height:291px;background:#d1d3d9;z-index:25;padding:8px 3px 0;display:grid;align-content:start;gap:12px}
+.kbd .kr{display:flex;justify-content:center;gap:6px}
+.kbd .key{width:33px;height:42px;border-radius:5px;background:#fff;box-shadow:0 1px 0 #898a8d;display:grid;place-items:center;font:400 22px/1 -apple-system,system-ui,sans-serif;color:#000}
+.kbd .key.f{background:#abb0bb;font-size:15px;width:44px}
+.kbd .key.sp{width:182px;font-size:15px}
+.kbd .key.go{width:88px;background:#0a84ff;color:#fff;font-size:15px}
+.toast{position:absolute;left:16px;right:16px;bottom:44px;z-index:26;background:var(--q-ink);color:var(--q-paper-050);border-radius:8px;padding:12px 14px;font-size:14px;display:flex;align-items:center;gap:10px;box-shadow:var(--q-shadow-md)}
+
+/* live demo motion */
+.live .m-scrim{transition:opacity .24s var(--q-ease)}
+.live .m-sheet{transition:transform .28s var(--q-ease)}
+.live .m-scrim.closed{opacity:0;pointer-events:none}
+.live .m-sheet.closed{transform:translateY(105%)}
+.live .m-shell .mid > *{transition:opacity .2s var(--q-ease),transform .2s var(--q-ease)}
+.live .m-shell .m-ttl{position:absolute;left:0;top:0;opacity:0;transform:translateY(6px);pointer-events:none}
+.live .m-shell.scrolled .m-ttl{opacity:1;transform:none;pointer-events:auto}
+.live .m-shell.scrolled .m-parent{opacity:0;transform:translateY(-6px);pointer-events:none}
+.live .view{animation:vin .22s var(--q-ease)}
+@keyframes vin{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
+.live .toast{transition:opacity .2s var(--q-ease),transform .2s var(--q-ease)}
+.live .toast.off{opacity:0;transform:translateY(8px)}
+.q :focus-visible{outline:2px solid var(--q-ink);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.live *{transition:none!important;animation:none!important}}
+</style>
+
+</head>
+<body>
+<main class="page">
+  <header class="intro">
+    <span class="eyebrow">Quincy Portal · Prototype · Oct 2026 · supersedes “Project header — rail to top” (2a)</span>
+    <h1>Project header</h1>
+    <p>The project page opens with the work, not the paperwork. Everyone on a project needs its name, its stage and its deadline at a glance, and the collection tabs one tap away. The rest (client, shoot, Dropbox, reminders, notes, links) moves one layer down: a sheet from the right on desktop, a sheet from the bottom on the phone.</p>
+    <ul class="principles">
+      <li><b>Glance, then go deeper</b><span>Name, Stage, Deadline and Team stay in view. Every other fact is one click or tap away.</span></li>
+      <li><b>Tabs are the main control</b><span>On the phone the tabs stick to the top while the project bar scrolls away. Switching collections never needs a scroll back up.</span></li>
+      <li><b>Problems show up, normal states stay quiet</b><span>Dropbox appears in the header only when it is blocked. Overdue, archived and read-only states change what the controls look like.</span></li>
+    </ul>
+    <div class="figures" id="figures">
+      <div><strong id="fig-d">—</strong><span>Desktop header height, shell bar not counted</span></div>
+      <div><strong id="fig-m">—</strong><span>Phone chrome above the work, at rest</span></div>
+      <div><strong id="fig-s">—</strong><span>Phone chrome once you scroll</span></div>
+    </div>
+  </header>
+
+  <section class="section" aria-labelledby="h-desk">
+    <div class="section-head"><span class="eyebrow">Rail visible · 772px and wider</span><h2 id="h-desk">Desktop</h2>
+      <p>Two rows replace today’s three bands. Row A holds the identity and a cluster of status controls. Row B holds the collection tabs. The shell bar’s breadcrumb already says where you are, so the “← Dashboard” crumb inside the header goes.</p></div>
+    <div class="frames" id="desk"></div>
+  </section>
+
+  <section class="section" aria-labelledby="h-tab">
+    <div class="section-head"><span class="eyebrow">iPad portrait · 834px</span><h2 id="h-tab">Tablet</h2>
+      <p>Same two rows. When the identity and the cluster no longer fit on one line, the cluster wraps under the title and Details stays at the right edge.</p></div>
+    <div class="frames" id="tab"></div>
+  </section>
+
+  <section class="section" aria-labelledby="h-phone">
+    <div class="section-head"><span class="eyebrow">Below 772px · iPhone 15, 390 × 844</span><h2 id="h-phone">Phone</h2>
+      <p>A single project bar names the project and shows its stage and due date. Tapping it opens Project details in a bottom sheet. Editing happens in views pushed inside that sheet, so a popover never has to squeeze in beside the on-screen keyboard.</p></div>
+    <div class="live-wrap">
+      <div class="dev-wrap"><div class="fit" data-w="412"><div class="frame" id="live"></div></div></div>
+      <div class="live-copy">
+        <h3 style="font:400 24px/1.2 var(--display)">Try it</h3>
+        <p>This phone works. It shows the intended behaviour, not the final build.</p>
+        <ol>
+          <li>Scroll the photos. The project bar scrolls away, the tabs stick under the shell bar, and the project name moves into the shell bar.</li>
+          <li>Tap the project bar, or the name in the shell bar, to open Project details.</li>
+          <li>Tap Stage, Deadline or Team to edit in a pushed view. Changing the Stage updates the bar straight away.</li>
+          <li>The board icon at the end of the project bar opens the whiteboard. It is also the first action in the sheet.</li>
+          <li>Close with ×, by tapping outside the sheet, or with Esc.</li>
+        </ol>
+      </div>
+    </div>
+    <div class="frames phones" id="phone"></div>
+  </section>
+
+  <section class="section" aria-labelledby="h-alt">
+    <div class="section-head"><span class="eyebrow">Considered, not recommended</span><h2 id="h-alt">Alternative: the name lives in the shell bar</h2>
+      <p>This drops the project bar completely. The tabs sit right under the shell bar, which always shows the project name as the button that opens the sheet. It saves 62px at rest but hides the Stage and the due date until you open the sheet. That costs most on the phone, where people check them on site.</p></div>
+    <div class="frames phones" id="alt"></div>
+  </section>
+
+  <section class="section" aria-labelledby="h-map">
+    <div class="section-head"><span class="eyebrow">For the build plan</span><h2 id="h-map">Frame → component map</h2>
+      <p>Every frame id maps to what renders it. The list starts from components already installed in <code style="font:13px var(--mono)">components/reui/</code> and <code style="font:13px var(--mono)">components/quincy/</code>.</p></div>
+    <div class="map-scroll"><table class="map">
+      <thead><tr><th>Frame</th><th>Element</th><th>Renders with</th></tr></thead>
+      <tbody>
+        <tr><td>D1 · T1</td><td>Title, suburb, meta line</td><td>The existing <code>ProjectHeader</code> identity, rebuilt as one block. The “← Dashboard” crumb is removed because the shell breadcrumb covers it.</td></tr>
+        <tr><td>D1 · D6</td><td>Stage control</td><td><code>reui/select</code>, using the current <code>StageControl</code> with a compact trigger (stage dot, label, chevron). No field label: the dot and the tooltip name it.</td></tr>
+        <tr><td>D1 · D4</td><td>Deadline chip + popover</td><td>The <code>ProjectHeaderDeadline</code> trigger restyled as a chip (clock icon, date, a <code>Badge</code> for the countdown). The popover body stays as it is today.</td></tr>
+        <tr><td>D1 · D3</td><td>Team avatars + picker</td><td>A <code>ProjectTeamCombobox</code> with a <code>quincy/AvatarStack</code> trigger. Options are grouped by role, as in prototype 2a.</td></tr>
+        <tr><td>D1 · D2</td><td>Details button + sheet</td><td><code>reui/button</code> (outline) opens <code>reui/sheet</code> with <code>side="right"</code> at 440px. The sheet takes Client, Schedule, Team, Dropbox, Social overlays and Production notes.</td></tr>
+        <tr><td>D1 · D5</td><td>More menu (⋯)</td><td><code>quincy/menu.tsx</code> (Base UI menu): Edit details, Copy link, Show in Calendar, Show in Timeline.</td></tr>
+        <tr><td>D1 · M1 · M3</td><td>Whiteboard entry</td><td>The existing <code>WhiteboardButton</code> moves out of <code>project-header__tabrow</code>. On desktop it sits beside Details. On the phone it sits at the end of the project bar and becomes a row in the details sheet. It is still shown only once the Workspace has confirmed collaboration access.</td></tr>
+        <tr><td>D1 · M1</td><td>Collection tabs</td><td><code>reui/tabs</code> with the line variant and count <code>Badge</code>s. The tab row now holds the tabs alone. On the phone it becomes <code>position: sticky</code>.</td></tr>
+        <tr><td>D5</td><td>Condensed sticky bar</td><td>A new strip inside <code>ProjectHeader</code>. It appears when Row A leaves the scroll viewport, detected by an IntersectionObserver.</td></tr>
+        <tr><td>M1 · M2</td><td>Project bar; name moves to shell bar</td><td>A full-width <code>reui/button</code> (ghost). The shell-bar title needs a slot in <code>ShellHeader</code> that a route can fill. See the decisions below.</td></tr>
+        <tr><td>M3</td><td>Project details sheet</td><td><code>reui/sheet</code> with <code>side="bottom"</code>, inset-grouped rows. Check the ReUI MCP for a drawer before hand-building the drag handle.</td></tr>
+        <tr><td>M4</td><td>Stage view</td><td><code>reui/radio-group</code> rows of 52px. Choosing a stage saves it and returns to Details, the same as choosing in the select today.</td></tr>
+        <tr><td>M5</td><td>Deadline view</td><td>The existing deadline form (<code>quincy/DateTimeField</code> plus reminder toggles), placed in the sheet with Save and Clear pinned at the bottom.</td></tr>
+        <tr><td>M6</td><td>Team view with keyboard</td><td>The combobox list rendered inline, not as a popup. The sheet is sized to the visual viewport, so the search field and results stay above the keyboard (#891).</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="section" aria-labelledby="h-dec">
+    <div class="section-head"><span class="eyebrow">Your call before the build</span><h2 id="h-dec">Decisions for the owner</h2></div>
+    <ol class="decisions">
+      <li><b>Production notes go behind a link.</b><span>On desktop they become a “Production notes” link in the meta line; on the phone, a note icon in the project bar. Both open the details sheet with the notes at the top. The alternative is a one-line excerpt under the title, which costs about 22px.</span></li>
+      <li><b>Dropbox leaves the always-visible row.</b><span>Its status and its Open and Sync actions move to the details sheet. A caution “Dropbox blocked” chip joins the cluster only while autoHDR is blocked (D6).</span></li>
+      <li><b>Edit details, Copy link and Show in move into ⋯ on desktop.</b><span>On the phone they sit at the bottom of the details sheet.</span></li>
+      <li><b>The phone shell bar gets a title slot.</b><span>At rest it shows only the parent (“Dashboard”), because the project bar names the project. Once the project bar scrolls away, the project name fades in there and becomes a second way to open the sheet. This is a change to <code>ShellHeader</code>, not only to the project page.</span></li>
+      <li><b>The field labels go from the desktop cluster.</b><span>“Stage”, “Team” and “Deadline” are no longer printed. Each control carries an icon or a dot, a tooltip and an accessible name. Prototype 2a printed them; this version gains a whole row by dropping them.</span></li>
+      <li><b>The desktop details sheet is modal.</b><span>The other choice is a docked panel that pushes the photo grid aside and stays open between visits. A modal sheet is simpler and matches the Project sheet the Dashboard already opens.</span></li>
+    </ol>
+  </section>
+</main>
+
+<script>
+(function(){
+const P={street:"14 Wattle Street",suburb:"Newtown NSW 2042",shoot:"Tue 16 Sep 2026",shootShort:"Tue 16 Sep",agency:"Ray White Newtown",agent:"Priya Sharma",deadline:"Thu 18 Sep, 17:00",due:"2d",
+  notes:"Twilight exterior requested. Owner’s dog will be home, so keep the side gate closed.",folder:"/Editor Input/2026-09-16 Wattle St"};
+const STAGES=[{k:"awaiting_raw",l:"Awaiting RAW",c:"var(--q-greige-400)"},{k:"raw_review",l:"RAW review",c:"var(--q-caution)"},{k:"editing_autohdr",l:"Editing · autoHDR",c:"var(--q-info)"},{k:"editing",l:"Editing",c:"var(--q-info)"},{k:"edited_review",l:"Edited review",c:"var(--q-caution)",h:1},{k:"delivered",l:"Delivered",c:"var(--q-positive)"}];
+const TEAM={ph:[["JM","Jess Miller","jess@quincy.au",1,""],["RK","Rob Kaur","rob@quincy.au",1,"a2"],["TL","Ting Rui Lee","Admin",0,"a3"]],ed:[["AN","Anika Ng","Editor",1,"a3"],["MB","Marco Bianchi","External editor",0,""]]};
+const TABS=[["RAW","128"],["Edited","42"],["Video","2"],["Floorplan","1"],["Copy","—"]];
+const IC={
+ panelLeft:'<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>',
+ panelRight:'<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>',
+ bell:'<path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/>',
+ down:'<path d="m6 9 6 6 6-6"/>',right:'<path d="m9 18 6-6-6-6"/>',left:'<path d="m15 18-6-6 6-6"/>',
+ x:'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+ more:'<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+ board:'<path d="M2 3h20"/><path d="M21 3v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3"/><path d="m7 21 5-5 5 5"/>',
+ note:'<path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8Z"/><path d="M15 3v4a2 2 0 0 0 2 2h4"/>',
+ cal:'<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/>',
+ link:'<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+ sync:'<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+ folder:'<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+ search:'<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',check:'<path d="M20 6 9 17l-5-5"/>',
+ dash:'<rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>',
+ mega:'<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>',
+ shield:'<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
+ sliders:'<path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>',
+ clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',plus:'<path d="M5 12h14"/><path d="M12 5v14"/>',
+ ext:'<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+ pencil:'<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/>',
+ warn:'<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+ gantt:'<path d="M8 6h10"/><path d="M6 12h9"/><path d="M11 18h7"/>',
+ lock:'<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+ archive:'<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>'
+};
+const ic=(n,s=16,c="")=>`<svg class="ic ${c}" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[n]}</svg>`;
+const stage=k=>STAGES.find(s=>s.k===k);
+const dot=k=>{const s=stage(k);return `<i class="sdot${s.h?" hatch":""}" style="background:${s.c}"></i>`};
+
+/* ---------- shared pieces ---------- */
+const avs=(sz)=>`<span class="avs"><span class="av">JM</span><span class="av a2">RK</span><span class="av a3">AN</span></span>`;
+function tabs(active="RAW",unread=3){
+  return `<div class="tabs" role="tablist" aria-label="Workspace">${TABS.map(([t,n])=>`<button role="tab" aria-selected="${t===active}" class="tab${t===active?" on":""}">${t}<span class="bdg${t===active?" ink":""}">${n}</span></button>`).join("")}<button role="tab" aria-selected="false" class="tab">Collaboration<span class="bdg crit">${unread}</span></button><button role="tab" aria-selected="false" class="tab">Delivery</button></div>`;
+}
+function tiles(n,start=412){let h="";for(let i=0;i<n;i++){const p="p"+(((i*5+Math.floor(i/6))%6)+1);h+=`<div class="tile"><div class="ph-img ${p}"></div><div class="cap"><span>DSC_0${start+i}</span><span>${i%3===0?"★★★★":i%3===1?"★★★":""}</span></div></div>`}return h}
+function worktools(){return `<div class="worktools"><span class="chip on">All <span class="n">128</span></span><span class="chip">Recommended <span class="n">24</span></span><span class="chip">Rated <span class="n">61</span></span><span class="chip">Labelled <span class="n">9</span></span><span class="chip">Selected <span class="n">18</span></span><span class="chip">Select all</span><span class="grow"></span><span class="prog">128 frames</span></div>`}
+
+/* ---------- desktop ---------- */
+function rail(){return `<nav class="d-rail" aria-label="Main"><div class="d-logo">Q</div><div class="d-nav"><span class="rb on">${ic("dash",20)}</span><span class="rb">${ic("mega",20)}</span><span class="rb">${ic("shield",20)}</span></div><div class="d-rail-foot"><span class="rb">${ic("bell",20)}</span><span class="rb">${ic("sliders",20)}</span><span class="av" style="margin-top:6px">TL</span></div></nav>`}
+function shell(){return `<header class="d-shell"><nav class="crumb" aria-label="Breadcrumb"><span>Dashboard</span><i class="sep"></i><span class="cur">${P.street}</span></nav></header>`}
+function stageBtn(o={}){const k=o.stage||"editing_autohdr";if(o.readonly)return `<span class="qb lock" title="Stage">${dot(k)}${stage(k).l}</span>`;return `<button class="qb${o.open==="stage"?" open":""}" aria-label="Stage: ${stage(k).l}">${dot(k)}${stage(k).l}${ic("down",14,"chev")}</button>`}
+function deadlineBtn(o={}){
+  const tone=o.due==="over"?`<span class="bdg critical-l">Overdue 3h</span>`:o.due==="today"?`<span class="bdg caution">Today</span>`:o.due==="none"?"":`<span class="bdg caution">${P.due}</span>`;
+  const label=o.due==="none"?`<span style="color:var(--q-greige-600)">Set deadline</span>`:o.due==="over"?"Wed 17 Sep, 17:00":o.due==="today"?"Thu 18 Sep, 17:00":"Due "+P.deadline;
+  if(o.readonly)return `<span class="qb lock">${ic("clock",15)}${label}</span>`;
+  return `<button class="qb${o.open==="deadline"?" open":""}" aria-label="Deadline">${ic("clock",15)}${label}${tone}${ic("down",14,"chev")}</button>`;
+}
+function teamBtn(o={}){if(o.empty)return `<button class="qb" aria-label="Team: nobody assigned">${ic("plus",15)}Add team${ic("down",14,"chev")}</button>`;if(o.readonly)return `<span class="qb lock team">${avs()}</span>`;return `<button class="qb team${o.open==="team"?" open":""}" aria-label="Team: Jess Miller, Rob Kaur, Anika Ng">${avs()}${ic("down",14,"chev")}</button>`}
+function teamPop(){
+  const opt=(r,hl)=>`<button class="opt${hl?" hl":""}"><span class="av ${r[4]}">${r[0]}</span><span class="who">${r[1]}<small>${r[2]}</small></span>${r[3]?ic("check",16,"ck"):""}</button>`;
+  return `<div class="pop right" role="dialog" aria-label="Team"><div class="ph2"><span class="qlabel">Team</span><span style="font-size:12px;color:var(--q-greige-600)">3 assigned</span></div><div class="search">${ic("search",15)}<span>Search people…</span></div>
+  <div class="grp"><span class="qlabel">Photographers</span>${TEAM.ph.map((r,i)=>opt(r,i===0)).join("")}</div><div class="grp"><span class="qlabel">Editors</span>${TEAM.ed.map(r=>opt(r)).join("")}</div>
+  <div class="foot">The group you pick from sets the person’s role. Pick a checked person again to remove them.</div></div>`;
+}
+function deadlinePop(){
+  return `<div class="pop right" style="width:340px" role="dialog" aria-label="Deadline"><div class="ph2"><span class="qlabel">Deadline</span><span class="bdg caution">Due in 2 days</span></div>
+  <div style="display:grid;gap:14px;padding:4px 16px 16px"><div style="display:grid;grid-template-columns:1fr 120px;gap:8px"><label class="field"><span class="qlabel">Date</span><span class="box">18 / 09 / 2026 ${ic("cal",15)}</span></label><label class="field"><span class="qlabel">Time</span><span class="box">17:00 ${ic("clock",15)}</span></label></div>
+  <div class="field"><span class="qlabel">Advance reminders · 3 of 8</span><div class="toggles"><span class="tg">1 week</span><span class="tg on">2 days</span><span class="tg on">1 day</span><span class="tg">4 hours</span><span class="tg on">1 hour</span><span class="tg">${ic("plus",13)}Custom</span></div></div>
+  <p style="font-size:13px;color:var(--q-greige-600)">Next reminder in 2 days · Tue 16 Sep, 17:00 AEST</p>
+  <div style="display:flex;justify-content:flex-end;gap:8px"><button class="qb ghost">Clear</button><button class="qb primary">Save deadline</button></div></div></div>`;
+}
+function moreMenu(){return `<div class="pop right menu" role="menu"><button class="mi hl">${ic("pencil",15)}Edit details</button><button class="mi">${ic("link",15)}Copy link</button><div class="msep"></div><button class="mi">${ic("cal",15)}Show in Calendar</button><button class="mi">${ic("gantt",15)}Show in Timeline</button></div>`}
+function cluster(o={}){
+  return `<div class="ph-cluster">
+    <span class="anchor">${stageBtn(o)}</span>
+    <span class="anchor">${deadlineBtn(o)}${o.open==="deadline"?deadlinePop():""}</span>
+    <span class="anchor">${teamBtn(o)}${o.open==="team"?teamPop():""}</span>
+    ${o.blocked?`<button class="qb warn">${ic("warn",15)}Dropbox blocked</button>`:""}
+    ${o.archived?`<span class="bdg neutral" style="height:28px;padding:0 10px;gap:6px">${ic("archive",14)}Archived</span>`:""}
+    <span class="vr${o.tablet?" push":""}"></span>
+    <button class="qb icon" aria-label="Open whiteboard" title="Open whiteboard">${ic("board",18)}</button>
+    <button class="qb${o.sheet?" open":""}" aria-label="Project details">${ic("panelRight",15)}Details</button>
+    <span class="anchor"><button class="qb icon${o.open==="more"?" open":""}" aria-label="More actions">${ic("more",18)}</button>${o.open==="more"?moreMenu():""}</span>
+  </div>`;
+}
+function header(o={}){
+  return `<section class="ph${o.tablet?" tablet":""}" aria-label="Project">
+    <div class="ph-a"><div class="ph-id"><div class="ph-titleline"><h1 class="ph-title">${P.street}</h1><span class="ph-sub">${P.suburb}</span></div>
+      <p class="ph-meta"><span>Shoot ${P.shootShort}</span><span class="dot">·</span><span>${P.agency}, ${P.agent}</span><span class="dot">·</span><button class="ph-notes">${ic("note",14)}Production notes</button></p></div>
+      ${cluster(o)}</div>
+    <div class="ph-b">${tabs()}</div>
+  </section>`;
+}
+function detailsSheet(){
+  return `<aside class="d-sheet" role="dialog" aria-label="Project details"><header><div class="t"><span class="qlabel">Project details</span><h2>${P.street}</h2><span style="font-size:14px;color:var(--q-greige-600)">${P.suburb}</span></div><button class="qb ghost icon" aria-label="Close">${ic("x",18)}</button></header>
+  <div class="body">
+    <div class="dsec"><div class="dsec-h"><span class="qlabel">Production notes</span><button class="link">Edit</button></div><p class="notesbox">${P.notes}</p></div>
+    <div class="dsec"><span class="qlabel">Client and shoot</span><dl class="dl"><dt>Agency</dt><dd>${P.agency}</dd><dt>Agent</dt><dd>${P.agent}</dd><dt>Shoot</dt><dd>${P.shoot}</dd></dl></div>
+    <div class="dsec"><div class="dsec-h"><span class="qlabel">Deadline</span><button class="link">Change</button></div><dl class="dl"><dt>Due</dt><dd>${P.deadline} <span class="bdg caution" style="margin-left:6px">2d</span></dd><dt>Reminders</dt><dd>2 days, 1 day, 1 hour before</dd></dl></div>
+    <div class="dsec"><div class="dsec-h"><span class="qlabel">Team</span><button class="link">Manage</button></div><dl class="dl"><dt>Photographers</dt><dd>Jess Miller, Rob Kaur</dd><dt>Editors</dt><dd>Anika Ng</dd></dl></div>
+    <div class="dsec"><div class="dsec-h"><span class="qlabel">Dropbox</span><span class="bdg pos">Monitored</span></div><dl class="dl"><dt>RAW folder</dt><dd class="mono">${P.folder}</dd><dt>Last sync</dt><dd>Today 09:12 · 128 files</dd></dl>
+      <div style="display:flex;gap:8px"><button class="qb">${ic("ext",15)}Open in Dropbox</button><button class="qb">${ic("sync",15)}Sync from Dropbox</button></div></div>
+  </div>
+  <footer><button class="qb">${ic("board",15)}Whiteboard</button><button class="qb">${ic("pencil",15)}Edit details</button><button class="qb ghost">${ic("link",15)}Copy link</button><button class="qb ghost">${ic("cal",15)}Show in Calendar</button></footer></aside>`;
+}
+function desktop(o={}){
+  const w=o.w||1440,h=o.h||900,cols=o.cols||(w>1200?6:4);
+  const top=o.condensed
+    ? `<div class="ph-condensed"><span class="ctitle">${dot("editing_autohdr")}${P.street}</span>${tabs()}<button class="qb icon" aria-label="Open whiteboard">${ic("board",18)}</button><button class="qb">${ic("panelRight",15)}Details</button></div>`
+    : header(o);
+  return `<div class="q d-frame" style="width:${w}px;height:${h}px">${rail()}<div class="d-col">${shell()}${top}${o.condensed?"":worktools()}<div class="grid" style="grid-template-columns:repeat(${cols},1fr)">${tiles(o.condensed?cols*3:cols*3,o.condensed?436:412)}</div>${o.sheet?`<div class="scrim"></div>${detailsSheet()}`:""}</div></div>`;
+}
+function statesFrame(){
+  const r=(lab,o)=>`<div class="srow"><span class="lab">${lab}</span><div>${cluster(o)}</div></div>`;
+  return `<div class="q states" style="width:1180px">${r("Default",{})}${r("Due today",{due:"today"})}${r("Overdue",{due:"over"})}${r("No deadline, no team",{due:"none",empty:1})}${r("Dropbox blocked",{blocked:1})}${r("Photographer (read-only Stage)",{readonly:1})}${r("Archived (read-only)",{archived:1,readonly:1})}</div>`;
+}
+
+/* ---------- phone ---------- */
+function mShell(scrolled){return `<header class="m-shell${scrolled?" scrolled":""}"><span class="ib" aria-label="Open navigation">${ic("panelLeft",20)}</span><div class="mid">${scrolled?`<button class="m-ttl" aria-label="Project details, ${P.street}"><span>${P.street}</span>${ic("down",16)}</button>`:`<span class="m-parent">Dashboard</span>`}</div><span class="ib" aria-label="Notifications">${ic("bell",20)}</span></header>`}
+function mBar(k="editing_autohdr"){return `<div class="m-bar"><button class="m-bar-main" aria-label="Project details, ${P.street}" data-open><span class="txt"><span class="big">${P.street}</span><span class="m-sub">${dot(k)}<span data-stage-label>${stage(k).l}</span><span class="sep">·</span><span class="due">Due in 2d</span><span class="sep">·</span><span class="nt">${ic("note",13)}Notes</span></span></span><span class="m-more">${ic("down",18)}</span></button><span class="m-vr"></span><button class="m-wb" aria-label="Open whiteboard" data-wb>${ic("board",20)}</button></div>`}
+function mTabs(stuck){return `<div class="m-tabs${stuck?" stuck":""}">${tabs()}</div>`}
+function mWork(){return `<div class="m-work"><span class="chip on">All <span class="n">128</span></span><span class="chip">Recommended <span class="n">24</span></span><span class="chip">Rated <span class="n">61</span></span></div>`}
+function dev(inner){return `<div class="q dev"><div class="screen"><div class="safe-top"><div class="island"></div></div>${inner}</div><div class="home"></div></div>`}
+
+function rowsDetails(k="editing_autohdr"){
+  return `<span class="glabel">Status</span><div class="group">
+    <button class="row" data-go="stage"><span class="k">Stage</span><span class="v">${dot(k)}<span class="tx" data-stage-label>${stage(k).l}</span></span>${ic("right",18,"cv")}</button>
+    <button class="row" data-go="deadline"><span class="k">Deadline</span><span class="v"><span class="tx">${P.deadline}</span><span class="bdg caution">2d</span></span>${ic("right",18,"cv")}</button>
+    <button class="row" data-go="team"><span class="k">Team</span><span class="v">${avs()}<span class="tx">Jess, Rob, Anika</span></span>${ic("right",18,"cv")}</button></div>
+  <span class="glabel">Production notes</span><p class="m-notes">${P.notes}</p>
+  <span class="glabel">Client and shoot</span><div class="group">
+    <div class="row static"><span class="k">Agency</span><span class="v"><span class="tx">${P.agency}</span></span></div>
+    <div class="row static"><span class="k">Agent</span><span class="v"><span class="tx">${P.agent}</span></span></div>
+    <div class="row static"><span class="k">Shoot</span><span class="v"><span class="tx">${P.shoot}</span></span></div></div>
+  <span class="glabel">Files</span><div class="group">
+    <button class="row" data-go="dropbox"><span class="k">Dropbox</span><span class="v"><span class="bdg pos">Monitored</span></span>${ic("right",18,"cv")}</button></div>
+  <div class="acts"><button class="qb wide" data-wb>${ic("board",16)}Open whiteboard</button><button class="qb">${ic("pencil",16)}Edit details</button><button class="qb">${ic("link",16)}Copy link</button><button class="qb">${ic("cal",16)}Calendar</button><button class="qb">${ic("gantt",16)}Timeline</button></div>`;
+}
+function sheetHead(){return `<div class="handle"></div><div class="sh-head"><div class="t"><h2>${P.street}</h2><span class="s">${P.suburb}</span></div><button class="x" aria-label="Close" data-close>${ic("x",22)}</button></div>`}
+function sheetNav(title){return `<div class="handle"></div><div class="sh-nav"><button class="back" data-back>${ic("left",20)}Details</button><h2>${title}</h2><button class="x" aria-label="Close" data-close>${ic("x",22)}</button></div>`}
+function viewStage(k="editing_autohdr"){return sheetNav("Stage")+`<div class="sh-body"><span class="glabel">Move this project to</span><div class="group" role="radiogroup" aria-label="Stage">${STAGES.filter(s=>s.k!=="editing").map(s=>`<button class="row" role="radio" aria-checked="${s.k===k}" data-stage="${s.k}"><span class="lbl">${dot(s.k)}${s.l}</span><span class="radio${s.k===k?" on":""}"></span></button>`).join("")}</div><p style="padding:12px 20px;font-size:13px;color:var(--q-greige-600)">Choosing a stage saves it straight away.</p></div>`}
+function viewDeadline(){return sheetNav("Deadline")+`<div class="sh-body" style="display:grid;gap:16px;align-content:start;padding-top:4px"><div class="m-field"><span class="qlabel">Date</span><span class="box">Thu 18 Sep 2026 ${ic("cal",18)}</span></div><div class="m-field"><span class="qlabel">Time</span><span class="box">17:00 ${ic("clock",18)}</span></div>
+  <div class="m-field"><span class="qlabel">Advance reminders · 3 of 8</span><div class="toggles"><button class="tg" data-tg style="height:40px">1 week</button><button class="tg on" data-tg style="height:40px">2 days</button><button class="tg on" data-tg style="height:40px">1 day</button><button class="tg" data-tg style="height:40px">4 hours</button><button class="tg on" data-tg style="height:40px">1 hour</button><button class="tg" style="height:40px">${ic("plus",14)}Custom</button></div></div>
+  <p style="padding:0 16px;font-size:14px;color:var(--q-greige-600)">Next reminder in 2 days · Tue 16 Sep, 17:00 AEST</p></div><div class="sh-foot"><button class="qb ghost" data-back>Clear</button><button class="qb primary" data-save>Save deadline</button></div>`}
+function viewTeam(typed){
+  const opt=(r)=>`<button class="opt" data-ck style="padding:6px 20px;border-radius:0"><span class="av ${r[4]}">${r[0]}</span><span class="who" style="font-size:16px">${r[1]}<small style="font-size:13px">${r[2]}</small></span>${r[3]?ic("check",18,"ck"):""}</button>`;
+  const ph=typed?TEAM.ph.filter(r=>/an/i.test(r[1])):TEAM.ph, ed=typed?TEAM.ed.filter(r=>/an/i.test(r[1])):TEAM.ed;
+  return sheetNav("Team")+`<div class="m-search">${ic("search",17)}${typed?`<span>an</span><i class="caret" style="margin-left:-4px"></i>`:`<span style="color:var(--q-greige-600)">Search people</span>`}</div><div class="sh-body">${ph.length?`<span class="glabel">Photographers</span><div class="group">${ph.map(opt).join("")}</div>`:""}${ed.length?`<span class="glabel">Editors</span><div class="group">${ed.map(opt).join("")}</div>`:""}<p style="padding:12px 20px;font-size:13px;color:var(--q-greige-600)">The group you pick from sets the person’s role.</p></div>`;
+}
+function viewDropbox(){return sheetNav("Dropbox")+`<div class="sh-body"><span class="glabel">Status</span><div class="group"><div class="row static"><span class="k">Status</span><span class="v"><span class="bdg pos">Monitored</span></span></div><div class="row static"><span class="k">Last sync</span><span class="v"><span class="tx">Today 09:12 · 128 files</span></span></div></div><span class="glabel">RAW folder</span><p class="m-notes mono" style="font-size:14px">${P.folder}</p><div class="acts"><button class="qb wide">${ic("ext",16)}Open in Dropbox</button><button class="qb wide">${ic("sync",16)}Sync from Dropbox</button></div></div>`}
+const phoneContent=(rest)=>`${mShell(!rest)}<div class="m-body">${rest?mBar():""}${mTabs(!rest)}${mWork()}<div class="m-grid">${tiles(8,rest?412:420)}</div></div>`;
+function phoneSheet(view,opts={}){
+  const body=view==="details"?sheetHead()+`<div class="sh-body">${rowsDetails()}</div>`:view==="stage"?viewStage():view==="deadline"?viewDeadline():view==="team"?viewTeam(opts.typed):viewDropbox();
+  return `${phoneContent(true)}<div class="m-scrim"></div><div class="m-sheet${opts.kb?" kb":""}" role="dialog" aria-label="Project details">${body}</div>${opts.kb?`<div class="kbd" aria-hidden="true"><div class="kr">${"qwertyuiop".split("").map(c=>`<span class="key">${c}</span>`).join("")}</div><div class="kr">${"asdfghjkl".split("").map(c=>`<span class="key">${c}</span>`).join("")}</div><div class="kr"><span class="key f">⇧</span>${"zxcvbnm".split("").map(c=>`<span class="key">${c}</span>`).join("")}<span class="key f">⌫</span></div><div class="kr"><span class="key f">123</span><span class="key sp">space</span><span class="key go">search</span></div></div>`:""}`;
+}
+function altPhone(){return `<header class="m-shell"><span class="ib">${ic("panelLeft",20)}</span><div class="mid"><button class="m-ttl"><span>${P.street}</span>${ic("down",16)}</button></div><span class="ib">${ic("bell",20)}</span></header><div class="m-body">${mTabs(true)}${mWork()}<div class="m-grid">${tiles(10)}</div></div>`}
+
+/* ---------- frames ---------- */
+function card(id,title,html,w,notes){
+  return `<article class="fcard"><div class="ftitle"><span class="fid">${id}</span><h3>${title}</h3></div><div class="fit" data-w="${w}"><div class="frame" inert>${html}</div></div><ul class="notes">${notes.map(n=>`<li>${n}</li>`).join("")}</ul></article>`;
+}
+document.getElementById("desk").innerHTML=[
+  card("D1","Project page at rest",desktop({h:820}),1440,[
+    "<b>Row A</b>: the title in Mazius at 28px with the suburb beside it. The meta line shows the shoot date, the client and a Production notes link.",
+    "<b>Cluster</b>: Stage, Deadline and Team are the controls people use daily. Each opens its own popover, as today. A rule separates them from Details and ⋯.",
+    "<b>Row B</b>: only the collection tabs, so they get the full width.",
+    "<b>Whiteboard</b> moves out of the tab row to sit beside Details. It belongs to the whole project, like Details, not to one collection.",
+    "The “← Dashboard” crumb goes. The shell breadcrumb already links back."]),
+  card("D2","Details sheet open",desktop({h:820,sheet:true}),1440,[
+    "<b>Details</b> opens a 440px sheet from the right. It is modal: Esc closes it and focus returns to Details.",
+    "Production notes come first, then Client and shoot, Deadline, Team and Dropbox. Each section has one edit action at its right.",
+    "Dropbox’s Open and Sync actions live only here, as in prototype 2a.",
+    "The Production notes link in the meta line opens this sheet with the notes in view."]),
+  card("D3","Team popover",desktop({h:600,open:"team"}),1440,[
+    "The avatar stack is the Team trigger. Up to three faces show, then +N.",
+    "The popover is the grouped combobox from 2a. The group you pick from sets the role, and picking a checked person removes them."]),
+  card("D4","Deadline popover",desktop({h:600,open:"deadline"}),1440,[
+    "The chip shows the date and a countdown <code style=\"font:12px var(--mono)\">Badge</code>. It turns caution on the due day and critical once overdue (see D6).",
+    "The popover body is today’s deadline form, unchanged."]),
+  card("D5","More menu, and the condensed bar after scrolling",
+    `<div style="display:grid;gap:24px">${desktop({h:430,open:"more"})}${desktop({h:360,condensed:true})}</div>`,1440,[
+    "<b>⋯</b> holds the actions people use less often: Edit details, Copy link, Show in Calendar and Show in Timeline.",
+    "<b>Condensed</b>: once Row A scrolls out of view, a 45px bar sticks under the shell bar. It shows the stage dot, the title, the tabs, Whiteboard and Details, so switching collections never needs a scroll back up."]),
+  card("D6","Cluster states",statesFrame(),1180,[
+    "A problem changes how a control looks; a normal state stays quiet. Dropbox appears only while it is blocked.",
+    "Read-only roles and archived projects get flat, sunken values with no chevron, matching today’s read-only header.",
+    "An empty deadline or team turns into a prompt to add one."]),
+].join("");
+document.getElementById("tab").innerHTML=card("T1","iPad portrait, 834px",desktop({w:834,h:760,tablet:true,cols:3}),834,[
+  "The cluster wraps onto its own line under the title, with Details and ⋯ pushed to the right edge.",
+  "The tabs keep one row and scroll sideways with an edge fade. With Whiteboard moved into the cluster, nothing sits at the end of the tab row."]);
+document.getElementById("phone").innerHTML=[
+  card("M1","At rest",dev(phoneContent(true)),412,[
+    "<b>Project bar</b>, 62px: the title, then the stage, the due date and a Notes marker. The text and chevron are one button that opens Project details.",
+    "<b>Whiteboard</b> is a 44px button at the right end of the project bar, behind a hairline. The tab row now runs the full width with nothing at its end.",
+    "The shell bar shows only the parent, “Dashboard”, because the project bar names the project.",
+    "The tabs sit right under the project bar. The work starts about 160px below the safe area."]),
+  card("M2","After scrolling",dev(phoneContent(false)),412,[
+    "The project bar has scrolled away. The tabs stick under the shell bar, which leaves 95px of chrome.",
+    "The project name fades into the shell bar and opens the same sheet. Whiteboard is then one row down, as the first action in the sheet (M3)."]),
+  card("M3","Project details sheet",dev(phoneSheet("details")),412,[
+    "The bottom sheet opens 96px from the top, so the page stays visible above it. Drag down, tap outside or tap × to close.",
+    "<b>Status</b> is first: Stage, Deadline and Team, each a 52px row that opens a pushed view.",
+    "The notes, client and shoot and Dropbox follow, then Open whiteboard and the other four actions. The sheet body scrolls on its own."]),
+  card("M4","Stage view",dev(phoneSheet("stage")),412,[
+    "52px radio rows replace a floating select popup. Choosing a stage saves it and returns to Details.",
+    "The back button keeps the parent name (“Details”), following the iOS convention."]),
+  card("M5","Deadline view",dev(phoneSheet("deadline")),412,[
+    "Date and Time open the native iOS pickers, so no keyboard comes up.",
+    "Reminder toggles are 40px tall. Save and Clear stay pinned above the home indicator."]),
+  card("M6","Team view, keyboard up",dev(phoneSheet("team",{kb:true,typed:true})),412,[
+    "The sheet shrinks to the visual viewport, so the search field and results stay above the keyboard. This is the #891 lesson.",
+    "Results filter as you type. The groups still set the role."]),
+].join("");
+document.getElementById("alt").innerHTML=card("A1","Name in the shell bar, no project bar",dev(altPhone()),412,[
+  "Chrome is 95px at rest and when scrolled. The Stage and due date are gone until you open the sheet.",
+  "Only one tap target opens the details, and it is small and at the top."]);
+
+/* ---------- live phone ---------- */
+const live=document.getElementById("live");
+let cur="editing_autohdr";
+live.innerHTML=`<div class="q dev live"><div class="screen"><div class="safe-top"><div class="island"></div></div>
+  <header class="m-shell" id="lv-shell"><button class="ib" aria-label="Open navigation">${ic("panelLeft",20)}</button><div class="mid"><span class="m-parent">Dashboard</span><button class="m-ttl" data-open aria-label="Project details, ${P.street}"><span>${P.street}</span>${ic("down",16)}</button></div><button class="ib" aria-label="Notifications">${ic("bell",20)}</button></header>
+  <div class="m-body"><div class="m-scroll" id="lv-scroll"><div id="lv-bar">${mBar(cur)}</div>${mTabs(false)}${mWork()}<div class="m-grid">${tiles(24)}</div></div></div>
+  <div class="m-scrim closed" id="lv-scrim"></div><div class="m-sheet closed" id="lv-sheet" role="dialog" aria-modal="true" aria-label="Project details"></div>
+  <div class="toast off" id="lv-toast" role="status">${ic("check",16)}<span id="lv-toast-t">Saved</span></div></div><div class="home"></div></div>`;
+const $=id=>document.getElementById(id);
+const sheet=$("lv-sheet"),scrim=$("lv-scrim"),sc=$("lv-scroll"),shellEl=$("lv-shell");
+let lastFocus=null,toastT=0;
+function render(view){
+  sheet.innerHTML=`<div class="view" style="display:flex;flex-direction:column;height:100%">${view==="details"?sheetHead()+`<div class="sh-body">${rowsDetails(cur)}</div>`:view==="stage"?viewStage(cur):view==="deadline"?viewDeadline():view==="team"?viewTeam(false):viewDropbox()}</div>`;
+  const f=sheet.querySelector("[data-back],[data-close]");f&&f.focus({preventScroll:true});
+}
+function open(){lastFocus=document.activeElement;render("details");sheet.classList.remove("closed");scrim.classList.remove("closed")}
+function close(){sheet.classList.add("closed");scrim.classList.add("closed");lastFocus&&lastFocus.focus&&lastFocus.focus({preventScroll:true})}
+function toast(t){$("lv-toast-t").textContent=t;$("lv-toast").classList.remove("off");clearTimeout(toastT);toastT=setTimeout(()=>$("lv-toast").classList.add("off"),1600)}
+live.addEventListener("click",e=>{
+  const t=e.target.closest("button,[data-open]");if(!t)return;
+  if(t.hasAttribute("data-open"))return open();
+  if(t.hasAttribute("data-close"))return close();
+  if(t.hasAttribute("data-wb"))return toast("Whiteboard opens full screen");
+  if(t.hasAttribute("data-back"))return render("details");
+  if(t.dataset.go)return render(t.dataset.go);
+  if(t.dataset.stage){cur=t.dataset.stage;$("lv-bar").innerHTML=mBar(cur);render("details");return toast("Stage moved to "+stage(cur).l)}
+  if(t.hasAttribute("data-save")){render("details");return toast("Deadline saved")}
+  if(t.hasAttribute("data-tg"))return t.classList.toggle("on");
+  if(t.hasAttribute("data-ck")){const c=t.querySelector(".ck");if(c)c.remove();else t.insertAdjacentHTML("beforeend",ic("check",18,"ck"));}
+});
+scrim.addEventListener("click",close);
+live.addEventListener("keydown",e=>{if(e.key==="Escape"&&!sheet.classList.contains("closed")){e.stopPropagation();close()}});
+const tabsEl=sc.querySelector(".m-tabs");
+sc.addEventListener("scroll",()=>{const past=sc.scrollTop>$("lv-bar").offsetHeight-4;shellEl.classList.toggle("scrolled",past);tabsEl.classList.toggle("stuck",past)},{passive:true});
+
+/* ---------- fit frames ---------- */
+function fit(){document.querySelectorAll(".fit").forEach(f=>{const w=+f.dataset.w,fr=f.firstElementChild;const z=Math.min(1,f.clientWidth/w);fr.style.zoom=z})}
+fit();addEventListener("resize",fit);
+try{new ResizeObserver(fit).observe(document.body)}catch(e){}
+
+/* ---------- measured figures ---------- */
+requestAnimationFrame(()=>{try{
+  const d=document.querySelector("#desk .ph");const m=document.querySelector("#phone .dev .m-shell");
+  const z=v=>Math.round(v);
+  const dz=parseFloat(d.closest(".frame").style.zoom)||1;
+  $("fig-d").textContent=z(d.getBoundingClientRect().height/dz)+"px";
+  const ph=document.querySelector("#phone .dev");const pz=parseFloat(ph.closest(".frame").style.zoom)||1;
+  const rest=ph.querySelector(".m-shell").offsetHeight+ph.querySelector(".m-bar").offsetHeight+ph.querySelector(".m-tabs").offsetHeight;
+  $("fig-m").textContent=rest+"px";
+  $("fig-s").textContent=(ph.querySelector(".m-shell").offsetHeight+ph.querySelector(".m-tabs").offsetHeight)+"px";
+}catch(e){}});
+})();
+</script>
+
+</body>
+</html>
