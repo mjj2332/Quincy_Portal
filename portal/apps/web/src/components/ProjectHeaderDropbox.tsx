@@ -32,33 +32,38 @@ function dropboxState(project: ProjectDetail, autohdrBlocked: boolean): { tone: 
 
 const ARCHIVED_DROPBOX_NOTICE = "Read-only while archived. Restore the project before syncing from Dropbox.";
 
-export function ProjectHeaderDropbox({ project, isSyncing, autohdrBlocked, onSyncDropbox, archived = false, archivedNotice = false, readOnlyRef, onArchivedRefusal }: {
+export type DropboxDetailsProps = {
   project: ProjectDetail;
   isSyncing: boolean;
   autohdrBlocked: boolean;
   /** Resolves "archived" when the server refused the sync because the Project is archived (#455). */
   onSyncDropbox: () => void | Promise<"archived" | void>;
-  /** #455: the Project is archived (from the loaded detail, or latched by the header). The cell is a plain value, with no popover and no Sync. */
+  /** #455: the Project is archived (from the loaded detail, or latched by the header). Plain facts, no Sync. */
   archived?: boolean;
-  /** #455: show the "read-only while archived" notice (this cell's own sync was refused). */
+  /** #455: show the "read-only while archived" notice (this group's own sync was refused). */
   archivedNotice?: boolean;
   /** #455: the read-only group, so the header can move focus to it after a refusal. */
   readOnlyRef?: Ref<HTMLDivElement>;
-  /** #455: the sync was refused as archived; `focusWasInside` is whether focus was in this cell (trigger or popup) when it was pressed. */
+  /** #455: the sync was refused as archived; `focusWasInside` is whether focus was inside these details when Sync was pressed. */
   onArchivedRefusal?: (focusWasInside: boolean) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const popupRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
+};
+
+export function dropboxStatus(project: ProjectDetail, autohdrBlocked: boolean, archived = false) {
+  return archived ? { tone: "neutral" as const, label: "Not monitored" } : dropboxState(project, autohdrBlocked);
+}
+
+/**
+ * #914: the Dropbox facts and actions (folder, Tonomo secondary, Open in Dropbox, Sync from Dropbox, the Blocked line), extracted
+ * from the header popover so Project info (desktop section, phone view) renders the same body. `sync()` and the archived refusal
+ * moved with it: focus "inside" is decided against this body's own root, captured before the await.
+ */
+export function DropboxDetails({ project, isSyncing, autohdrBlocked, onSyncDropbox, archived = false, archivedNotice = false, readOnlyRef, onArchivedRefusal }: DropboxDetailsProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const noticeId = useId();
-  const state = dropboxState(project, autohdrBlocked);
-  // An archived Project has no popover: close it on the read-only edge, else it would reopen when the Project comes back.
-  useLayoutEffect(() => { if (archived) setOpen(false); }, [archived]);
 
   async function sync() {
-    // Captured before the await: the popup (portalled) or the trigger held focus when Sync was pressed.
     const active = document.activeElement;
-    const inside = Boolean(active && (triggerRef.current?.contains(active) || popupRef.current?.contains(active)));
+    const inside = Boolean(active && rootRef.current?.contains(active));
     const result = await onSyncDropbox();
     if (result === "archived") onArchivedRefusal?.(inside);
   }
@@ -82,9 +87,73 @@ export function ProjectHeaderDropbox({ project, isSyncing, autohdrBlocked, onSyn
     </div>;
   }
 
+  return <div ref={rootRef} className="grid gap-[var(--space-3)]" data-testid="dropbox-details">
+    {project.monitoredRawFolder
+      ? <div data-testid="raw-monitored">
+        <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
+          <span className={HEADER_KV_KEY}>Monitored RAW folder</span>
+          <span className={cn(HEADER_KV_VALUE, "[font-family:var(--font-mono)]")}>{project.monitoredRawFolder.path}</span>
+        </div>
+        {project.monitoredRawFolder.extraPaths.length > 0 && <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
+          <span className={HEADER_KV_KEY}>Also monitored</span>
+          {project.monitoredRawFolder.extraPaths.map((path) => (
+            <span key={path} className={cn(HEADER_KV_VALUE, "[font-family:var(--font-mono)] block")}>{path}</span>
+          ))}
+        </div>}
+      </div>
+      : <p className="m-0 text-foreground-secondary
+                      [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">
+        No Editor Input folder is monitored for this project.
+      </p>}
+    {(project.rawFolderPath || project.rawFolderLink) && project.monitoredRawFolder && <div data-testid="raw-tonomo-secondary">
+      {project.rawFolderPath && <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
+        <span className={HEADER_KV_KEY}>Tonomo folder path</span>
+        <span className={HEADER_KV_VALUE}>{project.rawFolderPath}</span>
+      </div>}
+      {project.rawFolderLink && <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
+        <span className={HEADER_KV_KEY}>Tonomo folder link</span>
+        <span className={HEADER_KV_VALUE}>{project.rawFolderLink}</span>
+      </div>}
+      <div className="flex items-center gap-[var(--space-2)] mb-[var(--space-2)]">
+        <StatusPill tone="neutral">Not monitored</StatusPill>
+      </div>
+      <p className="m-0 text-foreground-secondary
+                    [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]">
+        RAW is read from the Editor Input folder. This folder is kept for Tonomo change detection and AutoHDR naming.
+      </p>
+    </div>}
+    <div className="flex flex-wrap items-center gap-[var(--space-2)]">
+      {project.monitoredRawFolder?.webUrl
+        ? <a href={project.monitoredRawFolder.webUrl} target="_blank" rel="noreferrer" className={buttonClasses("secondary", { className: "min-h-[44px]" })}>Open in Dropbox</a>
+        : null}
+      <button
+        type="button" disabled={isSyncing} aria-busy={isSyncing || undefined} data-testid="dropbox-sync"
+        className={buttonClasses("primary", { className: "min-h-[44px]" })}
+        onClick={() => void sync()}
+      >
+        <RefreshCw aria-hidden="true" className="size-[var(--space-4)] shrink-0 stroke-[1.5]" />
+        <span>{isSyncing ? "Syncing Dropbox…" : "Sync from Dropbox"}</span>
+      </button>
+    </div>
+    {autohdrBlocked && (
+      <p role="status" className="m-0
+           [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]
+           uppercase tracking-[var(--tracking-wide)] text-[color:var(--signal-caution-text)]">Blocked</p>
+    )}
+  </div>;
+}
+
+export function ProjectHeaderDropbox({ project, isSyncing, autohdrBlocked, onSyncDropbox, archived = false, archivedNotice = false, readOnlyRef, onArchivedRefusal }: DropboxDetailsProps) {
+  const [open, setOpen] = useState(false);
+  const popupRef = useRef<HTMLDivElement>(null);
+  const state = dropboxState(project, autohdrBlocked);
+  // An archived Project has no popover: close it on the read-only edge, else it would reopen when the Project comes back.
+  useLayoutEffect(() => { if (archived) setOpen(false); }, [archived]);
+
+  if (archived) return <DropboxDetails project={project} isSyncing={isSyncing} autohdrBlocked={autohdrBlocked} onSyncDropbox={onSyncDropbox} archived archivedNotice={archivedNotice} readOnlyRef={readOnlyRef} onArchivedRefusal={onArchivedRefusal} />;
+
   return <Popover open={open} onOpenChange={setOpen}>
     <PopoverTrigger
-      ref={triggerRef}
       type="button"
       data-testid="project-dropbox-trigger"
       aria-label={`Dropbox: ${state.label}`}
@@ -101,58 +170,7 @@ export function ProjectHeaderDropbox({ project, isSyncing, autohdrBlocked, onSyn
         <PopoverTitle className="!font-medium">Dropbox</PopoverTitle>
         <StatusPill tone={state.tone}>{state.label}</StatusPill>
       </div>
-      {project.monitoredRawFolder
-        ? <div data-testid="raw-monitored" className="mb-[var(--space-3)]">
-          <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
-            <span className={HEADER_KV_KEY}>Monitored RAW folder</span>
-            <span className={cn(HEADER_KV_VALUE, "[font-family:var(--font-mono)]")}>{project.monitoredRawFolder.path}</span>
-          </div>
-          {project.monitoredRawFolder.extraPaths.length > 0 && <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
-            <span className={HEADER_KV_KEY}>Also monitored</span>
-            {project.monitoredRawFolder.extraPaths.map((path) => (
-              <span key={path} className={cn(HEADER_KV_VALUE, "[font-family:var(--font-mono)] block")}>{path}</span>
-            ))}
-          </div>}
-        </div>
-        : <p className="m-0 mb-[var(--space-3)] text-foreground-secondary
-                        [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">
-          No Editor Input folder is monitored for this project.
-        </p>}
-      {(project.rawFolderPath || project.rawFolderLink) && project.monitoredRawFolder && <div data-testid="raw-tonomo-secondary" className="mb-[var(--space-3)]">
-        {project.rawFolderPath && <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
-          <span className={HEADER_KV_KEY}>Tonomo folder path</span>
-          <span className={HEADER_KV_VALUE}>{project.rawFolderPath}</span>
-        </div>}
-        {project.rawFolderLink && <div className="grid gap-[var(--space-1)] py-[var(--space-2)]">
-          <span className={HEADER_KV_KEY}>Tonomo folder link</span>
-          <span className={HEADER_KV_VALUE}>{project.rawFolderLink}</span>
-        </div>}
-        <div className="flex items-center gap-[var(--space-2)] mb-[var(--space-2)]">
-          <StatusPill tone="neutral">Not monitored</StatusPill>
-        </div>
-        <p className="m-0 text-foreground-secondary
-                      [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]">
-          RAW is read from the Editor Input folder. This folder is kept for Tonomo change detection and AutoHDR naming.
-        </p>
-      </div>}
-      <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-        {project.monitoredRawFolder?.webUrl
-          ? <a href={project.monitoredRawFolder.webUrl} target="_blank" rel="noreferrer" className={buttonClasses("secondary", { className: "min-h-[44px]" })}>Open in Dropbox</a>
-          : null}
-        <button
-          type="button" disabled={isSyncing} aria-busy={isSyncing || undefined} data-testid="dropbox-sync"
-          className={buttonClasses("primary", { className: "min-h-[44px]" })}
-          onClick={() => void sync()}
-        >
-          <RefreshCw aria-hidden="true" className="size-[var(--space-4)] shrink-0 stroke-[1.5]" />
-          <span>{isSyncing ? "Syncing Dropbox…" : "Sync from Dropbox"}</span>
-        </button>
-      </div>
-      {autohdrBlocked && (
-        <p role="status" className="mt-[var(--space-2)] m-0
-             [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]
-             uppercase tracking-[var(--tracking-wide)] text-[color:var(--signal-caution-text)]">Blocked</p>
-      )}
+      <DropboxDetails project={project} isSyncing={isSyncing} autohdrBlocked={autohdrBlocked} onSyncDropbox={onSyncDropbox} onArchivedRefusal={onArchivedRefusal} />
     </PopoverContent>
   </Popover>;
 }

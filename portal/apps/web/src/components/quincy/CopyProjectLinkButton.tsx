@@ -14,7 +14,11 @@ const COPIED_MS = 2000;
  * The link is built from the `tab` prop, not `window.location`, so it is right even before the
  * URL's own `replace` has landed. The outcome is announced through the shared toast live region.
  */
-export function CopyProjectLinkButton({ projectId, tab, className, whiteboard = false }: { projectId: string; tab: WorkspaceTab; className?: string; /** #498: copy the Project whiteboard's link (`?whiteboard=open`) instead of a tab's. */ whiteboard?: boolean }) {
+/**
+ * #914: the copy itself, shared by this button, the header's ⋯ menu item and the phone Project info action. `copied` is true for
+ * two seconds after a successful copy, for a label swap.
+ */
+export function useCopyProjectLink(projectId: string, tab: WorkspaceTab, whiteboard = false): { copy: () => void; copied: boolean } {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timerRef.current), []);
@@ -32,7 +36,11 @@ export function CopyProjectLinkButton({ projectId, tab, className, whiteboard = 
       () => pushToast("Couldn't copy the link.", "error"),
     );
   }
+  return { copy, copied };
+}
 
+export function CopyProjectLinkButton({ projectId, tab, className, whiteboard = false }: { projectId: string; tab: WorkspaceTab; className?: string; /** #498: copy the Project whiteboard's link (`?whiteboard=open`) instead of a tab's. */ whiteboard?: boolean }) {
+  const { copy, copied } = useCopyProjectLink(projectId, tab, whiteboard);
   return (
     <Button type="button" variant="ghost" data-testid="copy-project-link" className={className} onClick={copy}>
       {copied ? <CheckIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" /> : <CopyIcon className="size-3.5" aria-hidden="true" data-icon="inline-start" />}

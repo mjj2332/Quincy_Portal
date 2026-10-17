@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { XIcon } from "lucide-react";
 
 import { Button } from "@/components/reui/button";
@@ -45,8 +45,38 @@ export type ProjectSheetProps = {
   children: ReactNode;
 };
 
-type ProjectSheetContextValue = { close(): void; backdropHref: string };
+/**
+ * #914: the phone header's breakpoint, one query shared with this sheet. It is exactly what the sheet's own `max-[721px]:` variant
+ * compiles to (width < 721, so 720 is phone and 721 is desktop), so the header and the sheet never disagree at the edge.
+ * Not `TABLE_NARROW_QUERY`'s `(max-width: 721px)`, which also matches 721.
+ */
+export const PROJECT_SHEET_PHONE_QUERY = "(width < 721px)";
+
+type ProjectSheetContextValue = {
+  close(): void;
+  backdropHref: string;
+  /** The scroll body: the IntersectionObserver root for content that sticks or condenses inside it (#914). Null until mounted. */
+  body: HTMLDivElement | null;
+  /** #914: take the sheet's own Close away while the caller renders its own; returns the release. Ref-counted. */
+  claimClose(): () => void;
+};
 const ProjectSheetContext = createContext<ProjectSheetContextValue | null>(null);
+
+/** #914: the sheet's context for its content (close, the scroll body), or null outside a Project sheet. */
+export function useProjectSheet(): Pick<ProjectSheetContextValue, "close" | "body" | "backdropHref"> | null {
+  return useContext(ProjectSheetContext);
+}
+
+/**
+ * #914: while the calling component is mounted (and `active`), the sheet renders no Close of its own: the phone header draws Close
+ * in whichever bar is showing. Claims are counted, so a remount never races a release. Outside a sheet this does nothing.
+ */
+export function useClaimSheetClose(active = true): boolean {
+  const sheet = useContext(ProjectSheetContext);
+  const claim = sheet?.claimClose;
+  useLayoutEffect(() => (active && claim ? claim() : undefined), [active, claim]);
+  return Boolean(sheet && active);
+}
 
 /**
  * Props for an `InternalLink` that returns to the Dashboard: inside a sheet it closes it (landing
@@ -146,7 +176,16 @@ export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClos
     onRequestClose();
   }, [onRequestClose]);
 
-  const context = useMemo<ProjectSheetContextValue>(() => ({ close: onRequestClose, backdropHref }), [onRequestClose, backdropHref]);
+  // #914: ref-counted Close claims (the phone header). The effective switch is `closeButton && claims === 0`.
+  const [claims, setClaims] = useState(0);
+  const claimClose = useCallback(() => {
+    let released = false;
+    setClaims((count) => count + 1);
+    return () => { if (released) return; released = true; setClaims((count) => count - 1); };
+  }, []);
+  const [body, setBody] = useState<HTMLDivElement | null>(null);
+  const setBodyRef = useCallback((node: HTMLDivElement | null) => { bodyRef.current = node; setBody(node); }, []);
+  const context = useMemo<ProjectSheetContextValue>(() => ({ close: onRequestClose, backdropHref, body, claimClose }), [onRequestClose, backdropHref, body, claimClose]);
 
   return (
     <Sheet open={open} onOpenChange={handleOpenChange}>
@@ -172,7 +211,7 @@ export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClos
       >
         <SheetTitle className="sr-only">{kind === "edit" ? "Edit project details" : "Project workspace"}</SheetTitle>
         {/* Outside the scroller, above `.worktools` (z-20). */}
-        {closeButton ? (
+        {closeButton && claims === 0 ? (
         <SheetClose
           data-testid="project-sheet-close"
           aria-label="Close project"
@@ -181,7 +220,7 @@ export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClos
           <XIcon aria-hidden />
         </SheetClose>
         ) : null}
-        <div key={sheetKey} ref={bodyRef} data-testid="project-sheet-body" className="project-sheet__body [--toast-inset-inline-end:calc(var(--space-5)+var(--space-5))] [--toast-inset-block-end:calc(var(--space-5)+var(--space-5))] max-[721px]:[--toast-inset-inline-end:max(var(--space-5),env(safe-area-inset-right))] max-[721px]:[--toast-inset-block-end:max(var(--space-5),env(safe-area-inset-bottom))] min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-py-[var(--space-2)]">
+        <div key={sheetKey} ref={setBodyRef} data-testid="project-sheet-body" className="project-sheet__body [--toast-inset-inline-end:calc(var(--space-5)+var(--space-5))] [--toast-inset-block-end:calc(var(--space-5)+var(--space-5))] max-[721px]:[--toast-inset-inline-end:max(var(--space-5),env(safe-area-inset-right))] max-[721px]:[--toast-inset-block-end:max(var(--space-5),env(safe-area-inset-bottom))] min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-py-[var(--space-2)]">
           <ProjectSheetContext.Provider value={context}>
             <OverlayContainerContext.Provider value={slot}>{children}</OverlayContainerContext.Provider>
           </ProjectSheetContext.Provider>
