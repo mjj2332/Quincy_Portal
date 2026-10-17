@@ -135,9 +135,20 @@ table.map{border-collapse:collapse;width:100%;min-width:760px;font-size:14px}
 .crumb .sep{width:8px;height:2px;border-radius:2px;background:rgba(10,10,10,.3);flex:none}
 .crumb .cur{color:var(--q-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
+/* the Project sheet over the blurred Dashboard (ADR 0013): inset 24px above 721px, full screen at and below */
+.d-stage{position:relative;overflow:hidden;background:var(--q-paper-050)}
+.d-back{position:absolute;inset:0;display:flex;filter:blur(3px)}
+.dash-rows{display:grid;padding:20px 32px;align-content:start}
+.dr{height:48px;display:flex;align-items:center;gap:32px;border-bottom:1px solid var(--q-paper-200)}
+.dr i{display:block;height:8px;border-radius:4px;background:var(--q-paper-200)}
+.d-scrim{position:absolute;inset:0;background:rgba(10,10,10,.5)}
+.psheet{position:absolute;inset:24px;background:var(--q-paper-000);border:1px solid var(--q-hair);display:flex;flex-direction:column;overflow:hidden;z-index:1}
+.psheet-x{position:absolute;top:16px;right:16px;width:44px;height:44px;display:grid;place-items:center;border-radius:4px;z-index:4}
+.psheet.condensed .psheet-x{top:8px}
+
 /* project header — desktop */
 .ph{padding:20px 32px 0;border-bottom:1px solid var(--q-hair);display:grid;gap:14px;background:var(--q-paper-000);flex:none}
-.ph-a{display:flex;align-items:center;justify-content:space-between;gap:16px 24px;flex-wrap:wrap}
+.ph-a{display:flex;align-items:center;justify-content:space-between;gap:16px 24px;flex-wrap:wrap;padding-right:36px}
 .ph-id{display:grid;gap:4px;min-width:0}
 .ph-titleline{display:flex;align-items:baseline;gap:12px;min-width:0;flex-wrap:wrap}
 .ph-title{font:400 28px/1.18 var(--display);letter-spacing:-.01em;margin:0}
@@ -156,7 +167,7 @@ table.map{border-collapse:collapse;width:100%;min-width:760px;font-size:14px}
 .ph.tablet .tabs{-webkit-mask-image:linear-gradient(90deg,#000 88%,transparent);mask-image:linear-gradient(90deg,#000 88%,transparent)}
 
 /* condensed sticky bar */
-.ph-condensed{display:flex;align-items:center;gap:20px;padding:0 32px;border-bottom:1px solid var(--q-hair);background:var(--q-paper-000);box-shadow:0 4px 12px rgba(10,10,10,.05);flex:none;position:relative;z-index:2}
+.ph-condensed{display:flex;align-items:center;gap:20px;height:60px;padding:0 76px 0 32px;border-bottom:1px solid var(--q-hair);background:var(--q-paper-000);box-shadow:0 4px 12px rgba(10,10,10,.05);flex:none;position:relative;z-index:2}
 .ph-condensed .ctitle{display:flex;align-items:center;gap:8px;font:400 18px/1 var(--display);white-space:nowrap;padding-right:20px;border-right:1px solid var(--q-hair);height:28px}
 
 /* work area */
@@ -242,7 +253,9 @@ table.map{border-collapse:collapse;width:100%;min-width:760px;font-size:14px}
 .m-parent{display:inline-flex;align-items:center;gap:4px;font-size:15px;color:var(--q-greige-600);height:44px;padding-right:8px}
 .m-ttl{display:inline-flex;align-items:center;gap:6px;height:44px;max-width:100%;font:400 18px/1 var(--display);white-space:nowrap;min-width:0}
 .m-ttl span{overflow:hidden;text-overflow:ellipsis}
-.m-bar{display:flex;align-items:center;gap:4px;min-height:62px;padding:8px 6px 10px 16px;background:var(--q-paper-000);flex:none}
+.m-bar{display:flex;align-items:center;gap:0;min-height:62px;padding:8px 4px 10px 16px;background:var(--q-paper-000);flex:none}
+.m-compact{height:48px;display:flex;align-items:center;gap:4px;padding:0 4px 0 16px;background:var(--q-paper-000);flex:none}
+.m-compact .m-ttl{flex:1;min-width:0}
 .m-bar-main{flex:1;min-width:0;display:flex;align-items:center;gap:12px;min-height:44px}
 .m-vr{width:1px;height:28px;background:var(--q-hair);flex:none;margin-left:4px}
 .m-wb{width:44px;height:44px;display:grid;place-items:center;border-radius:8px;flex:none}
@@ -252,6 +265,8 @@ table.map{border-collapse:collapse;width:100%;min-width:760px;font-size:14px}
 .m-sub .sep{color:var(--q-greige-300)}
 .m-sub .due{color:var(--q-caution-text)}
 .m-sub .nt{display:inline-flex;align-items:center;gap:3px;color:var(--q-ink)}
+.m-bar .bigline{display:flex;align-items:center;gap:4px;min-width:0}
+.m-bar .bigline .ic{color:var(--q-greige-400)}
 .m-more{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;background:var(--q-paper-100);border:1px solid var(--q-hair);flex:none}
 .m-tabs{display:flex;align-items:center;background:var(--q-paper-000);border-bottom:1px solid var(--q-hair);flex:none;position:relative;z-index:2}
 .m-tabs .tabs{padding-left:16px;gap:22px;overflow-x:auto;scrollbar-width:none;-webkit-mask-image:linear-gradient(90deg,#000 85%,transparent);mask-image:linear-gradient(90deg,#000 85%,transparent)}
@@ -264,7 +279,7 @@ table.map{border-collapse:collapse;width:100%;min-width:760px;font-size:14px}
 .m-body{flex:1;min-height:0;overflow:hidden;position:relative}
 .m-scroll{overflow-y:auto;height:100%;overscroll-behavior:contain;scrollbar-width:none}
 .m-scroll::-webkit-scrollbar{display:none}
-.m-scroll .m-tabs{position:sticky;top:0}
+.m-scroll .m-tabs{position:sticky;top:48px}
 
 /* bottom sheet */
 .m-scrim{position:absolute;inset:0;background:rgba(10,10,10,.36);z-index:20}
@@ -317,10 +332,8 @@ table.map{border-collapse:collapse;width:100%;min-width:760px;font-size:14px}
 .live .m-sheet{transition:transform .28s var(--q-ease)}
 .live .m-scrim.closed{opacity:0;pointer-events:none}
 .live .m-sheet.closed{transform:translateY(105%)}
-.live .m-shell .mid > *{transition:opacity .2s var(--q-ease),transform .2s var(--q-ease)}
-.live .m-shell .m-ttl{position:absolute;left:0;top:0;opacity:0;transform:translateY(6px);pointer-events:none}
-.live .m-shell.scrolled .m-ttl{opacity:1;transform:none;pointer-events:auto}
-.live .m-shell.scrolled .m-parent{opacity:0;transform:translateY(-6px);pointer-events:none}
+.live .m-compact{position:absolute;top:0;left:0;right:0;z-index:3;opacity:0;pointer-events:none;transition:opacity .2s var(--q-ease)}
+.live .m-compact.on{opacity:1;pointer-events:auto}
 .live .view{animation:vin .22s var(--q-ease)}
 @keyframes vin{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
 .live .toast{transition:opacity .2s var(--q-ease),transform .2s var(--q-ease)}
@@ -333,47 +346,48 @@ table.map{border-collapse:collapse;width:100%;min-width:760px;font-size:14px}
 <body>
 <main class="page">
   <header class="intro">
-    <span class="eyebrow">Quincy Portal · Prototype · Oct 2026 · supersedes “Project header — rail to top” (2a)</span>
+    <span class="eyebrow">Quincy Portal · Prototype · rev 2, 18 Oct 2026 · supersedes “Project header — rail to top” (2a)</span>
     <h1>Project header</h1>
-    <p>The project page opens with the work, not the paperwork. Everyone on a project needs its name, its stage and its deadline at a glance, and the collection tabs one tap away. The rest (client, shoot, Dropbox, reminders, notes, links) moves one layer down: a sheet from the right on desktop, a sheet from the bottom on the phone.</p>
+    <p>The Project workspace opens with the work, not the paperwork. Everyone on a Project needs its name, its Stage and its Deadline at a glance, and the Workspace tabs one tap away. The rest (client, shoot, Dropbox, reminders, Production notes, links) moves one layer down into <b>Project info</b>: a sheet from the right on desktop, a sheet from the bottom on the phone.</p>
+    <p>Every frame sits in its real container, the Project sheet. On desktop it floats 24px in from the window over the blurred Dashboard, with its own Close; on the phone it fills the screen. No rail or shell bar shows inside it, so this revision leaves <code style="font:13px var(--mono)">ShellHeader</code> untouched.</p>
     <ul class="principles">
       <li><b>Glance, then go deeper</b><span>Name, Stage, Deadline and Team stay in view. Every other fact is one click or tap away.</span></li>
-      <li><b>Tabs are the main control</b><span>On the phone the tabs stick to the top while the project bar scrolls away. Switching collections never needs a scroll back up.</span></li>
+      <li><b>Tabs are the main control</b><span>On the phone the Workspace tabs stick under a slim bar while the project bar scrolls away. Switching tabs never needs a scroll back up.</span></li>
       <li><b>Problems show up, normal states stay quiet</b><span>Dropbox appears in the header only when it is blocked. Overdue, archived and read-only states change what the controls look like.</span></li>
     </ul>
     <div class="figures" id="figures">
-      <div><strong id="fig-d">—</strong><span>Desktop header height, shell bar not counted</span></div>
-      <div><strong id="fig-m">—</strong><span>Phone chrome above the work, at rest</span></div>
+      <div><strong id="fig-d">—</strong><span>Desktop header height inside the Project sheet</span></div>
+      <div><strong id="fig-m">—</strong><span>Phone chrome under the safe area, at rest (today about 160px)</span></div>
       <div><strong id="fig-s">—</strong><span>Phone chrome once you scroll</span></div>
     </div>
   </header>
 
   <section class="section" aria-labelledby="h-desk">
-    <div class="section-head"><span class="eyebrow">Rail visible · 772px and wider</span><h2 id="h-desk">Desktop</h2>
-      <p>Two rows replace today’s three bands. Row A holds the identity and a cluster of status controls. Row B holds the collection tabs. The shell bar’s breadcrumb already says where you are, so the “← Dashboard” crumb inside the header goes.</p></div>
+    <div class="section-head"><span class="eyebrow">Project sheet inset 24px · wider than 721px</span><h2 id="h-desk">Desktop</h2>
+      <p>Two rows replace today’s three bands. Row A holds the identity and a cluster of status controls, and leaves room at its right for the sheet’s Close. Row B holds the Workspace tabs alone. Close returns to the Dashboard view underneath, so the header needs no “← Dashboard” crumb.</p></div>
     <div class="frames" id="desk"></div>
   </section>
 
   <section class="section" aria-labelledby="h-tab">
-    <div class="section-head"><span class="eyebrow">iPad portrait · 834px</span><h2 id="h-tab">Tablet</h2>
-      <p>Same two rows. When the identity and the cluster no longer fit on one line, the cluster wraps under the title and Details stays at the right edge.</p></div>
+    <div class="section-head"><span class="eyebrow">iPad portrait · 834px · still the inset sheet</span><h2 id="h-tab">Tablet</h2>
+      <p>Same two rows. When the identity and the cluster no longer fit on one line, the cluster wraps under the title and Project info stays at the right edge.</p></div>
     <div class="frames" id="tab"></div>
   </section>
 
   <section class="section" aria-labelledby="h-phone">
-    <div class="section-head"><span class="eyebrow">Below 772px · iPhone 15, 390 × 844</span><h2 id="h-phone">Phone</h2>
-      <p>A single project bar names the project and shows its stage and due date. Tapping it opens Project details in a bottom sheet. Editing happens in views pushed inside that sheet, so a popover never has to squeeze in beside the on-screen keyboard.</p></div>
+    <div class="section-head"><span class="eyebrow">721px and narrower · full-screen Project sheet · iPhone 15, 390 × 844</span><h2 id="h-phone">Phone</h2>
+      <p>A single project bar names the Project and shows its Stage and due date, with the whiteboard and Close at its end. Tapping it opens Project info in a bottom sheet. Editing happens in views pushed inside that sheet, so a popover never has to squeeze in beside the on-screen keyboard.</p></div>
     <div class="live-wrap">
       <div class="dev-wrap"><div class="fit" data-w="412"><div class="frame" id="live"></div></div></div>
       <div class="live-copy">
         <h3 style="font:400 24px/1.2 var(--display)">Try it</h3>
         <p>This phone works. It shows the intended behaviour, not the final build.</p>
         <ol>
-          <li>Scroll the photos. The project bar scrolls away, the tabs stick under the shell bar, and the project name moves into the shell bar.</li>
-          <li>Tap the project bar, or the name in the shell bar, to open Project details.</li>
+          <li>Scroll the photos. The project bar scrolls away and a 48px bar with the name and Close takes its place; the tabs stick under it.</li>
+          <li>Tap the project bar, or the name in the slim bar, to open Project info.</li>
           <li>Tap Stage, Deadline or Team to edit in a pushed view. Changing the Stage updates the bar straight away.</li>
-          <li>The board icon at the end of the project bar opens the whiteboard. It is also the first action in the sheet.</li>
-          <li>Close with ×, by tapping outside the sheet, or with Esc.</li>
+          <li>The board icon at the end of the project bar opens the whiteboard. It is also the first action in Project info.</li>
+          <li>Close Project info with ×, by tapping outside it, or with Esc. The × in the project bar closes the Project.</li>
         </ol>
       </div>
     </div>
@@ -381,8 +395,8 @@ table.map{border-collapse:collapse;width:100%;min-width:760px;font-size:14px}
   </section>
 
   <section class="section" aria-labelledby="h-alt">
-    <div class="section-head"><span class="eyebrow">Considered, not recommended</span><h2 id="h-alt">Alternative: the name lives in the shell bar</h2>
-      <p>This drops the project bar completely. The tabs sit right under the shell bar, which always shows the project name as the button that opens the sheet. It saves 62px at rest but hides the Stage and the due date until you open the sheet. That costs most on the phone, where people check them on site.</p></div>
+    <div class="section-head"><span class="eyebrow">Considered, not recommended</span><h2 id="h-alt">Alternative: the slim bar only</h2>
+      <p>This drops the project bar completely: the 48px bar with the name and Close is always shown. It saves 14px at rest but hides the Stage and the due date until you open Project info. That costs most on the phone, where people check them on site.</p></div>
     <div class="frames phones" id="alt"></div>
   </section>
 
@@ -392,33 +406,40 @@ table.map{border-collapse:collapse;width:100%;min-width:760px;font-size:14px}
     <div class="map-scroll"><table class="map">
       <thead><tr><th>Frame</th><th>Element</th><th>Renders with</th></tr></thead>
       <tbody>
-        <tr><td>D1 · T1</td><td>Title, suburb, meta line</td><td>The existing <code>ProjectHeader</code> identity, rebuilt as one block. The “← Dashboard” crumb is removed because the shell breadcrumb covers it.</td></tr>
-        <tr><td>D1 · D6</td><td>Stage control</td><td><code>reui/select</code>, using the current <code>StageControl</code> with a compact trigger (stage dot, label, chevron). No field label: the dot and the tooltip name it.</td></tr>
+        <tr><td>all</td><td>Container</td><td>The existing <code>quincy/ProjectSheet</code> (ADR 0013), unchanged: inset 24px over the blurred Dashboard above 721px, full screen at and below. Its body is the scroll viewport, so stickiness and the IntersectionObserver below use it as the root.</td></tr>
+        <tr><td>D1 · T1</td><td>Title, suburb, meta line</td><td>The existing <code>ProjectHeader</code> identity, rebuilt as one block. Row A keeps the end padding <code>.project-sheet__body</code> already reserves for Close.</td></tr>
+        <tr><td>D1 · D6</td><td>Stage control</td><td><code>reui/select</code>, using the current <code>StageControl</code> with a compact trigger (stage dot, label, chevron). No field label: the dot, the tooltip and the accessible name carry it. Desktop only; on the phone it moves into Project info (M4).</td></tr>
         <tr><td>D1 · D4</td><td>Deadline chip + popover</td><td>The <code>ProjectHeaderDeadline</code> trigger restyled as a chip (clock icon, date, a <code>Badge</code> for the countdown). The popover body stays as it is today.</td></tr>
         <tr><td>D1 · D3</td><td>Team avatars + picker</td><td>A <code>ProjectTeamCombobox</code> with a <code>quincy/AvatarStack</code> trigger. Options are grouped by role, as in prototype 2a.</td></tr>
-        <tr><td>D1 · D2</td><td>Details button + sheet</td><td><code>reui/button</code> (outline) opens <code>reui/sheet</code> with <code>side="right"</code> at 440px. The sheet takes Client, Schedule, Team, Dropbox, Social overlays and Production notes.</td></tr>
-        <tr><td>D1 · D5</td><td>More menu (⋯)</td><td><code>quincy/menu.tsx</code> (Base UI menu): Edit details, Copy link, Show in Calendar, Show in Timeline.</td></tr>
-        <tr><td>D1 · M1 · M3</td><td>Whiteboard entry</td><td>The existing <code>WhiteboardButton</code> moves out of <code>project-header__tabrow</code>. On desktop it sits beside Details. On the phone it sits at the end of the project bar and becomes a row in the details sheet. It is still shown only once the Workspace has confirmed collaboration access.</td></tr>
-        <tr><td>D1 · M1</td><td>Collection tabs</td><td><code>reui/tabs</code> with the line variant and count <code>Badge</code>s. The tab row now holds the tabs alone. On the phone it becomes <code>position: sticky</code>.</td></tr>
-        <tr><td>D5</td><td>Condensed sticky bar</td><td>A new strip inside <code>ProjectHeader</code>. It appears when Row A leaves the scroll viewport, detected by an IntersectionObserver.</td></tr>
-        <tr><td>M1 · M2</td><td>Project bar; name moves to shell bar</td><td>A full-width <code>reui/button</code> (ghost). The shell-bar title needs a slot in <code>ShellHeader</code> that a route can fill. See the decisions below.</td></tr>
-        <tr><td>M3</td><td>Project details sheet</td><td><code>reui/sheet</code> with <code>side="bottom"</code>, inset-grouped rows. Check the ReUI MCP for a drawer before hand-building the drag handle.</td></tr>
-        <tr><td>M4</td><td>Stage view</td><td><code>reui/radio-group</code> rows of 52px. Choosing a stage saves it and returns to Details, the same as choosing in the select today.</td></tr>
+        <tr><td>D1 · D2</td><td>Project info button + sheet</td><td><code>reui/button</code> (outline) opens <code>reui/sheet</code> with <code>side="right"</code> at 440px, portalled into the Project sheet so it docks to its edge. Its scrim covers the Project sheet’s Close; Esc closes Project info first. Sections: Production notes, Client and shoot, Deadline, Team, Dropbox.</td></tr>
+        <tr><td>D1 · D5</td><td>More menu (⋯)</td><td><code>quincy/menu.tsx</code> (Base UI menu): Edit project details, Copy link, Show in Calendar, Show in Timeline.</td></tr>
+        <tr><td>D1 · M1 · M3</td><td>Whiteboard entry</td><td>The existing <code>WhiteboardButton</code> moves out of <code>project-header__tabrow</code>: beside Project info on desktop, at the end of the project bar on the phone, and the first action in Project info. Still shown only once the Workspace has confirmed collaboration access.</td></tr>
+        <tr><td>D1 · M1</td><td>Workspace tabs</td><td><code>reui/tabs</code> with the line variant and count <code>Badge</code>s, Delivery last when offered. The tab row holds the tabs alone. On the phone it is <code>position: sticky</code> under the slim bar.</td></tr>
+        <tr><td>D5</td><td>Condensed sticky bar</td><td>A new 60px strip inside <code>ProjectHeader</code>, shown when Row A leaves the sheet body’s viewport. It reserves Close’s space, and Close moves to <code>top: var(--space-2)</code> to centre in it.</td></tr>
+        <tr><td>M1 · M2</td><td>Project bar; slim bar with Close</td><td>The project bar is a full-width <code>reui/button</code> (ghost) followed by the whiteboard and Close icon buttons. On the phone the header renders Close itself (<code>ProjectSheet closeButton={false}</code>, the switch the whiteboard already uses), so it sits in whichever bar is showing. The 48px slim bar fades in once the project bar has scrolled under the tabs.</td></tr>
+        <tr><td>M3</td><td>Project info sheet</td><td><code>reui/sheet</code> with <code>side="bottom"</code> over the Project sheet, inset-grouped rows. Check the ReUI MCP for a drawer before hand-building the drag handle.</td></tr>
+        <tr><td>M4</td><td>Stage view</td><td><code>reui/radio-group</code> rows of 52px. Choosing a stage saves it and returns to Project info, the same as choosing in the select today.</td></tr>
         <tr><td>M5</td><td>Deadline view</td><td>The existing deadline form (<code>quincy/DateTimeField</code> plus reminder toggles), placed in the sheet with Save and Clear pinned at the bottom.</td></tr>
         <tr><td>M6</td><td>Team view with keyboard</td><td>The combobox list rendered inline, not as a popup. The sheet is sized to the visual viewport, so the search field and results stay above the keyboard (#891).</td></tr>
+        <tr><td>D6 · M3</td><td>Read-only roles</td><td>Staff without edit rights and External editors get the same header. Project info shows their fields as plain rows, with no Edit project details, Stage or Team controls. Clients never reach the Project workspace; they use the Delivery page.</td></tr>
       </tbody>
     </table></div>
   </section>
 
   <section class="section" aria-labelledby="h-dec">
-    <div class="section-head"><span class="eyebrow">Your call before the build</span><h2 id="h-dec">Decisions for the owner</h2></div>
+    <div class="section-head"><span class="eyebrow">Settled with the owner, 18 Oct 2026</span><h2 id="h-dec">Decisions</h2>
+      <p>Revision 2 builds these in. Scope is the header only: the Workspace tabs, the header, Project info and the whiteboard entry. Tab content (worktools, grid, Collaboration, Delivery) is out of scope.</p></div>
     <ol class="decisions">
-      <li><b>Production notes go behind a link.</b><span>On desktop they become a “Production notes” link in the meta line; on the phone, a note icon in the project bar. Both open the details sheet with the notes at the top. The alternative is a one-line excerpt under the title, which costs about 22px.</span></li>
-      <li><b>Dropbox leaves the always-visible row.</b><span>Its status and its Open and Sync actions move to the details sheet. A caution “Dropbox blocked” chip joins the cluster only while autoHDR is blocked (D6).</span></li>
-      <li><b>Edit details, Copy link and Show in move into ⋯ on desktop.</b><span>On the phone they sit at the bottom of the details sheet.</span></li>
-      <li><b>The phone shell bar gets a title slot.</b><span>At rest it shows only the parent (“Dashboard”), because the project bar names the project. Once the project bar scrolls away, the project name fades in there and becomes a second way to open the sheet. This is a change to <code>ShellHeader</code>, not only to the project page.</span></li>
-      <li><b>The field labels go from the desktop cluster.</b><span>“Stage”, “Team” and “Deadline” are no longer printed. Each control carries an icon or a dot, a tooltip and an accessible name. Prototype 2a printed them; this version gains a whole row by dropping them.</span></li>
-      <li><b>The desktop details sheet is modal.</b><span>The other choice is a docked panel that pushes the photo grid aside and stays open between visits. A modal sheet is simpler and matches the Project sheet the Dashboard already opens.</span></li>
+      <li><b>The frames sit inside the Project sheet.</b><span>No rail or shell bar inside it. The earlier idea of a title slot in the phone shell bar is dropped; the slim bar inside the sheet does that job, and <code>ShellHeader</code> is untouched.</span></li>
+      <li><b>The layer is called Project info.</b><span>Not “Project details” (the edit form keeps “Edit project details”) and not “Project overview”. It is in the glossary.</span></li>
+      <li><b>Production notes go behind a link.</b><span>A link in the desktop meta line, a Notes marker in the phone project bar. Both open Project info at the notes. No unread state.</span></li>
+      <li><b>Dropbox leaves the always-visible row.</b><span>Status, Open and Sync live in Project info. A caution “Dropbox blocked” chip joins the cluster only while autoHDR is blocked (D6).</span></li>
+      <li><b>Edit project details, Copy link and Show in move into ⋯ on desktop.</b><span>On the phone they sit at the bottom of Project info.</span></li>
+      <li><b>No printed field labels on desktop.</b><span>Each control carries an icon or a dot, a tooltip and an accessible name.</span></li>
+      <li><b>Desktop Project info is a sheet, not a popover.</b><span>Notes can run long and Team edits need room; a popover holding forms is easy to dismiss by accident.</span></li>
+      <li><b>The phone slim bar holds the name and Close only.</b><span>Stage and the whiteboard are one tap away in Project info.</span></li>
+      <li><b>Stage stays in the desktop header.</b><span>It is the field Admins and Producers change most. On the phone it moves into Project info.</span></li>
+      <li><b>The whiteboard sits outside the Workspace tabs.</b><span>Beside Project info on desktop, at the end of the project bar on the phone.</span></li>
     </ol>
   </section>
 </main>
@@ -470,7 +491,8 @@ function worktools(){return `<div class="worktools"><span class="chip on">All <s
 
 /* ---------- desktop ---------- */
 function rail(){return `<nav class="d-rail" aria-label="Main"><div class="d-logo">Q</div><div class="d-nav"><span class="rb on">${ic("dash",20)}</span><span class="rb">${ic("mega",20)}</span><span class="rb">${ic("shield",20)}</span></div><div class="d-rail-foot"><span class="rb">${ic("bell",20)}</span><span class="rb">${ic("sliders",20)}</span><span class="av" style="margin-top:6px">TL</span></div></nav>`}
-function shell(){return `<header class="d-shell"><nav class="crumb" aria-label="Breadcrumb"><span>Dashboard</span><i class="sep"></i><span class="cur">${P.street}</span></nav></header>`}
+function shell(){return `<header class="d-shell"><nav class="crumb" aria-label="Breadcrumb"><span class="cur">Dashboard</span></nav></header>`}
+function dashBack(){const row=()=>`<div class="dr"><i style="width:200px"></i><i style="width:120px"></i><i style="width:90px"></i><i style="width:160px"></i><i style="width:70px"></i></div>`;return `<div class="d-back" aria-hidden="true">${rail()}<div class="d-col">${shell()}<div class="dash-rows">${Array.from({length:16},row).join("")}</div></div></div>`}
 function stageBtn(o={}){const k=o.stage||"editing_autohdr";if(o.readonly)return `<span class="qb lock" title="Stage">${dot(k)}${stage(k).l}</span>`;return `<button class="qb${o.open==="stage"?" open":""}" aria-label="Stage: ${stage(k).l}">${dot(k)}${stage(k).l}${ic("down",14,"chev")}</button>`}
 function deadlineBtn(o={}){
   const tone=o.due==="over"?`<span class="bdg critical-l">Overdue 3h</span>`:o.due==="today"?`<span class="bdg caution">Today</span>`:o.due==="none"?"":`<span class="bdg caution">${P.due}</span>`;
@@ -492,7 +514,7 @@ function deadlinePop(){
   <p style="font-size:13px;color:var(--q-greige-600)">Next reminder in 2 days · Tue 16 Sep, 17:00 AEST</p>
   <div style="display:flex;justify-content:flex-end;gap:8px"><button class="qb ghost">Clear</button><button class="qb primary">Save deadline</button></div></div></div>`;
 }
-function moreMenu(){return `<div class="pop right menu" role="menu"><button class="mi hl">${ic("pencil",15)}Edit details</button><button class="mi">${ic("link",15)}Copy link</button><div class="msep"></div><button class="mi">${ic("cal",15)}Show in Calendar</button><button class="mi">${ic("gantt",15)}Show in Timeline</button></div>`}
+function moreMenu(){return `<div class="pop right menu" role="menu"><button class="mi hl">${ic("pencil",15)}Edit project details</button><button class="mi">${ic("link",15)}Copy link</button><div class="msep"></div><button class="mi">${ic("cal",15)}Show in Calendar</button><button class="mi">${ic("gantt",15)}Show in Timeline</button></div>`}
 function cluster(o={}){
   return `<div class="ph-cluster">
     <span class="anchor">${stageBtn(o)}</span>
@@ -502,7 +524,7 @@ function cluster(o={}){
     ${o.archived?`<span class="bdg neutral" style="height:28px;padding:0 10px;gap:6px">${ic("archive",14)}Archived</span>`:""}
     <span class="vr${o.tablet?" push":""}"></span>
     <button class="qb icon" aria-label="Open whiteboard" title="Open whiteboard">${ic("board",18)}</button>
-    <button class="qb${o.sheet?" open":""}" aria-label="Project details">${ic("panelRight",15)}Details</button>
+    <button class="qb${o.sheet?" open":""}" aria-label="Project info">${ic("panelRight",15)}Project info</button>
     <span class="anchor"><button class="qb icon${o.open==="more"?" open":""}" aria-label="More actions">${ic("more",18)}</button>${o.open==="more"?moreMenu():""}</span>
   </div>`;
 }
@@ -515,7 +537,7 @@ function header(o={}){
   </section>`;
 }
 function detailsSheet(){
-  return `<aside class="d-sheet" role="dialog" aria-label="Project details"><header><div class="t"><span class="qlabel">Project details</span><h2>${P.street}</h2><span style="font-size:14px;color:var(--q-greige-600)">${P.suburb}</span></div><button class="qb ghost icon" aria-label="Close">${ic("x",18)}</button></header>
+  return `<aside class="d-sheet" role="dialog" aria-label="Project info"><header><div class="t"><span class="qlabel">Project info</span><h2>${P.street}</h2><span style="font-size:14px;color:var(--q-greige-600)">${P.suburb}</span></div><button class="qb ghost icon" aria-label="Close">${ic("x",18)}</button></header>
   <div class="body">
     <div class="dsec"><div class="dsec-h"><span class="qlabel">Production notes</span><button class="link">Edit</button></div><p class="notesbox">${P.notes}</p></div>
     <div class="dsec"><span class="qlabel">Client and shoot</span><dl class="dl"><dt>Agency</dt><dd>${P.agency}</dd><dt>Agent</dt><dd>${P.agent}</dd><dt>Shoot</dt><dd>${P.shoot}</dd></dl></div>
@@ -524,14 +546,14 @@ function detailsSheet(){
     <div class="dsec"><div class="dsec-h"><span class="qlabel">Dropbox</span><span class="bdg pos">Monitored</span></div><dl class="dl"><dt>RAW folder</dt><dd class="mono">${P.folder}</dd><dt>Last sync</dt><dd>Today 09:12 · 128 files</dd></dl>
       <div style="display:flex;gap:8px"><button class="qb">${ic("ext",15)}Open in Dropbox</button><button class="qb">${ic("sync",15)}Sync from Dropbox</button></div></div>
   </div>
-  <footer><button class="qb">${ic("board",15)}Whiteboard</button><button class="qb">${ic("pencil",15)}Edit details</button><button class="qb ghost">${ic("link",15)}Copy link</button><button class="qb ghost">${ic("cal",15)}Show in Calendar</button></footer></aside>`;
+  <footer><button class="qb">${ic("board",15)}Whiteboard</button><button class="qb">${ic("pencil",15)}Edit project details</button></footer></aside>`;
 }
 function desktop(o={}){
   const w=o.w||1440,h=o.h||900,cols=o.cols||(w>1200?6:4);
   const top=o.condensed
-    ? `<div class="ph-condensed"><span class="ctitle">${dot("editing_autohdr")}${P.street}</span>${tabs()}<button class="qb icon" aria-label="Open whiteboard">${ic("board",18)}</button><button class="qb">${ic("panelRight",15)}Details</button></div>`
+    ? `<div class="ph-condensed"><span class="ctitle">${dot("editing_autohdr")}${P.street}</span>${tabs()}<button class="qb icon" aria-label="Open whiteboard">${ic("board",18)}</button><button class="qb">${ic("panelRight",15)}Project info</button></div>`
     : header(o);
-  return `<div class="q d-frame" style="width:${w}px;height:${h}px">${rail()}<div class="d-col">${shell()}${top}${o.condensed?"":worktools()}<div class="grid" style="grid-template-columns:repeat(${cols},1fr)">${tiles(o.condensed?cols*3:cols*3,o.condensed?436:412)}</div>${o.sheet?`<div class="scrim"></div>${detailsSheet()}`:""}</div></div>`;
+  return `<div class="q d-stage" style="width:${w}px;height:${h}px">${dashBack()}<div class="d-scrim"></div><div class="psheet${o.condensed?" condensed":""}" role="dialog" aria-label="Project workspace"><button class="psheet-x" aria-label="Close project">${ic("x",20)}</button>${top}${o.condensed?"":worktools()}<div class="grid" style="grid-template-columns:repeat(${cols},1fr)">${tiles(cols*3,o.condensed?436:412)}</div>${o.sheet?`<div class="scrim"></div>${detailsSheet()}`:""}</div></div>`;
 }
 function statesFrame(){
   const r=(lab,o)=>`<div class="srow"><span class="lab">${lab}</span><div>${cluster(o)}</div></div>`;
@@ -539,8 +561,8 @@ function statesFrame(){
 }
 
 /* ---------- phone ---------- */
-function mShell(scrolled){return `<header class="m-shell${scrolled?" scrolled":""}"><span class="ib" aria-label="Open navigation">${ic("panelLeft",20)}</span><div class="mid">${scrolled?`<button class="m-ttl" aria-label="Project details, ${P.street}"><span>${P.street}</span>${ic("down",16)}</button>`:`<span class="m-parent">Dashboard</span>`}</div><span class="ib" aria-label="Notifications">${ic("bell",20)}</span></header>`}
-function mBar(k="editing_autohdr"){return `<div class="m-bar"><button class="m-bar-main" aria-label="Project details, ${P.street}" data-open><span class="txt"><span class="big">${P.street}</span><span class="m-sub">${dot(k)}<span data-stage-label>${stage(k).l}</span><span class="sep">·</span><span class="due">Due in 2d</span><span class="sep">·</span><span class="nt">${ic("note",13)}Notes</span></span></span><span class="m-more">${ic("down",18)}</span></button><span class="m-vr"></span><button class="m-wb" aria-label="Open whiteboard" data-wb>${ic("board",20)}</button></div>`}
+function mCompact(on){return `<div class="m-compact${on?" on":""}"${on===undefined?"":` id="lv-compact"`}><button class="m-ttl" data-open aria-label="Project info, ${P.street}"><span>${P.street}</span>${ic("down",16)}</button><button class="m-wb" aria-label="Close project" data-x>${ic("x",22)}</button></div>`}
+function mBar(k="editing_autohdr"){return `<div class="m-bar"><button class="m-bar-main" aria-label="Project info, ${P.street}" data-open><span class="txt"><span class="bigline"><span class="big">${P.street}</span>${ic("down",16)}</span><span class="m-sub">${dot(k)}<span data-stage-label>${stage(k).l}</span><span class="sep">·</span><span class="due">Due in 2d</span><span class="sep">·</span><span class="nt">${ic("note",13)}Notes</span></span></span></button><span class="m-vr"></span><button class="m-wb" aria-label="Open whiteboard" data-wb>${ic("board",20)}</button><button class="m-wb" aria-label="Close project" data-x>${ic("x",22)}</button></div>`}
 function mTabs(stuck){return `<div class="m-tabs${stuck?" stuck":""}">${tabs()}</div>`}
 function mWork(){return `<div class="m-work"><span class="chip on">All <span class="n">128</span></span><span class="chip">Recommended <span class="n">24</span></span><span class="chip">Rated <span class="n">61</span></span></div>`}
 function dev(inner){return `<div class="q dev"><div class="screen"><div class="safe-top"><div class="island"></div></div>${inner}</div><div class="home"></div></div>`}
@@ -557,10 +579,10 @@ function rowsDetails(k="editing_autohdr"){
     <div class="row static"><span class="k">Shoot</span><span class="v"><span class="tx">${P.shoot}</span></span></div></div>
   <span class="glabel">Files</span><div class="group">
     <button class="row" data-go="dropbox"><span class="k">Dropbox</span><span class="v"><span class="bdg pos">Monitored</span></span>${ic("right",18,"cv")}</button></div>
-  <div class="acts"><button class="qb wide" data-wb>${ic("board",16)}Open whiteboard</button><button class="qb">${ic("pencil",16)}Edit details</button><button class="qb">${ic("link",16)}Copy link</button><button class="qb">${ic("cal",16)}Calendar</button><button class="qb">${ic("gantt",16)}Timeline</button></div>`;
+  <div class="acts"><button class="qb wide" data-wb>${ic("board",16)}Open whiteboard</button><button class="qb">${ic("pencil",16)}Edit project details</button><button class="qb">${ic("link",16)}Copy link</button><button class="qb">${ic("cal",16)}Calendar</button><button class="qb">${ic("gantt",16)}Timeline</button></div>`;
 }
 function sheetHead(){return `<div class="handle"></div><div class="sh-head"><div class="t"><h2>${P.street}</h2><span class="s">${P.suburb}</span></div><button class="x" aria-label="Close" data-close>${ic("x",22)}</button></div>`}
-function sheetNav(title){return `<div class="handle"></div><div class="sh-nav"><button class="back" data-back>${ic("left",20)}Details</button><h2>${title}</h2><button class="x" aria-label="Close" data-close>${ic("x",22)}</button></div>`}
+function sheetNav(title){return `<div class="handle"></div><div class="sh-nav"><button class="back" data-back>${ic("left",20)}Info</button><h2>${title}</h2><button class="x" aria-label="Close" data-close>${ic("x",22)}</button></div>`}
 function viewStage(k="editing_autohdr"){return sheetNav("Stage")+`<div class="sh-body"><span class="glabel">Move this project to</span><div class="group" role="radiogroup" aria-label="Stage">${STAGES.filter(s=>s.k!=="editing").map(s=>`<button class="row" role="radio" aria-checked="${s.k===k}" data-stage="${s.k}"><span class="lbl">${dot(s.k)}${s.l}</span><span class="radio${s.k===k?" on":""}"></span></button>`).join("")}</div><p style="padding:12px 20px;font-size:13px;color:var(--q-greige-600)">Choosing a stage saves it straight away.</p></div>`}
 function viewDeadline(){return sheetNav("Deadline")+`<div class="sh-body" style="display:grid;gap:16px;align-content:start;padding-top:4px"><div class="m-field"><span class="qlabel">Date</span><span class="box">Thu 18 Sep 2026 ${ic("cal",18)}</span></div><div class="m-field"><span class="qlabel">Time</span><span class="box">17:00 ${ic("clock",18)}</span></div>
   <div class="m-field"><span class="qlabel">Advance reminders · 3 of 8</span><div class="toggles"><button class="tg" data-tg style="height:40px">1 week</button><button class="tg on" data-tg style="height:40px">2 days</button><button class="tg on" data-tg style="height:40px">1 day</button><button class="tg" data-tg style="height:40px">4 hours</button><button class="tg on" data-tg style="height:40px">1 hour</button><button class="tg" style="height:40px">${ic("plus",14)}Custom</button></div></div>
@@ -571,12 +593,12 @@ function viewTeam(typed){
   return sheetNav("Team")+`<div class="m-search">${ic("search",17)}${typed?`<span>an</span><i class="caret" style="margin-left:-4px"></i>`:`<span style="color:var(--q-greige-600)">Search people</span>`}</div><div class="sh-body">${ph.length?`<span class="glabel">Photographers</span><div class="group">${ph.map(opt).join("")}</div>`:""}${ed.length?`<span class="glabel">Editors</span><div class="group">${ed.map(opt).join("")}</div>`:""}<p style="padding:12px 20px;font-size:13px;color:var(--q-greige-600)">The group you pick from sets the person’s role.</p></div>`;
 }
 function viewDropbox(){return sheetNav("Dropbox")+`<div class="sh-body"><span class="glabel">Status</span><div class="group"><div class="row static"><span class="k">Status</span><span class="v"><span class="bdg pos">Monitored</span></span></div><div class="row static"><span class="k">Last sync</span><span class="v"><span class="tx">Today 09:12 · 128 files</span></span></div></div><span class="glabel">RAW folder</span><p class="m-notes mono" style="font-size:14px">${P.folder}</p><div class="acts"><button class="qb wide">${ic("ext",16)}Open in Dropbox</button><button class="qb wide">${ic("sync",16)}Sync from Dropbox</button></div></div>`}
-const phoneContent=(rest)=>`${mShell(!rest)}<div class="m-body">${rest?mBar():""}${mTabs(!rest)}${mWork()}<div class="m-grid">${tiles(8,rest?412:420)}</div></div>`;
+const phoneContent=(rest)=>`<div class="m-body">${rest?mBar():mCompact()}${mTabs(!rest)}${mWork()}<div class="m-grid">${tiles(8,rest?412:420)}</div></div>`;
 function phoneSheet(view,opts={}){
   const body=view==="details"?sheetHead()+`<div class="sh-body">${rowsDetails()}</div>`:view==="stage"?viewStage():view==="deadline"?viewDeadline():view==="team"?viewTeam(opts.typed):viewDropbox();
-  return `${phoneContent(true)}<div class="m-scrim"></div><div class="m-sheet${opts.kb?" kb":""}" role="dialog" aria-label="Project details">${body}</div>${opts.kb?`<div class="kbd" aria-hidden="true"><div class="kr">${"qwertyuiop".split("").map(c=>`<span class="key">${c}</span>`).join("")}</div><div class="kr">${"asdfghjkl".split("").map(c=>`<span class="key">${c}</span>`).join("")}</div><div class="kr"><span class="key f">⇧</span>${"zxcvbnm".split("").map(c=>`<span class="key">${c}</span>`).join("")}<span class="key f">⌫</span></div><div class="kr"><span class="key f">123</span><span class="key sp">space</span><span class="key go">search</span></div></div>`:""}`;
+  return `${phoneContent(true)}<div class="m-scrim"></div><div class="m-sheet${opts.kb?" kb":""}" role="dialog" aria-label="Project info">${body}</div>${opts.kb?`<div class="kbd" aria-hidden="true"><div class="kr">${"qwertyuiop".split("").map(c=>`<span class="key">${c}</span>`).join("")}</div><div class="kr">${"asdfghjkl".split("").map(c=>`<span class="key">${c}</span>`).join("")}</div><div class="kr"><span class="key f">⇧</span>${"zxcvbnm".split("").map(c=>`<span class="key">${c}</span>`).join("")}<span class="key f">⌫</span></div><div class="kr"><span class="key f">123</span><span class="key sp">space</span><span class="key go">search</span></div></div>`:""}`;
 }
-function altPhone(){return `<header class="m-shell"><span class="ib">${ic("panelLeft",20)}</span><div class="mid"><button class="m-ttl"><span>${P.street}</span>${ic("down",16)}</button></div><span class="ib">${ic("bell",20)}</span></header><div class="m-body">${mTabs(true)}${mWork()}<div class="m-grid">${tiles(10)}</div></div>`}
+function altPhone(){return `<div class="m-body">${mCompact()}${mTabs(true)}${mWork()}<div class="m-grid">${tiles(10)}</div></div>`}
 
 /* ---------- frames ---------- */
 function card(id,title,html,w,notes){
@@ -585,15 +607,15 @@ function card(id,title,html,w,notes){
 document.getElementById("desk").innerHTML=[
   card("D1","Project page at rest",desktop({h:820}),1440,[
     "<b>Row A</b>: the title in Mazius at 28px with the suburb beside it. The meta line shows the shoot date, the client and a Production notes link.",
-    "<b>Cluster</b>: Stage, Deadline and Team are the controls people use daily. Each opens its own popover, as today. A rule separates them from Details and ⋯.",
-    "<b>Row B</b>: only the collection tabs, so they get the full width.",
-    "<b>Whiteboard</b> moves out of the tab row to sit beside Details. It belongs to the whole project, like Details, not to one collection.",
-    "The “← Dashboard” crumb goes. The shell breadcrumb already links back."]),
-  card("D2","Details sheet open",desktop({h:820,sheet:true}),1440,[
-    "<b>Details</b> opens a 440px sheet from the right. It is modal: Esc closes it and focus returns to Details.",
+    "<b>Cluster</b>: Stage, Deadline and Team are the controls people use daily. Each opens its own popover, as today. A rule separates them from Whiteboard, Project info and ⋯.",
+    "<b>Row B</b>: only the Workspace tabs, so they get the full width.",
+    "<b>Whiteboard</b> moves out of the tab row to sit beside Project info. It belongs to the whole Project, not to one tab.",
+    "<b>Close</b> is the Project sheet’s own, at its top right. Row A stops 36px short of it. It returns to the Dashboard view underneath, so the “← Dashboard” crumb goes."]),
+  card("D2","Project info open",desktop({h:820,sheet:true}),1440,[
+    "<b>Project info</b> opens a 440px sheet docked to the Project sheet’s right edge. It is modal: its scrim covers the Project’s Close, Esc closes Project info first, and focus returns to its button.",
     "Production notes come first, then Client and shoot, Deadline, Team and Dropbox. Each section has one edit action at its right.",
     "Dropbox’s Open and Sync actions live only here, as in prototype 2a.",
-    "The Production notes link in the meta line opens this sheet with the notes in view."]),
+    "The Production notes link in the meta line opens this sheet with the notes in view. Its footer holds Whiteboard and Edit project details."]),
   card("D3","Team popover",desktop({h:600,open:"team"}),1440,[
     "The avatar stack is the Team trigger. Up to three faces show, then +N.",
     "The popover is the grouped combobox from 2a. The group you pick from sets the role, and picking a checked person removes them."]),
@@ -602,32 +624,32 @@ document.getElementById("desk").innerHTML=[
     "The popover body is today’s deadline form, unchanged."]),
   card("D5","More menu, and the condensed bar after scrolling",
     `<div style="display:grid;gap:24px">${desktop({h:430,open:"more"})}${desktop({h:360,condensed:true})}</div>`,1440,[
-    "<b>⋯</b> holds the actions people use less often: Edit details, Copy link, Show in Calendar and Show in Timeline.",
-    "<b>Condensed</b>: once Row A scrolls out of view, a 45px bar sticks under the shell bar. It shows the stage dot, the title, the tabs, Whiteboard and Details, so switching collections never needs a scroll back up."]),
+    "<b>⋯</b> holds the actions people use less often: Edit project details, Copy link, Show in Calendar and Show in Timeline.",
+    "<b>Condensed</b>: once Row A scrolls out of view, a 60px bar sticks to the top of the Project sheet. It shows the stage dot, the title, the tabs, Whiteboard and Project info, and Close moves up to centre in it, so switching tabs never needs a scroll back up."]),
   card("D6","Cluster states",statesFrame(),1180,[
     "A problem changes how a control looks; a normal state stays quiet. Dropbox appears only while it is blocked.",
-    "Read-only roles and archived projects get flat, sunken values with no chevron, matching today’s read-only header.",
+    "Read-only roles (staff without edit rights, External editors) and archived Projects get flat, sunken values with no chevron, matching today’s read-only header. Their Project info shows plain rows with no edit actions.",
     "An empty deadline or team turns into a prompt to add one."]),
 ].join("");
 document.getElementById("tab").innerHTML=card("T1","iPad portrait, 834px",desktop({w:834,h:760,tablet:true,cols:3}),834,[
-  "The cluster wraps onto its own line under the title, with Details and ⋯ pushed to the right edge.",
+  "Still the inset Project sheet at 834px. The cluster wraps onto its own line under the title, with Whiteboard, Project info and ⋯ pushed to the right edge.",
   "The tabs keep one row and scroll sideways with an edge fade. With Whiteboard moved into the cluster, nothing sits at the end of the tab row."]);
 document.getElementById("phone").innerHTML=[
   card("M1","At rest",dev(phoneContent(true)),412,[
-    "<b>Project bar</b>, 62px: the title, then the stage, the due date and a Notes marker. The text and chevron are one button that opens Project details.",
-    "<b>Whiteboard</b> is a 44px button at the right end of the project bar, behind a hairline. The tab row now runs the full width with nothing at its end.",
-    "The shell bar shows only the parent, “Dashboard”, because the project bar names the project.",
-    "The tabs sit right under the project bar. The work starts about 160px below the safe area."]),
+    "<b>Full-screen Project sheet</b>: no shell bar, so the project bar sits right under the safe area.",
+    "<b>Project bar</b>, 62px: the title, then the Stage, the due date and a Notes marker. The title, its chevron and the subline are one button that opens Project info.",
+    "<b>Whiteboard</b> and <b>Close</b> are 44px buttons at the right end, behind a hairline. The tab row runs the full width with nothing at its end.",
+    "The work starts about 110px below the safe area, against about 160px today."]),
   card("M2","After scrolling",dev(phoneContent(false)),412,[
-    "The project bar has scrolled away. The tabs stick under the shell bar, which leaves 95px of chrome.",
-    "The project name fades into the shell bar and opens the same sheet. Whiteboard is then one row down, as the first action in the sheet (M3)."]),
-  card("M3","Project details sheet",dev(phoneSheet("details")),412,[
-    "The bottom sheet opens 96px from the top, so the page stays visible above it. Drag down, tap outside or tap × to close.",
+    "The project bar has scrolled under the tabs. A 48px slim bar fades in with the name and Close, and the tabs stick under it: 93px of chrome.",
+    "Tapping the name opens Project info. Stage and the whiteboard are one tap away there (M3)."]),
+  card("M3","Project info",dev(phoneSheet("details")),412,[
+    "A bottom sheet over the Project sheet, 96px from the top, so the Project stays visible above it. Drag down, tap outside or tap × to close Project info only.",
     "<b>Status</b> is first: Stage, Deadline and Team, each a 52px row that opens a pushed view.",
-    "The notes, client and shoot and Dropbox follow, then Open whiteboard and the other four actions. The sheet body scrolls on its own."]),
+    "Production notes, client and shoot and Dropbox follow, then Open whiteboard and the other four actions. The body scrolls on its own. Read-only roles see plain rows and no actions beyond the whiteboard."]),
   card("M4","Stage view",dev(phoneSheet("stage")),412,[
-    "52px radio rows replace a floating select popup. Choosing a stage saves it and returns to Details.",
-    "The back button keeps the parent name (“Details”), following the iOS convention."]),
+    "52px radio rows replace a floating select popup. Choosing a stage saves it and returns to Project info.",
+    "The back button keeps the parent name (“Info”), following the iOS convention."]),
   card("M5","Deadline view",dev(phoneSheet("deadline")),412,[
     "Date and Time open the native iOS pickers, so no keyboard comes up.",
     "Reminder toggles are 40px tall. Save and Clear stay pinned above the home indicator."]),
@@ -635,20 +657,19 @@ document.getElementById("phone").innerHTML=[
     "The sheet shrinks to the visual viewport, so the search field and results stay above the keyboard. This is the #891 lesson.",
     "Results filter as you type. The groups still set the role."]),
 ].join("");
-document.getElementById("alt").innerHTML=card("A1","Name in the shell bar, no project bar",dev(altPhone()),412,[
-  "Chrome is 95px at rest and when scrolled. The Stage and due date are gone until you open the sheet.",
-  "Only one tap target opens the details, and it is small and at the top."]);
+document.getElementById("alt").innerHTML=card("A1","Slim bar only, no project bar",dev(altPhone()),412,[
+  "Chrome is 93px at rest and when scrolled. The Stage and due date are gone until you open Project info.",
+  "The whiteboard moves into Project info, two taps away."]);
 
 /* ---------- live phone ---------- */
 const live=document.getElementById("live");
 let cur="editing_autohdr";
 live.innerHTML=`<div class="q dev live"><div class="screen"><div class="safe-top"><div class="island"></div></div>
-  <header class="m-shell" id="lv-shell"><button class="ib" aria-label="Open navigation">${ic("panelLeft",20)}</button><div class="mid"><span class="m-parent">Dashboard</span><button class="m-ttl" data-open aria-label="Project details, ${P.street}"><span>${P.street}</span>${ic("down",16)}</button></div><button class="ib" aria-label="Notifications">${ic("bell",20)}</button></header>
-  <div class="m-body"><div class="m-scroll" id="lv-scroll"><div id="lv-bar">${mBar(cur)}</div>${mTabs(false)}${mWork()}<div class="m-grid">${tiles(24)}</div></div></div>
-  <div class="m-scrim closed" id="lv-scrim"></div><div class="m-sheet closed" id="lv-sheet" role="dialog" aria-modal="true" aria-label="Project details"></div>
+  <div class="m-body">${mCompact(false)}<div class="m-scroll" id="lv-scroll"><div id="lv-bar">${mBar(cur)}</div>${mTabs(false)}${mWork()}<div class="m-grid">${tiles(24)}</div></div></div>
+  <div class="m-scrim closed" id="lv-scrim"></div><div class="m-sheet closed" id="lv-sheet" role="dialog" aria-modal="true" aria-label="Project info"></div>
   <div class="toast off" id="lv-toast" role="status">${ic("check",16)}<span id="lv-toast-t">Saved</span></div></div><div class="home"></div></div>`;
 const $=id=>document.getElementById(id);
-const sheet=$("lv-sheet"),scrim=$("lv-scrim"),sc=$("lv-scroll"),shellEl=$("lv-shell");
+const sheet=$("lv-sheet"),scrim=$("lv-scrim"),sc=$("lv-scroll"),compact=$("lv-compact");
 let lastFocus=null,toastT=0;
 function render(view){
   sheet.innerHTML=`<div class="view" style="display:flex;flex-direction:column;height:100%">${view==="details"?sheetHead()+`<div class="sh-body">${rowsDetails(cur)}</div>`:view==="stage"?viewStage(cur):view==="deadline"?viewDeadline():view==="team"?viewTeam(false):viewDropbox()}</div>`;
@@ -662,6 +683,7 @@ live.addEventListener("click",e=>{
   if(t.hasAttribute("data-open"))return open();
   if(t.hasAttribute("data-close"))return close();
   if(t.hasAttribute("data-wb"))return toast("Whiteboard opens full screen");
+  if(t.hasAttribute("data-x"))return toast("Closes the Project, back to the Dashboard");
   if(t.hasAttribute("data-back"))return render("details");
   if(t.dataset.go)return render(t.dataset.go);
   if(t.dataset.stage){cur=t.dataset.stage;$("lv-bar").innerHTML=mBar(cur);render("details");return toast("Stage moved to "+stage(cur).l)}
@@ -672,7 +694,8 @@ live.addEventListener("click",e=>{
 scrim.addEventListener("click",close);
 live.addEventListener("keydown",e=>{if(e.key==="Escape"&&!sheet.classList.contains("closed")){e.stopPropagation();close()}});
 const tabsEl=sc.querySelector(".m-tabs");
-sc.addEventListener("scroll",()=>{const past=sc.scrollTop>$("lv-bar").offsetHeight-4;shellEl.classList.toggle("scrolled",past);tabsEl.classList.toggle("stuck",past)},{passive:true});
+sc.addEventListener("scroll",()=>{const past=sc.scrollTop>$("lv-bar").offsetHeight-compact.offsetHeight;compact.classList.toggle("on",past);compact.inert=!past;tabsEl.classList.toggle("stuck",past)},{passive:true});
+compact.inert=true;
 
 /* ---------- fit frames ---------- */
 function fit(){document.querySelectorAll(".fit").forEach(f=>{const w=+f.dataset.w,fr=f.firstElementChild;const z=Math.min(1,f.clientWidth/w);fr.style.zoom=z})}
@@ -681,14 +704,13 @@ try{new ResizeObserver(fit).observe(document.body)}catch(e){}
 
 /* ---------- measured figures ---------- */
 requestAnimationFrame(()=>{try{
-  const d=document.querySelector("#desk .ph");const m=document.querySelector("#phone .dev .m-shell");
+  const d=document.querySelector("#desk .ph");
   const z=v=>Math.round(v);
   const dz=parseFloat(d.closest(".frame").style.zoom)||1;
   $("fig-d").textContent=z(d.getBoundingClientRect().height/dz)+"px";
-  const ph=document.querySelector("#phone .dev");const pz=parseFloat(ph.closest(".frame").style.zoom)||1;
-  const rest=ph.querySelector(".m-shell").offsetHeight+ph.querySelector(".m-bar").offsetHeight+ph.querySelector(".m-tabs").offsetHeight;
-  $("fig-m").textContent=rest+"px";
-  $("fig-s").textContent=(ph.querySelector(".m-shell").offsetHeight+ph.querySelector(".m-tabs").offsetHeight)+"px";
+  const devs=document.querySelectorAll("#phone .dev");const ph=devs[0],ps=devs[1];
+  $("fig-m").textContent=(ph.querySelector(".m-bar").offsetHeight+ph.querySelector(".m-tabs").offsetHeight)+"px";
+  $("fig-s").textContent=(ps.querySelector(".m-compact").offsetHeight+ps.querySelector(".m-tabs").offsetHeight)+"px";
 }catch(e){}});
 })();
 </script>
