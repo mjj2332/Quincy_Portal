@@ -236,6 +236,12 @@ describe("a Delivery deep link (#847)", () => {
       await openDeep(vid(2));
       expect(byId("guest-back-to-page")).toBeNull();
     });
+    it("is on the film list too, where a reload lands (no film in the address), so the page is still one tap away", async () => {
+      await openDeep(null, null, PAGE);
+      expect(byId("guest-list")).not.toBeNull();
+      const back = byId("guest-back-to-page") as HTMLAnchorElement;
+      expect(back.tagName).toBe("A"); expect(back.getAttribute("href")).toBe(`/d/${PAGE}`);
+    });
   });
 
   it("opens the film's newest granted Version, which the list gives first", async () => {
