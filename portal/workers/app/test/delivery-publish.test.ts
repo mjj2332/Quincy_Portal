@@ -374,7 +374,7 @@ describe("the staff read and the public DTO", () => {
     expect(await response.json()).toEqual({ page: null, set: null, dto: null });
   });
 
-  it("reads the latest set only, with a DTO that exposes handles and labels and never an id, a key or a filename, and a film's own title and nothing else of it (#882)", async () => {
+  it("reads the latest set only, with a DTO that exposes handles and labels and never an id, a key or a filename, and, on the staff read, no title key at all (#882)", async () => {
     const photo = await seedAsset("photo"); const video = await seedVideoVersion({ title: "Secret Walkthrough" }); const premium = await seedAsset("photo", { deliveryPremium: true }); const paid = await seedAsset("photo", { deliveryPremium: true }); await seedUnlock(paid.id);
     expect((await publish(body([photo.id], { coverAssetId: photo.id }))).status).toBe(201);
     const second = await publish(body([photo.id, video.assetId, premium.id, paid.id], { expectedLatestSet: 1, coverAssetId: photo.id }));
@@ -385,12 +385,12 @@ describe("the staff read and the public DTO", () => {
     expect(state.dto.items.map((item: Json) => item.locked)).toEqual([false, false, true, false]);
     // `premium` is the item's own paid-extra flag and survives an Unlock (the Premium tab keeps listing an unlocked item); it says nothing about unlocks or payment.
     expect(state.dto.items.map((item: Json) => item.premium)).toEqual([false, false, true, true]);
-    // #882: the one Video field the page carries is the film's title; a photo's is null.
-    expect(state.dto.items.map((item: Json) => item.title)).toEqual([null, "Secret Walkthrough", null, null]);
+    // #882: the staff read carries NO title key (a deployed staff tab parses strictly, lesson #858); only the public read does.
+    for (const item of state.dto.items) expect(Object.keys(item)).not.toContain("title");
     const wire = JSON.stringify({ ...state.dto, items: state.dto.items.map((item: Json) => ({ ...item, url: null, thumbUrl: null })) });
-    for (const secret of [photo.id, video.assetId, video.videoId, premium.id, ".bin", "projects/", "delivery-test", ids.admin, "Admin Person", ids.project]) expect(wire, secret).not.toContain(secret);
+    for (const secret of [photo.id, video.assetId, video.videoId, premium.id, "Secret Walkthrough", ".bin", "projects/", "delivery-test", ids.admin, "Admin Person", ids.project]) expect(wire, secret).not.toContain(secret);
     expect(Object.keys(state.dto).sort()).toEqual(["coverHandle", "items", "property", "publishedAt", "setNumber"]);
-    expect(Object.keys(state.dto.items[0]).sort()).toEqual(["durationMs", "handle", "height", "kind", "label", "locked", "position", "premium", "review", "thumbUrl", "title", "url", "width"]);
+    expect(Object.keys(state.dto.items[0]).sort()).toEqual(["durationMs", "handle", "height", "kind", "label", "locked", "position", "premium", "review", "thumbUrl", "url", "width"]);
     expect(state.dto.coverHandle).toBe(state.set.items[0].handle);
   });
 

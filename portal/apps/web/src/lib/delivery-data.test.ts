@@ -75,6 +75,21 @@ describe("premium writes", () => {
   });
 });
 
+describe("Preview film titles (#882)", () => {
+  const item = (h: string, kind: "photo" | "video", label: string) => ({ handle: h, kind, label, position: 0, locked: false, premium: false, review: null, width: null, height: null, durationMs: null, url: null, thumbUrl: null });
+  const dto = { property: { street: "1 A St", suburb: null, postcode: null, agency: null }, setNumber: 1, publishedAt: null, coverHandle: null, items: [item(handle, "video", "Video 01"), item("bcdefghijklmnopq", "photo", "Photo 01")] };
+  it("merges the top-level titles into the matching items", async () => {
+    api.apiPost.mockResolvedValue({ dto, titles: { [handle]: "Hero" } });
+    const page = await previewDelivery(client, P, { assetIds: [A], coverAssetId: null });
+    expect(page.items[0]).toMatchObject({ label: "Video 01", title: "Hero" }); expect(Object.keys(page.items[1]!)).not.toContain("title");
+  });
+  it("an older server without titles still parses and keeps the label", async () => {
+    api.apiPost.mockResolvedValue({ dto });
+    const page = await previewDelivery(client, P, { assetIds: [A], coverAssetId: null });
+    expect(page.items.every((entry) => !("title" in entry))).toBe(true);
+  });
+});
+
 describe("a 401 from any delivery call ends the session", () => {
   it.each([
     ["preview", () => previewDelivery(client, P, { assetIds: [A], coverAssetId: null }), "apiPost"],

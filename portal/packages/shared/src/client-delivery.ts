@@ -124,6 +124,12 @@ export type DeliveryCandidateDto = z.infer<typeof deliveryCandidateSchema>;
 export type DeliveryCandidatesResponse = z.infer<typeof deliveryCandidatesResponseSchema>;
 
 /** The Publish response: the CURRENT state (the same shape as the staff read), the receipt for the operation, and whether this was a retry. `operationSetNumber` is the set the operation landed as, which on a replay may be older than `set.setNumber`. */
+/**
+ * Staff Preview's film titles (#882), keyed by item handle, for video items only (trimmed, empty omitted). They ride BESIDE `dto`, never inside it: a staff tab open across a deploy parses the item DTO `.strict()`, so a new item key would fail it (lesson #858),
+ * while the Preview wrapper is non-strict and drops this unknown top-level key. The client merges them back into the DTO before it renders.
+ */
+export const deliveryPreviewTitlesSchema = z.record(z.string().length(DELIVERY_HANDLE_LENGTH), z.string().min(1).max(400));
+export type DeliveryPreviewTitles = z.infer<typeof deliveryPreviewTitlesSchema>;
 export const deliveryPublishResponseSchema = deliveryStateSchema.extend({ replayed: z.boolean(), operationSetNumber: z.number().int().min(1) }).strict();
 export type DeliveryPublishResponse = z.infer<typeof deliveryPublishResponseSchema>;
 

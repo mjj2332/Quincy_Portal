@@ -67,7 +67,7 @@ async function readDeliveryProperty(db: D1Database, projectId: string): Promise<
     .bind(projectId).first<DeliveryProperty>())!;
 }
 
-/** Absent for staff Preview and the staff read, so every item there carries `review: null` and NO tile facts at all (the keys are omitted, not null: #882, lesson #858). */
+/** Absent for staff Preview and the staff read, so every item there carries `review: null` and NO tile facts or `title` at all (the keys are omitted, not null: #882, lesson #858). */
 /** The way into review per film, by Asset id (#847), with the tile's facts (#882): the published Version and its open public root notes. */
 export type DeliveryReviewEntries = ReadonlyMap<string, { url: string; version: number; openNotes: number }>;
 
@@ -76,11 +76,11 @@ const cleanTitle = (value: string | null): string | null => { const text = value
 export function buildDeliveryDto(input: { property: DeliveryProperty; setNumber: number; publishedAt: number | null; coverHandle: string | null; rows: readonly DeliveryItemRow[]; urls: DeliveryUrlResolver; review?: DeliveryReviewEntries }): DeliveryPageDto {
   const labels = deliveryLabels(input.rows);
   const items: DeliveryItemDto[] = input.rows.map((row, index) => ({
-    handle: row.handle, kind: row.kind, label: labels[index]!, title: row.kind === "video" ? cleanTitle(row.title) : null, position: row.position, locked: row.locked, premium: row.premium,
+    handle: row.handle, kind: row.kind, label: labels[index]!, position: row.position, locked: row.locked, premium: row.premium,
     width: row.width, height: row.height, durationMs: row.durationMs, ...input.urls(row),
     review: ((): { url: string } | null => { const entry = row.kind === "video" && !row.locked ? input.review?.get(row.assetId) : undefined; return entry ? { url: entry.url } : null; })(),
-    // The public read passes `review` (an empty map when the gate is shut) and so always carries both keys; staff passes none and carries neither.
-    ...(input.review === undefined ? {} : (() => { const entry = row.kind === "video" && !row.locked ? input.review.get(row.assetId) : undefined; return { version: entry?.version ?? null, openNotes: entry?.openNotes ?? null }; })()),
+    // The public read passes `review` (an empty map when the gate is shut) and so always carries all three keys; staff passes none and carries none (a deployed staff tab parses `.strict()`, lesson #858).
+    ...(input.review === undefined ? {} : (() => { const entry = row.kind === "video" && !row.locked ? input.review.get(row.assetId) : undefined; return { title: row.kind === "video" ? cleanTitle(row.title) : null, version: entry?.version ?? null, openNotes: entry?.openNotes ?? null }; })()),
   }));
   const clean = (value: string | null): string | null => { const text = value?.trim(); return text ? text : null; };
   return { property: { street: input.property.street, suburb: clean(input.property.suburb), postcode: clean(input.property.postcode), agency: clean(input.property.agency) }, setNumber: input.setNumber, publishedAt: input.publishedAt, coverHandle: input.coverHandle, items };
@@ -185,11 +185,13 @@ export async function readDeliveryState(db: D1Database, projectId: string, optio
 }
 
 /** Preview: the page as it would be if this selection were published next. Reads only; handles are fresh and never stored. `invalid` carries the refusal. */
-export async function previewDelivery(db: D1Database, projectId: string, assetIds: readonly string[], coverAssetId: string | null, newHandle: () => string, urls: DeliveryUrlResolver = previewItemUrls(projectId)): Promise<{ ok: true; dto: DeliveryPageDto } | Exclude<SelectionVerdict, { ok: true }>> {
+export async function previewDelivery(db: D1Database, projectId: string, assetIds: readonly string[], coverAssetId: string | null, newHandle: () => string, urls: DeliveryUrlResolver = previewItemUrls(projectId)): Promise<{ ok: true; dto: DeliveryPageDto; titles: Record<string, string> } | Exclude<SelectionVerdict, { ok: true }>> {
   const verdict = await checkSelection(db, projectId, assetIds, coverAssetId, newHandle);
   if (!verdict.ok) return verdict;
   const project = await readDeliveryProperty(db, projectId);
   const latest = (await db.prepare("SELECT latest_set_number AS latest FROM delivery_pages WHERE project_id = ?1").bind(projectId).first<{ latest: number }>())?.latest ?? 0;
   const coverHandle = verdict.rows.find((row) => row.assetId === coverAssetId)?.handle ?? null;
-  return { ok: true, dto: buildDeliveryDto({ property: project, setNumber: latest + 1, publishedAt: null, coverHandle, rows: verdict.rows, urls: await lockAwareUrls(db, verdict.rows, urls) }) };
+  // Film titles ride beside the DTO, never inside it: the item DTO is strictly parsed by staff tabs open across a deploy (#882, lesson #858).
+  const titles: Record<string, string> = {}; for (const row of verdict.rows) { const title = row.kind === "video" ? cleanTitle(row.title) : null; if (title) titles[row.handle] = title; }
+  return { ok: true, dto: buildDeliveryDto({ property: project, setNumber: latest + 1, publishedAt: null, coverHandle, rows: verdict.rows, urls: await lockAwareUrls(db, verdict.rows, urls) }), titles };
 }

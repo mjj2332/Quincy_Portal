@@ -180,6 +180,17 @@ describe("Preview", () => {
     expect(dialog.textContent).toContain("12 Example St: how the client page will look as set 1.");
     expect(dialog.querySelector("img")?.getAttribute("src")).toContain("/delivery/preview-media/");
   });
+  const filmDto = { property: { street: "12 Example St", suburb: null, postcode: null, agency: null }, setNumber: 1, publishedAt: null, coverHandle: null, items: [
+    { handle: handle(1), kind: "video", label: "Video 01", position: 0, locked: false, premium: false, review: null, width: 1920, height: 1080, durationMs: 1000, url: null, thumbUrl: null }] };
+  const previewFilm = async (response: unknown) => { apiPostMock.mockResolvedValue(response); await openDelivery(); await startEmpty(); await click(byLabel("Select 1.jpg")); await click(byId("delivery-preview")); return bodyById("delivery-preview-dialog")!; };
+  it("shows the real film title from the top-level `titles`", async () => {
+    const dialog = await previewFilm({ dto: filmDto, titles: { [handle(1)]: "Hero Walkthrough" } });
+    expect(dialog.textContent).toContain("Hero Walkthrough");
+  });
+  it("shows the Video 01 label when an older server sends no `titles`", async () => {
+    const dialog = await previewFilm({ dto: filmDto });
+    expect(dialog.textContent).toContain("Video 01"); expect(dialog.textContent).not.toContain("Hero Walkthrough");
+  });
   it("says why when the server refuses the selection, and names the items", async () => {
     apiPostMock.mockRejectedValue(api(400, { error: "x", code: "invalid_selection", assetIds: [ids.photo2] }));
     await openDelivery();

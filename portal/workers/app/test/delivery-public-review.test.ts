@@ -169,8 +169,24 @@ describe("film tile facts on the public Delivery page (#882)", () => {
     for (const item of body.items) { expect(Object.keys(item)).toContain("version"); expect(Object.keys(item)).toContain("openNotes"); }
   });
 
+  it("the public item key set includes title, version and openNotes", async () => {
+    await published(); const body = await (await guestFetch(`/d/api/pages/${await slug()}`)).json() as Json;
+    for (const item of body.items) expect(Object.keys(item).sort()).toEqual(["handle", "kind", "label", "position", "locked", "premium", "width", "height", "durationMs", "url", "thumbUrl", "review", "title", "version", "openNotes"].sort());
+  });
+
+  describe("staff Preview titles (#882)", () => {
+    it("carries a top-level `titles` map for films only (trimmed) and no `title` key inside the dto", async () => {
+      const v = await published(); await database.DB.prepare("UPDATE videos SET title = '  Hero  '").run();
+      const preview = await (await request(`/api/projects/${ids.project}/delivery/preview`, "admin", "POST", { assetIds: [v.assetId, v.photo.id] })).json() as Json;
+      for (const item of preview.dto.items) expect(Object.keys(item)).not.toContain("title");
+      const [film, photo] = preview.dto.items as Json[];
+      expect(preview.titles).toEqual({ [film.handle]: "Hero" });
+      expect(Object.keys(preview.titles)).not.toContain(photo.handle);
+    });
+  });
+
   describe("staff DTOs omit the keys entirely", () => {
-    const BASE_KEYS = ["handle", "kind", "label", "position", "locked", "premium", "width", "height", "durationMs", "url", "thumbUrl", "review", "title"].sort();
+    const BASE_KEYS = ["handle", "kind", "label", "position", "locked", "premium", "width", "height", "durationMs", "url", "thumbUrl", "review"].sort();
     it("pins the staff read, Preview and Publish item key set, so a later change cannot leak the public-only facts", async () => {
       const v = await published(); await seedVideoNote({ assetId: v.assetId, body: "open" });
       const state = await (await request(`/api/projects/${ids.project}/delivery`, "admin")).json() as Json;
@@ -183,7 +199,7 @@ describe("film tile facts on the public Delivery page (#882)", () => {
     });
     it("an old staff-style strict parse still accepts the staff DTO, and rejects the public one (the designed Reload screen)", async () => {
       const v = await published();
-      const oldItem = deliveryItemDtoSchema.omit({ version: true, openNotes: true });
+      const oldItem = deliveryItemDtoSchema.omit({ version: true, openNotes: true, title: true });
       const state = await (await request(`/api/projects/${ids.project}/delivery`, "admin")).json() as Json;
       expect(z.array(oldItem).safeParse(state.dto.items).success).toBe(true);
       const publicBody = await (await guestFetch(`/d/api/pages/${await slug()}`)).json() as Json;

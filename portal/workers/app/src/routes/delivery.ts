@@ -63,7 +63,7 @@ deliveryRoutes.post("/projects/:projectId/delivery/preview", terminalRoute("/pro
   const refused = await admitDelivery(c, projectId, "viewClientPreview", false); if (refused) return refused;
   const input = await jsonInput(c, deliveryPreviewInputSchema); if (input instanceof Response) return input;
   const result = await previewDelivery(c.env.DB, projectId, input.assetIds, input.coverAssetId ?? null, randomItemHandle);
-  if (result.ok) return c.json({ dto: result.dto });
+  if (result.ok) return c.json({ dto: result.dto, titles: result.titles });
   return result.reason === "invalid_cover" ? c.json({ error: "The cover must be one of the selected photos.", code: "invalid_cover" }, 400) : c.json({ error: "Some selected items can't be on a Delivery page.", code: "invalid_selection", assetIds: result.assetIds }, 400);
 }));
 
