@@ -536,6 +536,21 @@ describe("A note's saved drawing (#741 6b-ui)", () => {
     expect(tid("video-note-has-drawing", threadOf(drawn.id))!.textContent).toMatch(/hidden/i); // the row says so, but nothing is drawn or fetched
   });
 
+  it("#901: a tap on the card's text lands on the drawing's frame (not the range's start), shows the drawing and selects the card", async () => {
+    const drawn = await withDrawnNote({ startFrame: 20, endFrame: 40, drawingFrame: 30 });
+    expect(threadOf(drawn.id).dataset.selected).toBe("false");
+    const text = tid("video-note-body", threadOf(drawn.id))!;
+    await act(async () => {
+      text.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientX: 10, clientY: 10, button: 0, isPrimary: true, pointerType: "mouse" }));
+      text.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX: 10, clientY: 10, button: 0, detail: 1 }));
+    });
+    expect(stub.writes.at(-1)).toBeCloseTo(frameSeekSeconds(30, { num: 25, den: 1 }), 5);
+    await land(30);
+    await flush(4);
+    expect(strokesOnScreen()).toBe(1);
+    expect(threadOf(drawn.id).dataset.selected).toBe("true");
+  });
+
   it("a note with a drawing carries a pen mark on its row", async () => {
     const drawn = await withDrawnNote();
     expect(tid("video-note-has-drawing", threadOf(drawn.id))!.textContent).toContain("Drawing");

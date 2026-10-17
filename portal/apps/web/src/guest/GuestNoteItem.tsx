@@ -6,6 +6,7 @@ import type { EditorMediaTransport } from "../lib/embedded-media-core";
 import { RichTextContent } from "../components/RichTextContent";
 import { noteAnchorLabel } from "../lib/video-note-view";
 import { cn } from "../lib/utils";
+import { NOTE_CARD_SEEKABLE, useNoteCardSeek } from "../lib/note-card-seek";
 import { Badge } from "../components/reui/badge";
 import { Button } from "../components/reui/button";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../components/reui/alert-dialog";
@@ -173,6 +174,10 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
     </Menu>
     : null;
 
+  // The whole card seeks to the thread's frame (#901), through the same `onSelect` as the timecode button (the drawing-frame landing, and a collapsed
+  // phone sheet opening to half). A press while this card's "⋯" menu is open only dismisses it; `menuFor` counts only while that note's menu is rendered.
+  const seekProps = useNoteCardSeek(thread.startFrame !== null ? () => { onSelect(thread); } : null, () => menuFor !== null && all.some((note) => note.id === menuFor && own(note)));
+
   const body = (note: GuestNoteDto) => editDraft !== null && editDraft.noteId === note.id
     ? <form data-testid="guest-note-edit-form" aria-label="Edit your note" onSubmit={(event) => { void saveEdit(event); }} noValidate className="flex flex-col gap-[var(--space-2)]">
       <GuestNoteField testId="guest-note-edit-body" label="Your note" media={writing.media} value={editDraft.doc} disabled={editStatus.pending || !writing.canWrite} onChange={(doc) => { drafts.set(editKey, { ...editDraft, doc }); }} onUploadingChange={setEditUploading} />
@@ -185,7 +190,7 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
     </form>
     : <NoteText note={note} media={writing.media} />;
 
-  return <Item variant="outline" size="sm" data-testid="guest-note" data-note-id={thread.id} data-selected={selected ? "true" : "false"} className="flex-col items-stretch data-[selected=true]:border-foreground">
+  return <Item variant="outline" size="sm" {...seekProps} data-testid="guest-note" data-note-id={thread.id} data-selected={selected ? "true" : "false"} className={cn("flex-col items-stretch data-[selected=true]:border-foreground", thread.startFrame !== null && NOTE_CARD_SEEKABLE)}>
     <ItemContent className="gap-[var(--space-2)]">
       <div className="flex min-w-0 items-center gap-[var(--space-2)]"><Author note={thread} />{menu(thread)}</div>
       <div className="flex flex-wrap items-center gap-[var(--space-2)]">

@@ -317,6 +317,22 @@ describe("Compare: readouts follow each clock (#741 7c)", () => {
     expect(readoutA()).toContain("v2 00:00:00:00");
   });
 
+  it("#901: a tap on a note card's text in Compare seeks to its frame, as its timecode button does", async () => {
+    const n = note({ assetId: ids.asset2, body: "Two seconds in", startFrame: 50 });
+    await openCompare({ parts: ["notes", "compare"], notes: { [ids.asset2]: [n] } }, 5);
+    await openNotes();
+    const tabs = [...dialog()!.querySelectorAll<HTMLElement>('[role="tab"]')];
+    await click(tabs[1]!);
+    await flush(4);
+    stub.writes.length = 0;
+    const text = tid("video-note-body", document.querySelector<HTMLElement>(`[data-note-id="${n.id}"]`)!)!;
+    await act(async () => {
+      text.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientX: 10, clientY: 10, button: 0, isPrimary: true, pointerType: "mouse" }));
+      text.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX: 10, clientY: 10, button: 0, detail: 1 }));
+    });
+    expect(stub.writes).toContain(frameSeekSeconds(50, F25));
+  });
+
   it("stops at a side's effective last frame, not the DTO's frame count", async () => {
     await mount({ parts: ["compare"] });
     await openViewer();

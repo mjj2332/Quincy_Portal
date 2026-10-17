@@ -2,7 +2,7 @@ import { createVideoApprovalStore } from "../../lib/video-approval-store";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { videoVersionDownloadUrl, type VideoDto } from "@quincy/shared";
+import { frameSeekSeconds, videoVersionDownloadUrl, type VideoDto } from "@quincy/shared";
 import { QuincyQueryProvider } from "../../lib/query-client";
 import "../../testing/dom-polyfills";
 import { installVideoElementStub, type VideoElementStub } from "../../testing/video-element";
@@ -598,5 +598,71 @@ describe("the P9 rows (#879 PR 3b)", () => {
     await flush(6); await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 150)); });
     expect(tid("video-note-paste-dialog")).toBeNull();
     expect(document.activeElement).toBe(trigger());
+  });
+});
+
+describe("the phone notes list: the whole card seeks (#901)", () => {
+  const T = "2026-10-10T00:00:00.000Z";
+  const NOTE = "00000000-0000-4000-8000-000000000001";
+  async function mountWithNote() {
+    const notes = [{ assetId: ids.asset2, parentId: null, author: { kind: "staff", person: mia }, authorRole: "editor", visibility: "internal", startFrame: 50, endFrame: null, drawingFrame: null, hasMarkup: false, body: "Two seconds in", deleted: false, resolved: null, revision: 1, createdAt: T, editedAt: null, copiedFrom: null, replies: [], id: NOTE }];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const body = /\/notes$/.test(String(input)) ? { notes } : {};
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+    await mount({ notes: true });
+    const deadline = Date.now() + 5000; while (!tid("video-note-body") && Date.now() < deadline) await flush(1);
+    // Load the film, so a seek is written to it rather than held for the metadata.
+    const film = document.querySelector<HTMLVideoElement>('[role="dialog"] video')!;
+    await act(async () => { stub.loadMetadata(film, { duration: 12, videoWidth: 1920, videoHeight: 1080 }); stub.setReadyState(film, 4); });
+    await act(async () => { stub.finishSeek(film); stub.presentFrame(film, 0); });
+    await flush(2);
+    stub.writes.length = 0;
+  }
+  const seconds = frameSeekSeconds(50, { num: 25, den: 1 });
+  /** A finger on the card: pointerdown, then a click `dy` pixels lower, or a pointercancel (the browser took the touch for a scroll). */
+  async function touch(el: Element, { dy = 0, cancel = false, between }: { dy?: number; cancel?: boolean; between?: () => void } = {}) {
+    await act(async () => {
+      el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientX: 100, clientY: 300, button: 0, isPrimary: true, pointerType: "touch" }));
+      between?.();
+      if (cancel) { el.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, isPrimary: true, pointerType: "touch" })); return; }
+      el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, clientX: 100, clientY: 300 + dy, button: 0, isPrimary: true, pointerType: "touch" }));
+      el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX: 100, clientY: 300 + dy, button: 0, detail: 1 }));
+    });
+    await flush(2);
+  }
+
+  it("a tap on a note's text seeks to its frame", async () => {
+    await mountWithNote();
+    await touch(tid("video-note-body")!);
+    expect(stub.writes).toContain(seconds);
+  });
+
+  it("a drag past the tap slop, a cancelled touch and a list that scrolled under the finger do not seek", async () => {
+    await mountWithNote();
+    await touch(tid("video-note-body")!, { dy: 40 });
+    await touch(tid("video-note-body")!, { cancel: true });
+    const scroller = tid("video-note-thread")!.closest<HTMLElement>('[data-slot="scroll-area-viewport"]') ?? tid("video-note-thread")!.parentElement!;
+    await touch(tid("video-note-body")!, { between: () => { scroller.scrollTop = 30; } });
+    expect(stub.writes).not.toContain(seconds);
+    await touch(tid("video-note-body")!, { dy: 4 }); // a wobble within the slop is still a tap
+    expect(stub.writes).toContain(seconds);
+  });
+
+  it("the grabber still moves the sheet: a drag on it changes the stop, and a card press beside it leaves the stop alone", async () => {
+    await mountWithNote();
+    const pane = tid("video-review-pane")!;
+    const before = pane.getAttribute("data-stop");
+    await touch(tid("video-note-body")!, { dy: 200 });
+    expect(pane.getAttribute("data-stop")).toBe(before);
+    const grabber = tid("review-sheet-grabber")!;
+    await act(async () => {
+      grabber.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientY: 400, button: 0, isPrimary: true, pointerType: "touch" }));
+      grabber.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, cancelable: true, clientY: 380, button: 0, isPrimary: true, pointerType: "touch" }));
+      grabber.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, cancelable: true, clientY: 700, button: 0, isPrimary: true, pointerType: "touch" }));
+      grabber.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, clientY: 700, button: 0, isPrimary: true, pointerType: "touch" }));
+    });
+    await flush(2);
+    expect(pane.getAttribute("data-stop")).not.toBe(before);
   });
 });

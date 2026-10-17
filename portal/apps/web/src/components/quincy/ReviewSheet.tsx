@@ -82,7 +82,7 @@ export const SHEET_COLLAPSED_MIN = 127;
 const PART = "[data-sheet-part]";
 const EDITABLE = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
 const DOUBLE_TAP_MS = 300;
-const TAP_SLOP = 6;
+export const TAP_SLOP = 6;
 const ORDER: SheetStop[] = ["collapsed", "half", "full"];
 
 const setInert = (element: Element, on: boolean) => { if (on) element.setAttribute("inert", ""); else element.removeAttribute("inert"); };

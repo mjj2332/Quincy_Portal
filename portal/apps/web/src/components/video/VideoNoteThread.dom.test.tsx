@@ -572,3 +572,140 @@ describe("VideoNoteThread rich fields (#835)", () => {
     expect(document.activeElement).toBe(field);
   });
 });
+
+describe("the whole card seeks to its frame (#901)", () => {
+  /** A real tap: pointerdown on `el`, then (unless `cancel`) a click `dx`/`dy` pixels away, the way a browser sends it. */
+  async function tap(el: Element, { dx = 0, dy = 0, cancel = false, between }: { dx?: number; dy?: number; cancel?: boolean; between?: () => void } = {}) {
+    await act(async () => {
+      el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, composed: true, clientX: 50, clientY: 50, button: 0, isPrimary: true, pointerType: "mouse" }));
+      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, composed: true, clientX: 50, clientY: 50, button: 0 }));
+      between?.();
+      if (cancel) { el.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, composed: true, isPrimary: true, pointerType: "mouse" })); return; }
+      el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, composed: true, clientX: 50 + dx, clientY: 50 + dy, button: 0, isPrimary: true, pointerType: "mouse" }));
+      el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, composed: true, clientX: 50 + dx, clientY: 50 + dy, button: 0 }));
+      el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, composed: true, clientX: 50 + dx, clientY: 50 + dy, button: 0, detail: 1 }));
+      await Promise.resolve();
+    });
+  }
+  const card = () => tid("video-note-thread")!;
+  const withLink = (root: VideoNoteThreadDto) => ({ ...root, content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "see " }, { type: "text", text: "the brief", marks: [{ type: "link", href: "https://example.com/brief" }] }] }] } }) as unknown as VideoNoteThreadDto;
+
+  it("a tap on the body, the header or a reply's text seeks to the thread, once each", async () => {
+    const t = thread({ body: "Root text" });
+    const withReply = { ...t, replies: [reply(t, { body: "Reply text" })] } as VideoNoteThreadDto;
+    const onSeek = vi.fn();
+    await render(withReply, { onSeek });
+    await tap(tid("video-note-body")!);
+    expect(onSeek).toHaveBeenCalledTimes(1);
+    expect(onSeek).toHaveBeenLastCalledWith(withReply);
+    await tap(card().querySelector("header strong")!);
+    expect(onSeek).toHaveBeenCalledTimes(2);
+    await tap(tid("video-note-body", tids("video-note-reply")[0]!)!);
+    expect(onSeek).toHaveBeenCalledTimes(3);
+    expect(onSeek).toHaveBeenLastCalledWith(withReply);
+  });
+
+  it("the timecode button seeks exactly once (its own handler, not the card's as well)", async () => {
+    const onSeek = vi.fn();
+    await render(thread(), { onSeek });
+    await tap(tid("video-note-anchor-button")!);
+    expect(onSeek).toHaveBeenCalledTimes(1);
+  });
+
+  it("Reply, the ⋯ trigger, its Edit and Delete items, Resolve, a link, the reply editor and the edit form's gap never seek", async () => {
+    const onSeek = vi.fn();
+    const actions = actionsMock();
+    await render(withLink(thread()), { onSeek, actions });
+    // Stop happy-dom following the link, after the card has seen the click (window is past React's root listener).
+    const stay = (event: Event) => { event.preventDefault(); };
+    window.addEventListener("click", stay);
+    await tap(card().querySelector("a[href]")!);
+    window.removeEventListener("click", stay);
+    await tap(tid("video-note-resolve")!);
+    await tap(tid("video-note-actions")!); // opens the menu
+    const items = () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    expect(items().length).toBe(2);
+    expect(card().contains(items()[0]!)).toBe(false); // portaled: React still bubbles its click to the card
+    await tap(items().find((item) => item.textContent === "Delete")!);
+    expect(actions.requestDelete).toHaveBeenCalledTimes(1);
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 150)); });
+    await tap(tid("video-note-reply-button")!);
+    await flush();
+    await tap(tid("video-note-reply-body")!.querySelector("textarea")!);
+    await click(tid("video-note-reply-cancel")!);
+    await chooseAction("Terry", "Edit");
+    await tap(card().querySelector('[data-notes-form="edit"]')!);
+    expect(onSeek).not.toHaveBeenCalled();
+  });
+
+  it("a tap that only dismisses the card's open ⋯ menu does not seek; the next tap does", async () => {
+    const onSeek = vi.fn();
+    await render(thread(), { onSeek });
+    await click(tid("video-note-actions")!);
+    await flush();
+    expect(document.querySelectorAll('[role="menuitem"]').length).toBe(2);
+    await tap(tid("video-note-body")!);
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 150)); });
+    expect(onSeek).not.toHaveBeenCalled();
+    expect(document.querySelectorAll('[role="menuitem"]').length).toBe(0); // the press closed the menu
+    await tap(tid("video-note-body")!);
+    expect(onSeek).toHaveBeenCalledTimes(1);
+  });
+
+  it("a reply's ⋯ menu counts too: dismissing it does not seek", async () => {
+    const t = thread();
+    const withReply = { ...t, replies: [reply(t, { body: "Mine" })] } as VideoNoteThreadDto;
+    const onSeek = vi.fn();
+    await render(withReply, { onSeek });
+    await click(tids("video-note-actions", tids("video-note-reply")[0]!)[0]!);
+    await flush();
+    await tap(tid("video-note-body")!);
+    expect(onSeek).not.toHaveBeenCalled();
+  });
+
+  it("a drag past the tap slop, a cancelled pointer, a scrolled list and a text selection do not seek", async () => {
+    const onSeek = vi.fn();
+    await render(thread({ body: "Some words to select" }), { onSeek });
+    await tap(tid("video-note-body")!, { dy: 7 });
+    await tap(tid("video-note-body")!, { cancel: true });
+    await tap(tid("video-note-body")!, { between: () => { host.scrollTop = 30; } });
+    expect(onSeek).not.toHaveBeenCalled();
+    await tap(tid("video-note-body")!, { dx: 5, dy: -5 });
+    expect(onSeek).toHaveBeenCalledTimes(1);
+    const text = tid("video-note-body")!.firstChild!;
+    await tap(tid("video-note-body")!, { between: () => { const range = document.createRange(); range.setStart(text, 0); range.setEnd(text, 4); document.getSelection()!.removeAllRanges(); document.getSelection()!.addRange(range); } });
+    expect(onSeek).toHaveBeenCalledTimes(1);
+    document.getSelection()!.removeAllRanges();
+  });
+
+  it("the pinned notice and an alert inside the card seek", async () => {
+    const onSeek = vi.fn();
+    const actions = actionsMock();
+    actions.resolve = vi.fn(async () => { throw new ApiError("Boom", 500); });
+    await render(thread(), { onSeek, actions, pinned: true });
+    await tap(tid("video-note-pinned")!);
+    expect(onSeek).toHaveBeenCalledTimes(1);
+    await click(tid("video-note-resolve")!);
+    await flush();
+    await tap(tid("video-note-notice")!.querySelector("span")!);
+    expect(onSeek).toHaveBeenCalledTimes(2);
+  });
+
+  it("a general note (no frame) has no handler, cursor or hover; no card takes a role or a tab stop", async () => {
+    const onSeek = vi.fn();
+    await render(thread({ startFrame: null }), { onSeek });
+    await tap(tid("video-note-body")!);
+    expect(onSeek).not.toHaveBeenCalled();
+    expect(card().className).not.toContain("cursor-pointer");
+    expect(card().className).not.toContain("hover:bg-muted/50");
+    expect(card().hasAttribute("role")).toBe(false);
+    expect(card().hasAttribute("tabindex")).toBe(false);
+    await act(async () => { root!.unmount(); }); host.remove();
+    await render(thread());
+    expect(card().className).toContain("cursor-pointer");
+    expect(card().className).toContain("data-[selected=false]:hover:bg-muted/50");
+    expect(card().className).toContain("data-[selected=false]:hover:border-border-hover");
+    expect(card().hasAttribute("role")).toBe(false);
+    expect(card().hasAttribute("tabindex")).toBe(false);
+  });
+});

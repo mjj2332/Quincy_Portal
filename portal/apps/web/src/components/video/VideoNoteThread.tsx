@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Re
 import { CircleCheck, Lock, PencilIcon } from "lucide-react";
 import { VIDEO_NOTE_BODY_MAX, type RichTextDoc, type Role, type VideoNoteDto, type VideoNoteEditInput, type VideoNoteThreadDto } from "@quincy/shared";
 import { cn } from "../../lib/utils";
+import { NOTE_CARD_SEEKABLE, useNoteCardSeek } from "../../lib/note-card-seek";
 import { isOwnNote, noteAnchorLabel } from "../../lib/video-note-view";
 import { MarkupRevisionMismatch, useVideoNoteMarkupQuery } from "../../lib/video-notes-data";
 import { draftDoc, effectiveMarks, frameOnScreen, preloadSavedDrawing, writeFailure, type NoteFormStore, type Problem } from "../../lib/video-note-form-store";
@@ -184,9 +185,15 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     if (replying) focusField(q(articleRef.current, '[data-testid="video-note-reply-body"]'));
   }, [replying]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The "⋯" menus that are open, by note id (#901): a press on the card while one is open only dismisses it. An id counts only while its menu is
+  // still rendered, so a menu that unmounts open (the note deleted elsewhere) cannot leave the card unable to seek.
+  const openMenus = useRef(new Set<string>());
+  const menuShown = (note: VideoNoteDto) => !readOnly && !note.deleted && isOwnNote(note, userId);
+  const seekProps = useNoteCardSeek(thread.startFrame !== null ? () => { onSeek(thread); } : null, () => [thread, ...thread.replies].some((note) => openMenus.current.has(note.id) && menuShown(note)));
+
   function renderMenu(note: VideoNoteDto): ReactNode {
-    if (readOnly || note.deleted || !isOwnNote(note, userId)) return null;
-    return <Menu triggerLabel={`Actions for note by ${authorName(note)}`} label="Note actions" triggerClassName={cn(ICON_BUTTON, "me-[var(--space-1)]")} triggerTestId="video-note-actions" finalFocus={focusEditor} onOpenChange={(open) => { if (open) deletePending.current = false; }} trigger={<span aria-hidden="true">⋯</span>}>
+    if (!menuShown(note)) return null;
+    return <Menu triggerLabel={`Actions for note by ${authorName(note)}`} label="Note actions" triggerClassName={cn(ICON_BUTTON, "me-[var(--space-1)]")} triggerTestId="video-note-actions" finalFocus={focusEditor} onOpenChange={(open) => { if (open) deletePending.current = false; if (open) openMenus.current.add(note.id); else openMenus.current.delete(note.id); }} trigger={<span aria-hidden="true">⋯</span>}>
       <MenuPrimitive.Item className={MENU_ITEM} disabled={busy || blocked} onClick={() => { startEdit(note); }}>Edit</MenuPrimitive.Item>
       <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive")} disabled={busy} onClick={() => { deletePending.current = true; actions.requestDelete(note, thread); }}>Delete</MenuPrimitive.Item>
     </Menu>;
@@ -237,7 +244,8 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
   const label = noteAnchorLabel(thread, timecode);
   const resolvedLine = thread.resolved ? `Resolved by ${thread.resolved.by.name}` : null;
 
-  return <Item variant="outline" size="sm" className="block min-w-0 data-[selected=true]:border-foreground" data-testid="video-note-thread" data-note-id={thread.id} data-selected={selected ? "true" : "false"} data-resolved={thread.resolved ? "true" : "false"} ref={articleRef as never}>
+  // The whole card seeks to the thread's frame (#901), as its timecode button does; a general note has no frame, so no handler, cursor or hover.
+  return <Item variant="outline" size="sm" className={cn("block min-w-0 data-[selected=true]:border-foreground", thread.startFrame !== null && NOTE_CARD_SEEKABLE)} {...seekProps} data-testid="video-note-thread" data-note-id={thread.id} data-selected={selected ? "true" : "false"} data-resolved={thread.resolved ? "true" : "false"} ref={articleRef as never}>
     <div className="grid min-w-0 gap-[var(--space-2)]">
       {pinned && <Notice tone="caution" data-testid="video-note-pinned">Outside current filters</Notice>}
       {header(thread, true)}
