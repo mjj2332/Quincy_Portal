@@ -28,8 +28,11 @@ the code; viewing and downloading carry none.
 
 ## Consequences
 
-- A download with no verified session is audited against the link and the Version, with no guest identity,
-  as a download from the public Delivery page already is. A verified guest's download keeps their email.
+- A download with no verified session is audited against the link and the Version, with no guest identity
+  (only the opaque session id). A public Delivery page download writes no audit row at all, so this is more
+  than that page records. A verified guest's download keeps their guest identity.
+- Anonymous callers are limited by address and spend their own link pools, never the verified client's,
+  so they cannot lock the client out of Download all.
 - Which Versions download is unchanged: the published Version without a Release, an older one only once
   Released (ADR 0023). Every Review link other than the Delivery review link keeps the code for download.
 - Only the guest download routes widen, and each re-reads in SQL, at its commit and byte fences, that the
