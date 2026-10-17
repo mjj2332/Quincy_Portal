@@ -641,6 +641,12 @@ describe("VideoReviewViewer desktop rail (#881)", () => {
     await mount(["notes"]);
     await openViewerWithFilm();
     expect(pane()).not.toBeNull();
+     await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren();
+    // A square tablet-width window is not taller than wide (D18: height > width): open (#881 Sol review).
+    viewport.restore(); viewport = mockViewport({ width: 1024, height: 1024 });
+    await mount(["notes"]);
+    await openViewerWithFilm();
+    expect(pane()).not.toBeNull();
   });
 
   it("a drag ends cleanly: another pointer cannot move it, a cancel commits what was drawn, and a collapse mid-drag commits nothing", async () => {

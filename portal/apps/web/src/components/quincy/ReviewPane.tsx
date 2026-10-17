@@ -48,7 +48,7 @@ function collapsedHeight(row: HTMLElement): number {
 
 /** A tablet held upright (D18): from the phone breakpoint up to `TABLET_MAX` wide, taller than wide. No pointer gate, so a tall narrow desktop window counts too (the same narrow film). */
 const TABLET_WIDE_QUERY = `(max-width: ${TABLET_MAX}px)`;
-const PORTRAIT_QUERY = "(orientation: portrait)";
+const PORTRAIT_QUERY = "(aspect-ratio < 1)"; // strictly taller than wide (D18): a square viewport is not portrait, though `(orientation: portrait)` says it is
 
 /**
  * The pane's state for a screen: the saved preference (open, width), plus the narrow rule. A row too narrow for the smallest pane AND the
