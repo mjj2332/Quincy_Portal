@@ -169,7 +169,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const paneId = useId();
   const deliveryHeadingId = useId();
   const [sideTab, setSideTab] = useState<"main" | "delivery">("main");
-  /** An I/O mark, a marker or a note link needs the notes where the person can see them: open the pane on its first tab. */
+  /** An I/O mark, a marker or a note link needs the notes where the person can see them: show the pane on its first tab (`revealNotes`, never saved). */
   const setPaneOpen = pane.setOpen;
   const shown = video.versions.find((candidate) => candidate.assetId === assetId) ?? video.versions[0]!;
   const sheetControl = useReviewSheet({ drawing: false, filmAspect: shown.height > 0 ? shown.width / shown.height : 16 / 9 });
@@ -177,7 +177,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   sheetStopRef.current = sheetControl.stop;
   const setSheetStop = sheetControl.onStop;
   // A phone's notes sheet opens at half whenever something sends the person to the notes (a marker, an I/O mark, a note link), and never persists (D6).
-  const revealNotes = useCallback(() => { setPaneOpen(true); setSideTab("main"); if (sheetStopRef.current === "collapsed") setSheetStop("half"); }, [setPaneOpen, setSheetStop]);
+  const revealPane = pane.reveal;
+  const revealNotes = useCallback(() => { revealPane(); setSideTab("main"); if (sheetStopRef.current === "collapsed") setSheetStop("half"); }, [revealPane, setSheetStop]);
   // Search in the phone notes head (#879 PR 3b, owner decision): the keyboard is about to take half the screen, so the sheet goes to full while the field is open and back to
   // the stop it was at when it closes. A stop the person drags to meanwhile is theirs: closing restores only if the sheet is still at full.
   const searchReturn = useRef<SheetStop | null>(null);

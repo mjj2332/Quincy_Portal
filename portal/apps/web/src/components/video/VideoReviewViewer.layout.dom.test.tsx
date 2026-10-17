@@ -624,6 +624,39 @@ describe("VideoReviewViewer desktop rail (#881)", () => {
     expect(pane()).not.toBeNull();
   });
 
+  it("D18 (owner, #881): an I mark on a portrait tablet shows the pane for this visit and saves nothing, so the next visit starts collapsed", async () => {
+    viewport.restore(); viewport = mockViewport({ width: 834, height: 1112, coarse: true });
+    await mount(["notes"]);
+    await openViewerWithFilm();
+    expect(pane()).toBeNull();
+    const film = document.querySelector("video")!;
+    await act(async () => { stub.loadMetadata(film, { duration: 12 }); });
+    await press(document.querySelector('[data-testid="video-review-viewer"]')!, "i");
+    await flush(4);
+    expect(pane()).not.toBeNull();
+    expect(saved()).toBeNull();
+    // Hiding the revealed pane returns to the screen's default, still unsaved.
+    await act(async () => { hide()!.click(); });
+    expect(pane()).toBeNull();
+    expect(saved()).toBeNull();
+    await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren(); resetUiPrefMemory();
+    await mount(["notes"]);
+    await openViewerWithFilm();
+    expect(pane()).toBeNull();
+  });
+
+  it("a reveal never rewrites a remembered hide: the I mark shows the pane, the saved choice stays closed", async () => {
+    shim.values.set(PANE, JSON.stringify({ open: false, width: 360 }));
+    await mount(["notes"]);
+    await openViewerWithFilm();
+    const film = document.querySelector("video")!;
+    await act(async () => { stub.loadMetadata(film, { duration: 12 }); });
+    await press(document.querySelector('[data-testid="video-review-viewer"]')!, "i");
+    await flush(4);
+    expect(pane()).not.toBeNull();
+    expect(saved()).toEqual({ open: false, width: 360 });
+  });
+
   it("D18: a remembered open choice opens on a portrait tablet; landscape and a wide desktop start open", async () => {
     shim.values.set(PANE, JSON.stringify({ open: true, width: 380 }));
     viewport.restore(); viewport = mockViewport({ width: 834, height: 1112, coarse: true });

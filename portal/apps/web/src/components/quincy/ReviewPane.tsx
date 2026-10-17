@@ -71,16 +71,25 @@ export function useReviewPane(phone: boolean) {
   const narrowRef = useRef(false);
   narrowRef.current = narrow;
   const [narrowOpen, setNarrowOpen] = useState(false);
-  const open = narrow ? narrowOpen : resolved;
+  // A reveal (a marker, an I/O mark, a note link) shows the pane for this visit only: it is not a choice, so it never writes (owner, #881 — a portrait tablet keeps D18's collapsed start).
+  const [revealed, setRevealed] = useState(false);
+  const open = narrow ? narrowOpen : revealed || resolved;
   const setOpen = useCallback((next: boolean) => {
     if (phone) return; // a phone has its own layout and must not rewrite the desktop choice
     if (narrowRef.current) { setNarrowOpen(next); return; }
-    // Against what is on screen, not the stored value: showing a pane that is already shown is not a choice, so a never-chosen state stays live.
+    setRevealed(false);
+    // Against the remembered or default state, not the stored value: showing a pane that is already shown is not a choice, so a never-chosen state stays live,
+    // and hiding a revealed pane only drops the reveal when that lands back on the remembered state.
     if (resolvedRef.current !== next) setPref({ ...prefRef.current, open: next });
   }, [phone, setPref]);
+  const reveal = useCallback(() => {
+    if (phone) return;
+    if (narrowRef.current) { setNarrowOpen(true); return; }
+    setRevealed(true);
+  }, [phone]);
   // A resize keeps `open` as stored: a never-chosen state stays `null`.
   const setWidth = useCallback((width: number) => { setPref({ ...prefRef.current, width }); }, [setPref]);
-  return { open, setOpen, width: pref.width, setWidth, onNarrow: setNarrow };
+  return { open, setOpen, reveal, width: pref.width, setWidth, onNarrow: setNarrow };
 }
 const STEP = 16;
 const STEP_BIG = 64;
