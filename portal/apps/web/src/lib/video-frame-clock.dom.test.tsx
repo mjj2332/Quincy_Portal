@@ -205,6 +205,13 @@ describe("VideoFrameClock, requestVideoFrameCallback path (#741 4d-ii)", () => {
     expect(clock!.getState()).toMatchObject({ frame: 99, playing: false, rate: 0 });
   });
 
+  it("ended on the cfr-25 shape (500 frames, 20 s) parks on frame 499 of 500 (#900)", () => {
+    const video = setup({ frameCount: 500 }); settleAtZero(video, 20);
+    clock!.play();
+    stub.endPlayback(video);
+    expect(clock!.getState()).toMatchObject({ frame: 499, playing: false, rate: 0 });
+  });
+
   it("play at the last frame restarts from frame 0", () => {
     const video = setup(); settleAtZero(video);
     clock!.seekToFrame(99); stub.finishSeek(video); stub.presentFrame(video, 99 / 25);

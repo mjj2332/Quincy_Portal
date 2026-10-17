@@ -96,6 +96,13 @@ export type TrackSpec = {
   height?: number;
   /** Nine raw int32 matrix values (a b u c d v x y w). Default identity. */
   matrix?: number[];
+  /** [sampleCount, compositionOffset] runs, written after stts. Offsets are signed; version 0 writes them as raw int32. */
+  ctts?: Array<[number, number]>;
+  cttsVersion?: 0 | 1;
+  /** Whole-box ctts override, for malformed-box tests. */
+  cttsRaw?: Uint8Array;
+  /** A `cslg` box in stbl; the probe must ignore it. */
+  cslg?: boolean;
   elst?: Array<{ segmentDuration: number; mediaTime: number; rateInt?: number; rateFrac?: number }>;
   elstVersion?: 0 | 1;
   /** tref/tmcd: ids of the timecode tracks this track references. */
@@ -212,6 +219,9 @@ function trak(t: TrackSpec, i: number, chunkOffset: number): Uint8Array {
     "stbl",
     fullBox("stsd", 0, 0, u32(1 + extraEntries.length), entry, ...extraEntries),
     t.sttsRaw ?? fullBox("stts", 0, 0, u32(stts.length), ...stts.map(([c, d]) => concat(u32(c), u32(d)))),
+    ...(t.cttsRaw ? [t.cttsRaw] : []),
+    ...(t.ctts ? [fullBox("ctts", t.cttsVersion ?? 0, 0, u32(t.ctts.length), ...t.ctts.map(([c, o]) => concat(u32(c), u32(o >>> 0))))] : []),
+    ...(t.cslg ? [fullBox("cslg", 0, 0, u32(0), u32(0), u32(0), u32(0), u32(0))] : []),
     t.stscRaw ?? fullBox("stsc", 0, 0, u32(1), u32(1), u32(1), u32(t.stscDesc ?? 1)),
     t.stszRaw ?? fullBox("stsz", 0, 0, u32(4), u32(1)),
     t.stcoRaw ?? (t.co64 ? fullBox("co64", 0, 0, u32(1), u64(chunkOffset)) : fullBox("stco", 0, 0, u32(1), u32(chunkOffset))),
@@ -280,4 +290,25 @@ export function buildMp4(spec: Mp4Spec): BuiltSource {
 /** A 30000/1001 H.264 video track, 300 frames, 1920x1080: the baseline every test varies. */
 export function videoTrack(over: Partial<TrackSpec> = {}): TrackSpec {
   return { handler: "vide", timescale: 30000, stts: [[300, 1001]], ...over };
+}
+
+/** ctts runs for I (2d), then P 4d / B d / B d groups, closed with 2d: composition times are a permutation of 2d..(n+1)d. */
+export function bFrameCtts(n: number, delta: number): Array<[number, number]> {
+  const disp: number[] = [0]; // display index of each sample, in decode order
+  let next = 1;
+  while (next < n) {
+    const left = n - next;
+    if (left >= 3) disp.push(next + 2, next, next + 1);
+    else if (left === 2) disp.push(next + 1, next);
+    else disp.push(next);
+    next += Math.min(3, left);
+  }
+  const runs: Array<[number, number]> = [];
+  disp.forEach((j, i) => {
+    const off = (j + 2) * delta - i * delta;
+    const last = runs[runs.length - 1];
+    if (last && last[1] === off) last[0]++;
+    else runs.push([1, off]);
+  });
+  return runs;
 }

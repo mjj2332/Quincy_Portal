@@ -104,6 +104,7 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "POST", path: "/api/admin/autohdr/backfill", class: "withheld" },
   { method: "POST", path: "/api/admin/autohdr/scaffold-backfill", class: "withheld" },
   { method: "POST", path: "/api/admin/delivery-review-links/sync", class: "withheld" },
+  { method: "POST", path: "/api/admin/video-versions/reprobe", class: "withheld" },
   { method: "POST", path: "/api/admin/notification-deliveries/:outboxId/discard", class: "withheld" },
   { method: "POST", path: "/api/admin/notification-deliveries/:outboxId/replay", class: "withheld" },
   { method: "GET", path: "/api/admin/notification-deliveries", class: "withheld" },

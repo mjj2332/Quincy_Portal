@@ -36,7 +36,18 @@ const SECURITY_HEADERS = { "cache-control": "private, no-store", "x-content-type
 
 const entryName = videoVersionFileName;
 /** The audit identity: the verified guest and session, or null for an unverified Delivery-link session (ADR 0025: no guest identity; the opaque `sessionId` sits beside it). */
-const guestMeta = (guestId: string | null, sessionId: string) => (guestId === null ? null : { guestId, sessionId });
+type Principal = { kind: "anon"; sessionId: string } | { kind: "guest"; guestId: string; sessionId: string };
+const principalOf = (session: GuestSession): Principal => (session.guestId === null ? { kind: "anon", sessionId: session.id } : { kind: "guest", guestId: session.guestId, sessionId: session.id });
+/** The `guest` SQL bind: the verified guest, or NULL for the unverified session. */
+const guestIdOf = (principal: Principal): string | null => (principal.kind === "guest" ? principal.guestId : null);
+/** The audit identity fields, in meta order: `guest` (null when unverified), then the opaque `sessionId` beside it for an unverified session only. */
+const auditWho = (principal: Principal) => (principal.kind === "guest" ? { guest: { guestId: principal.guestId, sessionId: principal.sessionId } } : { guest: null, sessionId: principal.sessionId });
+/** The two rate-limit buckets of a zip start (`zip`) or of prepare (`zipprep`): the principal's own, then the link's. Unverified: keyed by address (hashed, as the Delivery zips do) and an anonymous-only link pool, so it can never exhaust the verified client's Download all. */
+async function zipBuckets(c: Ctx, kind: "zip" | "zipprep", principal: Principal, linkId: string, now: number): Promise<{ bucket: string; limit: number }[]> {
+  const prep = kind === "zipprep";
+  if (principal.kind === "anon") return [{ bucket: await ipBucket(kind, clientAddress(c.req.raw), windowStart(now)), limit: prep ? GUEST_LIMITS.zipPrepareIp : GUEST_LIMITS.zipIp }, { bucket: `${kind}:anon-link:${linkId}`, limit: prep ? GUEST_LIMITS.zipPrepareAnonLink : GUEST_LIMITS.zipAnonLink }];
+  return [{ bucket: `${kind}:guest:${principal.guestId}`, limit: prep ? GUEST_LIMITS.zipPrepareGuest : GUEST_LIMITS.zipGuest }, { bucket: `${kind}:link:${linkId}`, limit: prep ? GUEST_LIMITS.zipPrepareLink : GUEST_LIMITS.zipLink }];
+}
 export { attachment, safeFileName };
 
 // -- SQL: the fence a committing statement and every zip entry repeat. Aliases: `s` guest_sessions, `l` client_links. Downloads read, so there is NO unarchived test here. --
@@ -62,7 +73,7 @@ async function stillAllowed(db: D1Database, session: GuestSession, assetId: stri
   return row !== null;
 }
 
-type Entered = { session: GuestSession; /** Null: an unverified session on the Delivery review link (ADR 0025). */ guestId: string | null; answer: (response: Response) => Promise<Response> };
+type Entered = { session: GuestSession; /** `anon`: an unverified session on the Delivery review link (ADR 0025). */ principal: Principal; answer: (response: Response) => Promise<Response> };
 /** Steps 1 to 5: the response that ends the request, or the session with an `answer` that re-classifies any non-success first. */
 async function enter(c: Ctx, assetId?: string): Promise<Entered | Response> {
   const linkId = c.req.param("linkId") ?? "";
@@ -73,14 +84,15 @@ async function enter(c: Ctx, assetId?: string): Promise<Entered | Response> {
   const session = await resolveSession(c, linkId, Date.now()); if (!session) return stub();
   // The gate is read again inside `resolveSession`; it may have closed since `loadActiveLink`, so the session's own parts must still carry both.
   if (!open(session.link)) return stub();
+  const principal = principalOf(session);
   const early = (response: Response) => classifyRefusal(c, session, true, { parts: PARTS, archived: false }).then((refused) => refused ?? response);
   // The capability is not a stub on purpose: the session body already tells the page whether it is verified and what the link allows.
   // Only the Delivery review link downloads without a verified session (ADR 0025). The fences below re-read this in SQL; this is the cheap early answer.
-  if (session.guestId === null && !session.link.deliveryReview) return early(c.json({ error: "verification_required" }, 401));
+  if (principal.kind === "anon" && !session.link.deliveryReview) return early(c.json({ error: "verification_required" }, 401));
   if (!session.link.allowDownload) return early(c.json({ error: "download_disabled" }, 403));
   const scope: RefusalScope = { parts: PARTS, download: true, archived: false, ...(assetId === undefined ? {} : { assetId }) };
   const answer = async (response: Response): Promise<Response> => await classifyRefusal(c, session, true, scope) ?? response;
-  return { session, guestId: session.guestId, answer };
+  return { session, principal, answer };
 }
 
 type VersionState = { r2Key: string; bytes: number; version: number; videoId: string; title: string; /** A live Release, or on the Delivery review link a place in the latest Published set. */ downloadable: boolean; locked: boolean };
@@ -101,7 +113,8 @@ async function refusedBecause(c: Ctx, session: GuestSession, assetId: string | u
   const row = await c.env.DB.prepare("SELECT s.guest_id, s.verified_at, l.delivery_review FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE s.id = ?1").bind(session.id).first<{ guest_id: string | null; verified_at: number | null; delivery_review: number }>();
   if (!row) return guestNotFound(c);
   // 401 whenever the credential this request held no longer matches the row: a verified guest changed or unverified; an unverified one is no longer on a Delivery link, or has verified since (the page re-reads the session and retries).
-  if (session.guestId === null ? row.guest_id !== null || row.delivery_review !== 1 : row.guest_id === null || row.verified_at === null || row.guest_id !== session.guestId) return c.json({ error: "verification_required" }, 401);
+  const principal = principalOf(session);
+  if (principal.kind === "anon" ? row.guest_id !== null || row.delivery_review !== 1 : row.guest_id === null || row.verified_at === null || row.guest_id !== principal.guestId) return c.json({ error: "verification_required" }, 401);
   if (assetId !== undefined) {
     const state = await readVersion(c.env.DB, session.link.id, session.link.projectId, assetId);
     if (state && !state.downloadable) return c.json({ error: "not_released" }, 409);
@@ -114,7 +127,7 @@ async function refusedBecause(c: Ctx, session: GuestSession, assetId: string | u
 async function downloadOne(c: Ctx): Promise<Response> {
   const assetId = c.req.param("assetId") ?? "";
   const entered = await enter(c, assetId); if (entered instanceof Response) return entered;
-  const { session, guestId, answer } = entered;
+  const { session, principal, answer } = entered;
   const state = await readVersion(c.env.DB, session.link.id, session.link.projectId, assetId);
   if (!state) return answer(await guestNotFound(c));
   if (!state.downloadable) return answer(c.json({ error: "not_released" }, 409));
@@ -126,7 +139,7 @@ async function downloadOne(c: Ctx): Promise<Response> {
     const written = await c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
       SELECT ?1, NULL, 'review_link.download', 'review_link', l.id, ?2, ?3 FROM guest_sessions s JOIN client_links l ON l.id = s.link_id
       WHERE ${sessionFence({ session: "?4", token: "?5", guest: "?6", now: "?3" })} AND ${reachSql("l.id", "l.project_id", "?7")} AND ${deliverableSql("l.id", "?7")}`)
-      .bind(newId(), auditMeta(null, { guest: guestMeta(guestId, session.id), ...(guestId === null ? { sessionId: session.id } : {}), linkId: session.link.id, projectId: session.link.projectId, videoId: state.videoId, assetId, version: state.version, bytes: state.bytes }), at, session.id, session.tokenHash, guestId, assetId).run();
+      .bind(newId(), auditMeta(null, { ...auditWho(principal), linkId: session.link.id, projectId: session.link.projectId, videoId: state.videoId, assetId, version: state.version, bytes: state.bytes }), at, session.id, session.tokenHash, guestIdOf(principal), assetId).run();
     if (written.meta.changes === 0) return refusedBecause(c, session, assetId);
   }
   // The last fence before any R2 read, for every method: HEAD and a resumed Range write no audit row, so the audit INSERT cannot be what stops them, and a revoke can land after `readVersion`.
@@ -189,9 +202,9 @@ async function checkLimited(c: Ctx, session: GuestSession, now: number): Promise
 /** Read-only: the page polls this, and a GET must not queue work (that is `prepare`'s job). */
 async function manifest(c: Ctx): Promise<Response> {
   const entered = await enter(c); if (entered instanceof Response) return entered;
-  const { session, guestId, answer } = entered;
+  const { session, principal, answer } = entered;
   const { included, leftOut } = await readDownloadSet(c.env.DB, session.link.id, session.link.projectId);
-  if (guestId === null && included.length > 0 && !tooLarge(included)) { const limited = await checkLimited(c, session, Date.now()); if (limited) return answer(limited); }
+  if (principal.kind === "anon" && included.length > 0 && !tooLarge(included)) { const limited = await checkLimited(c, session, Date.now()); if (limited) return answer(limited); }
   const archive: GuestArchiveState = included.length === 0 ? { state: "ready", pending: 0 }
     : tooLarge(included) ? { state: "too_large", pending: 0 }
     : archiveState(await assessZip(c.env, included, { source: "guest-downloads-manifest", enqueue: "never", headWhenOff: false }));
@@ -211,14 +224,12 @@ async function manifest(c: Ctx): Promise<Response> {
  */
 async function prepare(c: Ctx): Promise<Response> {
   const entered = await enter(c); if (entered instanceof Response) return entered;
-  const { session, guestId, answer } = entered;
+  const { session, principal, answer } = entered;
   const now = Date.now();
-  // A session with no guest costs nothing to mint, so its per-guest bucket would mean nothing: key it by address (hashed, as the Delivery zips do).
-  const principal = guestId === null ? { bucket: await ipBucket("zipprep", clientAddress(c.req.raw), windowStart(now)), limit: GUEST_LIMITS.zipPrepareIp } : { bucket: `zipprep:guest:${guestId}`, limit: GUEST_LIMITS.zipPrepareGuest };
-  // Anonymous callers have their own link pool, so they can never exhaust the verified client's Download all.
-  const buckets = [principal, guestId === null ? { bucket: `zipprep:anon-link:${session.link.id}`, limit: GUEST_LIMITS.zipPrepareAnonLink } : { bucket: `zipprep:link:${session.link.id}`, limit: GUEST_LIMITS.zipPrepareLink }];
+  // A session with no guest costs nothing to mint, so its per-guest bucket would mean nothing: key it by address. Anonymous callers have their own link pool (see `zipBuckets`).
+  const buckets = await zipBuckets(c, "zipprep", principal, session.link.id, now);
   // An address already over its limit must not also burn the link's slots (anyone holding the link could then lock every other visitor out of Download all): the unverified path takes both buckets or neither.
-  const attempt = guestId === null ? await reserveAllOrNone(c.env.DB, buckets, now) : await reserveAttempts(c.env.DB, buckets, now);
+  const attempt = principal.kind === "anon" ? await reserveAllOrNone(c.env.DB, buckets, now) : await reserveAttempts(c.env.DB, buckets, now);
   if (attempt.limited) return answer(tooMany(attempt.retryAfterSeconds));
   const { included } = await readDownloadSet(c.env.DB, session.link.id, session.link.projectId);
   if (included.length === 0) return answer(c.json({ error: "nothing_to_download" }, 409));
@@ -286,14 +297,14 @@ function archiveRefusal(c: Ctx, assessed: ZipAssessment): Response | null {
 
 async function downloadAll(c: Ctx): Promise<Response> {
   const entered = await enter(c); if (entered instanceof Response) return entered;
-  const { session, guestId, answer } = entered;
+  const { session, principal, answer } = entered;
   // A HEAD must not write an audit row or build anything.
   if (c.req.method === "HEAD") return answer(c.json({ error: "method_not_allowed" }, 405, { allow: "GET" }));
   const { included, leftOut } = await readDownloadSet(c.env.DB, session.link.id, session.link.projectId);
   if (included.length === 0) return answer(c.json({ error: "nothing_to_download" }, 409));
   if (tooLarge(included)) return answer(c.json({ error: "zip_too_large", maxEntries: GUEST_ZIP_MAX_ENTRIES, maxBytes: GUEST_ZIP_MAX_BYTES }, 422));
   // The gate: a missing or resized object fails here, before byte 0 and before the audit row, and so does a set whose CRC-32s are still being prepared or that is too big for the old writer.
-  if (guestId === null) { const limited = await checkLimited(c, session, Date.now()); if (limited) return answer(limited); }
+  if (principal.kind === "anon") { const limited = await checkLimited(c, session, Date.now()); if (limited) return answer(limited); }
   const assessed = await assessZip(c.env, included, { source: "guest-download-all", enqueue: "when_blocked" });
   const refusal = archiveRefusal(c, assessed); if (refusal) return answer(refusal);
   const notice = leftOutText(leftOut);
@@ -307,16 +318,16 @@ async function downloadAll(c: Ctx): Promise<Response> {
   // failed plan never costs a start.
   // Both buckets are taken together or not at all (#824), so a refused start changes neither; a start that then fails gives back exactly one slot in each, as the Delivery zips do.
   const at = Date.now();
-  const guestBucket = guestId === null ? await ipBucket("zip", clientAddress(c.req.raw), windowStart(at)) : `zip:guest:${guestId}`; const linkBucket = guestId === null ? `zip:anon-link:${session.link.id}` : `zip:link:${session.link.id}`;
-  const attempt = await reserveAllOrNone(c.env.DB, [{ bucket: guestBucket, limit: guestId === null ? GUEST_LIMITS.zipIp : GUEST_LIMITS.zipGuest }, { bucket: linkBucket, limit: guestId === null ? GUEST_LIMITS.zipAnonLink : GUEST_LIMITS.zipLink }], at);
+  const startBuckets = await zipBuckets(c, "zip", principal, session.link.id, at);
+  const attempt = await reserveAllOrNone(c.env.DB, startBuckets, at);
   if (attempt.limited) return answer(tooMany(attempt.retryAfterSeconds));
-  const refund = async () => { await refundAttempt(c.env.DB, guestBucket, at); await refundAttempt(c.env.DB, linkBucket, at); };
+  const refund = async () => { for (const { bucket } of startBuckets) await refundAttempt(c.env.DB, bucket, at); };
   const written = await c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
     SELECT ?1, NULL, 'review_link.download_all', 'review_link', l.id, ?2, ?3 FROM guest_sessions s JOIN client_links l ON l.id = s.link_id WHERE ${sessionFence({ session: "?4", token: "?5", guest: "?6", now: "?3" })}`)
     .bind(newId(), auditMeta(null, {
-      guest: guestMeta(guestId, session.id), ...(guestId === null ? { sessionId: session.id } : {}), linkId: session.link.id, projectId: session.link.projectId,
+      ...auditWho(principal), linkId: session.link.id, projectId: session.link.projectId,
       assetIds: included.map((entry) => entry.assetId), leftOut: leftOut.map(({ videoId, reason }) => ({ videoId, reason })), totalBytes: totalOf(included),
-    }), at, session.id, session.tokenHash, guestId).run().catch(async (error: unknown) => { await refund(); throw error; });
+    }), at, session.id, session.tokenHash, guestIdOf(principal)).run().catch(async (error: unknown) => { await refund(); throw error; });
   if (written.meta.changes === 0) { await refund(); return refusedBecause(c, session, undefined); }
   const filename = attachment(`${safeFileName(session.link.label ?? "Videos")}.zip`);
   if (planned) return nativeZipResponse(planned.open(), (promise) => c.executionCtx.waitUntil(promise), { ...SECURITY_HEADERS, "content-disposition": filename });

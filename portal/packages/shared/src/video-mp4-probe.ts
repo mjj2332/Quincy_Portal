@@ -3,6 +3,9 @@ import { rational, rationalToNumber, type Rational } from "./video-rational";
 /** Where the bytes come from: File.slice in the browser, R2 range reads on the server. */
 export type ByteSource = { size: number; read(offset: number, length: number): Promise<Uint8Array> };
 
+/** Bumped when the probe's frame count changes meaning; rows stored under an older version can be re-probed. */
+export const MP4_PROBE_VERSION = 2;
+
 /** Decimal 2 GB. The API enforces it (`too_large`); the probe only reads what it needs. */
 export const VIDEO_MAX_BYTES = 2_000_000_000;
 export const MP4_PROBE_LIMITS = { maxReads: 64, maxMoovBytes: 16 * 1024 * 1024 };
@@ -262,7 +265,7 @@ async function run(
   }
   const codec = media.entryType;
 
-  // Constant frame rate from stts alone. Ctts (B-frames) is irrelevant.
+  // Constant frame rate from stts alone. Ctts is irrelevant to the rate but not to the edit window.
   const { entries } = media;
   let totalSamples = 0;
   let delta = -1;
@@ -280,9 +283,13 @@ async function run(
   const ts = media.timescale;
   if (!isSupportedRate(ts, delta)) throw reject("unsupported_frame_rate", `${ts}/${delta}`);
   const fps = rational(ts, delta);
+  const ctts = media.ctts ?? [totalSamples, 0];
+  let cttsTotal = 0;
+  for (let i = 0; i < ctts.length; i += 2) cttsTotal += ctts[i]!;
+  if (cttsTotal !== totalSamples) throw reject("box_size_invalid", "ctts sample count");
 
-  // Edit list: none, or exactly one plain entry.
-  let skip = 0;
+  // Edit list: none, or exactly one plain entry. Its media_time is a composition time, so the frames it presents are
+  // the samples whose DTS + ctts offset falls in [media_time, media_time + segment_duration).
   let frameCount = totalSamples;
   const elst = video.kids.find((b) => b.type === "edts");
   if (elst) {
@@ -303,18 +310,18 @@ async function run(
         if (dv.getInt16(rateAt) !== 1 || dv.getInt16(rateAt + 2) !== 0) throw reject("unsupported_edit_list", "rate");
         if (mediaTime < 0) throw reject("unsupported_edit_list", "empty edit");
         if (mediaTime % delta !== 0) throw reject("unsupported_edit_list", "media_time not frame aligned");
-        skip = mediaTime / delta;
-        frameCount = totalSamples - skip;
+        let segFrames: number | null = null;
         if (segDur > 0 && movieTimescale > 0) {
           // segment_duration is in movie timescale; round to the nearest frame to absorb its rounding.
           const num = BigInt(segDur) * BigInt(ts);
           const den = BigInt(movieTimescale) * BigInt(delta);
-          const frames = Number((2n * num + den) / (2n * den));
-          frameCount = Math.min(frameCount, frames);
+          segFrames = Number((2n * num + den) / (2n * den));
         }
+        frameCount = presentedFrames(ctts, delta, mediaTime, segFrames === null ? null : BigInt(mediaTime) + BigInt(segFrames) * BigInt(delta));
       }
     }
   }
+  if (frameCount > Number.MAX_SAFE_INTEGER) throw reject("box_size_invalid", "frame count");
   if (frameCount <= 0) throw reject("zero_frames");
 
   // Transform
@@ -372,6 +379,30 @@ async function run(
   };
 }
 
+/** ceil(a / b) for b > 0 and any sign of a (BigInt division truncates toward zero). */
+const ceilDiv = (a: bigint, b: bigint): bigint => (a >= 0n ? (a + b - 1n) / b : a / b);
+
+/** Samples whose composition time i*delta + offset lies in [start, end), counted per ctts run (stts counts are unbounded). */
+function presentedFrames(ctts: number[], delta: number, start: number, end: bigint | null): number {
+  const D = BigInt(delta);
+  const S = BigInt(start);
+  let at = 0n;
+  let total = 0n;
+  for (let i = 0; i < ctts.length; i += 2) {
+    const n = BigInt(ctts[i]!);
+    const off = BigInt(ctts[i + 1]!);
+    const lo = ceilDiv(S - off, D) > at ? ceilDiv(S - off, D) : at;
+    let hi = at + n;
+    if (end !== null) {
+      const h = ceilDiv(end - off, D);
+      if (h < hi) hi = h;
+    }
+    if (hi > lo) total += hi - lo;
+    at += n;
+  }
+  return total > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER + 1 : Number(total);
+}
+
 type Media = {
   timescale: number;
   entryType: string;
@@ -381,6 +412,8 @@ type Media = {
   matrix: number[];
   /** Flattened [count, delta, count, delta, ...]. */
   entries: number[];
+  /** Flattened [count, offset, ...], offset signed in both versions; one run of offset 0 when the track has no ctts. */
+  ctts: number[] | null;
 };
 
 function stblOf(buf: Uint8Array, dv: DataView, t: TrackLight): { mdhd: MBox; stbl: MBox[] } {
@@ -477,6 +510,16 @@ function parseMedia(buf: Uint8Array, dv: DataView, t: TrackLight): Media {
     entries.push(dv.getUint32(sttsBox.start + 8 + i * 8), dv.getUint32(sttsBox.start + 12 + i * 8));
   }
 
+  let ctts: number[] | null = null;
+  const cttsBox = stbl.find((b) => b.type === "ctts");
+  if (cttsBox) {
+    need(cttsBox, 8);
+    const cn = dv.getUint32(cttsBox.start + 4);
+    if (cn > Math.floor((cttsBox.end - cttsBox.start - 8) / 8)) throw reject("box_size_invalid", "ctts entries");
+    ctts = [];
+    for (let i = 0; i < cn; i++) ctts.push(dv.getUint32(cttsBox.start + 8 + i * 8), dv.getInt32(cttsBox.start + 12 + i * 8));
+  }
+
   const tkhd = t.tkhd;
   const v1 = dv.getUint8(tkhd.start) === 1;
   const mAt = tkhd.start + (v1 ? 52 : 40);
@@ -484,7 +527,7 @@ function parseMedia(buf: Uint8Array, dv: DataView, t: TrackLight): Media {
   for (let i = 0; i < 9; i++) matrix.push(dv.getInt32(mAt + i * 4));
   const width = dv.getUint32(mAt + 36) >>> 16 || sw;
   const height = dv.getUint32(mAt + 40) >>> 16 || sh;
-  return { timescale, entryType, avcC, width, height, matrix, entries };
+  return { timescale, entryType, avcC, width, height, matrix, entries, ctts };
 }
 
 function readTmcdRefs(buf: Uint8Array, dv: DataView, t: TrackLight): number[] {

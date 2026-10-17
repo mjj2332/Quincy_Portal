@@ -232,6 +232,12 @@ describe("a Delivery deep link (#847)", () => {
       expect(back.tagName).toBe("A"); expect(back.getAttribute("href")).toBe(`/d/${PAGE}#v=${vid(2)}`);
       expect(push).not.toHaveBeenCalled();
     });
+    it("is named \"Back to the Delivery page\" on the video screen, its visible label inside that name", async () => {
+      await openDeep(vid(2), "tok123", PAGE);
+      const back = byId("guest-back-to-page")!;
+      expect(back.getAttribute("aria-label")).toBe("Back to the Delivery page");
+      expect(back.textContent).toBe("Delivery page");
+    });
     it("is absent when the link was not opened from a Delivery page", async () => {
       await openDeep(vid(2));
       expect(byId("guest-back-to-page")).toBeNull();
@@ -247,6 +253,8 @@ describe("a Delivery deep link (#847)", () => {
       expect(byId("guest-list")).not.toBeNull();
       const back = byId("guest-back-to-page") as HTMLAnchorElement;
       expect(back.tagName).toBe("A"); expect(back.getAttribute("href")).toBe(`/d/${PAGE}`);
+      expect(back.getAttribute("aria-label")).toBe("Back to the Delivery page");
+      expect(back.textContent).toBe("Delivery page");
     });
   });
 

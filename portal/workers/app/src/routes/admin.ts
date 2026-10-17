@@ -13,6 +13,7 @@ import { ensurePipelineStages, listPipelineStages } from "./stages";
 import { boardSchemaMaintenance } from "../lib/board-schema-maintenance";
 import { listEditorFolderAttention, readProvisioningFreeze } from "../lib/attention";
 import { publishOutboxDetached } from "../lib/server-timing";
+import { reprobePage } from "../lib/video-reprobe";
 
 const agencyCreate = z.object({ name: z.string().trim().min(1), notes: z.string().trim().nullable().optional() });
 const agencyPatch = agencyCreate.partial();
@@ -22,6 +23,7 @@ const stagePatch = z.object({ label: z.string().trim().min(1).optional(), active
 const renditionBackfill = z.object({ dryRun: z.boolean().optional(), cursor: z.string().uuid().optional(), limit: z.number().int().min(1).max(100).optional(), confirmProduction: z.literal(true).optional() });
 const autohdrBackfillInput = z.object({ dryRun: z.boolean().optional(), limit: z.number().int().min(1).max(100).optional(), cursor: z.string().uuid().optional() });
 const deliveryReviewSyncInput = z.object({ dryRun: z.boolean().optional(), limit: z.number().int().min(1).max(100).optional(), cursor: z.string().uuid().optional() }).strict();
+const videoReprobeInput = z.object({ dryRun: z.boolean().optional(), cursor: z.string().min(1).max(64).optional(), limit: z.number().int().min(1).max(10).optional() }).strict();
 const autohdrScaffoldBackfillInput = z.object({ dryRun: z.boolean().optional(), limit: z.number().int().min(1).max(200).optional() });
 const optionalQuery = <T extends z.ZodTypeAny>(schema: T) => z.preprocess((value) => value === "" ? undefined : value, schema.optional());
 const eventsQuery = z.object({ source: optionalQuery(z.literal("tonomo")), status: optionalQuery(z.enum(["received", "processed", "poison"])), offset: optionalQuery(z.coerce.number().int().min(0)), limit: optionalQuery(z.coerce.number().int().min(1).max(100)) });
@@ -461,6 +463,23 @@ adminRoutes.post("/admin/delivery-review-links/sync", terminalRoute("/admin/deli
   }
   await audit(c.env, user, "admin.delivery_review_backfill", "system", "delivery-review-links", { scanned: batch.length, created, changed, nextCursor });
   return c.json({ dryRun: false, scanned: batch.length, created, changed, nextCursor });
+}));
+
+/**
+ * #900 backfill: re-probes stored Versions under an older probe version from their R2 bytes and raises a frame count the old probe undercounted. Paged (`limit` <= 10, default 5), run by the owner from the signed-in Admin browser.
+ * `dryRun` defaults to true and writes nothing, audit included. A real call writes only where the count rises, plus one summary audit row. Items carry ids only.
+ */
+adminRoutes.post("/admin/video-versions/reprobe", terminalRoute("/admin/video-versions/reprobe", async (c) => {
+  if (!adminAllowed(c)) return c.json({ error: "Forbidden", capability: "adminBackend" }, 403);
+  const input = await jsonInput(c, videoReprobeInput); if (input instanceof Response) return input;
+  const dryRun = input.dryRun ?? true; const user = c.get("user");
+  const page = await reprobePage(c.env, { cursor: input.cursor ?? null, limit: input.limit ?? 5, dryRun, actor: user });
+  if (!dryRun) {
+    const counts: Record<string, number> = {};
+    for (const item of page.items) counts[item.status] = (counts[item.status] ?? 0) + 1;
+    await audit(c.env, user, "admin.video_probe_backfill", "system", "video-probe-backfill", { scanned: page.scanned, counts, nextCursor: page.nextCursor });
+  }
+  return c.json({ dryRun, ...page });
 }));
 
 // Messages the quincy-renditions consumer's DLQ actually received (see background queue()'s

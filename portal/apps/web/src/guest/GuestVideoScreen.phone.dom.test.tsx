@@ -461,7 +461,9 @@ describe("the Delivery review link on a phone: downloads need no code, writing s
     expect(back.tagName).toBe("A");
     expect(back.getAttribute("href")).toBe(`/d/${SLUG}#v=${vid(1)}`);
     expect(byId("review-phone-bar")!.contains(back)).toBe(true);
-    expect(back.textContent).toContain("Back to the delivery page");
+    // Icon only in the phone bar, named in full (owner decision: "Back to the Delivery page").
+    expect(back.getAttribute("aria-label")).toBe("Back to the Delivery page");
+    expect(back.textContent).toBe("");
   });
 
   it("the ⋯ Download row is an anchor to the film's download and opens no verify dialog", async () => {
