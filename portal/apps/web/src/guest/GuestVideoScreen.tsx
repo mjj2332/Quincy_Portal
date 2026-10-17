@@ -25,6 +25,7 @@ import { ReviewPhoneBar, VersionChip } from "../components/quincy/ReviewPhoneBar
 import { ActionRow, ActionSeparator, ReviewActionSheet } from "../components/quincy/ReviewActionSheet";
 import { blurComposerField, isComposerField, useReviewSheet } from "../components/quincy/ReviewSheet";
 import { PHONE_QUERY } from "../lib/review-pane-geometry";
+import { isPaneToggleKey } from "../lib/video-player-keys";
 import { useVisualViewport } from "../lib/use-visual-viewport";
 import { useInkCanvas } from "../lib/use-ink-canvas";
 import { VideoVersionsSheet, withSummaries, type VersionSheetRow } from "../components/video/VideoVersionsSheet";
@@ -95,6 +96,21 @@ function usePlayerKeysFromScreen(player: RefObject<VideoPlayerControl | null>) {
     window.addEventListener("keydown", onKeyDown);
     return () => { window.removeEventListener("keydown", onKeyDown); };
   }, [player]);
+}
+
+/** N shows or hides the notes pane (#881, D17) from anywhere on the screen while `enabled`; fields and popups keep their keys, as they do the player's. */
+function usePaneToggleKeyFromScreen(enabled: boolean, toggle: () => void) {
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.target instanceof Element && event.target.closest(`${FIELD}, ${POPUP}`)) return;
+      if (!isPaneToggleKey(event)) return;
+      event.preventDefault();
+      toggle();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => { window.removeEventListener("keydown", onKeyDown); };
+  }, [enabled, toggle]);
 }
 
 /**
@@ -207,8 +223,10 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
   const reviewPane = useReviewPane(phone);
   const paneId = useId();
   const setPaneOpen = reviewPane.setOpen;
-  // The pane's collapse control (#877 S2): ⇥ beside the Notes heading, ⇤ in a strip once collapsed. A phone has the drawer and no toggle.
-  const paneControls = useReviewPaneControls({ open: reviewPane.open, onOpenChange: setPaneOpen, paneId, noun: "notes" });
+  // The pane's collapse control (#877 S2): ⇥ beside the Notes heading, ⇤ in a strip once collapsed, with the open-note count (#881, W2/D22). A phone has the drawer and no toggle.
+  const paneControls = useReviewPaneControls({ open: reviewPane.open, onOpenChange: setPaneOpen, paneId, noun: "notes", shortcut: "N", openCount: threads === null ? null : openThreadCount(threads) });
+  // N (#881): desktop only; in Full screen the pane is hidden and the floating composer owns it.
+  usePaneToggleKeyFromScreen(!phone && immersive === null, paneControls.toggle);
 
   // Copy my notes (13d): the dialog, and what the last paste came to for the Version on screen.
   const [pasteOpen, setPasteOpen] = useState(false);

@@ -1,29 +1,39 @@
 import { describe, expect, it } from "vitest";
-import { PANE_DEFAULT, PANE_MAX, PANE_MIN, PLAYER_MIN, REVIEW_PANE_KEY, clampPaneWidth, normalizeReviewPane, paneCeiling } from "./review-pane-prefs";
+import { REVIEW_PANE_KEY, normalizeReviewPane } from "./review-pane-prefs";
+import { readUiPref, writeUiPref, type UiPrefStorage } from "./ui-prefs";
 
-describe("review pane prefs (#859)", () => {
-  it("has one browser-wide key and the settled bounds", () => {
+const memoryStorage = (): UiPrefStorage & { values: Map<string, string> } => {
+  const values = new Map<string, string>();
+  return { values, getItem: (key) => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value); } };
+};
+
+describe("review pane prefs (#859, #881)", () => {
+  it("keeps one browser-wide key", () => {
     expect(REVIEW_PANE_KEY).toBe("quincy:ui:review-notes-pane");
-    expect([PANE_MIN, PANE_DEFAULT, PANE_MAX, PLAYER_MIN]).toEqual([280, 360, 640, 480]);
   });
-  it("defaults to open at 360 for anything that is not a pane object", () => {
-    for (const junk of [null, undefined, "x", 3, [], NaN, { open: "yes", width: "wide" }, { width: NaN }]) expect(normalizeReviewPane(junk)).toEqual({ open: true, width: 360 });
+  it("reads anything that is not a pane object as never chosen, at 380", () => {
+    for (const junk of [null, undefined, "x", 3, [], NaN, { open: "yes", width: "wide" }, { width: NaN }, { open: 1 }]) expect(normalizeReviewPane(junk)).toEqual({ open: null, width: 380 });
   });
-  it("keeps a closed pane closed and rounds and clamps a stored width", () => {
+  it("keeps a remembered choice, and rounds and clamps a stored width to 300–560", () => {
     expect(normalizeReviewPane({ open: false, width: 400.4 })).toEqual({ open: false, width: 400 });
-    expect(normalizeReviewPane({ open: true, width: 10 })).toEqual({ open: true, width: 280 });
-    expect(normalizeReviewPane({ open: true, width: 9999 })).toEqual({ open: true, width: 640 });
-    expect(normalizeReviewPane({ open: true, width: Infinity })).toEqual({ open: true, width: 360 });
+    expect(normalizeReviewPane({ open: true, width: 10 })).toEqual({ open: true, width: 300 });
+    expect(normalizeReviewPane({ open: true, width: 9999 })).toEqual({ open: true, width: 560 });
+    expect(normalizeReviewPane({ open: true, width: Infinity })).toEqual({ open: true, width: 380 });
+    expect(normalizeReviewPane({ open: null, width: 420 })).toEqual({ open: null, width: 420 });
   });
-  it("the ceiling is the smaller of 640 and host - 480, never below the minimum, and 640 when the host is unmeasured", () => {
-    expect(paneCeiling(1440)).toBe(640);
-    expect(paneCeiling(1000)).toBe(520);
-    expect(paneCeiling(700)).toBe(280);
-    expect(paneCeiling(0)).toBe(640);
+  it("round-trips through the stored JSON, a never-chosen state included", () => {
+    const storage = memoryStorage();
+    writeUiPref(REVIEW_PANE_KEY, { open: null, width: 450 }, normalizeReviewPane, storage);
+    expect(readUiPref(REVIEW_PANE_KEY, normalizeReviewPane, storage)).toEqual({ open: null, width: 450 });
+    writeUiPref(REVIEW_PANE_KEY, { open: false, width: 450 }, normalizeReviewPane, storage);
+    expect(JSON.parse(storage.values.get(REVIEW_PANE_KEY)!)).toEqual({ open: false, width: 450 });
+    expect(readUiPref(REVIEW_PANE_KEY, normalizeReviewPane, storage)).toEqual({ open: false, width: 450 });
   });
-  it("clamps at use time without touching the preferred width", () => {
-    expect(clampPaneWidth(640, 1000)).toBe(520);
-    expect(clampPaneWidth(100, 1440)).toBe(280);
-    expect(clampPaneWidth(500, 1440)).toBe(500);
+  it("falls back to the defaults for corrupt JSON and a storage that throws", () => {
+    const storage = memoryStorage();
+    storage.values.set(REVIEW_PANE_KEY, "{{{not json");
+    expect(readUiPref(REVIEW_PANE_KEY, normalizeReviewPane, storage)).toEqual({ open: null, width: 380 });
+    const throwing: UiPrefStorage = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("blocked"); } };
+    expect(readUiPref(REVIEW_PANE_KEY, normalizeReviewPane, throwing)).toEqual({ open: null, width: 380 });
   });
 });

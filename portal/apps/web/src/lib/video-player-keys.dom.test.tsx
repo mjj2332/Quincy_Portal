@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { playerKeyAction } from "./video-player-keys";
+import { isPaneToggleKey, playerKeyAction } from "./video-player-keys";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -137,5 +137,32 @@ describe("playerKeyAction (#741 4d-ii)", () => {
       expect(playerKeyAction(keydown("k", { target }))).toEqual({ type: "toggle" });
       expect(playerKeyAction(keydown("i", { target }), { marks: true })).toEqual({ type: "mark", kind: "in" });
     });
+  });
+});
+
+describe("isPaneToggleKey (#881)", () => {
+  it("is plain N, either case, and never a player action", () => {
+    expect(isPaneToggleKey(keydown("n"))).toBe(true);
+    expect(isPaneToggleKey(keydown("N"))).toBe(true);
+    const button = mount<HTMLButtonElement>("<button>Note</button>");
+    expect(isPaneToggleKey(keydown("n", { target: button }))).toBe(true);
+    expect(playerKeyAction(keydown("n"), { marks: true, fullscreen: true })).toBeNull();
+    for (const key of ["m", "b", "k", "Escape", " "]) expect(isPaneToggleKey(keydown(key)), key).toBe(false);
+  });
+
+  it("is not N under a modifier, on key repeat, mid-composition, or once handled", () => {
+    for (const init of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }, { shiftKey: true }, { repeat: true }, { isComposing: true }, { keyCode: 229 }]) expect(isPaneToggleKey(keydown("n", init)), JSON.stringify(init)).toBe(false);
+    const taken = keydown("n", { cancelable: true });
+    taken.preventDefault();
+    expect(isPaneToggleKey(taken)).toBe(false);
+  });
+
+  it("is not N typed into a field, or inside a composite that owns its keys", () => {
+    for (const html of ["<input />", "<textarea></textarea>", '<div contenteditable="true"></div>', '<div role="menu"><button role="menuitem">a</button></div>', '<div role="listbox"><div role="option">a</div></div>', '<div role="separator" tabindex="0"></div>']) {
+      const host = mount(html);
+      const target = host.querySelector("[role=menuitem],[role=option]") ?? host;
+      expect(isPaneToggleKey(keydown("n", { target })), html).toBe(false);
+      document.body.replaceChildren();
+    }
   });
 });

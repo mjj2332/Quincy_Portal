@@ -9,6 +9,7 @@ import { frameOnScreen } from "../../lib/video-note-form-store";
 import { registerToastHost } from "../../lib/toast-host";
 import { hasOpenAlertDialog } from "../../lib/alert-dialog-press";
 import { useMediaQuery } from "../../lib/use-media-query";
+import { isPaneToggleKey } from "../../lib/video-player-keys";
 import { useProjectSocialOverlaysQuery, useVideoVersionSummariesQuery } from "../../lib/project-data";
 import { currentOverlay, useSocialPreview } from "../../lib/use-social-preview";
 import type { CompareSideId, CompareStore } from "../../lib/video-compare-store";
@@ -47,6 +48,7 @@ import type { VideoNotesSession } from "./use-video-notes";
 import { REVIEW_STATUS_LABEL, REVIEW_STATUS_TONE, VideoReviewStatusPill } from "./VideoReviewStatusPill";
 import { VideoReviewHeaderMenu } from "./VideoReviewHeaderMenu";
 import { VideoDetailsSheet } from "./VideoDetailsSheet";
+import { VideoVersionDetails } from "./VideoVersionDetails";
 import { blurNotesSearchField, type NotesSearchState } from "../quincy/NotesFilterHead";
 
 /** The notes UI is its own chunk: a Project whose notes part is off never loads it. */
@@ -164,6 +166,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   // The side pane (#859): open / width are a per-browser preference shared with the guest page. `sideTab` picks Notes (or Details) or Delivery inside it.
   const pane = useReviewPane(phone);
   const paneId = useId();
+  const deliveryHeadingId = useId();
   const [sideTab, setSideTab] = useState<"main" | "delivery">("main");
   /** An I/O mark, a marker or a note link needs the notes where the person can see them: open the pane on its first tab. */
   const setPaneOpen = pane.setOpen;
@@ -232,8 +235,9 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const [toastSlot, setToastSlot] = useState<HTMLElement | null>(null);
   useEffect(() => (toastSlot ? registerToastHost(toastSlot) : undefined), [toastSlot]);
   const notesOn = notes !== undefined;
-  // The pane's collapse control (#877): hide (⇥) lives in the pane, show (⇤) in a slim strip once it is collapsed. The top bar holds neither.
-  const paneControls = useReviewPaneControls({ open: pane.open, onOpenChange: setPaneOpen, paneId, noun: notesOn ? "notes" : "details" });
+  // The pane's collapse control (#877): hide (⇥) lives in the pane, show (⇤) in a slim strip once it is collapsed. The top bar holds neither (D29).
+  // N shows or hides it (#881, D17); with the notes part off and Delivery on, the desktop pane is Delivery alone.
+  const paneControls = useReviewPaneControls({ open: pane.open, onOpenChange: setPaneOpen, paneId, noun: notesOn ? "notes" : delivery !== undefined ? "delivery" : "details", shortcut: "N" });
   // Escape order with the notes panel (#741 5b), decided from a snapshot taken at keydown, before any handler has run: Base UI reports one
   // Escape to `onOpenChange` more than once, so the answer cannot come from state the first call changed (the ProjectSheet note).
   // 1. an open menu, popover, list, confirm or modal dialog owns it; 2. the form store decides for the Version's form (draw mode first: a confirmation is cancelled, or
@@ -579,21 +583,27 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       </aside>;
     // Delivery is a tab of the pane on desktop, so the player takes the full column; both panels stay mounted (a draft or a pending write survives switching). A phone keeps today's stack: delivery under the player.
     const tabbed = delivery !== undefined;
+    // The notes part off (#881, D8: there is no Details tab): the desktop pane is Delivery alone, no tablist of one, with the Version details behind the head's
+    // popover. The same Tabs root and panels stay mounted (the Details panel hidden), so crossing 721px to the phone's Details · Delivery tabs never remounts the delivery panel.
+    const deliveryOnly = tabbed && slots === null && !phone;
     // On a phone the tab row is the sheet's head (it stays when the sheet is collapsed); choosing a tab from collapsed opens the sheet to half (D6).
     const openSheet = () => { if (phone && sheetControl.stop === "collapsed") sheetControl.onStop("half"); };
     const notesLabel = slots ? "Notes" : "Details";
     const sidePane = tabbed
-      ? <Tabs value={sideTab} onValueChange={(next) => { setSideTab(next === "delivery" ? "delivery" : "main"); }} className="min-h-0 flex-1 gap-0">
-        {/* A phone's tabs sit left, each its own width (#879 PR 3a, P1 `.tabs`), with the open-note count as a Badge beside Notes. */}
+      ? <Tabs value={deliveryOnly ? "delivery" : sideTab} onValueChange={(next) => { setSideTab(next === "delivery" ? "delivery" : "main"); }} className="min-h-0 flex-1 gap-0">
+        {/* A phone's tabs sit left, each its own width (#879 PR 3a, P1 `.tabs`); the open-note count is a Badge beside Notes at every width (W1, #881). */}
         <div data-sheet-part="head" className="flex shrink-0 items-center border-l border-b border-border bg-card pe-[var(--space-2)] max-[721px]:border-l-0 max-[721px]:ps-[var(--space-3)]">
-          <TabsList variant="line" className="min-w-0 flex-1 rounded-none bg-card px-[var(--space-3)] max-[721px]:!h-11 max-[721px]:justify-start max-[721px]:!p-0">
-            <TabsTrigger value="main" data-testid="video-pane-tab-main" className={PHONE_TAB} onClick={openSheet}>{notesLabel}{phone && slots?.openCount != null && <><span className="sr-only"> </span><Badge variant="secondary" data-testid="video-pane-tab-count" className="tabular-nums">{slots.openCount}</Badge><span className="sr-only"> open</span></>}</TabsTrigger>
-            <TabsTrigger value="delivery" data-testid="video-pane-tab-delivery" className={PHONE_TAB} onClick={openSheet}>Delivery</TabsTrigger>
-          </TabsList>
+          {deliveryOnly
+            ? <><h3 id={deliveryHeadingId} data-testid="video-pane-delivery-heading" className="m-0 flex min-h-8 min-w-0 flex-1 items-center px-[var(--space-4)] text-foreground [font:var(--type-body)]">Delivery</h3><VideoVersionDetails>{detailsRows}</VideoVersionDetails></>
+            : <TabsList variant="line" className="min-w-0 flex-1 rounded-none bg-card px-[var(--space-3)] max-[721px]:!h-11 max-[721px]:justify-start max-[721px]:!p-0">
+              <TabsTrigger value="main" data-testid="video-pane-tab-main" className={PHONE_TAB} onClick={openSheet}>{notesLabel}{slots?.openCount != null && <><span className="sr-only"> </span><Badge variant="secondary" data-testid="video-pane-tab-count" className="tabular-nums">{slots.openCount}</Badge><span className="sr-only"> open</span></>}</TabsTrigger>
+              <TabsTrigger value="delivery" data-testid="video-pane-tab-delivery" className={PHONE_TAB} onClick={openSheet}>Delivery</TabsTrigger>
+            </TabsList>}
           {!phone && paneControls.hideButton}
         </div>
         <TabsContent value="main" keepMounted className={`flex min-h-0 flex-col [&[hidden]]:hidden${phone ? " flex-1" : ""}`}><ReviewPaneHideContext.Provider value={null}>{main}</ReviewPaneHideContext.Provider></TabsContent>
-        <TabsContent value="delivery" keepMounted data-sheet-part="body" className={`min-h-0 overflow-y-auto border-l border-border bg-card p-[var(--space-4)] [&[hidden]]:hidden${phone ? " flex-1 border-l-0" : ""}`}>{deliveryPanel}</TabsContent>
+        {/* Delivery alone is a region named by the head, not a tab panel of a tablist that is not there. */}
+        <TabsContent value="delivery" keepMounted data-sheet-part="body" {...(deliveryOnly ? { role: "region", "aria-labelledby": deliveryHeadingId } : {})} className={`min-h-0 overflow-y-auto border-l border-border bg-card p-[var(--space-4)] [&[hidden]]:hidden${phone ? " flex-1 border-l-0" : ""}`}>{deliveryPanel}</TabsContent>
       </Tabs>
       : <div className="flex min-h-0 flex-1 flex-col">
         <div data-sheet-part="head" className="flex shrink-0 items-center border-b border-border bg-card px-[var(--space-4)] py-[var(--space-2)] [font:var(--type-body)] min-[721px]:hidden" onClick={openSheet}>{notesLabel}{slots?.openCount != null && <span className="ms-[var(--space-2)] text-foreground-secondary tabular-nums">{`${slots.openCount} open`}</span>}</div>
@@ -656,7 +666,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         <CloseCardOnPlay clock={imm && slots ? slots.immersive.clock : null} active={cardId !== null} onClose={closeCard} />
       </>}
       pane={sidePane}
-      strip={paneControls.strip}
+      strip={paneControls.stripFor(slots?.openCount)}
     />;
     // The phone header is part of the layout (it needs the notes host's marker export for its action sheet); Compare does not exist on a phone, so it never needs to outlive a mode switch.
     return <>{phone ? <div data-testid="video-review-header-hide" className={imm ? "hidden" : "contents"} inert={imm}>{phoneHeader(slots ?? undefined)}</div> : null}{split}</>;
@@ -677,6 +687,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         // A dialog portalled out of the viewer (a confirm, a note-delete) still bubbles its keys here through React: leave them to that dialog.
         const host = (event.target as Element).closest?.('[role=dialog],[role=alertdialog]');
         if (host && host !== event.currentTarget) return;
+        // N shows or hides the pane (#881): desktop, one film. Not on a phone (the sheet), not in Compare (its own notes), not in Full screen (the pane is hidden and the floating composer owns it).
+        if (!phone && !imm && modeRef.current === "single" && isPaneToggleKey(event.nativeEvent)) { event.preventDefault(); paneControls.toggle(); return; }
         (modeRef.current === "compare" ? compareRef.current : playerRef.current)?.handleKeyDown(event);
       }}
       className="top-0 left-0 flex h-dvh w-dvw max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none bg-background p-0 text-foreground ring-0 focus-visible:!outline-none sm:max-w-none"

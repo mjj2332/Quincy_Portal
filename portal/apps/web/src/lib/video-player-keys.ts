@@ -31,6 +31,23 @@ function isEditable(target: Element): boolean {
   return editable !== null && editable.getAttribute("contenteditable") !== "false";
 }
 
+/** A key that is not the viewer's to take: modified, mid-composition, already handled, typed into a field, or inside a composite that owns it. */
+function ownedElsewhere(event: KeyLike): boolean {
+  if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return true;
+  if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return true;
+  const target = isElement(event.target) ? event.target : null;
+  return target !== null && (isEditable(target) || target.closest(OWNS_KEYS) !== null);
+}
+
+/**
+ * Whether a keydown is the review pane's show / hide shortcut (#881): plain N, filtered exactly as the player's keys are, and never held. N is in no player
+ * map (J / K / L, Space, the arrows, Home / End, I / O, F), so the two cannot collide; the screen decides where it applies (desktop, one film, not in Full screen).
+ */
+export function isPaneToggleKey(event: KeyLike): boolean {
+  if (ownedElsewhere(event) || event.repeat) return false;
+  return event.key === "n" || event.key === "N";
+}
+
 /**
  * Maps a keydown to a player action, or null when the key is not the player's: modified, mid-composition, already handled,
  * typed into a field, inside a composite that owns it, or a held key that must not walk the shuttle ladder. With `held.k` (K down)
@@ -38,10 +55,8 @@ function isEditable(target: Element): boolean {
  * the arrows, Home and End (its step is one frame); a focused button keeps Space.
  */
 export function playerKeyAction(event: KeyLike, held: { k?: boolean; marks?: boolean; fullscreen?: boolean } = {}): PlayerKeyAction | null {
-  if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return null;
-  if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return null;
+  if (ownedElsewhere(event)) return null;
   const target = isElement(event.target) ? event.target : null;
-  if (target && (isEditable(target) || target.closest(OWNS_KEYS))) return null;
 
   const key = event.key;
   const isSlider = target !== null && (target.closest('input[type="range"], [role="slider"]') !== null);

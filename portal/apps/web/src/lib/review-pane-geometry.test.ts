@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FLICK_PX_PER_MS, PICTURE_MIN, PHONE_QUERY, releaseVelocity, settleSheet, sheetStops } from "./review-pane-geometry";
+import { FLICK_PX_PER_MS, PANE_DEFAULT, PANE_MAX, PANE_MIN, PICTURE_MIN, PHONE_QUERY, PLAYER_MIN, TABLET_MAX, clampPaneWidth, paneCeiling, releaseVelocity, resolvePaneOpen, settleSheet, sheetStops } from "./review-pane-geometry";
 
 describe("review sheet geometry (#879)", () => {
   it("names the phone query once", () => {
@@ -67,4 +67,35 @@ describe("releaseVelocity (#879)", () => {
     expect(Math.abs(releaseVelocity({ y: 300, t: 100 }, { y: 296, t: 900 }))).toBeLessThan(FLICK_PX_PER_MS);
   });
   it("no elapsed time is no velocity", () => { expect(releaseVelocity({ y: 1, t: 5 }, { y: 9, t: 5 })).toBe(0); });
+});
+
+describe("desktop pane bounds (#881)", () => {
+  it("are the prototype's 300 / 380 / 560, the player keeps 480, and a tablet is at most 1366 wide", () => {
+    expect([PANE_MIN, PANE_DEFAULT, PANE_MAX, PLAYER_MIN, TABLET_MAX]).toEqual([300, 380, 560, 480, 1366]);
+  });
+  it("the ceiling is the smaller of 560 and host - 480, never below the minimum, and 560 when the host is unmeasured", () => {
+    expect(paneCeiling(1440)).toBe(560);
+    expect(paneCeiling(1000)).toBe(520);
+    expect(paneCeiling(700)).toBe(300);
+    expect(paneCeiling(0)).toBe(560);
+  });
+  it("clamps at use time without touching the preferred width", () => {
+    expect(clampPaneWidth(560, 1000)).toBe(520);
+    expect(clampPaneWidth(100, 1440)).toBe(300);
+    expect(clampPaneWidth(500, 1440)).toBe(500);
+    expect(clampPaneWidth(500.6, 1440)).toBe(501);
+  });
+});
+
+describe("resolvePaneOpen (#881, D18)", () => {
+  it("with no remembered choice a portrait tablet starts collapsed and anything else open", () => {
+    expect(resolvePaneOpen(null, true)).toBe(false);
+    expect(resolvePaneOpen(null, false)).toBe(true);
+  });
+  it("a remembered choice wins either way", () => {
+    expect(resolvePaneOpen(true, true)).toBe(true);
+    expect(resolvePaneOpen(false, false)).toBe(false);
+    expect(resolvePaneOpen(true, false)).toBe(true);
+    expect(resolvePaneOpen(false, true)).toBe(false);
+  });
 });
