@@ -35,6 +35,25 @@ async function published() {
   return { ...v, photo };
 }
 
+describe("film title on the public Delivery page (#882)", () => {
+  it("a film carries its Video title, trimmed, and a photo's title is null; the label stays", async () => {
+    await published();
+    await database.DB.prepare("UPDATE videos SET title = '  Hero  '").run();
+    const items = (await page()).items;
+    const film = items.find((item) => item.kind === "video")!; const photo = items.find((item) => item.kind === "photo")!;
+    expect(film.title).toBe("Hero"); expect(film.label).toBe("Video 01");
+    expect(photo.title).toBeNull(); expect(photo.label).toBe("Photo 01");
+  });
+  it("a locked Premium film shows its title too, with no review address, and an unlocked one still does", async () => {
+    const v = await published();
+    expect((await premium(v.videoId, true)).ok).toBe(true);
+    const locked = (await page()).items.find((item) => item.kind === "video")!;
+    expect(locked.locked).toBe(true); expect(locked.title).toBe("Hero"); expect(locked.review).toBeNull();
+    expect((await unlock(v.videoId, true)).ok).toBe(true);
+    expect((await page()).items.find((item) => item.kind === "video")!.title).toBe("Hero");
+  });
+});
+
 describe("review entry on the public Delivery page", () => {
   it("a film carries the link address with its Video id in the fragment; photos carry none", async () => {
     const v = await published(); const l = await link();
@@ -151,7 +170,7 @@ describe("film tile facts on the public Delivery page (#882)", () => {
   });
 
   describe("staff DTOs omit the keys entirely", () => {
-    const BASE_KEYS = ["handle", "kind", "label", "position", "locked", "premium", "width", "height", "durationMs", "url", "thumbUrl", "review"].sort();
+    const BASE_KEYS = ["handle", "kind", "label", "position", "locked", "premium", "width", "height", "durationMs", "url", "thumbUrl", "review", "title"].sort();
     it("pins the staff read, Preview and Publish item key set, so a later change cannot leak the public-only facts", async () => {
       const v = await published(); await seedVideoNote({ assetId: v.assetId, body: "open" });
       const state = await (await request(`/api/projects/${ids.project}/delivery`, "admin")).json() as Json;

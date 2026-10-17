@@ -71,3 +71,6 @@ export function formatDuration(durationMs: number | null): string | null {
 }
 
 export const unlockOf = (states: UnlockStates, handle: string): UnlockState => states[handle] ?? { kind: "idle" };
+
+/** What a film is called on the page (#882): its own title, else the public label ("Video 01"), which an older Worker still sends alone (`title` is optional on the wire, lesson #858). */
+export const filmName = (item: Pick<DeliveryItemDto, "title" | "label">): string => item.title ?? item.label;

@@ -44,8 +44,8 @@ export const DELIVERY_ITEM_KINDS = ["photo", "floorplan", "copy", "video"] as co
 export type DeliveryItemKind = (typeof DELIVERY_ITEM_KINDS)[number];
 
 /**
- * The page as a viewer sees it, built by one builder for staff Preview, the staff read and (slice 6) the public read. It carries random handles and labels such as "Photo 07", never an
- * Asset id, an R2 key, an original filename, a Video title, or anything about staff, agents, invoices or payment. The one people-adjacent field is `property.agency`: the agency, a business
+ * The page as a viewer sees it, built by one builder for staff Preview, the staff read and (slice 6) the public read. It carries random handles and labels such as "Photo 07", and for a FILM its own title (owner decision #882: the tile shows the real film title, locked or not), never an
+ * Asset id, an R2 key, an original filename, or anything about staff, agents, invoices or payment. The one people-adjacent field is `property.agency`: the agency, a business
  * (the directory name, else the Tonomo snapshot), shown in the hero meta line. Never an agent's name, email or phone, a photographer or any staff member. `url` and `thumbUrl` come from the caller's resolver: behind the staff
  * session for Preview, handle-based for the public page. `locked` is the live lock state, so a locked item is a preview the page must not offer as a download.
  */
@@ -53,6 +53,11 @@ export const deliveryItemDtoSchema = z.object({
   handle: z.string().length(DELIVERY_HANDLE_LENGTH),
   kind: z.enum(DELIVERY_ITEM_KINDS),
   label: z.string().min(1).max(40),
+  /**
+   * A film's own title (`videos.title`, at most 200 code points, `FILM_TITLE_MAX_CODE_POINTS`; zod counts UTF-16 units, so the cap is 400 to never reject a valid emoji-heavy title), the one Video field this page carries (#882). Null on every non-film item. `label` stays the fallback
+   * and what photos use. Optional for the same reason as `version`: an older Worker omits it, and a tab holding the strict schema must still parse (lesson #858).
+   */
+  title: z.string().min(1).max(400).nullable().optional(),
   position: z.number().int().nonnegative(),
   locked: z.boolean(),
   /** The item's own paid-extra flag, true before AND after an Unlock, so a viewer's Premium tab keeps listing an unlocked item. It says nothing about unlocks or payment; `locked` is the live answer. */

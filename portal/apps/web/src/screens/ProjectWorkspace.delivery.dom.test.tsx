@@ -646,7 +646,7 @@ describe("round 6: a pending Publish outlives the sheet, the cover follows its p
     { handle: handle(1), kind: "photo", label: "Photo 01", position: 0, locked: false, premium: false, review: null, width: 10, height: 10, durationMs: null, url: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/media`, thumbUrl: `/api/projects/${PROJECT_ID}/delivery/preview-media/${ids.photo1}/thumb` },
     { handle: handle(2), kind: "photo", label: "Photo 02", position: 1, locked: true, premium: true, review: null, width: 10, height: 10, durationMs: null, url: null, thumbUrl: null },
     { handle: handle(3), kind: "floorplan", label: "Floorplan 01", position: 2, locked: false, premium: false, review: null, width: null, height: null, durationMs: null, url: "/pdf/1", thumbUrl: null },
-    { handle: handle(4), kind: "video", label: "Video 01", position: 3, locked: false, premium: false, review: null, width: 1920, height: 1080, durationMs: 62000, url: "/video/1", thumbUrl: "/video/1/thumb" }] } };
+    { handle: handle(4), kind: "video", label: "Video 01", title: "Harbour Hero Film", position: 3, locked: false, premium: false, review: null, width: 1920, height: 1080, durationMs: 62000, url: "/video/1", thumbUrl: "/video/1/thumb" }] } };
   it("lets staff open an unlocked photo in the viewer, play a Video and view a PDF in a new tab, with no download and nothing to open for a locked item", async () => {
     apiPostMock.mockResolvedValue(lockedPreviewDto);
     await openDelivery(); await click(byId("delivery-preview"));
@@ -661,6 +661,7 @@ describe("round 6: a pending Publish outlives the sheet, the cover follows its p
     await click(lightbox.querySelector('[aria-label="Close"]')); await flush();
     expect(bodyById("delivery-lightbox")).toBeNull();
     await click(previewTab(dialog, "Film"));
+    expect(dialog.querySelector('[data-testid="delivery-film-open"]')!.textContent).toBe("Harbour Hero Film"); // the film's own title (#882), not "Video 01"
     await click(dialog.querySelector('[data-testid="delivery-film-open"]'));
     expect(bodyById("delivery-film-player-video")?.getAttribute("src")).toBe("/video/1");
     expect(bodyById("delivery-film-player")!.querySelectorAll("a[download]")).toHaveLength(0); // Preview offers no download

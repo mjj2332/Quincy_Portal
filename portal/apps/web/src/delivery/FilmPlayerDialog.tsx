@@ -5,7 +5,7 @@ import { EmptyState } from "../components/quincy/EmptyState";
 import { Button } from "../components/reui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "../components/reui/dialog";
 import { Spinner } from "../components/reui/spinner";
-import type { DeliveryHrefs } from "./delivery-model";
+import { filmName, type DeliveryHrefs } from "./delivery-model";
 
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 
@@ -24,11 +24,11 @@ export function FilmPlayerDialog({ item, hrefs, returnFocusTo, onClose }: { item
       className="max-h-[90dvh] max-w-[calc(100%-2rem)] gap-0 overflow-hidden bg-background p-0 text-foreground ring-0 sm:max-w-[min(90vw,64rem)]">
       {playable !== null && <>
         <div className="flex items-center gap-[var(--space-2)] px-[var(--space-4)] py-[var(--space-2)]">
-          <DialogTitle className="min-w-0 flex-1 truncate [font:var(--type-body)]">{playable.label}</DialogTitle>
-          {hrefs && <Button variant="ghost" nativeButton={false} data-testid="delivery-film-player-download" className={`shrink-0 ${TOUCH}`} render={<a href={hrefs.download(playable.handle)} download aria-label={`Download ${playable.label}, original`} />}><DownloadIcon aria-hidden="true" />Download original</Button>}
+          <DialogTitle className="min-w-0 flex-1 truncate [font:var(--type-body)]">{filmName(playable)}</DialogTitle>
+          {hrefs && <Button variant="ghost" nativeButton={false} data-testid="delivery-film-player-download" className={`shrink-0 ${TOUCH}`} render={<a href={hrefs.download(playable.handle)} download aria-label={`Download ${filmName(playable)}, original`} />}><DownloadIcon aria-hidden="true" />Download original</Button>}
           <DialogClose render={<Button type="button" variant="ghost" size="icon" aria-label="Close" data-testid="delivery-film-player-close" className={`shrink-0 ${TOUCH}`} />}><XIcon aria-hidden="true" /></DialogClose>
         </div>
-        <DialogDescription className="sr-only">{`${playable.label}, played here.`}</DialogDescription>
+        <DialogDescription className="sr-only">{`${filmName(playable)}, played here.`}</DialogDescription>
         <PlainVideo item={playable} url={playable.url!} />
       </>}
     </DialogContent>
@@ -59,7 +59,7 @@ function PlainVideo({ item, url }: { item: DeliveryItemDto; url: string }) {
 function PlainVideoElement({ item, url, onReady, onFailed }: { item: DeliveryItemDto; url: string; onReady: () => void; onFailed: () => void }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => { const video = ref.current; return () => { video?.pause(); }; }, []);
-  return <video ref={ref} controls playsInline autoPlay src={url} poster={item.thumbUrl ?? undefined} aria-label={item.label} data-testid="delivery-film-player-video"
+  return <video ref={ref} controls playsInline autoPlay src={url} poster={item.thumbUrl ?? undefined} aria-label={filmName(item)} data-testid="delivery-film-player-video"
     // Metadata is enough to call it loaded: iOS Safari fetches no frame data until the viewer presses play, so `loadeddata` alone would leave the spinner up.
     onLoadedMetadata={onReady} onLoadedData={onReady} onError={onFailed}
     className="max-h-[calc(90dvh-var(--space-8))] w-full object-contain [grid-area:1/1]" />;

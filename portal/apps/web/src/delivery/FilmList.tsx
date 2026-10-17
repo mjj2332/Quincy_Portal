@@ -4,7 +4,7 @@ import { EllipsisIcon, DownloadIcon } from "lucide-react";
 import { VideoTile } from "../components/quincy/VideoTile";
 import { IconButton } from "../components/quincy/icon-button";
 import { MENU_ITEM, Menu, MenuPrimitive } from "../components/quincy/menu";
-import { unlockOf, type DeliveryHrefs, type UnlockStates } from "./delivery-model";
+import { filmName, unlockOf, type DeliveryHrefs, type UnlockStates } from "./delivery-model";
 import { FilmPlayerDialog } from "./FilmPlayerDialog";
 import { PremiumBadge, UnlockControl } from "./UnlockControl";
 
@@ -28,32 +28,32 @@ export function FilmList({ items, hrefs, unlock, onRequestUnlock, pageSlug = nul
   const player = playing === null ? null : items.find((item) => item.handle === playing) ?? null;
   return <>
     <ul aria-label="Film" data-testid="delivery-film" className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-[var(--space-5)] p-0 has-[>li:only-child]:grid-cols-1 @max-[721px]:grid-cols-1">
-      {items.map((item) => <li key={item.handle} data-testid="delivery-film-item" data-handle={item.handle} className="min-w-0">
+      {items.map((item) => { const name = filmName(item); return <li key={item.handle} data-testid="delivery-film-item" data-handle={item.handle} className="min-w-0">
         {item.locked
           ? <VideoTile
             tone="paper" locked testId="delivery-film-tile" openTestId="delivery-film-open"
-            title={item.label} posterUrl={null} version={null} durationMs={null} openNotes={null}
-            openLabel={`Request unlock: ${item.label}`} onOpen={() => { onRequestUnlock(item.handle); }}
+            title={name} posterUrl={null} version={null} durationMs={null} openNotes={null}
+            openLabel={`Request unlock: ${name}`} onOpen={() => { onRequestUnlock(item.handle); }}
             menu={<PremiumBadge />}
-            footer={<UnlockControl label={item.label} state={unlockOf(unlock, item.handle)} onRequest={() => { onRequestUnlock(item.handle); }} />}
+            footer={<UnlockControl label={name} state={unlockOf(unlock, item.handle)} onRequest={() => { onRequestUnlock(item.handle); }} />}
           />
           : <VideoTile
             tone="paper" testId="delivery-film-tile" openTestId="delivery-film-open"
-            title={item.label} posterUrl={item.thumbUrl} version={item.version ?? null} durationMs={item.durationMs} openNotes={item.openNotes ?? null}
+            title={name} posterUrl={item.thumbUrl} version={item.version ?? null} durationMs={item.durationMs} openNotes={item.openNotes ?? null}
             {...(item.review
               ? { href: reviewAddress(item.review.url, pageSlug) }
               : { onOpen: (element: HTMLElement) => { if (item.url !== null) { trigger.current = element; setPlaying(item.handle); } } })}
             menu={hrefs ? <FilmMenu item={item} hrefs={hrefs} /> : undefined}
           />}
-      </li>)}
+      </li>; })}
     </ul>
     <FilmPlayerDialog item={player} hrefs={hrefs} returnFocusTo={trigger} onClose={() => { setPlaying(null); }} />
   </>;
 }
 
 function FilmMenu({ item, hrefs }: { item: DeliveryItemDto; hrefs: DeliveryHrefs }) {
-  return <Menu triggerLabel={`Actions for ${item.label}`} label={`${item.label} actions`} triggerTestId="delivery-film-menu" triggerRender={<IconButton />} triggerClassName="text-foreground" trigger={<EllipsisIcon aria-hidden="true" className="size-4" />}>
-    <MenuPrimitive.LinkItem closeOnClick className={`${MENU_ITEM} gap-[var(--space-2)]`} data-testid="delivery-film-download" href={hrefs.download(item.handle)} download aria-label={`Download ${item.label}, original`}>
+  return <Menu triggerLabel={`Actions for ${filmName(item)}`} label={`${filmName(item)} actions`} triggerTestId="delivery-film-menu" triggerRender={<IconButton />} triggerClassName="text-foreground" trigger={<EllipsisIcon aria-hidden="true" className="size-4" />}>
+    <MenuPrimitive.LinkItem closeOnClick className={`${MENU_ITEM} gap-[var(--space-2)]`} data-testid="delivery-film-download" href={hrefs.download(item.handle)} download aria-label={`Download ${filmName(item)}, original`}>
       <DownloadIcon aria-hidden="true" className="size-4" />Download original
     </MenuPrimitive.LinkItem>
   </Menu>;

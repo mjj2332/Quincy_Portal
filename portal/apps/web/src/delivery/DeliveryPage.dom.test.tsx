@@ -474,6 +474,30 @@ describe("film tiles (#882)", () => {
     const summary = document.getElementById(openOf(1).getAttribute("aria-describedby")!)!;
     expect(summary.textContent).toBe("v3, 1:02, 2 open notes on v3");
   });
+  it("names a film by its own title (#882): the tile, the unlock control, the menu and the Download link, and a long title truncates; a page from an older Worker (no title) keeps the label", async () => {
+    const long = "A very long film title ".repeat(12).trim();
+    await showFilms([film(1, { review: { url: REVIEW }, title: "Harbour View Walkthrough" }), film(2, { review: { url: REVIEW }, title: long }), film(3, { review: { url: REVIEW } })]);
+    expect(openOf(1).textContent).toBe("Harbour View Walkthrough");
+    expect(openOf(2).textContent).toBe(long); expect(openOf(2).querySelector("span")!.className).toContain("truncate");
+    expect(openOf(3).textContent).toBe("Video 03");
+    const trigger = tileOf(1).querySelector<HTMLElement>('[data-testid="delivery-film-menu"]')!;
+    expect(trigger.getAttribute("aria-label")).toBe("Actions for Harbour View Walkthrough");
+    await click(trigger);
+    expect(document.querySelector('[data-testid="delivery-film-download"]')!.getAttribute("aria-label")).toBe("Download Harbour View Walkthrough, original");
+  });
+  it("a locked Premium film shows its title too, and the unlock control is named for it", async () => {
+    await show(page([locked(1, { kind: "video", label: "Video 01", title: "Sunset Cut", url: null, thumbUrl: null })]));
+    await click(tab("Premium"));
+    expect(openOf(1).textContent).toBe("Sunset Cut");
+    expect(openOf(1).getAttribute("aria-label")).toBe("Request unlock: Sunset Cut");
+  });
+  it("the plain player is titled with the film's title", async () => {
+    await showFilms([film(1, { title: "Harbour View Walkthrough" })]);
+    await click(openOf(1)); await flush();
+    const dialog = byTestId("delivery-film-player")!;
+    expect(dialog.textContent).toContain("Harbour View Walkthrough"); expect(dialog.textContent).not.toContain("Video 01");
+    expect(byTestId("delivery-film-player-download")!.getAttribute("aria-label")).toBe("Download Harbour View Walkthrough, original");
+  });
   it("hides the count at 0 and shows no Version or count where there is no review (the page cannot point them anywhere)", async () => {
     await showFilms([film(1, { review: { url: REVIEW }, version: 2, openNotes: 0 }), film(2, { version: null, openNotes: null })]);
     expect(tileOf(1).querySelector('[data-testid="delivery-film-tile-open-notes"]')).toBeNull();
