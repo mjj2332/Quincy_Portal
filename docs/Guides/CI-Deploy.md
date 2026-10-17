@@ -46,6 +46,7 @@ Version ID"` prints background, webhook-ingress, then app. Then check production
   `/api/production-gantt?scope=active` answers 401 to a signed-out request: the route mounts and
   doesn't crash. Whether the signed-in pages work is the owner's check in their browser.
 - To see where load time goes after a deploy, follow `Load-Time-Measurement.md`.
+- After the #900 probe fix deploys, re-probe stored Versions with `Video-Probe-Backfill.md` (owner-run, dry run first).
 
 ## When the job fails
 

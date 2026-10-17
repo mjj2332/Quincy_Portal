@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mp4RejectMessage } from "@quincy/shared";
-import { buildMp4, videoTrack, type Mp4Spec } from "../../../../packages/shared/src/testing/mp4-builder";
+import { bFrameCtts, buildMp4, videoTrack, type Mp4Spec } from "../../../../packages/shared/src/testing/mp4-builder";
 import { ABORT_UNREACHABLE_MESSAGE, NOT_FAST_START_CAUTION, pluralCaution, NOT_MP4_NAME_MESSAGE, TIMECODE_MISMATCH_CAUTION, VideoUpload, checkVideoFile, type VideoUploadDone, type VideoUploadState } from "./video-upload";
 
 const poster = vi.hoisted(() => ({ blob: null as Blob | null }));
@@ -35,6 +35,11 @@ describe("checkVideoFile (#741 4d-i)", () => {
     const slow = await checkVideoFile(await fileOf({ tracks: [videoTrack({ timescale: 25000, stts: [[300, 1000]] })], moovFirst: false }));
     expect(slow).toMatchObject({ ok: true, cautions: [NOT_FAST_START_CAUTION] });
     expect(TIMECODE_MISMATCH_CAUTION).toMatch(/timecode/);
+  });
+
+  it("counts the frames an edit list presents on a B-frame file: 500 / 20000, not 498 (#900)", async () => {
+    const file = await fileOf({ movieTimescale: 1000, tracks: [videoTrack({ timescale: 12800, stts: [[500, 512]], ctts: bFrameCtts(500, 512), cttsVersion: 1, elst: [{ segmentDuration: 20000, mediaTime: 1024 }] })] });
+    expect(await checkVideoFile(file)).toMatchObject({ ok: true, probe: { frameCount: 500, durationMs: 20000 } });
   });
 
   it.each([

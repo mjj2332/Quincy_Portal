@@ -13,10 +13,12 @@ import {
   ROTATE_270,
   ROTATE_90,
   SKEW,
+  bFrameCtts,
   box,
   buildMp4,
   concat,
   ftyp,
+  fullBox,
   moovBody,
   rawBox,
   sourceFrom,
@@ -185,7 +187,7 @@ describe("probeMp4 frame rate", () => {
 describe("probeMp4 edit lists", () => {
   const e = (mediaTime: number, over: Record<string, number> = {}) => ({ segmentDuration: 0, mediaTime, ...over });
 
-  it("a B-frame edit (media_time = 2 * delta) is accepted and trims the frame count", async () => {
+  it("without ctts, media_time trims leading frames", async () => {
     const p = await probeOf(one(videoTrack({ elst: [e(2002)] })));
     expect(p.frameCount).toBe(298);
   });
@@ -218,6 +220,73 @@ describe("probeMp4 edit lists", () => {
 
   it("an edit that removes every frame -> zero_frames", async () => {
     expect(await reasonOf(buildMp4(one(videoTrack({ elst: [e(300 * 1001)] }))))).toBe("zero_frames");
+  });
+});
+
+describe("probeMp4 edit lists with B-frames (#900)", () => {
+  // The cfr-25 shape: 25 fps in a 12800 timescale, ctts delaying composition by two frames, an edit that only absorbs that delay.
+  const D = 512;
+  const bTrack = (n: number, over: Partial<TrackSpec> = {}): TrackSpec =>
+    videoTrack({ timescale: 12800, stts: [[n, D]], ctts: bFrameCtts(n, D), cttsVersion: 1, ...over });
+  const cfr25 = (over: Partial<TrackSpec> = {}) =>
+    bTrack(500, { elst: [{ segmentDuration: 20000, mediaTime: 2 * D }], ...over });
+
+  it("a B-frame file whose edit only absorbs the composition delay presents every frame", async () => {
+    const p = await probeOf(one(cfr25(), { movieTimescale: 1000 }));
+    expect(p.frameCount).toBe(500);
+    expect(p.durationMs).toBe(20000);
+  });
+
+  it("the same with segment_duration 0", async () => {
+    expect((await probeOf(one(cfr25({ elst: [{ segmentDuration: 0, mediaTime: 2 * D }] }), { movieTimescale: 1000 }))).frameCount).toBe(500);
+  });
+
+  it("a version 1 ctts with negative offsets, media_time 0 and a cslg box presents every frame", async () => {
+    const ctts = bFrameCtts(300, D).map(([c, o]) => [c, o - 2 * D] as [number, number]);
+    const t = bTrack(300, { ctts, cslg: true, elst: [{ segmentDuration: 0, mediaTime: 0 }] });
+    expect((await probeOf(one(t))).frameCount).toBe(300);
+  });
+
+  it("a version 0 ctts is read as signed", async () => {
+    const ctts = bFrameCtts(300, D).map(([c, o]) => [c, o - 2 * D] as [number, number]);
+    const t = bTrack(300, { ctts, cttsVersion: 0, elst: [{ segmentDuration: 0, mediaTime: 0 }] });
+    expect((await probeOf(one(t))).frameCount).toBe(300);
+  });
+
+  it("a file without B-frames (no ctts, no edts) counts every sample", async () => {
+    expect((await probeOf(one(videoTrack()))).frameCount).toBe(300);
+  });
+
+  it("a B-frame file trimmed at the head (media_time = delay + 10 frames)", async () => {
+    const p = await probeOf(one(bTrack(300, { elst: [{ segmentDuration: 0, mediaTime: 12 * D }] })));
+    expect(p.frameCount).toBe(290);
+  });
+
+  it("a B-frame file trimmed at the tail by segment_duration", async () => {
+    // 480 frames of 512/12800 s = 19200 ms
+    const p = await probeOf(one(cfr25({ elst: [{ segmentDuration: 19200, mediaTime: 2 * D }] }), { movieTimescale: 1000 }));
+    expect(p.frameCount).toBe(480);
+    expect(p.durationMs).toBe(19200);
+  });
+
+  it("a ctts whose counts do not cover stts is box_size_invalid", async () => {
+    expect(await reasonOf(buildMp4(one(bTrack(500, { ctts: [[499, 0]] }))))).toBe("box_size_invalid");
+  });
+
+  it("a ctts count larger than its payload is box_size_invalid", async () => {
+    const cttsRaw = fullBox("ctts", 1, 0, u32(1000), u32(500), u32(0));
+    expect(await reasonOf(buildMp4(one(bTrack(500, { ctts: undefined, cttsRaw }))))).toBe("box_size_invalid");
+  });
+
+  it("an edit window holding no composition time is zero_frames", async () => {
+    const t = bTrack(300, { elst: [{ segmentDuration: 0, mediaTime: 1000 * D }] });
+    expect(await reasonOf(buildMp4(one(t)))).toBe("zero_frames");
+  });
+
+  it("a 4e9-sample stts with one ctts run probes without overflow", async () => {
+    const n = 4_000_000_000;
+    const t = videoTrack({ timescale: 12800, stts: [[n, D]], ctts: [[n, 2 * D]], cttsVersion: 1, elst: [{ segmentDuration: 0, mediaTime: 2 * D }] });
+    expect((await probeOf(one(t))).frameCount).toBe(n);
   });
 });
 
@@ -409,7 +478,7 @@ describe("probeMp4 sample descriptions and short boxes", () => {
   });
 
   it("truncating a valid moov at every byte offset never throws", async () => {
-    const spec = { tracks: [videoTrack({ elst: [{ segmentDuration: 0, mediaTime: 2002 }] }), { handler: "tmcd" as const }] } as unknown as Mp4Spec;
+    const spec = { tracks: [videoTrack({ elst: [{ segmentDuration: 0, mediaTime: 2002 }], ctts: [[200, 2002], [100, 0]] }), { handler: "tmcd" as const }] } as unknown as Mp4Spec;
     const body = moovBody(spec, 100, 100);
     const moov = concat(u32(8 + body.length), new TextEncoder().encode("moov"), body);
     expect((await probeMp4(sourceFrom([ftyp(), moov]))).ok).toBe(true);

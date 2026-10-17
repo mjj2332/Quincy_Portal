@@ -3,7 +3,7 @@ import { z } from "zod";
 import { COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings } from "@quincy/db";
 import {
   EMBEDDED_POSTER_MAX_BYTES, EMBEDDED_VIDEO_PART_URL_TTL_SECONDS, VIDEO_UPLOAD_ACTIVE_STATUSES, VIDEO_UPLOAD_CONTENT_TYPE, VIDEO_UPLOAD_DECLARED_CONTENT_TYPES, VIDEO_UPLOAD_EXPIRY_MS, VIDEO_UPLOAD_MAX_ACTIVE_PER_USER, VIDEO_MAX_BYTES,
-  filmTitleFromFilename, isJpeg, mp4RejectMessage, normalizeVideoUploadFilename, probeMp4, roleHasCapability, timecodeBaseFor, videoObjectKey, videoPosterKey, videoUploadCompleteInputSchema, videoUploadCompleteResponseSchema,
+  MP4_PROBE_VERSION, filmTitleFromFilename, isJpeg, mp4RejectMessage, normalizeVideoUploadFilename, probeMp4, roleHasCapability, timecodeBaseFor, videoObjectKey, videoPosterKey, videoUploadCompleteInputSchema, videoUploadCompleteResponseSchema,
   videoUploadRejectMessage, videoUploadReserveInputSchema, videoUploadReserveResponseSchema, type Mp4Probe, type Mp4ProbeWarning, type VideoUploadRejectReason,
 } from "@quincy/shared";
 import { terminalRoute } from "../lib/terminal-route";
@@ -14,6 +14,7 @@ import { newId } from "../lib/ids";
 import { abortMultipart, completeMultipart, createMultipartPresign, PART_BYTES, validateMultipartParts } from "../lib/r2s3";
 import { discardUnreferencedObject, enqueueEmbeddedMediaCleanup, settleThrownAdoption } from "../lib/embedded-media";
 import { readVideoReviewGate, videoReviewGate } from "../lib/video-review-gate";
+import { ProbeUnavailable, r2ProbeSource } from "../lib/video-probe-source";
 import { loadVideoDtos } from "../lib/video-dto";
 import { videoReviewOutboxStatements } from "../lib/video-review-notifications";
 import { publishOutboxDetached } from "../lib/server-timing";
@@ -214,9 +215,6 @@ videoUploadsRoutes.put("/projects/:projectId/video-uploads/:reservationId/direct
   return c.body(null, 204);
 }));
 
-/** Thrown from a probe read when R2 cannot give the bytes the HEAD described: transient (503), never a rejection of the file. */
-class ProbeUnavailable extends Error {}
-
 /** The fields a client probe may be compared on, against the server's. A mismatch is audited and never stored. */
 export function clientProbeDisagreement(json: string | null, probe: Mp4Probe): string[] {
   if (!json) return [];
@@ -305,16 +303,7 @@ videoUploadsRoutes.post("/projects/:projectId/video-uploads/:reservationId/compl
   // The server probes the stored object itself. Every read is pinned to the HEAD's ETag, so a swap between the HEAD and a read is a 503, never a verdict on the wrong bytes.
   let probed: Awaited<ReturnType<typeof probeMp4>>;
   try {
-    probed = await probeMp4({
-      size: head.size,
-      read: async (offset, length) => {
-        const object = await c.env.MEDIA.get(row.r2Key, { range: { offset, length }, onlyIf: { etagMatches: head.etag } });
-        if (!object || !("body" in object) || !object.body) throw new ProbeUnavailable("The stored video changed or is not readable");
-        const bytes = new Uint8Array(await (object as R2ObjectBody).arrayBuffer());
-        if (bytes.byteLength < Math.min(length, head.size - offset)) throw new ProbeUnavailable("The stored video returned a short read");
-        return bytes;
-      },
-    });
+    probed = await probeMp4(r2ProbeSource(c.env.MEDIA, row.r2Key, head));
   } catch (error) {
     if (error instanceof ProbeUnavailable) return c.json({ error: "The video could not be read just now. Try again in a moment.", code: "probe_unavailable" }, 503);
     throw error;
@@ -342,9 +331,9 @@ videoUploadsRoutes.post("/projects/:projectId/video-uploads/:reservationId/compl
     // From the server probe only: `client_probe_json` is never read for storage.
     db.prepare(`INSERT INTO video_version_meta (asset_id, video_id, fps_num, fps_den, media_timescale, frame_delta, frame_count, duration_ms, width, height, codec, codec_string,
       start_tc_frames, tc_nominal_fps, tc_drop_frame, fast_start, has_audio, probe_version, poster_key, uploaded_by, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?)`)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`)
       .bind(row.assetId, row.videoId, fps.num, fps.den, probe.mediaTimescale, probe.frameDelta, probe.frameCount, probe.durationMs, probe.width, probe.height, probe.codec, probe.codecString,
-        startTimecode.frames, startTimecode.nominalFps, startTimecode.dropFrame ? 1 : 0, probe.fastStart ? 1 : 0, probe.hasAudio ? 1 : 0, user.id, now),
+        startTimecode.frames, startTimecode.nominalFps, startTimecode.dropFrame ? 1 : 0, probe.fastStart ? 1 : 0, probe.hasAudio ? 1 : 0, MP4_PROBE_VERSION, user.id, now),
   );
   statements.push(
     // The number is spent for good once a Version commits, even if a purge later deletes the row: reserve reads the high-water mark.

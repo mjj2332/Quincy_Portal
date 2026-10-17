@@ -1,8 +1,8 @@
 import { createExecutionContext } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { EXTERNAL_API_RESPONSE_SCHEMAS, PHOTOGRAPHER_VISIBLE_STAGES, videoObjectKey, videoUploadCompleteResponseSchema, videoUploadReserveResponseSchema, type VideoUploadCompleteResponse } from "@quincy/shared";
-import { box, buildMp4, videoTrack, type Mp4Spec } from "../../../packages/shared/src/testing/mp4-builder";
+import { EXTERNAL_API_RESPONSE_SCHEMAS, MP4_PROBE_VERSION, PHOTOGRAPHER_VISIBLE_STAGES, videoObjectKey, videoUploadCompleteResponseSchema, videoUploadReserveResponseSchema, type VideoUploadCompleteResponse } from "@quincy/shared";
+import { bFrameCtts, box, buildMp4, videoTrack, type Mp4Spec } from "../../../packages/shared/src/testing/mp4-builder";
 import { createAuth } from "../src/auth";
 import { app } from "../src/index";
 import type { Env } from "../src/env";
@@ -365,7 +365,7 @@ describe("POST …/complete", () => {
     expect(await database.DB.prepare("SELECT kind, collection_id AS collectionId, version_group_id AS versionGroupId, version, r2_key AS key, source, publish_status AS publishStatus, superseded_at AS supersededAt, width, height FROM assets WHERE id = ?").bind(reserved.assetId).first())
       .toEqual({ kind: "video", collectionId, versionGroupId: reserved.videoId, version: 1, key: videoObjectKey(ids.project, reserved.videoId, reserved.assetId), source: "upload", publishStatus: "ready", supersededAt: null, width: 1920, height: 1080 });
     expect(await database.DB.prepare("SELECT title, position, project_id AS projectId, collection_id AS collectionId, created_by AS createdBy FROM videos WHERE id = ?").bind(reserved.videoId).first()).toMatchObject({ title: "First cut", projectId: ids.project, collectionId, createdBy: ids.member });
-    expect(await database.DB.prepare("SELECT fps_num, fps_den, uploaded_by, probe_version, fast_start, has_audio FROM video_version_meta WHERE asset_id = ?").bind(reserved.assetId).first()).toEqual({ fps_num: 25, fps_den: 1, uploaded_by: ids.member, probe_version: 1, fast_start: 1, has_audio: 0 });
+    expect(await database.DB.prepare("SELECT fps_num, fps_den, uploaded_by, probe_version, fast_start, has_audio FROM video_version_meta WHERE asset_id = ?").bind(reserved.assetId).first()).toEqual({ fps_num: 25, fps_den: 1, uploaded_by: ids.member, probe_version: MP4_PROBE_VERSION, fast_start: 1, has_audio: 0 });
     expect(await reservationStatus(reserved.reservationId)).toBe("completed");
     expect(await database.DB.prepare("SELECT received_count AS n FROM collections WHERE id = ?").bind(collectionId).first<{ n: number }>()).toEqual({ n: await count("videos WHERE collection_id = ?", collectionId) });
     expect(await auditRow("video.version.upload", reserved.assetId)).toMatchObject({ actorId: ids.member, meta: { projectId: ids.project, videoId: reserved.videoId, version: 1, bytes: reserved.bytes, fps: { num: 25, den: 1 }, frameCount: 300, warnings: [], clientProbeDisagreed: [] } });
@@ -373,6 +373,15 @@ describe("POST …/complete", () => {
     expect(again.status).toBe(200); expect(await again.json()).toEqual(body);
     expect(await count("assets WHERE version_group_id = ?", reserved.videoId)).toBe(1);
     expect(await count("audit_log WHERE action = 'video.version.upload' AND target_id = ?", reserved.assetId)).toBe(1);
+  });
+
+  it("stores the frames an edit list presents (500, not 498) whatever the client claims (#900)", async () => {
+    stubS3();
+    const file = await buildFile({ movieTimescale: 1000, tracks: [videoTrack({ timescale: 12800, stts: [[500, 512]], ctts: bFrameCtts(500, 512), cttsVersion: 1, elst: [{ segmentDuration: 20000, mediaTime: 1024 }] })] });
+    const reserved = await reserveAndStore("member", { title: "B-frames", file, clientProbe: { fps: { num: 25, den: 1 }, frameCount: 498, width: 1920, height: 1080, durationMs: 19920, codec: "avc1" } });
+    expect((await complete("member", reserved.reservationId)).status).toBe(201);
+    expect(await database.DB.prepare("SELECT frame_count, duration_ms, probe_version FROM video_version_meta WHERE asset_id = ?").bind(reserved.assetId).first()).toEqual({ frame_count: 500, duration_ms: 20000, probe_version: MP4_PROBE_VERSION });
+    expect((await auditRow("video.version.upload", reserved.assetId))!.meta).toMatchObject({ frameCount: 500, clientProbeDisagreed: ["frameCount", "durationMs"] });
   });
 
   it("completes QuickTime-container H.264 bytes uploaded as a .mov: stored and named as .mp4, bytes unchanged (#813)", async () => {
