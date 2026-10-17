@@ -30,7 +30,13 @@ const slotIndex = (el: EventTarget | null) => {
  * viewport is `tabIndex -1`, so Base UI's overflow stop never doubles it. Slots ring inward (`RING_IN`): the viewport is
  * masked, and a mask clips an outline drawn outside it.
  */
-export function TimeColumn({ selected, skipped, onPick }: {
+// The phone's fade masks, written out per layout so Tailwind sees each class whole.
+const RESPONSIVE_SCROLL = "h-36 w-full [--fade-size:var(--space-5)] min-[721px]:h-72 min-[721px]:w-28 min-[721px]:shrink-0 max-[721px]:*:data-[slot=scroll-area-scrollbar]:hidden max-[721px]:*:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] max-[721px]:*:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))]";
+const STACKED_SCROLL = "h-36 w-full [--fade-size:var(--space-5)] *:data-[slot=scroll-area-scrollbar]:hidden *:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] *:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))]";
+
+export function TimeColumn({ selected, skipped, onPick, layout = "responsive" }: {
+  /** #914: `stacked` keeps the four-column grid (and its arrow keys) at every width, for a form drawn in a narrow sheet. */
+  layout?: "responsive" | "stacked";
   /** The picked time (`HH:mm`), highlighted only when it is on the 15-minute grid. */
   selected: string | null;
   /** Slots that do not exist on the chosen Sydney day. */
@@ -38,7 +44,8 @@ export function TimeColumn({ selected, skipped, onPick }: {
   onPick: (time: string) => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
-  const stacked = useMediaQuery(POPUP_STACKED_QUERY);
+  const stackedViewport = useMediaQuery(POPUP_STACKED_QUERY);
+  const stacked = layout === "stacked" || stackedViewport;
   // The roving position while focus is inside the list; null means "the default stop".
   const [roving, setRoving] = useState<number | null>(null);
 
@@ -151,8 +158,8 @@ export function TimeColumn({ selected, skipped, onPick }: {
   }, []);
 
   return (
-    <ScrollArea className="h-36 w-full [--fade-size:var(--space-5)] min-[721px]:h-72 min-[721px]:w-28 min-[721px]:shrink-0 max-[721px]:*:data-[slot=scroll-area-scrollbar]:hidden max-[721px]:*:data-[slot=scroll-area-viewport]:mask-t-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-start)))] max-[721px]:*:data-[slot=scroll-area-viewport]:mask-b-from-[calc(100%-min(var(--fade-size),var(--scroll-area-overflow-y-end)))]" viewportProps={{ tabIndex: -1 }}>
-      <div ref={listRef} role="group" aria-label="Time slots" onKeyDown={onKeyDown} onFocus={onFocus} onBlur={onBlur} className="grid grid-cols-4 gap-[var(--space-1)] min-[721px]:flex min-[721px]:flex-col pr-[var(--space-3)]">
+    <ScrollArea className={layout === "stacked" ? STACKED_SCROLL : RESPONSIVE_SCROLL} viewportProps={{ tabIndex: -1 }}>
+      <div ref={listRef} role="group" aria-label="Time slots" onKeyDown={onKeyDown} onFocus={onFocus} onBlur={onBlur} className={cn("grid grid-cols-4 gap-[var(--space-1)] pr-[var(--space-3)]", layout !== "stacked" && "min-[721px]:flex min-[721px]:flex-col")}>
         {SLOTS.map((slot, index) => {
           const isSkipped = skipped.has(slot);
           const isSelected = selected === slot;

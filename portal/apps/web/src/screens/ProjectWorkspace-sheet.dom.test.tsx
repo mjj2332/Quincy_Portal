@@ -302,7 +302,87 @@ describe("the real Workspace inside the Project sheet (#366)", () => {
   });
 });
 
-// #870 — the Social overlays picker in the real header, below the four-cell control grid.
+// #914 D2 — Project info: a 440px sheet docked inside the Project sheet. It is modal: Esc closes it first, and focus returns to
+// whatever opened it.
+describe("Project info inside the Project sheet (#914 D2)", () => {
+  const info = () => document.querySelector<HTMLElement>('[data-testid="project-info-sheet"]');
+  const infoButton = () => document.querySelector<HTMLElement>('[data-testid="project-info-open"]');
+
+  it("opens from its button, docked in the sheet's overlay slot; Esc closes it alone and focus returns to the button", async () => {
+    await renderSheet();
+    expect(info()).toBeNull();
+    infoButton()!.focus();
+    await click(infoButton()!);
+    await flushUntil(() => info() !== null, "Project info to open");
+    expect(document.querySelector('[data-testid="project-sheet-overlay-slot"]')!.contains(info())).toBe(true);
+    expect(info()!.getAttribute("role")).toBe("dialog");
+    expect(info()!.querySelector("h2")?.textContent).toBe("12 Example St");
+    expect(info()!.contains(document.activeElement)).toBe(true);
+
+    await escape(document.activeElement ?? document.body);
+    await flushUntil(() => info() === null, "Project info to close");
+    expect(onRequestClose).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(infoButton());
+
+    await escape(document.activeElement ?? document.body);
+    await flush();
+    expect(onRequestClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("covers the sheet's own Close with its scrim, and a scrim press closes Project info alone", async () => {
+    await renderSheet();
+    await click(infoButton()!);
+    await flushUntil(() => info() !== null, "Project info to open");
+    const scrim = document.querySelector<HTMLElement>('[data-testid="project-info-scrim"]')!;
+    expect(document.querySelector('[data-testid="project-sheet-overlay-slot"]')!.contains(scrim)).toBe(true);
+    await act(async () => {
+      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) scrim.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+    await flushUntil(() => info() === null, "Project info to close");
+    expect(onRequestClose).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(infoButton());
+  });
+
+  it("Change draws the deadline form in place with focus inside it; Cancel puts the facts back and focus on Change", async () => {
+    authState.role = "admin";
+    await renderSheet();
+    await click(infoButton()!);
+    await flushUntil(() => info() !== null, "Project info to open");
+    const section = () => info()!.querySelector<HTMLElement>('[data-testid="project-info-deadline"]')!;
+    await click(section().querySelector<HTMLElement>('[data-testid="project-info-deadline-change"]')!);
+    await flushUntil(() => section().querySelector('[aria-label="Time slots"]') !== null, "the inline deadline form");
+    expect(section().contains(document.activeElement)).toBe(true);
+    // In place: no Deadline popover over Project info.
+    expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).toBeNull();
+    const cancel = [...section().querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Cancel")!;
+    await click(cancel);
+    await flush();
+    expect(section().querySelector('[aria-label="Time slots"]')).toBeNull();
+    expect(document.activeElement).toBe(section().querySelector('[data-testid="project-info-deadline-change"]'));
+    expect(info()).not.toBeNull();
+  });
+
+  it("Manage draws the Team picker in place with the search focused; Done puts the facts back and focus on Manage", async () => {
+    // Team management is `editProject` (Admin); an Editor sees the Team as facts.
+    authState.role = "admin";
+    await renderSheet();
+    await click(infoButton()!);
+    await flushUntil(() => info() !== null, "Project info to open");
+    const manage = info()!.querySelector<HTMLElement>('[data-testid="project-info-team-manage"]')!;
+    await click(manage);
+    await flushUntil(() => info()!.querySelector('[data-testid="project-info-team"] [data-testid="project-team-control"]') !== null, "the inline Team picker");
+    expect(document.activeElement).toBe(info()!.querySelector('[aria-label="Search people"]'));
+    // In place, not a popup: no second layer opened over Project info.
+    expect(info()!.contains(document.querySelector('[role="listbox"][aria-label="Team candidates"]'))).toBe(true);
+    await click(info()!.querySelector<HTMLElement>('[data-testid="project-info-team-done"]')!);
+    await flush();
+    expect(info()!.querySelector('[data-testid="project-info-team"] [data-testid="project-team-control"]')).toBeNull();
+    expect(document.activeElement).toBe(info()!.querySelector('[data-testid="project-info-team-manage"]'));
+  });
+});
+
+// #870 — the Social overlays picker. #914 (settled decision): a section of Project info, after Team.
 describe("the Social overlays picker in the Project header (#870)", () => {
   const overlayId = "22222222-2222-4222-8222-222222222222", tiktokId = "33333333-3333-4333-8333-333333333333";
   const overlayState = (selected: Array<{ id: string; name: string }>) => ({
@@ -317,22 +397,27 @@ describe("the Social overlays picker in the Project header (#870)", () => {
   }
   const picker = () => document.querySelector<HTMLElement>('[data-testid="project-social-overlays"]');
   const pickerTrigger = () => document.querySelector<HTMLButtonElement>('button[aria-label="Social overlays"]');
+  const openInfo = async () => {
+    await click(document.querySelector<HTMLElement>('[data-testid="project-info-open"]')!);
+    await flushUntil(() => document.querySelector('[data-testid="project-info-sheet"]') !== null, "Project info to open");
+  };
 
-  // #914 S1 interim: the picker sits under Row A until S2 moves it into Project info (settled decision, after Team).
-  it("sits after the status cluster and before the tabs when video review is open", async () => {
+  it("is a Project info section after Team when video review is open, and not in the header rows", async () => {
     openGate(true);
     await renderSheet();
+    expect(picker()).toBeNull();
+    await openInfo();
     await flushUntil(() => picker() !== null, "the Social overlays picker");
-    const header = document.querySelector('[data-testid="project-header"]')!;
-    const cluster = header.querySelector('[data-testid="project-status-cluster"]')!;
-    expect(header.contains(picker())).toBe(true);
-    expect(cluster.compareDocumentPosition(picker()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(picker()!.compareDocumentPosition(document.querySelector('[data-testid="project-overview-tab"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const info = document.querySelector('[data-testid="project-info-sheet"]')!;
+    expect(info.contains(picker())).toBe(true);
+    expect(document.querySelector('[data-testid="project-header"]')!.contains(picker())).toBe(false);
+    expect(info.querySelector('[data-testid="project-info-team"]')!.compareDocumentPosition(picker()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("is absent while video review is closed, and asks for nothing", async () => {
     openGate(false);
     await renderSheet();
+    await openInfo();
     await flush(20);
     expect(picker()).toBeNull();
     expect(apiGetMock.mock.calls.some(([path]) => String(path).endsWith("/social-overlays"))).toBe(false);
@@ -341,14 +426,16 @@ describe("the Social overlays picker in the Project header (#870)", () => {
   it("is absent for a Photographer even with video review open", async () => {
     authState.role = "photographer"; openGate(true);
     await renderSheet();
+    await openInfo();
     await flush(20);
     expect(picker()).toBeNull();
   });
 
-  it("picks by keyboard, saves once on Escape, closes only the picker, and returns focus to its trigger", async () => {
+  it("picks by keyboard, saves once on Escape, closes only the picker (Project info stays), and returns focus to its trigger", async () => {
     openGate(true);
     apiPutMock.mockResolvedValue({ ...overlayState([{ id: tiktokId, name: "TikTok" }]) });
     await renderSheet();
+    await openInfo();
     await flushUntil(() => pickerTrigger() !== null, "the picker trigger");
     await click(pickerTrigger()!);
     await flushUntil(() => document.querySelector('[role="listbox"]') !== null, "the overlay list");
@@ -358,6 +445,7 @@ describe("the Social overlays picker in the Project header (#870)", () => {
     expect(onRequestClose).not.toHaveBeenCalled();
     expect(apiPutMock).toHaveBeenCalledTimes(1);
     expect(apiPutMock).toHaveBeenCalledWith("/api/projects/p1/social-overlays", { overlayIds: [tiktokId], expectedRevision: "0".repeat(64) });
+    expect(document.querySelector('[data-testid="project-info-sheet"]')).not.toBeNull();
     expect(document.activeElement).toBe(pickerTrigger());
   });
 
@@ -365,6 +453,7 @@ describe("the Social overlays picker in the Project header (#870)", () => {
     openGate(true);
     apiPutMock.mockRejectedValue(new ApiError("Archived", 409, { error: "Archived", code: "project_archived" }));
     await renderSheet();
+    await openInfo();
     await flushUntil(() => pickerTrigger() !== null, "the picker trigger");
     expect(document.querySelector('[role="group"][aria-label="Stage"]')).toBeNull();
     await click(pickerTrigger()!);

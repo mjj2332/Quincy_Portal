@@ -178,10 +178,11 @@ async function openDeadlineDialog(host: HTMLElement): Promise<HTMLElement> {
   return document.querySelector<HTMLElement>('[role="dialog"][aria-label="Deadline"]')!;
 }
 
+/** #914 D2: Dropbox's Open and Sync live in Project info; opens it and returns its Dropbox section. */
 async function openDropboxDialog(host: HTMLElement): Promise<HTMLElement> {
-  await click(host.querySelector<HTMLButtonElement>('[data-testid="project-dropbox-trigger"]')!);
+  await click(host.querySelector<HTMLButtonElement>('[data-testid="project-info-open"]')!);
   await flush(5);
-  return document.querySelector<HTMLElement>('[role="dialog"][aria-label="Dropbox"]')!;
+  return document.querySelector<HTMLElement>('[data-testid="project-info-dropbox"]')!;
 }
 
 // `.project-collaboration__head` was retired to Tailwind (TB8-07 §7.1) — the Hide button carries
@@ -778,7 +779,8 @@ afterEach(async () => {
         return Promise.resolve({});
       });
     });
-    const group = (name: string) => host.querySelector<HTMLElement>(`[role="group"][aria-label="${name}"]`);
+    // #914: the Dropbox group is in Project info, portalled outside `host`.
+    const group = (name: string) => document.querySelector<HTMLElement>(`[role="group"][aria-label="${name}"]`);
 
     it("a Dropbox sync refused as archived shows no toast, refetches the detail and turns the header Dropbox read-only", async () => {
       apiPostMock.mockImplementationOnce(async () => { archivedAt = Date.now(); throw new ApiError("Archived projects can't sync from Dropbox. Restore the project first.", 409, { code: "dropbox_sync_project_archived" }); });
@@ -792,7 +794,7 @@ afterEach(async () => {
       expect(host.querySelector('[role="alert"]')).toBeNull();
       expect(detailFetches()).toBeGreaterThan(before);
       expect(group("Dropbox")?.textContent).toContain("Not monitored");
-      expect(host.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
+      expect(document.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
     });
 
     it("a 409 that is not the archive refusal still toasts its message", async () => {
@@ -2405,9 +2407,12 @@ describe("ProjectWorkspace collaboration relocation", () => {
     await render(<ProjectWorkspace projectId={externalProjectId} />); await flush(20);
 
     expect(host.querySelector('a[href$="/edit"]')).toBeNull();
-    // dropbox-sync now lives in a closed popover for every role, so gating is proven by the trigger's absence.
-    expect(host.querySelector('[data-testid="project-dropbox-trigger"]')).toBeNull();
-    expect(host.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
+    // #914: dropbox-sync lives in Project info; it offers no Dropbox section to this role.
+    await openDropboxDialog(host);
+    expect(document.querySelector('[data-testid="project-info-dropbox"]')).toBeNull();
+    expect(document.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
+    await act(async () => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await Promise.resolve(); });
+    await flush(5);
     expect(host.querySelector('input[type="file"]')).toBeNull();
     expect(host.querySelector('[title="Use as project cover"]')).toBeNull();
 

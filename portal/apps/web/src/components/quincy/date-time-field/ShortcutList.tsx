@@ -25,7 +25,9 @@ export const SHORTCUTS_LABEL = "Date shortcuts";
 
 export type ShortcutRow = { id: string; label: string; sublabel: string };
 
-export function ShortcutList<TRow extends ShortcutRow>({ shortcuts, activeId, onPick }: {
+export function ShortcutList<TRow extends ShortcutRow>({ shortcuts, activeId, onPick, layout = "responsive" }: {
+  /** #914: `stacked` keeps the two-column grid at every width, for a form drawn in a narrow sheet. */
+  layout?: "responsive" | "stacked";
   shortcuts: readonly TRow[];
   /** The shortcut whose resolved value equals the draft, if any; the range form can have several (two chips that set the same moment both read pressed). */
   activeId: TRow["id"] | null | readonly TRow["id"][];
@@ -33,7 +35,7 @@ export function ShortcutList<TRow extends ShortcutRow>({ shortcuts, activeId, on
   onPick: (shortcut: TRow, button: HTMLElement) => void;
 }) {
   return (
-    <ItemGroup aria-label={SHORTCUTS_LABEL} className="grid grid-cols-2 gap-[var(--space-1)] min-[721px]:flex min-[721px]:w-44 min-[721px]:shrink-0">
+    <ItemGroup aria-label={SHORTCUTS_LABEL} className={cn("grid grid-cols-2 gap-[var(--space-1)]", layout !== "stacked" && "min-[721px]:flex min-[721px]:w-44 min-[721px]:shrink-0")}>
       {shortcuts.map((shortcut) => {
         const { icon: Icon, tone } = ICONS[shortcut.id] ?? ICONS.today!;
         return (

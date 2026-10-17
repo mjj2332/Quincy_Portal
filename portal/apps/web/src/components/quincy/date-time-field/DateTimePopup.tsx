@@ -4,6 +4,7 @@ import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/re
 import { Input } from "@/components/reui/input";
 import { buildShortcuts, civilToCell, joinCivilMinute, parseTypedTime, POPUP_SHORT_QUERY, POPUP_STACKED_QUERY, sameReminderOffsets, splitCivilMinute, sydneyToday, timeSlots, yearBounds, type DateShortcut } from "@/lib/date-time-field";
 import { useMediaQuery } from "@/lib/use-media-query";
+import { cn } from "@/lib/utils";
 import { CalendarPane } from "./CalendarPane";
 import { FoldChoice } from "./FoldChoice";
 import { NextReminder } from "./NextReminder";
@@ -69,6 +70,8 @@ export type DateTimePopupProps = {
   focusOnMount?: boolean;
   /** A mutation the caller owns is in flight: Apply is disabled until it settles. */
   busy?: boolean;
+  /** #914: `stacked` draws the one-column arrangement at every width (the form inline in Project info's 440px sheet). */
+  layout?: "responsive" | "stacked";
   /** Apply submits even on an untouched draft (it re-saves the stored value). For a value the caller wants a person to confirm, e.g. an Automatic Deadline (#484). */
   applyUntouched?: boolean;
   onApply: (next: DateTimeApply) => void | Promise<void>;
@@ -112,7 +115,7 @@ export function ordered(calendarFirst: boolean, [shortcuts, calendar]: [ReactNod
 const TIME_ERROR = "Enter a time as HH:MM, from 00:00 to 23:59.";
 const SLOTS = timeSlots();
 
-function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedback, focusOnMount, busy = false, applyUntouched = false, onApply, onClose }: Omit<DateTimePopupProps, "seedKey">) {
+function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedback, focusOnMount, busy = false, applyUntouched = false, layout = "responsive", onApply, onClose }: Omit<DateTimePopupProps, "seedKey">) {
   const anchor = useContext(PopupAnchorContext);
   const ownId = useId();
   const ownBodyRef = useRef<HTMLDivElement>(null);
@@ -121,7 +124,8 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
   const timeId = useId();
   // #686: a short viewport has no time-slot list (the typed time stays), the title scrolls with the body, and a stacked body shows the calendar first.
   const short = useMediaQuery(POPUP_SHORT_QUERY);
-  const stacked = useMediaQuery(POPUP_STACKED_QUERY);
+  const stackedViewport = useMediaQuery(POPUP_STACKED_QUERY);
+  const stacked = layout === "stacked" || stackedViewport;
   const calendarFirst = short && stacked;
 
   // Sydney's today, read once when the popup opens so it cannot change under the user.
@@ -218,9 +222,9 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
   return (
     <PopupFrame label={label} zoneId={zoneId} bodyRef={bodyRef} applying={applying} applyDisabled={blocked || busy} scrollTitle={short} revealFallback={short ? REVEAL_TODAY : undefined} onCancel={onClose} onApply={() => { void apply(); }}>
       <div className="flex flex-col gap-[var(--space-4)]">
-        <div className="flex flex-col gap-[var(--space-4)] min-[721px]:flex-row">
+        <div className={cn("flex flex-col gap-[var(--space-4)]", layout !== "stacked" && "min-[721px]:flex-row")}>
           {ordered(calendarFirst, [
-            <ShortcutList key="shortcuts" shortcuts={shortcuts} activeId={activeId} onPick={pickShortcut} />,
+            <ShortcutList key="shortcuts" shortcuts={shortcuts} activeId={activeId} onPick={pickShortcut} layout={layout} />,
             <CalendarPane
               key="calendar"
               selection={{ mode: "single", day: draft.day }}
@@ -233,8 +237,8 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
             />,
           ])}
           {!short && (
-            <div className="flex min-w-0 flex-col gap-[var(--space-2)] min-[721px]:w-28 min-[721px]:shrink-0">
-              <TimeColumn selected={draft.time} skipped={skipped} onPick={pickSlot} />
+            <div className={cn("flex min-w-0 flex-col gap-[var(--space-2)]", layout !== "stacked" && "min-[721px]:w-28 min-[721px]:shrink-0")}>
+              <TimeColumn selected={draft.time} skipped={skipped} onPick={pickSlot} layout={layout} />
             </div>
           )}
         </div>

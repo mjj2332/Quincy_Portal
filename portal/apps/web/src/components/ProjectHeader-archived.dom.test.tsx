@@ -46,7 +46,8 @@ function header(p: ProjectDetail, extra: Partial<{ canEdit: boolean; canAdminBac
   return <ProjectHeader project={p} activeTab={"raw" as CollectionKind} availableTabs={["raw"] as CollectionKind[]} canUpload canAdminBackend={extra.canAdminBackend ?? true} canEdit={extra.canEdit ?? true} hasRawFolder autohdrBlocked={false} isSyncing={false} onSyncDropbox={onSyncDropbox} onActiveTabChange={vi.fn()} onStageMove={extra.onStageMove as never} />;
 }
 function render(value: ReactNode) { act(() => { root.render(value); }); }
-const group = (name: string) => host.querySelector<HTMLElement>(`[role="group"][aria-label="${name}"]`);
+// #914: Dropbox's group lives in Project info (portalled to body), so groups are looked up in the document.
+const group = (name: string) => document.querySelector<HTMLElement>(`[role="group"][aria-label="${name}"]`);
 const link = (text: string) => [...host.querySelectorAll<HTMLAnchorElement>("a")].find((anchor) => anchor.textContent === text) ?? null;
 // #914: Copy link moved into ⋯ (D5), so the "another control" these cases move focus to is the ⋯ trigger itself.
 const otherControl = () => host.querySelector<HTMLButtonElement>('[data-testid="project-more-actions"]')!;
@@ -58,7 +59,8 @@ async function moreItems() {
   return items;
 }
 async function openDeadline() { const trigger = host.querySelector<HTMLButtonElement>('[data-testid="project-deadline-trigger"]')!; await act(async () => { trigger.click(); await Promise.resolve(); await Promise.resolve(); }); }
-async function openDropbox() { const trigger = host.querySelector<HTMLButtonElement>('[data-testid="project-dropbox-trigger"]')!; await act(async () => { trigger.click(); await Promise.resolve(); await Promise.resolve(); }); return document.querySelector<HTMLElement>('[role="dialog"][aria-label="Dropbox"]')!; }
+/** #914 D2: Dropbox's details are a Project info section. */
+async function openDropbox() { const trigger = host.querySelector<HTMLButtonElement>('[data-testid="project-info-open"]')!; await act(async () => { trigger.click(); await Promise.resolve(); await Promise.resolve(); }); return document.querySelector<HTMLElement>('[data-testid="project-info-dropbox"]')!; }
 
 beforeEach(() => { host = document.createElement("div"); document.body.append(host); root = createRoot(host); onSyncDropbox.mockReset(); controlProps.latest = null; });
 afterEach(() => { act(() => root.unmount()); document.body.replaceChildren(); });
@@ -105,10 +107,10 @@ describe("an archived Project's header on load (#455)", () => {
     expect(cell.textContent).toContain("No deadline set");
   });
 
-  it("shows Dropbox as a neutral 'Not monitored' value with no popover and no Sync, keeping an Open in Dropbox link", () => {
+  it("shows Project info's Dropbox as a neutral 'Not monitored' value with no Sync, keeping an Open in Dropbox link", async () => {
     render(header(project({ archivedAt: Date.now() })));
-    expect(host.querySelector('[data-testid="project-dropbox-trigger"]')).toBeNull();
-    expect(host.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
+    await openDropbox();
+    expect(document.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
     const cell = group("Dropbox")!;
     expect(cell.textContent).toContain("Not monitored");
     expect(cell.textContent).not.toContain("Monitored Not");
@@ -130,21 +132,22 @@ describe("an archived Project's header on load (#455)", () => {
     expect(group("Deadline")).toBeNull();
     expect(host.querySelector('[data-testid="project-deadline-trigger"]')).not.toBeNull();
     expect(document.querySelector('[data-testid="deadline-control"]')).toBeNull();
-    expect(host.querySelector('[data-testid="project-dropbox-trigger"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="project-info-open"]')).not.toBeNull();
   });
 });
 
 describe("a Team refusal latches the header read-only (#914, #455)", () => {
-  it("turns Stage, Deadline and Dropbox read-only at once, and leaves the Team to move its own focus", () => {
+  it("turns Stage, Deadline and Project info's Dropbox read-only at once, and leaves the Team to move its own focus", async () => {
     render(header(project()));
     expect(group("Stage")).toBeNull();
     act(() => otherControl().focus());
     act(() => teamProps.latest!.onArchivedRefusal!());
     expect(group("Stage")).not.toBeNull();
     expect(group("Deadline")).not.toBeNull();
-    expect(group("Dropbox")).not.toBeNull();
     expect(teamProps.latest?.archived).toBe(true);
     expect(document.activeElement).toBe(otherControl());
+    await openDropbox();
+    expect(group("Dropbox")).not.toBeNull();
   });
 });
 
@@ -162,7 +165,6 @@ describe("a Deadline refusal latches the header read-only (#455)", () => {
     expect(group("Deadline")!.getAttribute("aria-describedby")).toBe(notice.id);
     expect(host.querySelector('[role="alert"]')).toBeNull();
     expect(group("Stage")).not.toBeNull();
-    expect(group("Dropbox")).not.toBeNull();
     expect(teamProps.latest?.archived).toBe(true);
     expect((await moreItems())[0]?.text).toBe("Restore or delete");
   });
@@ -214,20 +216,23 @@ describe("a Dropbox sync refusal latches the header read-only (#455)", () => {
     return { resolve: () => act(async () => { finish(result); await Promise.resolve(); await Promise.resolve(); }) };
   }
 
-  it("moves focus to the Dropbox group and shows the notice when the sync resolves 'archived'", async () => {
+  it("moves focus to Project info's Dropbox group and shows the notice when the sync resolves 'archived'", async () => {
     const { resolve } = await pressSync("archived");
     await resolve();
     expect(document.activeElement).toBe(group("Dropbox"));
-    expect(host.querySelector('[role="status"]')?.textContent).toBe("Read-only while archived. Restore the project before syncing from Dropbox.");
-    expect(host.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
-    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(document.querySelector('[data-testid="project-info-sheet"]')!.contains(group("Dropbox"))).toBe(true);
+    expect(document.querySelector('[data-testid="project-info-dropbox"] [role="status"]')?.textContent).toBe("Read-only while archived. Restore the project before syncing from Dropbox.");
+    expect(document.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+    expect(group("Stage")).not.toBeNull();
   });
 
   it("leaves focus the user moved elsewhere", async () => {
     const { resolve } = await pressSync("archived");
-    act(() => otherControl().focus());
+    const close = document.querySelector<HTMLButtonElement>('[data-testid="project-info-close"]')!;
+    act(() => close.focus());
     await resolve();
-    expect(document.activeElement).toBe(otherControl());
+    expect(document.activeElement).toBe(close);
     expect(group("Dropbox")).not.toBeNull();
   });
 
@@ -235,7 +240,7 @@ describe("a Dropbox sync refusal latches the header read-only (#455)", () => {
     const { resolve } = await pressSync(undefined);
     await resolve();
     expect(group("Dropbox")).toBeNull();
-    expect(host.querySelector('[data-testid="project-dropbox-trigger"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="dropbox-sync"]')).not.toBeNull();
   });
 });
 

@@ -65,7 +65,7 @@ export function deadlineChipDate(localCivil: string): string {
 }
 
 /** The countdown Badge's variant per tone (Badge `-light` variants for state, AGENTS.md rule 2). */
-const COUNTDOWN_BADGE: Record<DeadlineDueInTone, "warning-light" | "destructive-light" | "secondary"> = { caution: "warning-light", critical: "destructive-light", neutral: "secondary" };
+export const COUNTDOWN_BADGE: Record<DeadlineDueInTone, "warning-light" | "destructive-light" | "secondary"> = { caution: "warning-light", critical: "destructive-light", neutral: "secondary" };
 
 const ARCHIVED_DEADLINE_NOTICE = "Read-only while archived. Restore the project before changing the deadline.";
 

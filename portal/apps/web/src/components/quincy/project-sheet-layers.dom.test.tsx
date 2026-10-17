@@ -58,6 +58,14 @@ describe("hasOpenInnerLayer (#366)", () => {
     expect(hasOpenInnerLayer(null, null, document)).toBe(false);
   });
 
+  it("is true for Project info (#914 D2): a registry sheet dialog docked in the overlay slot, which sets no aria-modal", () => {
+    // Pinned rather than relied on: Esc closes Project info first because its popup matches OPEN_POPUP (plan §4, lessons "Escape needs an order").
+    const { popup, slot } = fixture(`<div data-fixture="popup" role="dialog" aria-modal="true" data-open><div data-fixture="slot"><div role="dialog" data-slot="sheet-content" data-side="right" data-open data-testid="project-info-sheet"></div></div></div>`);
+    expect(hasOpenInnerLayer(popup, slot, document)).toBe(true);
+    slot!.querySelector("[data-open]")!.removeAttribute("data-open");
+    expect(hasOpenInnerLayer(popup, slot, document)).toBe(false);
+  });
+
   describe("popup arms (#375)", () => {
     const wrap = (inner: string, where: "popup" | "slot" = "popup") => fixture(`<div data-fixture="popup" role="dialog" aria-modal="true" data-open>${where === "popup" ? inner : ""}<div data-fixture="slot">${where === "slot" ? inner : ""}</div></div>`);
     it.each([

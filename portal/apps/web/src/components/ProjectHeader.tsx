@@ -1,5 +1,4 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import type { Role } from "@quincy/shared";
 import { InternalLink } from "./InternalLink";
 import { useDashboardReturnLink, useInProjectSheet } from "./quincy/ProjectSheet";
 import { WorkspaceTabs } from "./project-header/WorkspaceTabs";
@@ -7,20 +6,12 @@ import { HeaderDesktop } from "./project-header/HeaderDesktop";
 import type { ArchivedLatch } from "./project-header/StatusCluster";
 import { useStages } from "../lib/stages";
 import { useCapabilities } from "../lib/capabilities";
-import { useVideoReviewQuery, type ProjectDetail } from "../lib/project-data";
+import type { ProjectDetail } from "../lib/project-data";
 import type { CollectionKind } from "@quincy/shared";
 import type { WorkspaceTab } from "../lib/workspace-tab";
-import { ProjectHeaderDropbox } from "./ProjectHeaderDropbox";
-import { ProjectSocialOverlayPicker } from "./quincy/ProjectSocialOverlayPicker";
+import { ProjectInfoPanel, type InfoTarget } from "./project-header/ProjectInfoPanel";
 
 export { WhiteboardButton } from "./project-header/WhiteboardButton";
-
-/** #870: only while the Video review gate is open (the picker's routes answer 404 when it is closed). Its own component, so the query exists only for roles that can see it. */
-function SocialOverlaysRow({ projectId, role, canEdit, archived, onArchivedRefusal }: { projectId: string; role: Role; canEdit: boolean; archived: boolean; onArchivedRefusal: () => void }) {
-  const open = useVideoReviewQuery(projectId, true, role).data?.open === true;
-  if (!open) return null;
-  return <div data-testid="project-header-social-overlays"><ProjectSocialOverlayPicker key={projectId} projectId={projectId} role={role} canEdit={canEdit} archived={archived} onArchivedRefusal={onArchivedRefusal} /></div>;
-}
 
 // #213 follow-up: prototype 2a's `.crumb` — "← Dashboard" as small secondary text above the title, outside the Project sheet only
 // (inside it, the sheet's Close returns to the Dashboard, so #914 D1 drops the crumb there). The 44px target is kept by the
@@ -102,6 +93,11 @@ export function ProjectHeader({
   const stageGroupRef = useRef<HTMLSpanElement>(null);
   const deadlineGroupRef = useRef<HTMLDivElement>(null);
   const dropboxGroupRef = useRef<HTMLDivElement>(null);
+  const infoDeadlineRef = useRef<HTMLElement>(null);
+  const infoOverlaysRef = useRef<HTMLElement>(null);
+  // #914 D2: Project info, open at the top or at a section, and the control that opened it (focus goes back there).
+  const [info, setInfo] = useState<{ open: boolean; target: InfoTarget }>({ open: false, target: null });
+  const infoOpener = useRef<HTMLElement | null>(null);
   const priorArchivedAt = useRef(Boolean(project.archivedAt));
   const priorProjectId = useRef(project.id);
   const focusAfterFlip = useRef<{ source: NonNullable<ArchivedLatch> } | null>(null);
@@ -122,7 +118,10 @@ export function ProjectHeader({
     const flip = focusAfterFlip.current;
     if (!latch || !flip) return;
     focusAfterFlip.current = null;
-    const target = { stage: stageGroupRef, deadline: deadlineGroupRef, dropbox: dropboxGroupRef, team: null, "social-overlays": stageGroupRef }[flip.source]?.current;
+    // While Project info is open (a modal over the header), focus stays inside it: on the section the refusal came from.
+    const target = info.open
+      ? { stage: null, deadline: infoDeadlineRef, dropbox: dropboxGroupRef, team: null, "social-overlays": infoOverlaysRef }[flip.source]?.current
+      : { stage: stageGroupRef, deadline: deadlineGroupRef, dropbox: dropboxGroupRef, team: null, "social-overlays": stageGroupRef }[flip.source]?.current;
     if (!target) return;
     const active = document.activeElement;
     const reclaimed = !!active && active !== document.body && active !== target && active.contains(target);
@@ -138,18 +137,39 @@ export function ProjectHeader({
   }
 
   const tabs = <WorkspaceTabs project={project} activeTab={activeTab} availableTabs={availableTabs} deliveryOffered={deliveryOffered} onActiveTabChange={onActiveTabChange} collaborationUnread={collaborationUnread} workspaceTabRefs={workspaceTabRefs} whiteboardOpen={whiteboardOpen} />;
+  const place = [project.suburb, project.postcode].filter(Boolean).join(" ");
+  const offersDropbox = canUpload && (hasRawFolder || canAdminBackend || Boolean(project.monitoredRawFolder));
+  function openInfo(opener: HTMLElement, target: InfoTarget) {
+    infoOpener.current = opener;
+    setInfo({ open: true, target });
+  }
   return <HeaderDesktop
     project={project}
     crumb={!inSheet && <InternalLink className={DASHBOARD_CRUMB} {...dashboardReturn}>← Dashboard</InternalLink>}
     tabs={tabs}
-    below={offersOverlays && <SocialOverlaysRow projectId={project.id} role={role!} canEdit={can("chooseSocialOverlays")} archived={archived} onArchivedRefusal={() => latchArchived("social-overlays", false)} />}
     cluster={{
       project, activeTab, archived, latch, canEdit, canAdminBackend, canMoveStage, currentStageKey, stages,
       stageMovePending, stageMoveDisabledReason, onStageMove: (stageKey) => { void moveStageAndLatch(stageKey); },
       stageCellRef, stageGroupRef, deadlineGroupRef, latchArchived, onOpenWhiteboard,
-      dropbox: canUpload && (hasRawFolder || canAdminBackend || Boolean(project.monitoredRawFolder))
-        ? <ProjectHeaderDropbox project={project} isSyncing={isSyncing} autohdrBlocked={autohdrBlocked} onSyncDropbox={onSyncDropbox} archived={archived} archivedNotice={latch === "dropbox"} readOnlyRef={dropboxGroupRef} onArchivedRefusal={(inside) => latchArchived("dropbox", inside)} />
-        : null,
+      dropboxBlocked: offersDropbox && autohdrBlocked && !archived, onOpenInfo: openInfo, infoOpen: info.open,
     }}
+    info={<ProjectInfoPanel
+      open={info.open}
+      target={info.target}
+      onClose={() => setInfo((current) => ({ ...current, open: false }))}
+      returnFocus={() => (infoOpener.current?.isConnected ? infoOpener.current : document.querySelector<HTMLElement>('[data-testid="project-info-open"]'))}
+      project={project}
+      place={place}
+      archived={archived}
+      latch={latch}
+      canEdit={canEdit}
+      canAdminBackend={canAdminBackend}
+      latchArchived={latchArchived}
+      deadlineSectionRef={infoDeadlineRef}
+      overlaysSectionRef={infoOverlaysRef}
+      overlays={offersOverlays ? { role: role!, canEdit: can("chooseSocialOverlays") } : null}
+      dropbox={offersDropbox ? { isSyncing, autohdrBlocked, onSyncDropbox, readOnlyRef: dropboxGroupRef } : null}
+      onOpenWhiteboard={onOpenWhiteboard}
+    />}
   />;
 }

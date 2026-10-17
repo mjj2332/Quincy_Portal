@@ -1,4 +1,8 @@
 import type { ReactNode } from "react";
+import { NotebookPenIcon } from "lucide-react";
+import { Button } from "@/components/reui/button";
+import { cn } from "../../lib/utils";
+import { INFO_LINK } from "./info-sections";
 import type { ProjectDetail } from "../../lib/project-data";
 import { deadlineTriggerText } from "../ProjectHeaderDeadline";
 import { StatusCluster, type StatusClusterProps } from "./StatusCluster";
@@ -18,10 +22,10 @@ const META_DOT = <span aria-hidden="true" className="text-muted-foreground">·</
 
 /**
  * #914 D1/T1 — the desktop header. Row A is the labelled section: the title in the display face with the suburb beside it, the
- * meta line (shoot date, client), and the status cluster. Row B, the Workspace tab bar, is its sibling (see app.css), passed in as
+ * meta line (shoot date, client, and a Production notes link that opens Project info at the notes), and the status cluster. Row B, the Workspace tab bar, is its sibling (see app.css), passed in as
  * `tabs` so it is rendered exactly once.
  */
-export function HeaderDesktop({ project, crumb, cluster, tabs, below }: { project: ProjectDetail; crumb?: ReactNode; cluster: StatusClusterProps; tabs: ReactNode; below?: ReactNode }) {
+export function HeaderDesktop({ project, crumb, cluster, tabs, info }: { project: ProjectDetail; crumb?: ReactNode; cluster: StatusClusterProps; tabs: ReactNode; /** Project info (D2), rendered beside the rows. */ info?: ReactNode }) {
   const client = clientText(project);
   const place = [project.suburb, project.postcode].filter(Boolean).join(" ");
   return <>
@@ -36,12 +40,15 @@ export function HeaderDesktop({ project, crumb, cluster, tabs, below }: { projec
           <p className="m-0 flex flex-wrap items-center gap-[var(--space-2)] [font:var(--type-label)] text-foreground-secondary" data-testid="project-header-meta">
             <span>{shootDateText(project.shootDate)}</span>
             {client && <>{META_DOT}<span className="[overflow-wrap:anywhere]">{client}</span></>}
+            {project.productionNotes?.trim() && <>{META_DOT}<Button type="button" variant="ghost" data-testid="project-header-notes" aria-haspopup="dialog"
+              className={cn(INFO_LINK, "gap-[var(--space-1)] [font:var(--type-label)] text-foreground-secondary [margin-block:calc(var(--space-3)*-1)]")}
+              onClick={(event) => cluster.onOpenInfo(event.currentTarget, "notes")}><NotebookPenIcon aria-hidden="true" className="size-3.5" />Production notes</Button></>}
           </p>
         </div>
         <StatusCluster {...cluster} />
       </div>
-      {below}
     </section>
     <div className="project-header__tabbar" data-testid="project-header-tabbar">{tabs}</div>
+    {info}
   </>;
 }

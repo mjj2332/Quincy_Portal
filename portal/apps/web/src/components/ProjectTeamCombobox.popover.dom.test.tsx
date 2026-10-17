@@ -53,16 +53,17 @@ async function waitFor(assertion: () => void, timeoutMs = 1000) {
   }
 }
 
-async function render(members: ProjectMember[], props: { canEdit?: boolean; archived?: boolean; onArchivedRefusal?: () => void } = {}) {
+type MountProps = { canEdit?: boolean; archived?: boolean; onArchivedRefusal?: () => void; presentation?: "popover" | "inline" };
+async function render(members: ProjectMember[], props: MountProps = {}) {
   await act(async () => {
     root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}>
-      <ProjectTeamCombobox presentation="popover" projectId={projectId} members={members} canEdit={props.canEdit ?? true} archived={props.archived} onArchivedRefusal={props.onArchivedRefusal} />
+      <ProjectTeamCombobox presentation={props.presentation ?? "popover"} projectId={projectId} members={members} canEdit={props.canEdit ?? true} archived={props.archived} onArchivedRefusal={props.onArchivedRefusal} />
     </QueryClientProvider></ProjectQueryRuntimeProvider>);
     await Promise.resolve();
   });
   await flush();
 }
-async function mount(members: ProjectMember[] = [], props: { canEdit?: boolean; archived?: boolean; onArchivedRefusal?: () => void } = {}) {
+async function mount(members: ProjectMember[] = [], props: MountProps = {}) {
   host = document.createElement("div"); document.body.appendChild(host);
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   runtime = new ProjectQueryRuntime(queryClient);
@@ -321,5 +322,34 @@ describe("ProjectTeamCombobox popover presentation (#914 D3)", () => {
     const group = host.querySelector<HTMLElement>('[data-header-value="team"]')!;
     expect(group.getAttribute("role")).toBe("group");
     await waitFor(() => expect(document.activeElement).toBe(group));
+  });
+});
+
+// #914 D2 "Manage" / M6: the same grouped picker drawn in place.
+describe("ProjectTeamCombobox inline presentation (#914 D2, M6)", () => {
+  it("renders the search and grouped list with no popup or trigger, and a pick still sets the role from its group", async () => {
+    await mount([eliMember], { presentation: "inline" });
+    await waitFor(() => expect(options().length).toBeGreaterThan(0));
+    expect(host.querySelector('[data-testid="project-team-trigger"]')).toBeNull();
+    const list = document.querySelector<HTMLElement>('[role="listbox"]')!;
+    expect(list.getAttribute("aria-label")).toBe("Team candidates");
+    // In place: inside the control's own subtree, not portalled into a popup.
+    expect(host.contains(list)).toBe(true);
+    expect(host.contains(search())).toBe(true);
+    expect(host.textContent).toContain("Photographers");
+    expect(host.textContent).toContain("Editors");
+    expect(option("Eli Editor").getAttribute("aria-selected")).toBe("true");
+    await press(option("Ari Photographer"));
+    await flush(2);
+    expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/photographers/${photographer.id}`);
+    expect(document.querySelector('[role="listbox"]')).not.toBeNull();
+  });
+
+  it("is a named read-only group with the names when archived, and asks for no candidates", async () => {
+    await mount([eliMember], { presentation: "inline", archived: true });
+    expect(document.querySelector('[role="listbox"]')).toBeNull();
+    const group = host.querySelector<HTMLElement>('[role="group"][aria-label="Team"]')!;
+    expect(group.textContent).toBe("Eli Editor");
+    expect(apiGetMock).not.toHaveBeenCalled();
   });
 });

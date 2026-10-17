@@ -1,13 +1,15 @@
-import type { ReactNode, Ref, RefObject } from "react";
-import { ArchiveIcon } from "lucide-react";
+import type { Ref, RefObject } from "react";
+import { ArchiveIcon, PanelRightIcon, TriangleAlertIcon } from "lucide-react";
 import type { WorkspaceTab } from "@quincy/shared";
 import { Badge } from "@/components/reui/badge";
+import { Button } from "@/components/reui/button";
 import { ProjectHeaderDeadline } from "../ProjectHeaderDeadline";
 import { ProjectTeamCombobox } from "../ProjectTeamCombobox";
 import { StageControl, StageOption } from "./StageControl";
 import { ProjectMoreMenu } from "./ProjectMoreMenu";
 import { WhiteboardButton } from "./WhiteboardButton";
-import { HEADER_CHIP_LOCK, HEADER_RULE } from "./header-styles";
+import { HEADER_CHIP, HEADER_CHIP_LOCK, HEADER_CHIP_WARN, HEADER_RULE } from "./header-styles";
+import type { InfoTarget } from "./ProjectInfoPanel";
 import type { useStages } from "../../lib/stages";
 import type { ProjectDetail } from "../../lib/project-data";
 import { cn } from "../../lib/utils";
@@ -33,15 +35,18 @@ export type StatusClusterProps = {
   deadlineGroupRef: Ref<HTMLDivElement>;
   latchArchived: (source: NonNullable<ArchivedLatch>, focusWasInside: boolean) => void;
   onOpenWhiteboard?: () => void;
-  /** S1 interim: the Dropbox popover, until S2 moves its details into Project info and leaves only the "Dropbox blocked" chip here. */
-  dropbox?: ReactNode;
+  /** D6: the Dropbox is blocked (autoHDR). The cluster shows the caution chip, which opens Project info at Dropbox. */
+  dropboxBlocked: boolean;
+  /** Opens Project info, at a section or the top; `opener` is where focus returns when it closes. */
+  onOpenInfo: (opener: HTMLElement, target: InfoTarget) => void;
+  infoOpen: boolean;
 };
 
 /**
  * #914 D1/D6 — the status cluster at the end of Row A: Stage, Deadline and Team (the controls people use daily, each its own
- * popover), the Archived badge, then a rule and Whiteboard and ⋯. A problem changes how a control looks; read-only roles and an
+ * popover), "Dropbox blocked" when it is, the Archived badge, then a rule and Whiteboard, Project info and ⋯. A problem changes how a control looks; read-only roles and an
  * archived Project get flat values with no chevron. Below the `project-header` container's wide size the cluster takes its own
- * line, and the rule pushes Whiteboard and ⋯ to its end (T1).
+ * line, and the rule pushes Whiteboard, Project info and ⋯ to its end (T1).
  */
 export function StatusCluster(props: StatusClusterProps) {
   const { project, archived, latch, canEdit, canMoveStage, currentStageKey, stages } = props;
@@ -59,10 +64,13 @@ export function StatusCluster(props: StatusClusterProps) {
     </div>
     <ProjectHeaderDeadline projectId={project.id} schedule={project.deadlineSchedule} canEdit={canEdit} archived={archived} archivedNotice={latch === "deadline"} readOnlyRef={props.deadlineGroupRef} onArchivedRefusal={(inside) => props.latchArchived("deadline", inside)} />
     <ProjectTeamCombobox presentation="popover" projectId={project.id} members={project.members} canEdit={canEdit} archived={archived} onArchivedRefusal={() => props.latchArchived("team", false)} />
-    {props.dropbox}
+    {props.dropboxBlocked && <Button type="button" variant="outline" size="header" data-testid="project-dropbox-blocked" className={cn(HEADER_CHIP, HEADER_CHIP_WARN)} aria-haspopup="dialog"
+      onClick={(event) => props.onOpenInfo(event.currentTarget, "dropbox")}><TriangleAlertIcon aria-hidden="true" />Dropbox blocked</Button>}
     {archived && <Badge variant="secondary" size="xl" data-testid="project-archived-badge" className="normal-case tracking-normal gap-[var(--space-1)] [&_svg]:size-3.5"><ArchiveIcon aria-hidden="true" />Archived</Badge>}
     <span aria-hidden="true" className={cn(HEADER_RULE, "project-header__push mx-[var(--space-1)]")} />
     {props.onOpenWhiteboard && <WhiteboardButton variant="header" onOpen={props.onOpenWhiteboard} />}
+    <Button type="button" variant="outline" size="header" data-testid="project-info-open" className={HEADER_CHIP} aria-haspopup="dialog" aria-expanded={props.infoOpen}
+      onClick={(event) => props.onOpenInfo(event.currentTarget, null)}><PanelRightIcon aria-hidden="true" />Project info</Button>
     <ProjectMoreMenu project={project} activeTab={props.activeTab} canEdit={canEdit} archived={archived} canAdminBackend={props.canAdminBackend} />
   </div>;
 }

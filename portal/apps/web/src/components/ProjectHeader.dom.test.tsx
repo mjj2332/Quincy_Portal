@@ -23,7 +23,12 @@ vi.mock("../lib/stages", () => ({
 }));
 const teamProps = vi.hoisted(() => ({ latest: null as { archived?: boolean; presentation?: string; canEdit?: boolean } | null }));
 vi.mock("./ProjectTeamCombobox", () => ({ ProjectTeamCombobox: (props: { archived?: boolean; presentation?: string; canEdit?: boolean }) => { teamProps.latest = props; return <div />; } }));
-vi.mock("./ProjectDeadlineControl", () => ({ ProjectDeadlineControl: () => <div /> }));
+type DeadlineMockProps = { layout?: string; focusOnMount?: boolean; onClose?: () => void };
+const deadlineProps = vi.hoisted(() => ({ latest: null as DeadlineMockProps | null }));
+vi.mock("./ProjectDeadlineControl", () => ({ ProjectDeadlineControl: (props: DeadlineMockProps) => {
+  deadlineProps.latest = props;
+  return <div data-testid="deadline-form-mock"><button type="button" onClick={() => props.onClose?.()}>Cancel</button></div>;
+} }));
 
 function project(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
   return {
@@ -60,16 +65,18 @@ async function clickOption(option: HTMLElement) {
 }
 
 /**
- * The Dropbox popover (`reui/popover.tsx`) portals its content to `document.body`, outside
- * `host` — same as `quincy/NotificationBell.tsx`'s panel. A native `.click()` inside `act`,
- * flushing microtasks the same way `NotificationBell.dom.test.tsx`'s own click helper does, then
- * the caller queries `document` (or the returned dialog) rather than `host` for anything the
- * popover renders.
+ * #914 D2: the Dropbox details live only in Project info (a `reui/sheet`, portalled to `document.body` here, outside `host`).
+ * Opens it from its cluster button and returns the Dropbox section; callers query it, or `document`, not `host`.
  */
-async function openDropbox(): Promise<HTMLElement> {
-  const trigger = host.querySelector<HTMLButtonElement>('[data-testid="project-dropbox-trigger"]')!;
+async function openInfo(): Promise<HTMLElement> {
+  const trigger = host.querySelector<HTMLButtonElement>('[data-testid="project-info-open"]')!;
   await act(async () => { trigger.click(); await Promise.resolve(); await Promise.resolve(); });
-  return document.querySelector<HTMLElement>('[role="dialog"][aria-label="Dropbox"]')!;
+  return document.querySelector<HTMLElement>('[data-testid="project-info-sheet"]')!;
+}
+
+async function openDropbox(): Promise<HTMLElement> {
+  const info = await openInfo();
+  return info.querySelector<HTMLElement>('[data-testid="project-info-dropbox"]')!;
 }
 
 describe("Project header Stage control", () => {
@@ -431,13 +438,13 @@ describe("Project header Stage control", () => {
 
   // #914 D1: the status cluster reads Stage, Deadline, Team, then a rule, the whiteboard and ⋯, with no field labels; the
   // whiteboard sits outside the tablist. Text and attribute assertions only: Guard A forbids class selectors in DOM tests.
-  it("D1: the cluster is Stage, Deadline, Team, Whiteboard, ⋯ in DOM order, with no field labels and the whiteboard outside the tablist", () => {
+  it("D1: the cluster is Stage, Deadline, Team, Whiteboard, Project info, ⋯ in DOM order, with no field labels and the whiteboard outside the tablist", () => {
     render(<ProjectHeader {...baseProps(project())} canEdit onOpenWhiteboard={vi.fn()} />);
     const cluster = host.querySelector<HTMLElement>('[data-testid="project-status-cluster"]')!;
-    const names = [...cluster.querySelectorAll<HTMLElement>("button")].map((el) => el.getAttribute("aria-label") ?? "");
-    expect(names).toEqual(["Stage: Editing", "Deadline: Set deadline", "Open whiteboard", "More actions"]);
+    const names = [...cluster.querySelectorAll<HTMLElement>("button")].map((el) => el.getAttribute("aria-label") ?? el.textContent ?? "");
+    expect(names).toEqual(["Stage: Editing", "Deadline: Set deadline", "Open whiteboard", "Project info", "More actions"]);
     expect(teamProps.latest).toMatchObject({ presentation: "popover", canEdit: true, archived: false });
-    expect(cluster.textContent).not.toMatch(/Stage|Team|Dropbox/);
+    expect(cluster.textContent?.replace("Project info", "")).not.toMatch(/Stage|Team|Dropbox/);
     const whiteboard = host.querySelector('[data-testid="project-whiteboard-open"]')!;
     expect(whiteboard.closest('[role="tablist"]')).toBeNull();
     expect(host.querySelectorAll('[data-testid="project-whiteboard-open"]')).toHaveLength(1);
@@ -445,6 +452,94 @@ describe("Project header Stage control", () => {
     const section = host.querySelector('[data-testid="project-header"]')!;
     expect(section.querySelector('[role="tablist"]')).toBeNull();
     expect(section.nextElementSibling?.querySelector('[role="tablist"]')).not.toBeNull();
+  });
+
+  it("D1/D2: the meta line's Production notes link shows only for notes, and opens Project info with the notes focused", async () => {
+    render(<ProjectHeader {...baseProps(project({ productionNotes: "  " }))} />);
+    expect(host.querySelector('[data-testid="project-header-notes"]')).toBeNull();
+    render(<ProjectHeader {...baseProps(project({ productionNotes: "Twilight exterior requested." }))} />);
+    const link = host.querySelector<HTMLButtonElement>('[data-testid="project-header-notes"]')!;
+    expect(link.textContent).toBe("Production notes");
+    expect(host.querySelector('[data-testid="project-header-meta"]')!.contains(link)).toBe(true);
+    act(() => { link.focus(); });
+    await act(async () => { link.click(); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 20)); });
+    const notes = document.querySelector<HTMLElement>('[data-testid="project-info-notes"]')!;
+    expect(document.activeElement).toBe(notes);
+    expect(notes.textContent).toContain("Twilight exterior requested.");
+    await act(async () => { document.querySelector<HTMLElement>('[data-testid="project-info-close"]')!.click(); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 20)); });
+    expect(document.querySelector('[data-testid="project-info-sheet"]')).toBeNull();
+    expect(document.activeElement).toBe(link);
+  });
+
+  it("D2: Project info's sections run Production notes, Client and shoot, Deadline, Team, Dropbox, with their facts", async () => {
+    render(<ProjectHeader {...baseProps(project({ agencyName: "Ray White Newtown", agentName: "Priya Sharma", shootDate: "2026-09-16", timeWindow: "9:00–10:00",
+      members: [
+        { id: "m1", userId: "u1", roleOnProject: "photographer", name: "Jess Miller", email: "jess@example.com", active: true },
+        { id: "m2", userId: "u2", roleOnProject: "editor", name: "Anika Ng", email: "anika@example.com", active: true },
+      ] as ProjectDetail["members"],
+      deadlineSchedule: { version: 1, source: "manual", deadline: { localCivil: "2026-09-18T17:00", instant: "2026-09-18T07:00:00.000Z", utcOffsetMinutes: 600, fold: 0 }, reminderOffsetsMinutes: [2880, 1440, 60, 0], state: "scheduled", nextOccurrence: null, canResume: false } as unknown as ProjectDetail["deadlineSchedule"],
+    }))} canEdit canUpload hasRawFolder />);
+    const info = await openInfo();
+    const order = [...info.querySelectorAll("section[data-testid^='project-info-']")].map((section) => section.getAttribute("data-testid"));
+    expect(order).toEqual(["project-info-notes", "project-info-client", "project-info-deadline", "project-info-team", "project-info-dropbox"]);
+    expect(info.querySelector("h2")!.textContent).toBe("12 Example St");
+    expect(info.querySelector('[data-testid="project-info-notes"]')!.textContent).toContain("No production notes.");
+    const client = info.querySelector('[data-testid="project-info-client"]')!.textContent;
+    expect(client).toContain("Ray White Newtown");
+    expect(client).toContain("Priya Sharma");
+    expect(client).toContain("Wed 16 Sep 2026, 9:00–10:00");
+    const deadline = info.querySelector('[data-testid="project-info-deadline"]')!.textContent;
+    expect(deadline).toContain("Fri 18 Sep, 17:00");
+    expect(deadline).toContain("2 days, 1 day, 1 hour before");
+    const team = info.querySelector('[data-testid="project-info-team"]')!.textContent;
+    expect(team).toContain("PhotographersJess Miller");
+    expect(team).toContain("EditorsAnika Ng");
+  });
+
+  it("D2: an editor gets each section's edit action and the footer's Edit project details; a Photographer gets facts only", async () => {
+    render(<ProjectHeader {...baseProps(project())} canEdit />);
+    let info = await openInfo();
+    expect(info.querySelector('a[aria-label="Edit production notes"]')!.getAttribute("href")).toBe("/projects/project-1/edit");
+    expect(info.querySelector('[data-testid="project-info-team-manage"]')).not.toBeNull();
+    expect(info.querySelector('[data-testid="project-info-details"]')!.textContent).toBe("Edit project details");
+    act(() => { root.unmount(); });
+    root = createRoot(host);
+    act(() => { roleState.role = "photographer"; });
+    render(<ProjectHeader {...baseProps(project())} />);
+    info = await openInfo();
+    expect(info.querySelector('a[aria-label="Edit production notes"]')).toBeNull();
+    expect(info.querySelector('[data-testid="project-info-team-manage"]')).toBeNull();
+    expect(info.querySelector('[data-testid="project-info-details"]')).toBeNull();
+  });
+
+  it("D2: Deadline's Change draws the deadline form in place, stacked; closing it puts the facts back and focus on Change", async () => {
+    render(<ProjectHeader {...baseProps(project())} canEdit />);
+    const info = await openInfo();
+    const section = info.querySelector<HTMLElement>('[data-testid="project-info-deadline"]')!;
+    const change = section.querySelector<HTMLButtonElement>('[data-testid="project-info-deadline-change"]')!;
+    expect(change.getAttribute("aria-label")).toBe("Change deadline");
+    expect(section.querySelector('[data-testid="deadline-form-mock"]')).toBeNull();
+    await act(async () => { change.click(); await Promise.resolve(); });
+    // In place: inside the section, with no header popover opened under Project info's scrim.
+    expect(section.querySelector('[data-testid="deadline-form-mock"]')).not.toBeNull();
+    expect(deadlineProps.latest).toMatchObject({ layout: "stacked", focusOnMount: true });
+    expect(section.querySelector('[data-testid="project-info-deadline-change"]')).toBeNull();
+    await act(async () => { section.querySelector<HTMLButtonElement>('[data-testid="deadline-form-mock"] button')!.click(); await Promise.resolve(); });
+    expect(section.querySelector('[data-testid="deadline-form-mock"]')).toBeNull();
+    expect(document.activeElement).toBe(section.querySelector('[data-testid="project-info-deadline-change"]'));
+  });
+
+  it("D2: no Change for a role that cannot edit the deadline, nor while archived", async () => {
+    render(<ProjectHeader {...baseProps(project())} />);
+    let info = await openInfo();
+    expect(info.querySelector('[data-testid="project-info-deadline-change"]')).toBeNull();
+    act(() => { root.unmount(); });
+    root = createRoot(host);
+    render(<ProjectHeader {...baseProps(project({ archivedAt: Date.now() }))} canEdit />);
+    info = await openInfo();
+    expect(info.querySelector('[data-testid="project-info-deadline-change"]')).toBeNull();
   });
 
   it("D6: a read-only role gets the Stage as a flat value with no chevron and no combobox", () => {
@@ -457,59 +552,54 @@ describe("Project header Stage control", () => {
     expect(value.getAttribute("role")).toBeNull();
   });
 
-  it("omits the Dropbox block when uploads are allowed but there is no folder, mapping, or backend admin", () => {
+  it("omits the Dropbox section when uploads are allowed but there is no folder, mapping, or backend admin", async () => {
     render(<ProjectHeader {...baseProps(project())} canUpload />);
-    expect(host.querySelector('[data-testid="project-dropbox-trigger"]')).toBeNull();
-    expect(host.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
+    const info = await openInfo();
+    expect(info.querySelector('[data-testid="project-info-dropbox"]')).toBeNull();
+    expect(document.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
   });
 
-  it("renders a Dropbox trigger button but no Dropbox content while its popover is closed", () => {
+  it("D2: Dropbox's Open and Sync live only in Project info, never in the header rows", () => {
     render(<ProjectHeader {...baseProps(project({
       monitoredRawFolder: { source: "editor_input", path: "/Editor/01_ACTIVE EDITS/09. September/11/12 Example St/0. Input", webUrl: "https://www.dropbox.com/home/x", extraPaths: [] },
     }))} canUpload hasRawFolder />);
-    expect(host.querySelector('[data-testid="project-dropbox-trigger"]')).not.toBeNull();
-    expect(host.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
+    expect(host.querySelector('[data-testid="project-dropbox-trigger"]')).toBeNull();
+    expect(document.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
     expect(host.textContent).not.toContain("Sync from Dropbox");
-    expect(host.querySelector('a[href^="https://www.dropbox.com"]')).toBeNull();
+    expect(document.querySelector('a[href^="https://www.dropbox.com"]')).toBeNull();
   });
 
-  it("shows Blocked on the Dropbox trigger when AutoHDR is blocked, regardless of monitoring", () => {
-    render(<ProjectHeader {...baseProps(project({
-      monitoredRawFolder: { source: "editor_input", path: "/x", webUrl: null, extraPaths: [] },
-    }))} canUpload hasRawFolder autohdrBlocked />);
-    const trigger = host.querySelector('[data-testid="project-dropbox-trigger"]')!;
-    expect(trigger.textContent).toContain("Blocked");
-    expect(trigger.getAttribute("aria-label")).toBe("Dropbox: Blocked");
+  it("D6: shows the 'Dropbox blocked' chip only when AutoHDR is blocked, and Project info's Dropbox reads Blocked", async () => {
+    render(<ProjectHeader {...baseProps(project({ monitoredRawFolder: { source: "editor_input", path: "/x", webUrl: null, extraPaths: [] } }))} canUpload hasRawFolder />);
+    expect(host.querySelector('[data-testid="project-dropbox-blocked"]')).toBeNull();
+    render(<ProjectHeader {...baseProps(project({ monitoredRawFolder: { source: "editor_input", path: "/x", webUrl: null, extraPaths: [] } }))} canUpload hasRawFolder autohdrBlocked />);
+    expect(host.querySelector('[data-testid="project-dropbox-blocked"]')!.textContent).toBe("Dropbox blocked");
+    const section = await openDropbox();
+    expect(section.querySelector('[data-testid="project-info-dropbox-status"]')!.textContent).toBe("Blocked");
   });
 
-  it("shows Monitored on the Dropbox trigger when a Monitored RAW folder is set", () => {
-    render(<ProjectHeader {...baseProps(project({
-      monitoredRawFolder: { source: "editor_input", path: "/x", webUrl: null, extraPaths: [] },
-    }))} canUpload hasRawFolder />);
-    const trigger = host.querySelector('[data-testid="project-dropbox-trigger"]')!;
-    expect(trigger.textContent).toContain("Monitored");
-    expect(trigger.getAttribute("aria-label")).toBe("Dropbox: Monitored");
-  });
-
-  it("shows Not monitored on the Dropbox trigger by default", () => {
+  it("D2: Project info's Dropbox reads Monitored with a Monitored RAW folder, and Not monitored by default", async () => {
+    render(<ProjectHeader {...baseProps(project({ monitoredRawFolder: { source: "editor_input", path: "/x", webUrl: null, extraPaths: [] } }))} canUpload hasRawFolder />);
+    expect((await openDropbox()).querySelector('[data-testid="project-info-dropbox-status"]')!.textContent).toBe("Monitored");
+    act(() => { root.unmount(); });
+    root = createRoot(host);
     render(<ProjectHeader {...baseProps(project())} canUpload hasRawFolder />);
-    const trigger = host.querySelector('[data-testid="project-dropbox-trigger"]')!;
-    expect(trigger.textContent).toContain("Not monitored");
-    expect(trigger.getAttribute("aria-label")).toBe("Dropbox: Not monitored");
+    expect((await openDropbox()).querySelector('[data-testid="project-info-dropbox-status"]')!.textContent).toBe("Not monitored");
   });
 
-  it("closes the Dropbox popover on Escape and returns focus to the trigger (#206)", async () => {
-    render(<ProjectHeader {...baseProps(project())} canUpload hasRawFolder />);
-    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="project-dropbox-trigger"]')!;
-    act(() => { trigger.focus(); });
-    await openDropbox();
-    expect(document.querySelector('[role="dialog"][aria-label="Dropbox"]')).not.toBeNull();
-    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await Promise.resolve(); await Promise.resolve(); });
-    expect(document.querySelector('[role="dialog"][aria-label="Dropbox"]')).toBeNull();
-    // Base UI's focus-return lands a tick after the close — same idiom as the Deadline test file's
-    // 20ms wait for its own outside-press dismiss.
+  it("D2: the 'Dropbox blocked' chip opens Project info with Dropbox focused (not Sync); Escape closes it and focus returns to the chip", async () => {
+    render(<ProjectHeader {...baseProps(project())} canUpload hasRawFolder autohdrBlocked />);
+    const chip = host.querySelector<HTMLButtonElement>('[data-testid="project-dropbox-blocked"]')!;
+    act(() => { chip.focus(); });
+    await act(async () => { chip.click(); await Promise.resolve(); await Promise.resolve(); });
     await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 20)); });
-    expect(document.activeElement).toBe(trigger);
+    const section = document.querySelector('[data-testid="project-info-dropbox"]')!;
+    expect(document.activeElement).toBe(section);
+    expect(document.activeElement).not.toBe(section.querySelector('[data-testid="dropbox-sync"]'));
+    await act(async () => { document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 20)); });
+    expect(document.querySelector('[data-testid="project-info-sheet"]')).toBeNull();
+    expect(document.activeElement).toBe(chip);
   });
 
   // #325: the popup took the trigger's width and every option is `whitespace-nowrap`, so a long
@@ -540,15 +630,13 @@ describe("Project header Stage control", () => {
     for (const row of rows) expect(row.className.split(/\s+/), row.textContent ?? "").toContain("max-[721px]:min-h-[44px]");
   });
 
-  // #325: with no Open-in-Dropbox link, the first tabbable element was Sync from Dropbox, so an
-  // Enter that opened the popover left the user one keypress from a sync. Focus lands on the
-  // popover itself; Sync stays one Tab away.
-  it("opens the Dropbox popover focused on itself, not on Sync from Dropbox (#325)", async () => {
+  // #325, kept for Project info: an Enter that opened it must not leave the user one keypress from a sync.
+  it("opens Project info focused on itself, not on Sync from Dropbox (#325)", async () => {
     render(<ProjectHeader {...baseProps(project())} canUpload hasRawFolder />);
-    const dialog = await openDropbox();
+    const info = await openInfo();
     await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 20)); });
-    expect(document.activeElement).not.toBe(dialog.querySelector('[data-testid="dropbox-sync"]'));
-    expect(document.activeElement).toBe(dialog);
+    expect(document.activeElement).not.toBe(info.querySelector('[data-testid="dropbox-sync"]'));
+    expect(document.activeElement).toBe(info);
   });
 
   it("marks the Stage select busy and disabled while a move is pending, then focusable with the reason after a 503", async () => {

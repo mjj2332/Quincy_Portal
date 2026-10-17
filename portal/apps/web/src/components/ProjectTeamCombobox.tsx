@@ -508,13 +508,7 @@ function stackPeople(value: TeamOption[]) {
 const TEAM_POPOVER_META = "m-0 [font:var(--type-eyebrow)] text-foreground-secondary";
 const TEAM_POPOVER_LABEL = "[font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary";
 
-/**
- * #914 D3 — the Project header's Team: an avatar-stack chip (three faces, then +N) that opens the grouped picker with the search
- * field inside it (the `SubtaskAssigneePicker` shape: `ComboboxTrigger` + `ComboboxInput` in the popup). The same multi-select
- * Combobox and mutations as the chips presentation: the group a person is picked from sets the role, and pressing a checked person
- * again removes them. Each row shows its own pending or failed state; the failure messages and their Retry sit inside the popup.
- */
-function TeamPopoverView({ groups, value, onValueChange, chipProps, pending, inputRef, inputDisabled, contentRef, triggerRef, candidatesError, messages }: {
+type TeamPickerProps = {
   groups: TeamGroup[];
   value: TeamOption[];
   onValueChange: (next: TeamOption[], eventDetails: ComboboxPrimitive.Root.ChangeEventDetails) => void;
@@ -522,26 +516,69 @@ function TeamPopoverView({ groups, value, onValueChange, chipProps, pending, inp
   pending: Set<string>;
   inputRef?: Ref<HTMLInputElement>;
   inputDisabled: boolean;
-  contentRef?: Ref<HTMLDivElement>;
-  triggerRef?: Ref<HTMLButtonElement>;
   candidatesError: React.ReactNode;
   messages: React.ReactNode;
-}) {
-  const assigned = new Set(value.map((option) => option.userId)).size;
-  return <Combobox
-    multiple
-    items={groups}
-    value={value}
-    onValueChange={onValueChange}
-    isItemEqualToValue={(a: TeamOption, b: TeamOption) => a.key === b.key}
-    itemToStringLabel={(item: TeamOption) => displayName(item.name, item.email)}
-    itemToStringValue={(item: TeamOption) => item.key}
-    filter={(item: TeamOption, query: string) => {
+};
+
+/** The Combobox props both grouped presentations share: multiple, keyed by role and person, filtered on name, email and roles. */
+function teamPickerRootProps({ groups, value, onValueChange }: Pick<TeamPickerProps, "groups" | "value" | "onValueChange">) {
+  return {
+    multiple: true as const,
+    items: groups,
+    value,
+    onValueChange,
+    isItemEqualToValue: (a: TeamOption, b: TeamOption) => a.key === b.key,
+    itemToStringLabel: (item: TeamOption) => displayName(item.name, item.email),
+    itemToStringValue: (item: TeamOption) => item.key,
+    filter: (item: TeamOption, query: string) => {
       const needle = query.trim().toLocaleLowerCase();
       if (!needle) return true;
       return `${item.name} ${item.email} ${ROLE_LABELS[item.role]} ${ROLE_LABELS[item.globalRole]}`.toLocaleLowerCase().includes(needle);
-    }}
-  >
+    },
+  };
+}
+
+const TEAM_PICKER_FOOT = "The group you pick from sets the person’s role. Pick a checked person again to remove them.";
+
+/** D3 / M6's grouped list: Photographers, then Editors; each row an avatar, the name, the email and role, and its own state. */
+function TeamGroupedList({ chipProps, pending }: Pick<TeamPickerProps, "chipProps" | "pending">) {
+  return <>
+    <ComboboxEmpty>No eligible people match.</ComboboxEmpty>
+    <ComboboxList aria-label="Team candidates">
+      {(group: TeamGroup) => <ComboboxGroup key={group.value} items={group.items} className="border-t border-border pt-[var(--space-1)] first:border-t-0">
+        <ComboboxLabel className={TEAM_POPOVER_LABEL}>{group.label}</ComboboxLabel>
+        <ComboboxCollection>
+          {(option: TeamOption) => {
+            const { dataState, isPending, messageId } = chipProps(option);
+            return <ComboboxItem key={option.key} value={option} disabled={pending.has(option.key)} data-testid={`project-team-option-${option.key}`} data-state={dataState} aria-busy={isPending || undefined} aria-describedby={messageId} className="min-h-[44px]">
+              <Item size="xs" className="p-0 flex-nowrap">
+                <Avatar size="sm" className="size-7 shrink-0">
+                  <AvatarFallback>{initials(option.name, option.email)}</AvatarFallback>
+                </Avatar>
+                <ItemContent className="min-w-0">
+                  <ItemTitle className="block max-w-full truncate">{displayName(option.name, option.email)}</ItemTitle>
+                  <ItemDescription className="truncate">{option.email} · {ROLE_LABELS[option.globalRole]}{!option.active && " · Inactive"}</ItemDescription>
+                </ItemContent>
+                <TeamChipStateIcon dataState={dataState} />
+              </Item>
+            </ComboboxItem>;
+          }}
+        </ComboboxCollection>
+      </ComboboxGroup>}
+    </ComboboxList>
+  </>;
+}
+
+/**
+ * #914 D3 — the Project header's Team: an avatar-stack chip (three faces, then +N) that opens the grouped picker with the search
+ * field inside it (the `SubtaskAssigneePicker` shape: `ComboboxTrigger` + `ComboboxInput` in the popup). The same multi-select
+ * Combobox and mutations as the chips presentation: the group a person is picked from sets the role, and pressing a checked person
+ * again removes them. Each row shows its own pending or failed state; the failure messages and their Retry sit inside the popup.
+ */
+function TeamPopoverView({ contentRef, triggerRef, ...props }: TeamPickerProps & { contentRef?: Ref<HTMLDivElement>; triggerRef?: Ref<HTMLButtonElement> }) {
+  const { value, inputRef, inputDisabled, candidatesError, messages } = props;
+  const assigned = new Set(value.map((option) => option.userId)).size;
+  return <Combobox {...teamPickerRootProps(props)}>
     <ComboboxTrigger ref={triggerRef} data-testid="project-team-trigger" aria-label={teamTriggerName(value)} className={cn(HEADER_CHIP, value.length > 0 && "ps-[var(--space-2)]")}>
       {value.length
         ? <AvatarStack decorative fullLimit people={stackPeople(value)} personNoun="team member" emptyLabel="Nobody assigned" />
@@ -554,39 +591,34 @@ function TeamPopoverView({ groups, value, onValueChange, chipProps, pending, inp
       </div>
       {candidatesError}
       <ComboboxInput ref={inputRef} showTrigger={false} placeholder="Search people…" aria-label="Search people" disabled={inputDisabled} aria-invalid={inputDisabled ? true : undefined} />
-      <ComboboxEmpty>No eligible people match.</ComboboxEmpty>
-      <ComboboxList aria-label="Team candidates">
-        {(group: TeamGroup) => <ComboboxGroup key={group.value} items={group.items} className="border-t border-border pt-[var(--space-1)] first:border-t-0">
-          <ComboboxLabel className={TEAM_POPOVER_LABEL}>{group.label}</ComboboxLabel>
-          <ComboboxCollection>
-            {(option: TeamOption) => {
-              const { dataState, isPending, messageId } = chipProps(option);
-              return <ComboboxItem key={option.key} value={option} disabled={pending.has(option.key)} data-testid={`project-team-option-${option.key}`} data-state={dataState} aria-busy={isPending || undefined} aria-describedby={messageId} className="min-h-[44px]">
-                <Item size="xs" className="p-0 flex-nowrap">
-                  <Avatar size="sm" className="size-7 shrink-0">
-                    <AvatarFallback>{initials(option.name, option.email)}</AvatarFallback>
-                  </Avatar>
-                  <ItemContent className="min-w-0">
-                    <ItemTitle className="block max-w-full truncate">{displayName(option.name, option.email)}</ItemTitle>
-                    <ItemDescription className="truncate">{option.email} · {ROLE_LABELS[option.globalRole]}{!option.active && " · Inactive"}</ItemDescription>
-                  </ItemContent>
-                  <TeamChipStateIcon dataState={dataState} />
-                </Item>
-              </ComboboxItem>;
-            }}
-          </ComboboxCollection>
-        </ComboboxGroup>}
-      </ComboboxList>
+      <TeamGroupedList {...props} />
       {messages}
-      <p className={cn(TEAM_POPOVER_META, "border-t border-border px-[var(--space-3)] pt-[var(--space-2)] pb-[var(--space-3)]")}>The group you pick from sets the person’s role. Pick a checked person again to remove them.</p>
+      <p className={cn(TEAM_POPOVER_META, "border-t border-border px-[var(--space-3)] pt-[var(--space-2)] pb-[var(--space-3)]")}>{TEAM_PICKER_FOOT}</p>
     </ComboboxContent>
   </Combobox>;
 }
 
-export type ProjectTeamPresentation = "chips" | "popover";
+/**
+ * #914 D2 "Manage" / M6 — the same grouped picker drawn in place, with no popup: Base UI's `<Combobox.Root inline open>`, the search
+ * field above the list. The section it sits in (Project info) is the surface.
+ */
+function TeamInlineView(props: TeamPickerProps) {
+  const { inputRef, inputDisabled, candidatesError, messages } = props;
+  return <Combobox {...teamPickerRootProps(props)} inline open>
+    <div className="grid gap-[var(--space-2)]" data-testid="project-team-inline">
+      {candidatesError}
+      <ComboboxInput ref={inputRef} showTrigger={false} placeholder="Search people…" aria-label="Search people" disabled={inputDisabled} aria-invalid={inputDisabled ? true : undefined} />
+      <div className="grid"><TeamGroupedList {...props} /></div>
+      {messages}
+      <p className={TEAM_POPOVER_META}>{TEAM_PICKER_FOOT}</p>
+    </div>
+  </Combobox>;
+}
+
+export type ProjectTeamPresentation = "chips" | "popover" | "inline";
 
 export function ProjectTeamCombobox({ projectId, members, canEdit, archived = false, rowClassName, inputRef, presentation = "chips", onArchivedRefusal, triggerRef }: { projectId: string; members: ProjectMember[]; canEdit: boolean; /** #452: an archived Project's Team is read-only. Also latched on from a 409 `membership_project_archived`, until this goes true to false (Restore). */ archived?: boolean; /** Sizes the Team row, read-only or editable (#458); the header passes its 44px control height. */ rowClassName?: string; /** #365: lets a hosting popover focus the input (the first chip × is a Tab stop and would otherwise take initial focus). */ inputRef?: Ref<HTMLInputElement>;
-  /** #914: `"chips"` (the default: the Gantt People cell, New shoot's shape) or `"popover"`, the Project header's avatar chip (D3). */
+  /** #914: `"chips"` (the default: the Gantt People cell, New shoot's shape), `"popover"` (the Project header's avatar chip, D3) or `"inline"` (Project info's Manage, M6: the grouped list with no popup). */
   presentation?: ProjectTeamPresentation;
   /** #914: a write was refused as archived, so the host (the Project header's #455 latch) can turn the rest of its row read-only. This control moves its own focus. */
   onArchivedRefusal?: () => void;
@@ -655,7 +687,7 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
   const value = displayed.map((member) => optionsByKey.get(cellKey(member.roleOnProject, member.userId)) ?? memberOption(member));
   // #914: the popover has no chips, so an assigned person who is not a candidate today (inactive) is listed, checked, under their
   // role: pressing it is their only remove. It is never addable, since it is only ever there while it is selected.
-  const memberOnly = presentation === "popover" ? value.filter((option) => !option.candidate) : [];
+  const memberOnly = presentation !== "chips" ? value.filter((option) => !option.candidate) : [];
   const groups = [
     { value: "photographer", label: "Photographers", items: [...photographerOptions, ...memberOnly.filter((option) => option.role === "photographer")] },
     { value: "editor", label: "Editors", items: [...editorOptions, ...memberOnly.filter((option) => option.role === "editor")] },
@@ -731,6 +763,31 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
     </div>;
   });
   const latchedNotice = latched && <p id={noticeId} role="status" className={ARCHIVED_HEADER_NOTICE_CLASS}>{ARCHIVED_TEAM_NOTICE}</p>;
+
+  if (presentation === "inline") {
+    return <div ref={rootRef} className="grid gap-[var(--space-3)]" data-testid="project-team-control">
+      {editable ? <TeamInlineView
+        groups={groups}
+        value={value}
+        onValueChange={onValueChange}
+        chipProps={chipProps}
+        pending={pending}
+        inputRef={inputRef}
+        inputDisabled={candidatesQuery.isError}
+        candidatesError={candidatesError}
+        messages={messages}
+      /> : <div
+        // Read-only (archived, or latched by a refusal here): the named group a refusal returns focus to, with the names by role.
+        {...(readOnly ? { role: "group", "aria-label": "Team", tabIndex: -1, "aria-describedby": latched ? noticeId : undefined } : {})}
+        ref={readOnlyRef}
+        data-header-value="team"
+        className="grid gap-[var(--space-1)] outline-none [font:var(--type-label)] text-foreground focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2"
+      >
+        {value.length ? stackPeople(value).map((person) => <span key={person.id}>{person.name}</span>) : <span className="text-foreground-secondary">Nobody assigned</span>}
+      </div>}
+      {latchedNotice}
+    </div>;
+  }
 
   if (presentation === "popover") {
     return <div ref={rootRef} className="grid gap-[var(--space-3)]" data-testid="project-team-control">
