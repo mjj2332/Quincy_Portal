@@ -42,11 +42,11 @@ export function DeliveryDownloadAll({ api, onGone }: { api: Pick<DeliveryApi, "z
   return <>
     <Button type="button" variant="default" size="lg" data-testid="delivery-download-all" className={TOUCH} onClick={() => { setSize("web"); setOpening((n) => n + 1); setOpen(true); }}><DownloadIcon aria-hidden="true" />Download all</Button>
     <Dialog open={open} onOpenChange={(next) => { if (!next) close(); }}>
-      {/* #907: below 520px of height (`POPUP_SHORT_QUERY`) the pinned header, radios and footer left the zip body ~3px. There the dialog itself is the one scroller and the
+      {/* #907: below 520px of height (the same threshold as `POPUP_SHORT_QUERY`) the pinned header, radios and footer left the zip body ~3px. There the dialog itself is the one scroller and the
           body stops scrolling (`flex-none`), never a scroller nested in a shrinking window (lesson "A nested scroller taller than its host's window traps the wheel (#686)").
-          The footer stays pinned by `sticky`, opaque: `bg-muted/50` composited over `bg-popover`. Its `bottom` is minus the dialog's padding (`p-4`, `--space-4`): the sticky
+          Its native scrollbar is hidden: it would run through the sticky footer and the rounded corner (#882 keeps the bar inset), and the content cut at the footer already shows there is more. The footer stays pinned by `sticky`, opaque: `bg-muted/50` composited over `bg-popover`. Its `bottom` is minus the dialog's padding (`p-4`, `--space-4`): the sticky
           rectangle is the scroller less its padding, so `bottom-0` left a 16px band of scrolling content under the footer. At 520px and taller nothing changes. */}
-      <DialogContent data-testid="delivery-download-all-dialog" showCloseButton={false} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col sm:max-w-[520px] [@media(height<520px)]:overflow-y-auto [@media(height<520px)]:overscroll-contain">
+      <DialogContent data-testid="delivery-download-all-dialog" showCloseButton={false} className="flex max-h-[calc(100dvh-var(--space-5))] flex-col sm:max-w-[520px] [@media(height<520px)]:overflow-y-auto [@media(height<520px)]:overscroll-contain [@media(height<520px)]:[scrollbar-width:none]">
         <DialogHeader data-testid="delivery-zip-header" className="shrink-0">
           <DialogTitle>Download all photos</DialogTitle>
           <DialogDescription>One zip with every photo on this page that is unlocked.</DialogDescription>
