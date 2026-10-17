@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { GuestNoteThreadDto, GuestSessionResponse, GuestVideoDto } from "@quincy/shared";
+import { frameSeekSeconds, type GuestNoteThreadDto, type GuestSessionResponse, type GuestVideoDto } from "@quincy/shared";
 import { installVideoElementStub, type VideoElementStub } from "../testing/video-element";
 import { mockViewport, type MockViewport } from "../testing/viewport";
 import { GuestApp } from "./GuestApp";
@@ -506,5 +506,66 @@ describe("the Delivery review link on a phone: downloads need no code, writing s
     expect(area()).toBeNull();
     await press(byId("guest-compose-shell-open")!);
     expect(verifyDialogs()).toBe(1);
+  });
+});
+
+describe("the guest phone notes list: the whole card seeks (#901)", () => {
+  const NOTE = "00000000-0000-4000-8000-000000000901";
+  const seconds = frameSeekSeconds(50, { num: 25, den: 1 });
+  async function openWithNote() {
+    served = [{ id: NOTE, parentId: null, author: { kind: "studio", name: "Quincy" }, startFrame: 50, endFrame: null, drawingFrame: null, hasMarkup: false, body: "Two seconds in", deleted: false, revision: 1, resolved: false, createdAt: "2026-10-10T00:00:00.000Z", editedAt: null, replies: [] }];
+    await openVideo();
+    await vi.waitFor(() => { expect(byId("guest-note-body")).not.toBeNull(); });
+    // Load the film, so a seek is written to it rather than held for the metadata.
+    const film = document.querySelector<HTMLVideoElement>("video")!;
+    await act(async () => { stub.loadMetadata(film, { duration: 120, videoWidth: 1920, videoHeight: 1080 }); stub.setReadyState(film, 4); });
+    await act(async () => { stub.finishSeek(film); stub.presentFrame(film, 0); });
+    await flush(2);
+    stub.writes.length = 0;
+  }
+  /** A finger on the card: pointerdown, then a click `dy` pixels lower, or a pointercancel (the browser took the touch for a scroll). */
+  async function touch(el: Element, { dy = 0, cancel = false }: { dy?: number; cancel?: boolean } = {}) {
+    await act(async () => {
+      el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientX: 100, clientY: 300, button: 0, isPrimary: true, pointerType: "touch" }));
+      if (cancel) { el.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, isPrimary: true, pointerType: "touch" })); return; }
+      el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, clientX: 100, clientY: 300 + dy, button: 0, isPrimary: true, pointerType: "touch" }));
+      el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX: 100, clientY: 300 + dy, button: 0, detail: 1 }));
+    });
+    await flush(2);
+  }
+  const stop = () => byId("video-review-pane")!.getAttribute("data-stop");
+
+  it("a tap on a note's text seeks to its frame; a drag past the slop and a cancelled touch do not", async () => {
+    await openWithNote();
+    await touch(byId("guest-note-body")!, { dy: 40 });
+    await touch(byId("guest-note-body")!, { cancel: true });
+    expect(stub.writes).not.toContain(seconds);
+    await touch(byId("guest-note-body")!);
+    expect(stub.writes).toContain(seconds);
+  });
+
+  it("the card goes through the page's own select: chosen while the sheet is collapsed, it opens the sheet to half", async () => {
+    await openWithNote();
+    await act(async () => { byId("review-sheet-grabber")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true, cancelable: true })); });
+    expect(stop()).toBe("collapsed");
+    // A collapsed sheet's body is inert, so a finger cannot reach a card there; happy-dom does not honour inert, which lets this reach the shared select path.
+    await touch(byId("guest-note-body")!);
+    expect(stop()).toBe("half");
+  });
+
+  it("the grabber still moves the sheet, and a card press that drags leaves the stop alone", async () => {
+    await openWithNote();
+    const before = stop();
+    await touch(byId("guest-note-body")!, { dy: 200 });
+    expect(stop()).toBe(before);
+    const grabber = byId("review-sheet-grabber")!;
+    await act(async () => {
+      grabber.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientY: 400, button: 0, isPrimary: true, pointerType: "touch" }));
+      grabber.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, cancelable: true, clientY: 380, button: 0, isPrimary: true, pointerType: "touch" }));
+      grabber.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, cancelable: true, clientY: 700, button: 0, isPrimary: true, pointerType: "touch" }));
+      grabber.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, clientY: 700, button: 0, isPrimary: true, pointerType: "touch" }));
+    });
+    await flush(2);
+    expect(stop()).not.toBe(before);
   });
 });

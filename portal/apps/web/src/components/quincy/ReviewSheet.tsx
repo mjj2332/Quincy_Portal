@@ -1,5 +1,6 @@
 import { createContext, useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { releaseVelocity, settleSheet, sheetStops, type SheetStop, type SheetStops } from "../../lib/review-pane-geometry";
+import { TAP_SLOP } from "../../lib/tap-slop";
 
 /**
  * The phone review sheet (#879), Quincy-owned: the notes pane under the film with three stops. It is not a dialog and portals nothing: it is the review split's own pane `<div>`, sized by
@@ -82,7 +83,6 @@ export const SHEET_COLLAPSED_MIN = 127;
 const PART = "[data-sheet-part]";
 const EDITABLE = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
 const DOUBLE_TAP_MS = 300;
-const TAP_SLOP = 6;
 const ORDER: SheetStop[] = ["collapsed", "half", "full"];
 
 const setInert = (element: Element, on: boolean) => { if (on) element.setAttribute("inert", ""); else element.removeAttribute("inert"); };
