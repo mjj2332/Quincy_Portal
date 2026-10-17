@@ -33,6 +33,18 @@ describe("mountDelivery", () => {
     expect(host!.querySelector('[data-testid="app"]')?.textContent).toBe(SLUG);
   });
 
+  it("hands the app the film a review's Back returns to, read from the fragment, and nothing for any other fragment", async () => {
+    const App = ({ returnToVideo }: { slug: string; returnToVideo?: string | null }) => <p data-testid="app">{String(returnToVideo)}</p>;
+    const film = "bbbbbbbb-bbbb-4bbb-8bbb-000000000003";
+    await act(async () => { mountDelivery(open(), () => Promise.resolve({ DeliveryApp: App }), `/d/${SLUG}`, undefined, `#v=${film}`); });
+    await flush();
+    expect(host!.querySelector('[data-testid="app"]')?.textContent).toBe(film);
+    host!.remove();
+    await act(async () => { mountDelivery(open(), () => Promise.resolve({ DeliveryApp: App }), `/d/${SLUG}`, undefined, "#v=not-a-film"); });
+    await flush();
+    expect(host!.querySelector('[data-testid="app"]')?.textContent).toBe("null");
+  });
+
   it("shows the load failure when the chunk cannot load, and Reload is a full reload (no in-place retry)", async () => {
     const importer = vi.fn(() => Promise.reject(new Error("chunk gone")));
     const reload = vi.fn();

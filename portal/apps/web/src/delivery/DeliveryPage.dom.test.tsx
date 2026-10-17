@@ -455,6 +455,42 @@ describe("lightbox", () => {
   });
 });
 
+describe("back from a film's review (#882 follow-up)", () => {
+  const vid = (n: number) => `bbbbbbbb-bbbb-4bbb-8bbb-${String(n).padStart(12, "0")}`;
+  const review = (n: number) => ({ url: `/d/review?link=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa#t=secret&v=${vid(n)}` });
+  const films = () => [photo(1), film(2, { review: review(2) }), film(3, { review: review(3) }), film(4, { review: review(4) })];
+  const openOf = (n: number) => document.querySelector<HTMLElement>(`[data-testid="delivery-film-item"][data-handle="${handle(n)}"] [data-testid="delivery-film-open"]`)!;
+  let scrolled: { target: Element; options: unknown }[];
+  beforeEach(() => {
+    scrolled = [];
+    Element.prototype.scrollIntoView = function scrollIntoView(this: Element, options?: unknown) { scrolled.push({ target: this, options }); };
+  });
+  afterEach(() => { delete (Element.prototype as Partial<Element>).scrollIntoView; });
+
+  const itemOf = (n: number) => openOf(n).closest('[data-testid="delivery-film-item"]')!;
+  it("opens the Film tab and brings the returning film's whole tile to the centre, without an animated scroll, focusing its open link", async () => {
+    await show(page(films()), { returnToVideo: vid(3) });
+    expect(tab("Film")!.getAttribute("aria-selected")).toBe("true");
+    expect(scrolled).toEqual([{ target: itemOf(3), options: { block: "center" } }]);
+    expect(document.activeElement).toBe(openOf(3));
+  });
+  it("leaves a plain open of the page at the top of its first tab", async () => {
+    await show(page(films()));
+    expect(tab("Gallery")!.getAttribute("aria-selected")).toBe("true");
+    expect(scrolled).toEqual([]);
+  });
+  it("ignores a film no tile opens", async () => {
+    await show(page(films()), { returnToVideo: vid(9) });
+    expect(tab("Gallery")!.getAttribute("aria-selected")).toBe("true");
+    expect(scrolled).toEqual([]);
+  });
+  it("does not pull the viewer back to the tile when the page re-renders with fresh data (an unlock refetch)", async () => {
+    const { root } = await show(page(films()), { returnToVideo: vid(2) });
+    await act(async () => { root.render(<DeliveryPage dto={page([...films(), photo(5)])} returnToVideo={vid(2)} hrefs={hrefs} onRequestUnlock={() => undefined} unlockState={{}} />); });
+    expect(scrolled.map((entry) => entry.target)).toEqual([openOf(2).closest('[data-testid="delivery-film-item"]')]);
+  });
+});
+
 describe("film tiles (#882)", () => {
   const REVIEW = "/d/review?link=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa#t=secret&v=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
   const PAGE_SLUG = "12-example-st-23456b";

@@ -455,11 +455,11 @@ describe("the Delivery review link on a phone: downloads need no code, writing s
     await flush();
   }
 
-  it("Back is a real link to the Delivery page, in the phone bar", async () => {
+  it("Back is a real link to the Delivery page, naming the film on screen so the page returns to its tile, in the phone bar", async () => {
     await openFromDeliveryPage();
     const back = byId("guest-back-to-page")!;
     expect(back.tagName).toBe("A");
-    expect(back.getAttribute("href")).toBe(`/d/${SLUG}`);
+    expect(back.getAttribute("href")).toBe(`/d/${SLUG}#v=${vid(1)}`);
     expect(byId("review-phone-bar")!.contains(back)).toBe(true);
     expect(back.textContent).toContain("Back to the delivery page");
   });

@@ -11,6 +11,7 @@ import { heroMetaOf, heroOf, slideshowPhotosOf, tabsOf, type DeliveryHrefs, type
 import { DeliveryShareButton } from "./DeliveryShareButton";
 import { DocRows } from "./DocRows";
 import { FilmList } from "./FilmList";
+import { returnTargetOf } from "./film-return";
 import { PhotoGrid, ProcessingTile, type OpenViewer } from "./PhotoGrid";
 import { STUDIO_EMAIL, STUDIO_NAME, STUDIO_WEBSITE, studioEmailHref } from "./studio";
 import { TOUCH } from "./UnlockControl";
@@ -44,6 +45,8 @@ export type DeliveryPageProps = {
   downloadAllSlot?: ReactNode;
   /** The page's own public address, for the hero's Share (#837). Absent in Preview, which is not published and has nothing to share. */
   shareUrl?: string;
+  /** The film the viewer is coming back from (#882, `film-return.ts`): its tab opens and its tile is brought into view and focused, once, on the first render. */
+  returnToVideo?: string | null;
 };
 
 type Viewer = { items: DeliveryItemDto[]; index: number; opener: HTMLElement; mode: "photo" | "slideshow" };
@@ -142,7 +145,20 @@ export function DeliveryPage(props: DeliveryPageProps) {
   const { dto } = props;
   const tabs = useMemo(() => tabsOf(dto), [dto]);
   const hero = useMemo(() => heroOf(dto), [dto]);
-  const [chosen, setChosen] = useState<DeliveryTabId | null>(null);
+  // Read once: a later refetch (an unlock) must not pull the viewer back to the tile.
+  const [returning] = useState(() => returnTargetOf(tabs, props.returnToVideo ?? null));
+  const [chosen, setChosen] = useState<DeliveryTabId | null>(returning?.tab ?? null);
+  const page = useRef<HTMLElement | null>(null);
+  // Back from a review lands on the tile it opened: a jump, not an animated scroll (the page sets no smooth scroll-behavior, so there is no motion for reduced motion to stop), the TILE centred (not its title link, which sits at the tile's foot) so the sticky tab bar never covers its poster, then focus on its open link without a second
+  // scroll (the browser's own `:focus-visible` draws the ring).
+  useEffect(() => {
+    if (returning === null) return;
+    const item = [...(page.current?.querySelectorAll<HTMLElement>('[data-testid="delivery-film-item"]') ?? [])].find((element) => element.dataset.handle === returning.handle);
+    const open = item?.querySelector<HTMLElement>('[data-testid="delivery-film-open"]');
+    if (!item || !open) return;
+    item.scrollIntoView({ block: "center" });
+    open.focus({ preventScroll: true });
+  }, [returning]);
   const active = tabs.some((tab) => tab.id === chosen) ? chosen : (tabs[0]?.id ?? null);
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const opener = useRef<HTMLElement | null>(null);
@@ -168,7 +184,7 @@ export function DeliveryPage(props: DeliveryPageProps) {
   useEffect(() => { if (emptied) setViewer(null); }, [emptied]);
   const { street } = dto.property;
   const heroHasAction = slideshowItems.length > 0 || (props.downloadAllSlot !== undefined && props.downloadAllSlot !== null) || props.shareUrl !== undefined;
-  return <article aria-label={`Delivery: ${street}`} data-testid="delivery-page" className="@container w-full bg-background text-foreground">
+  return <article ref={page} aria-label={`Delivery: ${street}`} data-testid="delivery-page" className="@container w-full bg-background text-foreground">
     <Hero key={hero?.url ?? ""} dto={dto} hero={hero} action={heroHasAction ? <>
       {props.downloadAllSlot}
       {slideshowItems.length > 0 && <Button type="button" variant="outline" size="lg" data-testid="delivery-slideshow" className={TOUCH} onClick={(event) => { startSlideshow(slideshowItems, 0, event.currentTarget); }}><PlayIcon aria-hidden />Slideshow</Button>}

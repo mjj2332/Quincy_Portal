@@ -10,6 +10,7 @@ import { GuestVerifyDialog } from "./GuestVerifyDialog";
 import { useGuestVerify } from "./use-guest-verify";
 import { GuestIdentityRow } from "./GuestIdentityRow";
 import { LimitedScreen, PasscodeScreen, SignedOutScreen, UnavailableScreen, UnreachableScreen, VideoListScreen } from "./GuestScreens";
+import { deliveryPageAddress } from "../delivery/film-return";
 
 type Screen =
   | { name: "boot" }
@@ -223,8 +224,8 @@ function GuestPage({ token: initialToken, initialVideoId, pageSlug, onSignedOut 
   // Invariant: the video screen never renders without its Video. Reconciling keeps the index valid; this is the net under it.
   if (screen.name === "video" && videos[screen.index] === undefined) return <UnavailableScreen />;
   const shown = screen.name === "list"
-    ? <VideoListScreen api={api} title={session?.link.label ?? null} videos={videos} session={session} onSession={setSession} verify={verify} canDownloadWithoutCode={!codeRequired} pageHref={pageSlug === null ? null : `/d/${pageSlug}`} onOpen={(index) => { setNotice(null); setScreen({ name: "video", index }); }} onUnavailable={unavailable} identity={identity(false)} />
-    : <GuestVideoScreen api={api} verify={verify} canDownloadWithoutCode={!codeRequired} pageHref={pageSlug === null ? null : `/d/${pageSlug}`} writer={writer} drafts={drafts} subscription={subscription} session={session} onSession={setSession} archived={archived} onArchived={() => { setArchived(true); }} videos={videos} socialOverlays={overlays} index={screen.index} onIndex={(index) => { setScreen({ name: "video", index }); }} onBack={videos.length > 1 ? () => { setNotice(null); setScreen({ name: "list" }); } : null} onUnavailable={unavailable} onGrantsChanged={grantsChanged} onDecided={decided} onResyncDelivery={resyncDelivery} onShownVersion={onShownVersion} identity={identity(true)} viewportRoot={column} />;
+    ? <VideoListScreen api={api} title={session?.link.label ?? null} videos={videos} session={session} onSession={setSession} verify={verify} canDownloadWithoutCode={!codeRequired} pageHref={pageSlug === null ? null : deliveryPageAddress(pageSlug, null)} onOpen={(index) => { setNotice(null); setScreen({ name: "video", index }); }} onUnavailable={unavailable} identity={identity(false)} />
+    : <GuestVideoScreen api={api} verify={verify} canDownloadWithoutCode={!codeRequired} pageHref={pageSlug === null ? null : deliveryPageAddress(pageSlug, videos[screen.index]!.id)} writer={writer} drafts={drafts} subscription={subscription} session={session} onSession={setSession} archived={archived} onArchived={() => { setArchived(true); }} videos={videos} socialOverlays={overlays} index={screen.index} onIndex={(index) => { setScreen({ name: "video", index }); }} onBack={videos.length > 1 ? () => { setNotice(null); setScreen({ name: "list" }); } : null} onUnavailable={unavailable} onGrantsChanged={grantsChanged} onDecided={decided} onResyncDelivery={resyncDelivery} onShownVersion={onShownVersion} identity={identity(true)} viewportRoot={column} />;
   // On the video screen the notices and the screen share one bounded column (#859): a notice shortens the screen (it is `flex-1` in here) instead of pushing it past the window.
   // The notices sit above the dark video screen, so they take the inverse roles there (ADR 0024); on the list they stay on the light page.
   const noticeSurface = screen.name === "video" ? "inverse" : undefined;

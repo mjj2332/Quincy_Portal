@@ -47,7 +47,7 @@ function RateLimitedScreen({ until, onRetry }: { until: number; onRetry: () => v
  * and shows one of: a skeleton, the page, "This page isn't available." (unknown, switched off, unpublished and gate-shut are the same answer), a calm retry, a countdown, or "This page was updated." (the body no longer parses).
  * It owns the real unlock requests and their per-handle state, so a request survives a tab or lightbox change; a 409 `not_locked` re-reads the page quietly.
  */
-export function DeliveryApp({ slug }: { slug: string }) {
+export function DeliveryApp({ slug, returnToVideo = null }: { slug: string; /** The film a review's Back returns to (`film-return.ts`), already validated. */ returnToVideo?: string | null }) {
   const api = useMemo(() => createDeliveryApi(slug), [slug]);
   const [screen, setScreen] = useState<Screen>({ name: "loading" });
   const [unlock, setUnlock] = useState<UnlockStates>({});
@@ -116,7 +116,7 @@ export function DeliveryApp({ slug }: { slug: string }) {
     </main>;
     case "ready": {
       const downloadable = screen.dto.items.some((item) => item.kind === "photo" && !item.locked);
-      return <main><DeliveryPage dto={screen.dto} pageSlug={slug} hrefs={api.hrefs} shareUrl={`${window.location.origin}/d/${slug}`} unlockState={unlock} onRequestUnlock={(handle) => { void requestUnlock(handle); }} downloadAllSlot={downloadable ? <DeliveryDownloadAll api={api} onGone={gone} /> : undefined} /></main>;
+      return <main><DeliveryPage dto={screen.dto} pageSlug={slug} returnToVideo={returnToVideo} hrefs={api.hrefs} shareUrl={`${window.location.origin}/d/${slug}`} unlockState={unlock} onRequestUnlock={(handle) => { void requestUnlock(handle); }} downloadAllSlot={downloadable ? <DeliveryDownloadAll api={api} onGone={gone} /> : undefined} /></main>;
     }
   }
 }
