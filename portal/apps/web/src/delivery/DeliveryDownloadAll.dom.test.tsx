@@ -1,8 +1,11 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DeliveryZipManifest } from "@quincy/shared";
 import { allByTestId, byTestId, click, flush, json, render, SLUG, type Mounted } from "../testing/delivery-fixtures";
 import { createDeliveryApi } from "./delivery-api";
+import { ZipListScroll } from "../guest/ZipListScroll";
 import { DeliveryDownloadAll } from "./DeliveryDownloadAll";
 
 const BASE = `/d/api/pages/${SLUG}`;
@@ -210,5 +213,52 @@ describe("refusals", () => {
     await show(); await openIt();
     expect(byTestId("delivery-zip-problem")!.textContent).toContain("no photos");
     expect(link()).toBeNull();
+  });
+});
+
+/**
+ * #907: below 520px of height the dialog itself is the one scroller (lesson "A nested scroller taller than its host's window traps the wheel (#686)"):
+ * the content scrolls, the footer is sticky and opaque, and the zip body stops being a scroller of its own. Happy-dom resolves no media query, so these
+ * pin the structure and the literal classes; the browser pass measures the layout.
+ */
+describe("short heights (#907)", () => {
+  const SHORT = "[@media(height<520px)]:";
+  const classes = (element: Element | null) => (element?.getAttribute("class") ?? "").split(/\s+/);
+  it("keeps the dialog's children in order: header, sizes, body, footer", async () => {
+    await show(); await openIt();
+    const order = [...byTestId("delivery-download-all-dialog")!.children].map((child) => child.getAttribute("data-testid"));
+    expect(order).toEqual(["delivery-zip-header", "delivery-zip-sizes", "delivery-zip-body", "delivery-zip-footer"]);
+  });
+  it("keeps the size radios outside the zip body", async () => {
+    await show(); await openIt();
+    const body = byTestId("delivery-zip-body")!;
+    expect(body.contains(byTestId("delivery-zip-sizes"))).toBe(false);
+    expect(body.contains(byTestId("delivery-zip-size-web"))).toBe(false);
+    expect(body.contains(byTestId("delivery-zip-size-full"))).toBe(false);
+  });
+  it("a size switch keeps the same radio element and its focus", async () => {
+    await show(); await openIt();
+    const full = byTestId("delivery-zip-size-full")!;
+    await act(async () => { full.focus(); });
+    await pick("full");
+    expect(byTestId("delivery-zip-size-full")).toBe(full);
+    expect(full.getAttribute("aria-checked")).toBe("true");
+    expect(document.activeElement).toBe(full);
+  });
+  it("below 520px the dialog scrolls, the footer is sticky and opaque, and the body is not a scroller", async () => {
+    await show(); await openIt();
+    expect(classes(byTestId("delivery-download-all-dialog"))).toEqual(expect.arrayContaining([`${SHORT}overflow-y-auto`, `${SHORT}overscroll-contain`, `${SHORT}[scrollbar-width:none]`, `${SHORT}scroll-pb-[var(--space-9)]`]));
+    const footer = byTestId("delivery-zip-footer");
+    expect(classes(footer)).toEqual(expect.arrayContaining([`${SHORT}sticky`, `${SHORT}-bottom-[var(--space-4)]`, `${SHORT}bg-[color-mix(in_srgb,var(--color-muted)_50%,var(--color-popover))]`]));
+    const body = classes(byTestId("delivery-zip-body"));
+    expect(body).toContain(`${SHORT}flex-none`);
+    expect(body).toContain("flex-1");
+  });
+  it("the guest film dialog's body passes nothing, so it has no short-height class", async () => {
+    mounted = await render(<ZipListScroll testId="guest-download-all-body"><p>films</p></ZipListScroll>);
+    expect(byTestId("guest-download-all-body")!.getAttribute("class")).not.toContain("height<520px");
+    const guest = readFileSync(resolve(__dirname, "../guest/use-guest-download-all.tsx"), "utf8");
+    expect(guest).toMatch(/<ZipListScroll testId="guest-download-all-body">/);
+    expect(guest).not.toContain("height<520px");
   });
 });
