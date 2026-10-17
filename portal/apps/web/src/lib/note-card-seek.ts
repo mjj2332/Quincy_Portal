@@ -1,5 +1,5 @@
 import { useRef, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { TAP_SLOP } from "../components/quincy/ReviewSheet";
+import { TAP_SLOP } from "./tap-slop";
 
 /**
  * The whole note card seeks to its frame (#901): a click on a card's text, header or reply goes where its timecode button goes. Shared by the staff
@@ -10,7 +10,7 @@ import { TAP_SLOP } from "../components/quincy/ReviewSheet";
  */
 
 /** Anything inside the card that does its own thing on a click: those clicks never seek (the timecode button seeks through its own handler). */
-export const INTERACTIVE = [
+const INTERACTIVE = [
   "a[href]", "button", "input", "textarea", "select", "label", "summary", "video", "audio", "form",
   '[contenteditable]:not([contenteditable="false"])',
   '[role="button"]', '[role="link"]', '[role="menuitem"]', '[role="checkbox"]',
@@ -22,7 +22,7 @@ export const INTERACTIVE = [
  * a full fill would swallow the chip). Gated on `data-selected="false"` so a selected card's `border-foreground` always wins. Tailwind 4 emits `hover:`
  * under `@media (hover: hover)`, so a phone tap leaves no stuck fill.
  */
-export const NOTE_CARD_SEEKABLE = "cursor-pointer data-[selected=false]:hover:bg-muted/50 data-[selected=false]:hover:border-border-hover";
+const NOTE_CARD_SEEKABLE = "cursor-pointer data-[selected=false]:hover:bg-muted/50 data-[selected=false]:hover:border-border-hover";
 
 /** What the card saw at `pointerdown`, read again at `click`. */
 export type CardGesture = {
@@ -90,31 +90,37 @@ export type NoteCardSeekProps = {
   onClick?: (event: ReactMouseEvent<HTMLElement>) => void;
 };
 
+/** What the card spreads on its root (`props`) and adds to its class list (`className`). */
+export type NoteCardSeek = { props: NoteCardSeekProps; className: string | undefined };
+
 /**
- * The card's props: spread them on the card's root. `seek` null (a general note, with no frame) gives `{}`: no handler, no cursor, no hover.
- * `menuOpen` is read at `pointerdown`: whether the card's own "⋯" menu is open right now. The capture phase runs before Base UI's outside-press
+ * The card's seek. A general note (`startFrame` null) has no frame, so it gets no handler, no cursor and no hover.
+ * `isMenuOpen` is read at `pointerdown`: whether the card's own "⋯" menu is open right now. The capture phase runs before Base UI's outside-press
  * listener (which fires on the target), so the menu is still open when this reads it. Nothing here prevents a default or captures the pointer:
  * a swipe on a card still scrolls the list.
  */
-export function useNoteCardSeek(seek: (() => void) | null, menuOpen: () => boolean = () => false): NoteCardSeekProps {
+export function useNoteCardSeek(startFrame: number | null, seek: () => void, isMenuOpen: () => boolean = () => false): NoteCardSeek {
   const gesture = useRef<CardGesture | null>(null);
-  if (seek === null) return {};
+  if (startFrame === null) return { props: {}, className: undefined };
   return {
-    onPointerDownCapture: (event) => {
-      if (!event.isPrimary) { if (gesture.current) gesture.current.cancelled = true; return; }
-      gesture.current = { x: event.clientX, y: event.clientY, cancelled: false, moved: false, menuOpen: menuOpen(), scroll: scrollSnapshot(event.currentTarget) };
-    },
-    onPointerMoveCapture: (event) => {
-      const seen = gesture.current;
-      if (seen !== null && event.isPrimary && !seen.moved && pastSlop(seen, event)) seen.moved = true;
-    },
-    onPointerCancelCapture: () => { if (gesture.current) gesture.current.cancelled = true; },
-    onClick: (event) => {
-      const seen = gesture.current;
-      gesture.current = null;
-      const card = event.currentTarget;
-      if (!isCardSeekClick(event.nativeEvent, card, seen, card.ownerDocument.getSelection())) return;
-      seek();
+    className: NOTE_CARD_SEEKABLE,
+    props: {
+      onPointerDownCapture: (event) => {
+        if (!event.isPrimary) { if (gesture.current) gesture.current.cancelled = true; return; }
+        gesture.current = { x: event.clientX, y: event.clientY, cancelled: false, moved: false, menuOpen: isMenuOpen(), scroll: scrollSnapshot(event.currentTarget) };
+      },
+      onPointerMoveCapture: (event) => {
+        const seen = gesture.current;
+        if (seen !== null && event.isPrimary && !seen.moved && pastSlop(seen, event)) seen.moved = true;
+      },
+      onPointerCancelCapture: () => { if (gesture.current) gesture.current.cancelled = true; },
+      onClick: (event) => {
+        const seen = gesture.current;
+        gesture.current = null;
+        const card = event.currentTarget;
+        if (!isCardSeekClick(event.nativeEvent, card, seen, card.ownerDocument.getSelection())) return;
+        seek();
+      },
     },
   };
 }

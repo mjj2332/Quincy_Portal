@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { TAP_SLOP } from "../components/quincy/ReviewSheet";
-import { INTERACTIVE, isCardSeekClick, scrollSnapshot, type CardGesture } from "./note-card-seek";
+import { TAP_SLOP } from "./tap-slop";
+import { isCardSeekClick, scrollSnapshot, type CardGesture } from "./note-card-seek";
 
 let scroller: HTMLElement;
 let card: HTMLElement;
@@ -89,7 +89,6 @@ describe("isCardSeekClick (#901)", () => {
   });
 
   it(`a gesture within the tap slop (${TAP_SLOP}px) seeks; one that moved past it does not, on either axis`, () => {
-    expect(TAP_SLOP).toBe(6);
     expect(isCardSeekClick(click(body, { clientX: 105, clientY: 95 }), card, tap(), null)).toBe(true);
     expect(isCardSeekClick(click(body, { clientX: 100, clientY: 107 }), card, tap(), null)).toBe(false);
     expect(isCardSeekClick(click(body, { clientX: 93, clientY: 100 }), card, tap(), null)).toBe(false);
@@ -108,7 +107,4 @@ describe("isCardSeekClick (#901)", () => {
     expect(isCardSeekClick(click(body), card, before, null)).toBe(false);
   });
 
-  it("INTERACTIVE names the selector list the plan settled", () => {
-    for (const part of ["a[href]", "button", "form", '[role="menuitem"]', '[tabindex]:not([tabindex="-1"])']) expect(INTERACTIVE).toContain(part);
-  });
 });

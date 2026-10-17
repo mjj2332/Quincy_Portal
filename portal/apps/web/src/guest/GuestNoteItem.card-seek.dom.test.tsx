@@ -48,10 +48,11 @@ const settle = () => act(async () => { await new Promise<void>((resolve) => setT
 const flush = () => act(async () => { for (let i = 0; i < 4; i += 1) await Promise.resolve(); });
 
 /** A real press: pointerdown on `el`, then a click `dx`/`dy` pixels away (or a pointercancel), the way a browser sends it. */
-async function tap(el: Element, { dx = 0, dy = 0, cancel = false, pointerType = "mouse" }: { dx?: number; dy?: number; cancel?: boolean; pointerType?: string } = {}) {
+async function tap(el: Element, { dx = 0, dy = 0, cancel = false, pointerType = "mouse", between }: { dx?: number; dy?: number; cancel?: boolean; pointerType?: string; between?: () => void } = {}) {
   await act(async () => {
     el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, composed: true, clientX: 50, clientY: 50, button: 0, isPrimary: true, pointerType }));
     el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, composed: true, clientX: 50, clientY: 50, button: 0 }));
+    between?.();
     if (cancel) { el.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, composed: true, isPrimary: true, pointerType })); return; }
     el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, composed: true, clientX: 50 + dx, clientY: 50 + dy, button: 0, isPrimary: true, pointerType }));
     el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, composed: true, clientX: 50 + dx, clientY: 50 + dy, button: 0 }));
@@ -147,6 +148,28 @@ describe("GuestThreadItem: the whole card seeks to its frame (#901)", () => {
     expect(onSelect).not.toHaveBeenCalled();
     await tap(tid("guest-note-body", card())!, { dx: 6, pointerType: "touch" });
     expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("a touch that goes past the slop and comes back, a list that scrolled under the finger, and a text selection do not select", async () => {
+    const { onSelect } = await render(thread({ body: "Some words to select" }));
+    const body = () => tid("guest-note-body", card())!;
+    await tap(body(), { pointerType: "touch", between: () => { body().dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 50, clientY: 70, isPrimary: true, pointerType: "touch" })); } });
+    await tap(body(), { pointerType: "touch", between: () => { host.scrollTop = 30; } });
+    const text = [...body().querySelectorAll("*"), body()].map((el) => [...el.childNodes].find((node) => node.nodeType === Node.TEXT_NODE && node.textContent!.length > 4)).find(Boolean)!;
+    await tap(body(), { between: () => { const range = document.createRange(); range.setStart(text, 0); range.setEnd(text, 4); document.getSelection()!.removeAllRanges(); document.getSelection()!.addRange(range); } });
+    expect(onSelect).not.toHaveBeenCalled();
+    document.getSelection()!.removeAllRanges();
+    await tap(body(), { pointerType: "touch" });
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it("a reply's ⋯ menu counts too: dismissing it does not select", async () => {
+    const { onSelect } = await render(thread({ author: { kind: "studio", name: "Mia" } }, [reply(2)]));
+    await openMenu(0);
+    expect(document.querySelectorAll('[role="menuitem"]').length).toBe(2);
+    await tap(tid("guest-note-body", card())!);
+    await settle();
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it("an alert inside the card (a delete that hit a conflict) selects", async () => {
