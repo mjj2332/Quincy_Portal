@@ -25,6 +25,7 @@ import { ReviewPhoneBar, VersionChip } from "../components/quincy/ReviewPhoneBar
 import { ActionRow, ActionSeparator, ReviewActionSheet } from "../components/quincy/ReviewActionSheet";
 import { blurComposerField, isComposerField, useReviewSheet } from "../components/quincy/ReviewSheet";
 import { PHONE_QUERY } from "../lib/review-pane-geometry";
+import { isPaneToggleKey } from "../lib/video-player-keys";
 import { useVisualViewport } from "../lib/use-visual-viewport";
 import { useInkCanvas } from "../lib/use-ink-canvas";
 import { VideoVersionsSheet, withSummaries, type VersionSheetRow } from "../components/video/VideoVersionsSheet";
@@ -95,6 +96,21 @@ function usePlayerKeysFromScreen(player: RefObject<VideoPlayerControl | null>) {
     window.addEventListener("keydown", onKeyDown);
     return () => { window.removeEventListener("keydown", onKeyDown); };
   }, [player]);
+}
+
+/** N shows or hides the notes pane (#881, D17) from anywhere on the screen while `enabled`; fields and popups keep their keys, as they do the player's. */
+function usePaneToggleKeyFromScreen(enabled: boolean, toggle: () => void) {
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.target instanceof Element && event.target.closest(`${FIELD}, ${POPUP}`)) return;
+      if (!isPaneToggleKey(event)) return;
+      event.preventDefault();
+      toggle();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => { window.removeEventListener("keydown", onKeyDown); };
+  }, [enabled, toggle]);
 }
 
 /**
@@ -207,8 +223,11 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
   const reviewPane = useReviewPane(phone);
   const paneId = useId();
   const setPaneOpen = reviewPane.setOpen;
-  // The pane's collapse control (#877 S2): ⇥ beside the Notes heading, ⇤ in a strip once collapsed. A phone has the drawer and no toggle.
-  const paneControls = useReviewPaneControls({ open: reviewPane.open, onOpenChange: setPaneOpen, paneId, noun: "notes" });
+  const revealPane = reviewPane.reveal;
+  // The pane's collapse control (#877 S2): ⇥ beside the Notes heading, ⇤ in a strip once collapsed, with the open-note count (#881, W2/D22). A phone has the drawer and no toggle.
+  const paneControls = useReviewPaneControls({ open: reviewPane.open, onOpenChange: setPaneOpen, paneId, noun: "notes", shortcut: "N", openCount: threads === null ? null : openThreadCount(threads) });
+  // N (#881): desktop only; in Full screen the pane is hidden and the floating composer owns it.
+  usePaneToggleKeyFromScreen(!phone && immersive === null, paneControls.toggle);
 
   // Copy my notes (13d): the dialog, and what the last paste came to for the Version on screen.
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -310,9 +329,9 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
     // A drawing shows only on the exact frame it was drawn on, which can sit anywhere inside the note's range: seek there, else to the anchor.
     const frame = thread.hasMarkup && thread.drawingFrame !== null ? thread.drawingFrame : thread.startFrame;
     if (frame !== null) clock?.seekToFrame(frame);
-    setPaneOpen(true);
+    revealPane(); // shown for this visit, never saved (owner, #881)
     if (phone && sheetStopRef.current === "collapsed") setSheetStop("half"); // a note or marker chosen while the sheet is collapsed opens it to half (D6)
-  }, [clock, setPaneOpen, phone, setSheetStop]);
+  }, [clock, revealPane, phone, setSheetStop]);
   const markupOverlay = useGuestMarkup(api, clock, selected, onMarkupGone, selectionCount);
   const watermark = video.premium && !video.unlocked;
 
@@ -756,7 +775,7 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
       immersive={imm ? (composeShown ? "compose" : "watch") : "off"}
       {...(sheet ? { sheet } : {})}
       strip={paneControls.strip}
-      player={<OverlayContainerContext.Provider value={slot}><VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" phoneFrameStep={!canWrite} version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { setPaneOpen(true); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} transportHidden={phone && (sheetControl.mode === "search" || (sheetControl.mode === "compose" && !compose.penDown))} immersive={immersiveHost} /></OverlayContainerContext.Provider>}
+      player={<OverlayContainerContext.Provider value={slot}><VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" phoneFrameStep={!canWrite} version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { revealPane(); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} transportHidden={phone && (sheetControl.mode === "search" || (sheetControl.mode === "compose" && !compose.penDown))} immersive={immersiveHost} /></OverlayContainerContext.Provider>}
       // The pane's popups (a note's ⋯ menu) portal into the same slot as the player's, inside the inverse scope (fix round 1: they drew light on the dark viewer).
       pane={<OverlayContainerContext.Provider value={slot}><aside data-testid="guest-notes-aside" className="flex min-h-0 flex-1 flex-col bg-card text-card-foreground min-[721px]:overflow-hidden min-[721px]:border-l min-[721px]:border-border min-[721px]:p-[var(--space-5)] min-[721px]:in-data-[immersive=compose]:border-l-0 min-[721px]:in-data-[immersive=compose]:p-0"><div data-sheet-part="head" className="flex shrink-0 items-center border-b border-border bg-card px-[var(--space-3)] min-[721px]:hidden" onClick={openSheet}>{phone && <Tabs value="notes" className="w-full"><TabsList variant="line" className="w-full justify-start rounded-none bg-card px-0 max-[721px]:!h-11 max-[721px]:!p-0"><TabsTrigger value="notes" data-testid="guest-notes-heading" className="max-[721px]:!h-11 max-[721px]:flex-none max-[721px]:px-[var(--space-3)] max-[721px]:after:!bottom-0">{tabContent}</TabsTrigger></TabsList></Tabs>}</div><div data-testid="guest-notes-aside-body" className="flex min-h-0 flex-1 flex-col max-[721px]:p-[var(--space-4)] max-[721px]:in-data-[mode=browse]:py-0 max-[721px]:in-data-[mode=compose]:py-[var(--space-2)] max-[721px]:in-data-[immersive=compose]:p-0">{panel}</div></aside></OverlayContainerContext.Provider>}
     />

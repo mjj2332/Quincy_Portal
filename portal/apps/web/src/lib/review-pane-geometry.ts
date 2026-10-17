@@ -1,6 +1,6 @@
 /**
- * The phone review sheet's geometry (#879), pure and DOM-free. #881 adds the desktop rail's width clamp here.
- * Velocity is positive when the sheet grows (the finger moves up).
+ * The review pane's geometry, pure and DOM-free: the phone sheet's stops (#879) and the desktop pane's width bounds and clamp (#881).
+ * Velocity is positive when the sheet grows (the finger moves up). Guest-safe: it imports nothing.
  */
 export const PHONE_QUERY = "(width < 721px)";
 export const FLICK_PX_PER_MS = 0.5;
@@ -39,3 +39,24 @@ export function releaseVelocity(from: { y: number; t: number }, to: { y: number;
   const elapsed = to.t - from.t;
   return elapsed > 0 ? (from.y - to.y) / elapsed : 0;
 }
+
+/** The desktop pane's width bounds (#881, prototype `RAIL_MIN` / `RAIL_MAX`, W1 drawn at 380). */
+export const PANE_MIN = 300;
+export const PANE_DEFAULT = 380;
+export const PANE_MAX = 560;
+/** The player always keeps at least this much of the row. */
+export const PLAYER_MIN = 480;
+/** The widest viewport that counts as a tablet (D18: a tablet gets the desktop layout; in portrait the pane starts collapsed). */
+export const TABLET_MAX = 1366;
+
+/** The widest the pane may be in a row `hostWidth` wide: 560, or what leaves the player 480, never below the minimum. An unmeasured row (0) allows the full 560. */
+export function paneCeiling(hostWidth: number): number {
+  if (!(hostWidth > 0)) return PANE_MAX;
+  return Math.max(PANE_MIN, Math.min(PANE_MAX, Math.floor(hostWidth - PLAYER_MIN)));
+}
+
+/** The width to draw: the preference clamped to the room the row has. The preference itself is never rewritten by it (a narrow window keeps a wide choice). */
+export const clampPaneWidth = (width: number, hostWidth: number): number => Math.min(paneCeiling(hostWidth), Math.max(PANE_MIN, Math.round(width)));
+
+/** Whether the pane is open (D18): a remembered choice always wins; with none (`null`) a portrait tablet starts collapsed and every other desktop width open. */
+export const resolvePaneOpen = (remembered: boolean | null, portraitTablet: boolean): boolean => remembered ?? !portraitTablet;

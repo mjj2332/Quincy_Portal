@@ -46,6 +46,7 @@ export function mockViewport(initial: { width: number; height?: number; coarse?:
     if (query === "(pointer: fine)") return !coarse;
     if (query === "(orientation: landscape)") return height > 0 && width > height;
     if (query === "(orientation: portrait)") return !(width > height);
+    if (query === "(aspect-ratio < 1)") return height > width;
     return false;
   };
 

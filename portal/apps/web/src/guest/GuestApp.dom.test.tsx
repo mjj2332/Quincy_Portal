@@ -495,13 +495,13 @@ describe("the notes pane (#859)", () => {
   const press = async (target: Element, key: string, init: KeyboardEventInit = {}) => { await act(async () => { target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init })); }); };
   const saved = () => JSON.parse(shim.values.get(REVIEW_PANE_KEY) ?? "null") as { open: boolean; width: number } | null;
 
-  it("opens at 360px with the toggle expanded and the notes in the pane", async () => {
+  it("opens at 380px with the toggle expanded and the notes in the pane", async () => {
     videos = [videoOf(1)];
     await open();
     expect(toggle()!.getAttribute("aria-expanded")).toBe("true");
     expect(pane()!.querySelector('[data-testid="guest-notes-panel"]')).not.toBeNull();
-    expect(now(handle()!)).toBe(360);
-    expect(pane()!.style.getPropertyValue("--review-pane-w")).toBe("360px");
+    expect(now(handle()!)).toBe(380);
+    expect(pane()!.style.getPropertyValue("--review-pane-w")).toBe("380px");
   });
 
   it("puts ⇥ in the pane's heading row, none in the top bar, and a strip with ⇤ once collapsed (#877 S2)", async () => {
@@ -553,7 +553,7 @@ describe("the notes pane (#859)", () => {
     expect(mountedPane()!.hidden).toBe(true);
     expect(toggle()!.getAttribute("aria-expanded")).toBe("false");
     expect(host.querySelector("video")).toBe(film);
-    expect(saved()).toEqual({ open: false, width: 360 });
+    expect(saved()).toEqual({ open: false, width: 380 });
     await click(toggle()!);
     expect(pane()).not.toBeNull();
     expect(host.querySelector("video")).toBe(film);
@@ -566,14 +566,14 @@ describe("the notes pane (#859)", () => {
     const h = handle()!;
     await act(async () => { h.focus(); });
     await press(h, "ArrowLeft", { shiftKey: true });
-    expect(now(handle()!)).toBe(424);
+    expect(now(handle()!)).toBe(444);
     await press(h, "ArrowRight");
-    expect(now(handle()!)).toBe(408);
+    expect(now(handle()!)).toBe(428);
     expect(stub.writes.length).toBe(writes);
-    expect(saved()).toEqual({ open: true, width: 408 });
+    expect(saved()).toEqual({ open: null, width: 428 });
     await act(async () => { root!.unmount(); }); root = null; host.remove();
     await open();
-    expect(now(handle()!)).toBe(408);
+    expect(now(handle()!)).toBe(428);
   });
 
   it("shares one key with the staff viewer: a collapsed choice made there is collapsed here", async () => {
@@ -618,6 +618,69 @@ describe("the notes pane (#859)", () => {
     expect(toggle()).toBeNull();
     expect(handle()).toBeNull();
     expect(pane()).not.toBeNull();
+  });
+
+  describe("the desktop rail (#881)", () => {
+    const stripCount = () => byId("video-pane-strip-count");
+    const RESOLVED_AND_TOMBSTONE = () => [note(), note({ id: "33333333-3333-4333-8333-333333333333", startFrame: 80 }), note({ id: "55555555-5555-4555-8555-555555555555", resolved: true }), note({ id: "77777777-7777-4777-8777-777777777777", deleted: true, body: "" })];
+
+    it("W2/W3: the collapsed strip is one button with the open count (resolved notes and empty tombstones excluded), hidden at 0", async () => {
+      shim.values.set(REVIEW_PANE_KEY, JSON.stringify({ open: false, width: 380 }));
+      notes = RESOLVED_AND_TOMBSTONE();
+      videos = [videoOf(1)];
+      await open();
+      expect(byId("video-review-strip")!.querySelectorAll("button")).toHaveLength(1);
+      expect(byId("video-pane-show")!.getAttribute("aria-label")).toBe("Show notes, 2 open");
+      expect(stripCount()!.textContent).toBe("2");
+      await act(async () => { root!.unmount(); }); root = null; host.remove();
+      notes = [note({ resolved: true })];
+      await open();
+      expect(byId("video-pane-show")!.getAttribute("aria-label")).toBe("Show notes");
+      expect(stripCount()).toBeNull();
+    });
+
+    it("N toggles the pane from anywhere on the screen, remembers it, and is a letter in a field", async () => {
+      videos = [videoOf(1)];
+      await open();
+      const film = host.querySelector("video");
+      await keyDown("n");
+      expect(pane()).toBeNull();
+      expect(saved()).toEqual({ open: false, width: 380 });
+      await keyDown("N");
+      expect(pane()).not.toBeNull();
+      expect(saved()).toEqual({ open: true, width: 380 });
+      expect(host.querySelector("video")).toBe(film);
+      const field = document.createElement("textarea");
+      host.appendChild(field);
+      await keyDown("n", field);
+      expect(pane()).not.toBeNull();
+      await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "n", metaKey: true, bubbles: true, cancelable: true })); });
+      expect(pane()).not.toBeNull();
+    });
+
+    it("N does nothing on a phone", async () => {
+      await viewport.set({ width: 390, coarse: true });
+      videos = [videoOf(1)];
+      await open();
+      await keyDown("n");
+      expect(pane()).not.toBeNull();
+      expect(saved()).toBeNull();
+    });
+
+    it("D18/W4: a portrait tablet with no remembered choice starts collapsed; Approve stays in the delivery row", async () => {
+      viewport.restore(); viewport = mockViewport({ width: 834, height: 1112, coarse: true });
+      extra = (url) => (url === `/d/api/links/${LINK}/session` ? json({ ...SESSION, link: { ...SESSION.link, allow: { ...SESSION.link.allow, approve: true } } }) : undefined);
+      videos = [videoOf(1)];
+      await open();
+      expect(pane()).toBeNull();
+      expect(byId("video-review-strip")).not.toBeNull();
+      expect(saved()).toBeNull();
+      expect(byId("guest-delivery")!.contains(byId("guest-approve"))).toBe(true);
+      expect(byId("guest-bar")!.contains(byId("guest-approve"))).toBe(false);
+      await viewport.set({ width: 1112, height: 834 });
+      await flush(2);
+      expect(pane()).not.toBeNull();
+    });
   });
 
   it("puts notices and the video screen in one bounded column, so a notice shortens the screen instead of overflowing", async () => {

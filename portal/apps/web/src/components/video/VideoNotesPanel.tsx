@@ -14,12 +14,12 @@ import { EmptyState } from "../quincy/EmptyState";
 import { Notice } from "../quincy/Notice";
 import { NotesFilterHead, type NotesSearchState } from "../quincy/NotesFilterHead";
 import { ReviewPaneHideContext } from "../quincy/ReviewPane";
-import { Popover, PopoverContent, PopoverTrigger } from "../reui/popover";
 import { ScrollArea } from "../reui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "../reui/toggle-group";
 import { EXPORT_PANEL_WIDTH, MarkerExportMenuItems, MarkerExportNotices, type MarkerExport } from "./VideoMarkerExportMenu";
 import { VideoNoteComposer } from "./VideoNoteComposer";
 import { VideoNoteThread } from "./VideoNoteThread";
+import { VideoVersionDetails } from "./VideoVersionDetails";
 import type { VideoNotesSession } from "./use-video-notes";
 import type { NotesClipboard } from "./use-notes-clipboard";
 
@@ -158,10 +158,7 @@ export function VideoNotesPanel({ session, detailsRows, exp, clipboard, pen, pho
         <span data-testid="video-notes-counts" className="text-foreground-secondary [font:var(--type-label)]">{`${counts.totals.open} open · ${counts.totals.resolved} resolved`}</span>
       </div>
       <div className="flex items-center gap-[var(--space-1)]">
-        <Popover>
-          <PopoverTrigger render={<Button type="button" variant="text" data-testid="video-details-button" className="pointer-coarse:min-h-11 max-[721px]:min-h-11" />}>Version details</PopoverTrigger>
-          <PopoverContent align="end" className="w-[min(320px,calc(100vw-var(--space-5)))] max-h-[min(70dvh,520px)] overflow-y-auto" data-testid="video-details-popover">{detailsRows}</PopoverContent>
-        </Popover>
+        <VideoVersionDetails>{detailsRows}</VideoVersionDetails>
         {(clipboard.canCopy || (canExport && !phone)) && <Menu triggerLabel="Notes actions" label="Notes actions" triggerClassName={ICON_BUTTON} panelClassName={canExport ? EXPORT_PANEL_WIDTH : undefined} triggerTestId="video-notes-menu" trigger={<span aria-hidden="true">⋯</span>}>
           {clipboard.canCopy && <MenuPrimitive.Item className={MENU_ITEM} disabled={clipboard.copyDisabled} onClick={clipboard.copyShown}>Copy shown notes</MenuPrimitive.Item>}
           {clipboard.pasteLabel !== null && <MenuPrimitive.Item className={MENU_ITEM} onClick={clipboard.openPaste}>{clipboard.pasteLabel}</MenuPrimitive.Item>}

@@ -1,7 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
-import { PANE_MIN, PLAYER_MIN, REVIEW_PANE_KEY, clampPaneWidth, normalizeReviewPane, paneCeiling } from "../../lib/review-pane-prefs";
+import { PANE_MIN, PLAYER_MIN, TABLET_MAX, clampPaneWidth, paneCeiling, resolvePaneOpen } from "../../lib/review-pane-geometry";
+import { REVIEW_PANE_KEY, normalizeReviewPane } from "../../lib/review-pane-prefs";
+import { useMediaQuery } from "../../lib/use-media-query";
 import { useUiPref } from "../../lib/ui-prefs";
+import { Badge } from "../reui/badge";
 import { Button } from "../reui/button";
 import { IconTip } from "./IconTip";
 import { SHEET_COLLAPSED_MIN, SheetGrabber, SheetModeContext, isComposerField, isInComposer, useSheetPane, useSheetTextRoom, type ReviewSheetControl, type SheetModeValue, type SheetRoom } from "./ReviewSheet";
@@ -12,8 +15,8 @@ import { SHEET_COLLAPSED_MIN, SheetGrabber, SheetModeContext, isComposerField, i
  * (in happy-dom the group measures 0 wide, reports no layout and throws on the first key; it sizes from a measured group, with no px width
  * to persist), so the handle is the WAI-ARIA window splitter below.
  *
- * The player cell is always the first child and is never remounted by collapsing, expanding or crossing the phone breakpoint: the pane
- * unmounts when collapsed, the film does not. Width is a pixel preference clamped at use time (`clampPaneWidth`) against the row's
+ * The player cell is always the first child and is never remounted by collapsing, expanding or crossing the phone breakpoint, and the pane
+ * is hidden and inert when collapsed, never unmounted. Width is a pixel preference clamped at use time (`clampPaneWidth`) against the row's
  * measured width, never a percentage inside the flex row. `stacked` (phone) drops the handle and the width: the pane wraps below the player.
  */
 export const REVIEW_PANE_WIDTH_VAR = "--review-pane-w";
@@ -43,27 +46,50 @@ function collapsedHeight(row: HTMLElement): number {
   return total;
 }
 
+/** A tablet held upright (D18): from the phone breakpoint up to `TABLET_MAX` wide, taller than wide. No pointer gate, so a tall narrow desktop window counts too (the same narrow film). */
+const TABLET_WIDE_QUERY = `(max-width: ${TABLET_MAX}px)`;
+const PORTRAIT_QUERY = "(aspect-ratio < 1)"; // strictly taller than wide (D18): a square viewport is not portrait, though `(orientation: portrait)` says it is
+
 /**
  * The pane's state for a screen: the saved preference (open, width), plus the narrow rule. A row too narrow for the smallest pane AND the
  * 480px player lays out collapsed without touching the saved preference; the toggle then shows it for this visit only (`narrowOpen`),
  * and the player may shrink below 480 while it does.
+ *
+ * Until the person makes a choice (`open: null`, #881) the screen decides, live: a portrait tablet starts collapsed, so turning an iPad with no
+ * remembered choice opens or collapses the pane. The first show or hide writes a boolean, and from then on that choice wins (`resolvePaneOpen`).
  */
 export function useReviewPane(phone: boolean) {
   const [pref, setPref] = useUiPref(REVIEW_PANE_KEY, normalizeReviewPane);
   const prefRef = useRef(pref);
   prefRef.current = pref;
+  const portrait = useMediaQuery(PORTRAIT_QUERY);
+  const tabletWide = useMediaQuery(TABLET_WIDE_QUERY);
+  const resolved = resolvePaneOpen(pref.open, !phone && portrait && tabletWide);
+  const resolvedRef = useRef(resolved);
+  resolvedRef.current = resolved;
   const [narrow, setNarrow] = useState(false);
   const narrowRef = useRef(false);
   narrowRef.current = narrow;
   const [narrowOpen, setNarrowOpen] = useState(false);
-  const open = narrow ? narrowOpen : pref.open;
+  // A reveal (a marker, an I/O mark, a note link) shows the pane for this visit only: it is not a choice, so it never writes (owner, #881 — a portrait tablet keeps D18's collapsed start).
+  const [revealed, setRevealed] = useState(false);
+  const open = narrow ? narrowOpen : revealed || resolved;
   const setOpen = useCallback((next: boolean) => {
     if (phone) return; // a phone has its own layout and must not rewrite the desktop choice
     if (narrowRef.current) { setNarrowOpen(next); return; }
-    if (prefRef.current.open !== next) setPref({ ...prefRef.current, open: next });
+    setRevealed(false);
+    // Against the remembered or default state, not the stored value: showing a pane that is already shown is not a choice, so a never-chosen state stays live,
+    // and hiding a revealed pane only drops the reveal when that lands back on the remembered state.
+    if (resolvedRef.current !== next) setPref({ ...prefRef.current, open: next });
   }, [phone, setPref]);
+  const reveal = useCallback(() => {
+    if (phone) return;
+    if (narrowRef.current) { setNarrowOpen(true); return; }
+    setRevealed(true);
+  }, [phone]);
+  // A resize keeps `open` as stored: a never-chosen state stays `null`.
   const setWidth = useCallback((width: number) => { setPref({ ...prefRef.current, width }); }, [setPref]);
-  return { open, setOpen, width: pref.width, setWidth, onNarrow: setNarrow };
+  return { open, setOpen, reveal, width: pref.width, setWidth, onNarrow: setNarrow };
 }
 const STEP = 16;
 const STEP_BIG = 64;
@@ -126,7 +152,8 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
   useEffect(() => { onNarrow(narrow); }, [narrow, onNarrow]);
 
   const [drag, setDrag] = useState<number | null>(null);
-  const dragRef = useRef<{ x: number; width: number; now: number } | null>(null);
+  // One gesture at a time, owned by the pointer that started it (#881): a second finger or pen neither moves nor ends it.
+  const dragRef = useRef<{ pointerId: number; x: number; width: number; now: number } | null>(null);
   const shown = drag ?? clampPaneWidth(width, hostWidth);
   const ceiling = paneCeiling(hostWidth);
 
@@ -147,29 +174,33 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
   };
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== undefined && event.button !== 0) return;
+    // Another pointer's gesture is under way; the same pointer pressing again (its release was never seen) starts over.
+    if (dragRef.current && dragRef.current.pointerId !== event.pointerId) return;
     const live = measure();
     const start = clampPaneWidth(width, live);
-    dragRef.current = { x: event.clientX, width: start, now: start };
+    dragRef.current = { pointerId: event.pointerId, x: event.clientX, width: start, now: start };
     setDrag(start);
     try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* the pointer is gone, or the test runtime has no capture: the move events still arrive */ }
     event.preventDefault();
   };
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const gesture = dragRef.current;
-    if (!gesture) return;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
     gesture.now = clampPaneWidth(gesture.width + (gesture.x - event.clientX), measure());
     setDrag(gesture.now);
   };
-  const finish = () => {
+  // Release, a cancelled pointer and a lost capture all end the gesture where it was drawn, and commit that width once.
+  const finish = (event: ReactPointerEvent<HTMLDivElement>) => {
     const gesture = dragRef.current;
-    if (!gesture) return;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
     dragRef.current = null;
     setDrag(null);
     onWidth(gesture.now);
   };
-  useEffect(() => { if (!open || stacked) { dragRef.current = null; setDrag(null); } }, [open, stacked]);
-
   const full = immersive !== "off";
+  // The handle goes away mid-gesture (the pane collapses, by N or the button; the row crosses 721px or turns narrow; Full screen): no release will come, so the gesture is dropped, uncommitted.
+  useEffect(() => { if (!open || stacked || narrow || full) { dragRef.current = null; setDrag(null); } }, [open, stacked, narrow, full]);
+
   const showPane = full ? immersive === "compose" : stacked || open;
   const phoneSheet = stacked && sheet !== undefined && !full;
   const sheetPane = useSheetPane({ enabled: phoneSheet, control: sheet, room, paneRef, immersive });
@@ -278,24 +309,36 @@ export function ReviewPaneHideSlot() { return <>{useContext(ReviewPaneHideContex
 
 const PANE_ICON = "pointer-coarse:min-h-11 pointer-coarse:min-w-11";
 
+export type ReviewPaneNoun = "notes" | "details" | "delivery";
+
 /**
- * The pane's collapse control (#877): ⇥ "Hide {noun}" is placed by the screen inside the pane (`hideButton`); once the pane is collapsed a slim
- * strip on the right edge (`strip`, handed to `ReviewSplit`) holds ⇤ "Show {noun}". Collapsing moves focus to the strip's button, expanding moves it
- * back to ⇥ (a hidden-and-inert pane would otherwise drop focus on the body); showing the pane any other way (`revealNotes`) moves no focus.
+ * The pane's collapse control (#877, #881): ⇥ "Hide {noun}" is placed by the screen inside the pane (`hideButton`); once the pane is collapsed a slim
+ * strip on the right edge (`strip`, handed to `ReviewSplit`) is one full-height ⇤ "Show {noun}" button, with the open-note count under the icon
+ * (W2, D22: hidden at 0 and while unknown). A screen that learns the count below this hook (the staff viewer's lazy notes host) draws `stripFor(count)` instead. Collapsing moves focus to the strip's button when the focus was in the pane (or nowhere), expanding by the
+ * button moves it back to ⇥ (a hidden-and-inert pane would otherwise drop focus on the body); showing the pane any other way (`revealNotes`, the
+ * shortcut through `toggle`) moves no focus. `shortcut` is the key both tooltips name.
  */
-export function useReviewPaneControls({ open, onOpenChange, paneId, noun }: { open: boolean; onOpenChange: (next: boolean) => void; paneId: string; noun: "notes" | "details" }): { hideButton: ReactNode; strip: ReactNode } {
+export function useReviewPaneControls({ open, onOpenChange, paneId, noun, shortcut, openCount }: { open: boolean; onOpenChange: (next: boolean) => void; paneId: string; noun: ReviewPaneNoun; shortcut?: string; /** Open notes on the Version on screen; `null` while unknown. */ openCount?: number | null }): { hideButton: ReactNode; strip: ReactNode; stripFor: (openCount?: number | null) => ReactNode; toggle: () => void } {
   const pendingFocus = useRef<"strip" | "hide" | null>(null);
   const hideRef = useRef<HTMLButtonElement | null>(null);
   const showRef = useRef<HTMLButtonElement | null>(null);
+  const openRef = useRef(open);
+  openRef.current = open;
   useLayoutEffect(() => {
     const target = pendingFocus.current;
     pendingFocus.current = null;
     if (target === "strip") showRef.current?.focus({ preventScroll: true });
     else if (target === "hide") hideRef.current?.focus({ preventScroll: true });
   }, [open]);
+  const collapse = useCallback(() => {
+    const inside = document.getElementById(paneId)?.contains(document.activeElement) ?? false;
+    if (inside || document.activeElement === document.body) pendingFocus.current = "strip";
+    onOpenChange(false);
+  }, [paneId, onOpenChange]);
+  const toggle = useCallback(() => { if (openRef.current) collapse(); else onOpenChange(true); }, [collapse, onOpenChange]);
   const hideLabel = `Hide ${noun}`;
   const showLabel = `Show ${noun}`;
-  const hideButton = <IconTip label={hideLabel}>
+  const hideButton = <IconTip label={hideLabel} {...(shortcut ? { keys: shortcut } : {})}>
     <Button
       ref={hideRef}
       type="button"
@@ -305,29 +348,36 @@ export function useReviewPaneControls({ open, onOpenChange, paneId, noun }: { op
       aria-label={hideLabel}
       aria-expanded={open}
       aria-controls={paneId}
+      {...(shortcut ? { "aria-keyshortcuts": shortcut } : {})}
       className={PANE_ICON}
-      onClick={() => {
-        const inside = document.getElementById(paneId)?.contains(document.activeElement) ?? false;
-        if (inside || document.activeElement === document.body) pendingFocus.current = "strip";
-        onOpenChange(false);
-      }}
+      onClick={collapse}
     ><PanelRightClose aria-hidden="true" /></Button>
   </IconTip>;
-  const strip = open ? null : <div data-testid="video-review-strip" className="flex w-10 flex-none flex-col items-center border-l border-border bg-card py-[var(--space-2)] max-[721px]:hidden">
-    <IconTip label={showLabel}>
-      <Button
-        ref={showRef}
-        type="button"
-        variant="ghost"
-        size="icon"
-        data-testid="video-pane-show"
-        aria-label={showLabel}
-        aria-expanded={false}
-        aria-controls={paneId}
-        className={PANE_ICON}
-        onClick={() => { pendingFocus.current = "hide"; onOpenChange(true); }}
-      ><PanelRightOpen aria-hidden="true" /></Button>
-    </IconTip>
-  </div>;
-  return { hideButton, strip };
+  const stripFor = (shownCount?: number | null): ReactNode => {
+    if (open) return null;
+    const count = noun === "notes" && shownCount != null && shownCount > 0 ? shownCount : null;
+    // W2's strip (prototype 44px, the icon then the count): the whole column is the one reopen target, so it is a single ghost button filling the strip.
+    // Adaptation (prototype over ReUI rule 1): the button fills the column inside a --space-1 gutter, which is exactly room for the app-wide focus outline (2px at a 2px offset):
+    // the row clips its overflow, so an edge-to-edge button would lose its ring on three sides. Its side padding gives way to the 36px column; the gap and block padding are spacing tokens.
+    return <div data-testid="video-review-strip" className="flex w-11 flex-none flex-col border-l border-border bg-card p-[var(--space-1)] max-[721px]:hidden">
+      <IconTip label={showLabel} {...(shortcut ? { keys: shortcut } : {})}>
+        <Button
+          ref={showRef}
+          type="button"
+          variant="ghost"
+          data-testid="video-pane-show"
+          aria-label={count === null ? showLabel : `${showLabel}, ${count} open`}
+          aria-expanded={false}
+          aria-controls={paneId}
+          {...(shortcut ? { "aria-keyshortcuts": shortcut } : {})}
+          className="w-full flex-1 flex-col justify-start gap-[var(--space-2)] px-0 py-[var(--space-2)]"
+          onClick={() => { pendingFocus.current = "hide"; onOpenChange(true); }}
+        >
+          <PanelRightOpen aria-hidden="true" />
+          {count !== null && <Badge variant="secondary" aria-hidden="true" data-testid="video-pane-strip-count" className="tabular-nums">{count}</Badge>}
+        </Button>
+      </IconTip>
+    </div>;
+  };
+  return { hideButton, strip: stripFor(openCount), stripFor, toggle };
 }
