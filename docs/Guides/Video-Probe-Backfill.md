@@ -24,7 +24,7 @@ Only `changed` is written, and never on a dry run (a dry run writes nothing, aud
 2. Take a D1 Time Travel bookmark.
 3. Real run in a quiet review window (metadata lengths are not covered by paste's freshness fence, so viewers reload afterwards): the same pages with `{ "dryRun": false }`.
 4. Dry run again: every item is `unchanged`.
-5. `SELECT COUNT(*) FROM video_version_meta WHERE probe_version = 2` equals the number of `changed` items.
+5. The backfill's own audit rows match the `changed` items, one per asset: `SELECT target_id FROM audit_log WHERE action = 'video.version.reprobe'` lists exactly the changed asset ids. (Not a count of `probe_version = 2`: every upload since the deploy stores 2 as well.)
 6. In the browser, cfr-25 v2 reaches frame 499 at the end.
 
 ## Rollback
