@@ -247,7 +247,7 @@ describe("short heights (#907)", () => {
   });
   it("below 520px the dialog scrolls, the footer is sticky and opaque, and the body is not a scroller", async () => {
     await show(); await openIt();
-    expect(classes(byTestId("delivery-download-all-dialog"))).toEqual(expect.arrayContaining([`${SHORT}overflow-y-auto`, `${SHORT}overscroll-contain`, `${SHORT}[scrollbar-width:none]`]));
+    expect(classes(byTestId("delivery-download-all-dialog"))).toEqual(expect.arrayContaining([`${SHORT}overflow-y-auto`, `${SHORT}overscroll-contain`, `${SHORT}[scrollbar-width:none]`, `${SHORT}scroll-pb-[var(--space-9)]`]));
     const footer = byTestId("delivery-zip-footer");
     expect(classes(footer)).toEqual(expect.arrayContaining([`${SHORT}sticky`, `${SHORT}-bottom-[var(--space-4)]`, `${SHORT}bg-[color-mix(in_srgb,var(--color-muted)_50%,var(--color-popover))]`]));
     const body = classes(byTestId("delivery-zip-body"));
