@@ -18,6 +18,8 @@ import type { StatusTone } from "./StatusPill";
  * The whole tile opens: the title is the one open control and stretches over the tile (`after:inset-0`); the tick, the menu and the footer sit above it (`z-10`), so each is its own control.
  * With an `href` the open control is a native `<a>` in the same tab (#882, story 28: the Delivery page's review tile is one link, so open-in-new-tab and copy-link work); with `onOpen` it is a
  * `<button>`, for a tile whose open is an action rather than a navigation (a screen state, the plain player, an unlock request). `openLabel` renames it when the action is not "open this film".
+ * `caption` (#882, V1/V3) is a line under the title that belongs to that one control: unlike `footer` it is not raised above the stretched control, so a tap on it is a tap on the tile, and it must hold
+ * no control of its own (the locked film's "Request unlock" line). `openDisabled` makes the button inert but keeps it focusable (`aria-disabled`, not `disabled`), so focus stays where the viewer pressed.
  */
 export type VideoTileStatus = { tone: StatusTone; /** Drawn beside the dot. */ short: string; /** Read aloud and in the tile's summary. */ full: string };
 
@@ -34,7 +36,7 @@ type VideoTileOpen =
   | { /** A same-tab address: the open control is a native `<a>`. */ href: string; onOpen?: undefined }
   | { /** `trigger` is the open control, where focus returns when the viewer closes. */ onOpen: (trigger: HTMLElement) => void; href?: undefined };
 
-export function VideoTile({ title, posterUrl, version, durationMs, openNotes, href, onOpen, openLabel, tone = "ink", locked = false, status, linked, premium, select, menu, drop, footer, testId = "video-tile", openTestId = "video-tile-open", dataVideoId }: VideoTileOpen & {
+export function VideoTile({ title, posterUrl, version, durationMs, openNotes, href, onOpen, openLabel, openDisabled = false, tone = "ink", locked = false, status, linked, premium, select, menu, drop, footer, caption, testId = "video-tile", openTestId = "video-tile-open", dataVideoId }: VideoTileOpen & {
   title: string;
   posterUrl: string | null;
   /** Null where the page does not know or must not say (a locked film, or no review to open on the Delivery page): no chip, no words. */
@@ -44,6 +46,8 @@ export function VideoTile({ title, posterUrl, version, durationMs, openNotes, hr
   openNotes: number | null;
   /** The open control's accessible name when the tile does something other than open the film (a locked tile requests an unlock); it keeps the title in it. Default: the title. */
   openLabel?: string;
+  /** The `onOpen` button does nothing and says so (`aria-disabled`), staying focusable: a locked tile whose unlock is sending, waiting out a rate limit, or already requested. */
+  openDisabled?: boolean;
   tone?: "ink" | "paper";
   /** A locked Premium film (D37): no poster, no facts; `premium` is implied and drawn in the menu's place unless a `menu` is given. */
   locked?: boolean;
@@ -58,6 +62,8 @@ export function VideoTile({ title, posterUrl, version, durationMs, openNotes, hr
   drop?: { nextVersion: number; onFile: (file: File) => void; disabled: boolean };
   /** Under the title: upload progress and refusals. */
   footer?: ReactNode;
+  /** Under the title, part of the tile's one control (beneath its stretched ::after): text only, never a control. */
+  caption?: ReactNode;
   testId?: string;
   openTestId?: string;
   dataVideoId?: string;
@@ -106,13 +112,14 @@ export function VideoTile({ title, posterUrl, version, durationMs, openNotes, hr
         {href !== undefined
           ? <a href={href} data-testid={openTestId} data-video-id={dataVideoId} aria-describedby={summaryId} aria-label={openLabel} className={cn(OPEN, "flex items-center no-underline")}><span className="min-w-0 truncate">{title}</span></a>
           : <button
-            type="button" data-testid={openTestId} data-video-id={dataVideoId} aria-describedby={summaryId} aria-label={openLabel}
-            onClick={(event) => { onOpen?.(event.currentTarget); }}
-            className={cn(OPEN, "cursor-pointer truncate border-0 bg-transparent p-0 text-left")}
+            type="button" data-testid={openTestId} data-video-id={dataVideoId} aria-describedby={summaryId} aria-label={openLabel} aria-disabled={openDisabled ? true : undefined}
+            onClick={(event) => { if (!openDisabled) onOpen?.(event.currentTarget); }}
+            className={cn(OPEN, "cursor-pointer truncate border-0 bg-transparent p-0 text-left aria-disabled:cursor-default")}
           >{title}</button>}
         <span id={summaryId} className="sr-only">{summary}</span>
         {menu && <div className="relative z-10 shrink-0">{menu}</div>}
       </div>
+      {caption && <div className="px-[var(--space-3)] pb-[var(--space-3)]">{caption}</div>}
       {footer && <div className="relative z-10 grid gap-[var(--space-2)] px-[var(--space-3)] pb-[var(--space-3)]">{footer}</div>}
       </Zone>
     </FramePanel>

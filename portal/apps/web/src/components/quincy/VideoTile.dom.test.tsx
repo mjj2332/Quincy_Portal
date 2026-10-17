@@ -87,6 +87,32 @@ describe("VideoTile", () => {
     expect(open.getAttribute("aria-label")).toBe("Request unlock: Kitchen walkthrough");
   });
 
+  it("a caption is part of the tile's one control: it sits under the stretched open control, not raised above it like a footer (#882, V1)", async () => {
+    const el = await mount(<VideoTile {...base} locked caption={<p data-testid="cap">Request unlock</p>} footer={<p data-testid="foot">footer</p>} />);
+    const caption = el.querySelector('[data-testid="cap"]')!.parentElement!;
+    const footer = el.querySelector('[data-testid="foot"]')!.parentElement!;
+    expect(footer.className.split(" ")).toEqual(expect.arrayContaining(["relative", "z-10"]));
+    // A tap anywhere on the caption lands on the open control's ::after: no stacking context of its own, and no control inside.
+    expect(caption.className.split(" ")).not.toContain("z-10"); expect(caption.className.split(" ")).not.toContain("relative");
+    expect(caption.className).toContain("px-[var(--space-3)]"); expect(caption.className).toContain("pb-[var(--space-3)]");
+  });
+
+  it("openDisabled leaves the open control focusable but inert: aria-disabled, no open on click, no pointer cursor", async () => {
+    const onOpen = vi.fn();
+    const el = await mount(<VideoTile {...base} onOpen={onOpen} openLabel="Unlock requested: Kitchen walkthrough" openDisabled />);
+    const open = el.querySelector<HTMLButtonElement>('[data-testid="video-tile-open"]')!;
+    expect(open.getAttribute("aria-disabled")).toBe("true"); expect(open.disabled).toBe(false);
+    open.focus(); expect(document.activeElement).toBe(open);
+    await act(async () => { open.click(); });
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(open.className).toContain("aria-disabled:cursor-default");
+  });
+
+  it("without openDisabled the open control carries no aria-disabled", async () => {
+    const el = await mount(<VideoTile {...base} />);
+    expect(el.querySelector('[data-testid="video-tile-open"]')!.hasAttribute("aria-disabled")).toBe(false);
+  });
+
   it("ticks without opening, and the tick, a menu and a footer are separate controls", async () => {
     const onOpen = vi.fn(); const onToggle = vi.fn();
     const el = await mount(<VideoTile {...base} onOpen={onOpen} select={{ selected: false, onToggle }} menu={<button type="button">Menu</button>} footer={<p>footer</p>} />);

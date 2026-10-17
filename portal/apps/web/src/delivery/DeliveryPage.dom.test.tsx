@@ -621,11 +621,58 @@ describe("film tiles (#882)", () => {
     await click(tab("Premium"));
     expect(openOf(1).getAttribute("aria-label")).toBe("Request unlock: Video 01");
   });
-  it("a locked tile shows today's unlock states and the requested line", async () => {
-    await show(page([locked(1, { kind: "video", label: "Video 01", url: null, thumbUrl: null })]), { unlockState: { [handle(1)]: { kind: "requested" } } });
-    await click(tab("Premium"));
-    expect(byTestId("delivery-unlock-status")!.textContent).toBe("Requested. The studio will be in touch.");
-    expect([...document.querySelectorAll("button")].some((b) => b.textContent === "Request unlock")).toBe(false);
+  describe("the locked tile is one control (#882, V1/V3)", () => {
+    const lockedFilm = () => locked(1, { kind: "video", label: "Video 01", url: null, thumbUrl: null });
+    const controls = () => [...tileOf(1).querySelectorAll("button, a[href], input, [tabindex]")];
+    const line = () => tileOf(1).querySelector<HTMLElement>('[data-testid="delivery-unlock"]')!;
+    const status = () => tileOf(1).querySelector<HTMLElement>('[data-testid="delivery-unlock-status"]')!;
+    const showLocked = async (unlockState: UnlockStates = {}, onRequestUnlock = vi.fn()) => { await show(page([lockedFilm()]), { unlockState, onRequestUnlock }); await click(tab("Premium")); return onRequestUnlock; };
+
+    it("V1: the tile is the one control, and 'Request unlock' is a text line on it, not a second button", async () => {
+      const onRequestUnlock = await showLocked();
+      expect(controls()).toEqual([openOf(1)]);
+      expect(openOf(1).getAttribute("aria-label")).toBe("Request unlock: Video 01"); expect(openOf(1).hasAttribute("aria-disabled")).toBe(false);
+      // The visible line is the tile's affordance; the control's name already says it, so the line is not read twice.
+      const action = line().querySelector<HTMLElement>('[data-testid="delivery-unlock-action"]')!;
+      expect(action.textContent).toBe("Request unlock"); expect(action.className).toContain("underline"); expect(action.getAttribute("aria-hidden")).toBe("true");
+      expect(status().getAttribute("aria-live")).toBe("polite"); expect(status().textContent).toBe("");
+      await click(openOf(1));
+      expect(onRequestUnlock).toHaveBeenCalledTimes(1); expect(onRequestUnlock).toHaveBeenCalledWith(handle(1));
+    });
+    it("V3: once requested, the line is the studio's acknowledgement and the tile is inert, named for what happened", async () => {
+      const onRequestUnlock = await showLocked({ [handle(1)]: { kind: "requested" } });
+      expect(controls()).toEqual([openOf(1)]);
+      expect(openOf(1).getAttribute("aria-label")).toBe("Unlock requested: Video 01");
+      expect(openOf(1).getAttribute("aria-disabled")).toBe("true"); expect((openOf(1) as HTMLButtonElement).disabled).toBe(false);
+      expect(status().textContent).toBe("Requested. The studio will be in touch."); expect(status().getAttribute("aria-live")).toBe("polite");
+      expect(line().querySelector('[data-testid="delivery-unlock-action"]')).toBeNull();
+      expect(tileOf(1).textContent).not.toContain("Request unlock");
+      await click(openOf(1));
+      expect(onRequestUnlock).not.toHaveBeenCalled();
+    });
+    it("while sending the tile is inert and the line says Sending", async () => {
+      const onRequestUnlock = await showLocked({ [handle(1)]: { kind: "sending" } });
+      expect(openOf(1).getAttribute("aria-label")).toBe("Request unlock: Video 01"); expect(openOf(1).getAttribute("aria-disabled")).toBe("true");
+      expect(line().querySelector('[data-testid="delivery-unlock-action"]')!.textContent).toBe("Sending");
+      await click(openOf(1)); expect(onRequestUnlock).not.toHaveBeenCalled();
+    });
+    it("a failed request says so and stays retryable from the tile", async () => {
+      const onRequestUnlock = await showLocked({ [handle(1)]: { kind: "failed" } });
+      expect(status().textContent).toBe("Couldn't send. Try again.");
+      expect(openOf(1).getAttribute("aria-label")).toBe("Request unlock: Video 01"); expect(openOf(1).hasAttribute("aria-disabled")).toBe(false);
+      expect(line().querySelector('[data-testid="delivery-unlock-action"]')!.textContent).toBe("Request unlock");
+      await click(openOf(1)); expect(onRequestUnlock).toHaveBeenCalledWith(handle(1));
+    });
+    it("a rate-limit wait holds the tile inert and counts down, then the tile requests again", async () => {
+      vi.useFakeTimers();
+      const onRequestUnlock = await showLocked({ [handle(1)]: { kind: "limited", until: Date.now() + 2000 } });
+      expect(openOf(1).getAttribute("aria-disabled")).toBe("true");
+      expect(status().textContent).toBe("Too many requests. Try again in 2 seconds.");
+      await click(openOf(1)); expect(onRequestUnlock).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
+      expect(openOf(1).hasAttribute("aria-disabled")).toBe(false); expect(status().textContent).toBe("");
+      await click(openOf(1)); expect(onRequestUnlock).toHaveBeenCalledWith(handle(1));
+    });
   });
   it("lays the grid out as auto-fill 280 px columns, one column at 721 px and under the page's container (not the window), and a lone film across the row (D32, D33)", async () => {
     await showFilms([film(1), film(2)]);
@@ -664,7 +711,9 @@ describe("premium", () => {
     const [onPhoto, , inRow] = allByTestId("delivery-premium-badge", panel);
     expect(onPhoto!.className).toContain("bg-warning "); expect(onPhoto!.className).not.toContain("bg-warning/10"); // solid over a photo
     expect(inRow!.className).toContain("bg-warning/10"); // tinted in a document row
-    expect([...panel.querySelectorAll("button")].filter((b) => b.textContent === "Request unlock")).toHaveLength(3);
+    // A photo and a document row each have their Request unlock button; the locked film's is the tile itself (#882, V1).
+    expect([...panel.querySelectorAll("button")].filter((b) => b.textContent === "Request unlock")).toHaveLength(2);
+    expect(byLabel("Request unlock: Video 02")).toBe(placeholder.querySelector('[data-testid="delivery-film-open"]'));
   });
   it("sends the handle to onRequestUnlock and nothing else", async () => {
     const onRequestUnlock = vi.fn();
