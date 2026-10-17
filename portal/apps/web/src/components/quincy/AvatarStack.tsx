@@ -26,6 +26,11 @@ export type AvatarStackProps = {
    * dense stack clips the second letter (#370); the full name stays in the avatar's label.
    */
   singleInitial?: boolean;
+  /**
+   * #914 (the Project header's Team trigger, prototype D3): show `limit` avatars and then the `+N` chip, instead of `limit - 1`
+   * and the chip within the same width. Off by default, so the Gantt People column and every other caller keep their width.
+   */
+  fullLimit?: boolean;
 };
 
 /**
@@ -34,7 +39,7 @@ export type AvatarStackProps = {
  * avatar is load-bearing: `aria-label` on a roleless `<span>` is dropped by every major screen
  * reader. The avatars are static; the 44px touch-target contract belongs to whatever wraps them.
  */
-export function AvatarStack({ people, limit = 3, personNoun, emptyLabel, hiddenCount = 0, decorative = false, className, avatarClassName, singleInitial = false }: AvatarStackProps) {
+export function AvatarStack({ people, limit = 3, personNoun, emptyLabel, hiddenCount = 0, decorative = false, className, avatarClassName, singleInitial = false, fullLimit = false }: AvatarStackProps) {
   const hidden = decorative ? { "aria-hidden": true as const } : {};
   if (people.length === 0 && hiddenCount <= 0) {
     return (
@@ -45,7 +50,7 @@ export function AvatarStack({ people, limit = 3, personNoun, emptyLabel, hiddenC
     );
   }
   // With a `+N` chip, one fewer avatar: 3 avatars and a chip need ~84px, more than the Gantt People column's ~80px of content.
-  const shown = people.slice(0, people.length > limit ? Math.max(limit - 1, 1) : limit);
+  const shown = people.slice(0, people.length > limit && !fullLimit ? Math.max(limit - 1, 1) : limit);
   const overflow = people.length - shown.length;
   const countLabel = [
     overflow > 0 ? `${overflow} more ${personNoun}${overflow === 1 ? "" : "s"}` : null,

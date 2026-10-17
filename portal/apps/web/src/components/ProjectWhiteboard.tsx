@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { whiteboardReturnTarget } from "./project-header/whiteboard-opener";
 import { ArrowLeftIcon, HistoryIcon, PlayIcon } from "lucide-react";
 import type { WhiteboardMode, WhiteboardPeer } from "@quincy/shared";
 import { Button } from "@/components/reui/button";
@@ -260,7 +261,8 @@ export function ProjectWhiteboard({ projectId, street, archivedHint, onClose, on
       // Close hands the Workspace back; its entry button is what the user came from. Only the Close button
       // asks for this: Esc or navigation leave focus to whatever took over.
       if (!leftByClose.current) return;
-      document.querySelector<HTMLElement>('[data-testid="project-whiteboard-open"]')?.focus({ preventScroll: true });
+      // #914: the exact button that opened the board, or the header's own when that one has gone.
+      whiteboardReturnTarget()?.focus({ preventScroll: true });
     };
   }, []);
 

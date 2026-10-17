@@ -181,7 +181,8 @@ describe("the real Workspace inside the Project sheet (#366)", () => {
 
   it("a confirm raised from inside the sheet traps focus in the confirm; Escape closes it alone", async () => {
     await renderSheet();
-    const inner = document.querySelector<HTMLElement>('[data-testid="project-sheet-body"] button')!;
+    // #914: the header's ⋯ trigger, a control a confirm could be raised from (the first body button is now the Stage chip).
+    const inner = document.querySelector<HTMLElement>('[data-testid="project-sheet-body"] [data-testid="project-more-actions"]')!;
     inner.focus();
     let answer: boolean | undefined;
     await act(async () => { void confirm({ title: "Delete comment?", message: "This cannot be undone.", danger: true }).then((value) => { answer = value; }); await Promise.resolve(); });
@@ -317,15 +318,16 @@ describe("the Social overlays picker in the Project header (#870)", () => {
   const picker = () => document.querySelector<HTMLElement>('[data-testid="project-social-overlays"]');
   const pickerTrigger = () => document.querySelector<HTMLButtonElement>('button[aria-label="Social overlays"]');
 
-  it("sits after the control grid and before the tabs when video review is open", async () => {
+  // #914 S1 interim: the picker sits under Row A until S2 moves it into Project info (settled decision, after Team).
+  it("sits after the status cluster and before the tabs when video review is open", async () => {
     openGate(true);
     await renderSheet();
     await flushUntil(() => picker() !== null, "the Social overlays picker");
     const header = document.querySelector('[data-testid="project-header"]')!;
-    const deadline = header.querySelector('[data-testid="project-deadline-trigger"]')!;
+    const cluster = header.querySelector('[data-testid="project-status-cluster"]')!;
     expect(header.contains(picker())).toBe(true);
-    expect(deadline.compareDocumentPosition(picker()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(picker()!.compareDocumentPosition(header.querySelector('[data-testid="project-overview-tab"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(cluster.compareDocumentPosition(picker()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(picker()!.compareDocumentPosition(document.querySelector('[data-testid="project-overview-tab"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("is absent while video review is closed, and asks for nothing", async () => {

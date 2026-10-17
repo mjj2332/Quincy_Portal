@@ -1,16 +1,15 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CollectionKind } from "@quincy/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "../lib/api";
 import { confirm, confirmStore } from "../lib/confirm";
 import { ConfirmModalHost } from "./ConfirmDialog";
-import { ProjectHeader } from "./ProjectHeader";
+import { ProjectTeamCombobox } from "./ProjectTeamCombobox";
 import type { ProjectDetail, ProjectMember } from "../lib/project-data";
 
-/** Ported from `ProjectTeamControl.confirm.dom.test.tsx` (#204) — mounts the real `ProjectHeader` /
- *  `ProjectTeamCombobox` against the real `ConfirmModalHost`, no `confirm()` mock. */
+/** Ported from `ProjectTeamControl.confirm.dom.test.tsx` (#204) — mounts the real `ProjectTeamCombobox`
+ *  (its default chips presentation; #914 moved the header to the popover one) against the real `ConfirmModalHost`, no `confirm()` mock. */
 
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { role: "editor" } } }) }));
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: "editor", capabilities: [], can: () => false }) }));
@@ -54,11 +53,6 @@ function project(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
   };
 }
 
-const baseProps = (p: ProjectDetail) => ({
-  project: p, activeTab: "raw" as CollectionKind, availableTabs: ["raw"] as CollectionKind[], canUpload: false, canAdminBackend: false,
-  canEdit: true, hasRawFolder: false, autohdrBlocked: false, isSyncing: false, onSyncDropbox: vi.fn(), onActiveTabChange: vi.fn(), onStageMove: vi.fn(),
-});
-
 beforeEach(() => {
   apiGetMock.mockReset().mockResolvedValue({ photographers: [], editors: [] });
   apiDeleteMock.mockReset().mockRejectedValue(new ApiError("confirm", 422, { code: "subtask_assignment_confirmation_required", assignmentCount: 2 }));
@@ -76,7 +70,7 @@ describe("ProjectTeamCombobox real confirmation boundary", () => {
   it("cancels after the unconfirmed probe without sending a retry", async () => {
     const host = document.createElement("div"); document.body.append(host); root = createRoot(host);
     await act(async () => {
-      root!.render(<QueryClientProvider client={queryClient!}><><ProjectHeader {...baseProps(project())} /><ConfirmModalHost /></></QueryClientProvider>);
+      root!.render(<QueryClientProvider client={queryClient!}><><ProjectTeamCombobox projectId={projectId} members={project().members} canEdit /><ConfirmModalHost /></></QueryClientProvider>);
       await Promise.resolve();
     });
     await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="project-member-remove"]')!.click(); await Promise.resolve(); });
@@ -97,7 +91,7 @@ describe("ProjectTeamCombobox real confirmation boundary", () => {
     apiGetMock.mockResolvedValue({ photographers: [], editors: [{ id: member.userId, name: member.name, email: member.email, globalRole: "editor", active: true }] });
     const host = document.createElement("div"); document.body.append(host); root = createRoot(host);
     await act(async () => {
-      root!.render(<QueryClientProvider client={queryClient!}><><ProjectHeader {...baseProps(project())} /><ConfirmModalHost /></></QueryClientProvider>);
+      root!.render(<QueryClientProvider client={queryClient!}><><ProjectTeamCombobox projectId={projectId} members={project().members} canEdit /><ConfirmModalHost /></></QueryClientProvider>);
       await Promise.resolve();
     });
     await flush();

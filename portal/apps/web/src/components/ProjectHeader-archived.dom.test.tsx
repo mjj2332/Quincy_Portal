@@ -19,8 +19,8 @@ vi.mock("../lib/stages", () => ({
   presentationStages: (stages: readonly unknown[]) => stages,
   useStages: () => ({ stages: [{ key: "awaiting_raw", label: "Awaiting RAW", displayOrder: 1, active: true }, { key: "raw_review", label: "RAW review", displayOrder: 2, active: true }], presentationStageKey: (key: string) => key }),
 }));
-const teamProps = vi.hoisted(() => ({ latest: null as { archived?: boolean } | null }));
-vi.mock("./ProjectTeamCombobox", () => ({ ProjectTeamCombobox: (props: { archived?: boolean }) => { teamProps.latest = props; return <div />; } }));
+const teamProps = vi.hoisted(() => ({ latest: null as { archived?: boolean; onArchivedRefusal?: () => void } | null }));
+vi.mock("./ProjectTeamCombobox", () => ({ ProjectTeamCombobox: (props: { archived?: boolean; onArchivedRefusal?: () => void }) => { teamProps.latest = props; return <div />; } }));
 type ControlProps = { onRequestStart?: () => void; onArchivedRefusal?: () => void };
 const controlProps = vi.hoisted(() => ({ latest: null as ControlProps | null }));
 vi.mock("./ProjectDeadlineControl", () => ({ ProjectDeadlineControl: (props: ControlProps) => { controlProps.latest = props; return <div data-testid="deadline-control"><button type="button" data-testid="in-popup">Inside the popup</button></div>; } }));
@@ -48,7 +48,15 @@ function header(p: ProjectDetail, extra: Partial<{ canEdit: boolean; canAdminBac
 function render(value: ReactNode) { act(() => { root.render(value); }); }
 const group = (name: string) => host.querySelector<HTMLElement>(`[role="group"][aria-label="${name}"]`);
 const link = (text: string) => [...host.querySelectorAll<HTMLAnchorElement>("a")].find((anchor) => anchor.textContent === text) ?? null;
-const copyLinkButton = () => [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => /copy link/i.test(button.textContent ?? ""))!;
+// #914: Copy link moved into ⋯ (D5), so the "another control" these cases move focus to is the ⋯ trigger itself.
+const otherControl = () => host.querySelector<HTMLButtonElement>('[data-testid="project-more-actions"]')!;
+/** #914 D5: "Edit project details" / "Restore or delete" live in ⋯; the items it offers. */
+async function moreItems() {
+  await act(async () => { otherControl().click(); await Promise.resolve(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+  const items = [...document.querySelectorAll<HTMLAnchorElement>('[role="menuitem"]')].map((item) => ({ text: item.textContent?.trim(), href: item.getAttribute("href") }));
+  await act(async () => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await new Promise((resolve) => setTimeout(resolve, 0)); });
+  return items;
+}
 async function openDeadline() { const trigger = host.querySelector<HTMLButtonElement>('[data-testid="project-deadline-trigger"]')!; await act(async () => { trigger.click(); await Promise.resolve(); await Promise.resolve(); }); }
 async function openDropbox() { const trigger = host.querySelector<HTMLButtonElement>('[data-testid="project-dropbox-trigger"]')!; await act(async () => { trigger.click(); await Promise.resolve(); await Promise.resolve(); }); return document.querySelector<HTMLElement>('[role="dialog"][aria-label="Dropbox"]')!; }
 
@@ -56,16 +64,15 @@ beforeEach(() => { host = document.createElement("div"); document.body.append(ho
 afterEach(() => { act(() => root.unmount()); document.body.replaceChildren(); });
 
 describe("an archived Project's header on load (#455)", () => {
-  it("offers 'Restore or delete' to an Admin with backend access, nothing to an Editor, and keeps 'Edit details' when live", () => {
+  it("offers 'Restore or delete' in ⋯ to an Admin with backend access, nothing to an Editor, and keeps 'Edit project details' when live", async () => {
     render(header(project({ archivedAt: Date.now() })));
-    expect(link("Restore or delete")?.getAttribute("href")).toBe("/projects/project-1/edit");
-    expect(link("Edit details")).toBeNull();
+    expect((await moreItems())[0]).toEqual({ text: "Restore or delete", href: "/projects/project-1/edit" });
     render(header(project({ archivedAt: Date.now() }), { canAdminBackend: false }));
-    expect(link("Restore or delete")).toBeNull();
-    expect(link("Edit details")).toBeNull();
+    expect((await moreItems()).map((item) => item.text)).toEqual(["Copy link"]);
     render(header(project()));
-    expect(link("Edit details")?.getAttribute("href")).toBe("/projects/project-1/edit");
-    expect(link("Restore or delete")).toBeNull();
+    expect((await moreItems())[0]).toEqual({ text: "Edit project details", href: "/projects/project-1/edit" });
+    // No inline link in the header itself any more.
+    expect(link("Edit details")).toBeNull();
   });
 
   it("shows the Deadline as a plain value: a <time>, no trigger, no countdown, no popover", () => {
@@ -76,7 +83,7 @@ describe("an archived Project's header on load (#455)", () => {
     expect(cell.getAttribute("tabindex")).toBe("-1");
     const time = cell.querySelector("time")!;
     expect(time.getAttribute("datetime")).toBe("2027-01-14T22:00:00.000Z");
-    expect(time.textContent).toBe("Fri 15 Jan · 09:00");
+    expect(time.textContent).toBe("Fri 15 Jan, 09:00");
     expect(host.querySelector('[role="status"]')).toBeNull();
   });
 
@@ -87,14 +94,14 @@ describe("an archived Project's header on load (#455)", () => {
     expect(cell.querySelector('[data-testid="automatic-deadline-mark"]')?.textContent).toBe("Automatic");
     // #509: provenance is not a status, so the archived cell holds no status pill.
     expect(cell.querySelector('[data-slot="status-pill"]')).toBeNull();
-    expect(cell.querySelector("time")!.textContent).toBe("Fri 15 Jan · 09:00");
+    expect(cell.querySelector("time")!.textContent).toBe("Fri 15 Jan, 09:00");
   });
 
   it("shows an unset Deadline as a dash with 'No deadline set' for screen readers", () => {
     render(header(project({ archivedAt: Date.now(), deadlineSchedule: unsetSchedule })));
     const cell = group("Deadline")!;
     expect(cell.querySelector("time")).toBeNull();
-    expect(cell.querySelector('[aria-hidden="true"]')?.textContent).toBe("—");
+    expect(cell.querySelector('span[aria-hidden="true"]')?.textContent).toBe("—");
     expect(cell.textContent).toContain("No deadline set");
   });
 
@@ -127,6 +134,20 @@ describe("an archived Project's header on load (#455)", () => {
   });
 });
 
+describe("a Team refusal latches the header read-only (#914, #455)", () => {
+  it("turns Stage, Deadline and Dropbox read-only at once, and leaves the Team to move its own focus", () => {
+    render(header(project()));
+    expect(group("Stage")).toBeNull();
+    act(() => otherControl().focus());
+    act(() => teamProps.latest!.onArchivedRefusal!());
+    expect(group("Stage")).not.toBeNull();
+    expect(group("Deadline")).not.toBeNull();
+    expect(group("Dropbox")).not.toBeNull();
+    expect(teamProps.latest?.archived).toBe(true);
+    expect(document.activeElement).toBe(otherControl());
+  });
+});
+
 describe("a Deadline refusal latches the header read-only (#455)", () => {
   it("moves focus to the Deadline group when it was inside the popup, shows a status notice (no alert), and makes the whole row read-only", async () => {
     render(header(project()));
@@ -143,28 +164,27 @@ describe("a Deadline refusal latches the header read-only (#455)", () => {
     expect(group("Stage")).not.toBeNull();
     expect(group("Dropbox")).not.toBeNull();
     expect(teamProps.latest?.archived).toBe(true);
-    expect(link("Restore or delete")).not.toBeNull();
-    expect(link("Edit details")).toBeNull();
+    expect((await moreItems())[0]?.text).toBe("Restore or delete");
   });
 
   it("leaves focus alone when it was on another control at request start", async () => {
     render(header(project()));
     await openDeadline();
-    act(() => copyLinkButton().focus());
+    act(() => otherControl().focus());
     act(() => controlProps.latest!.onRequestStart!());
     act(() => controlProps.latest!.onArchivedRefusal!());
-    expect(document.activeElement).toBe(copyLinkButton());
+    expect(document.activeElement).toBe(otherControl());
     expect(group("Deadline")).not.toBeNull();
   });
 
-  it("leaves focus the user moved to Copy link while the request was pending", async () => {
+  it("leaves focus the user moved to ⋯ while the request was pending", async () => {
     render(header(project()));
     await openDeadline();
     act(() => document.querySelector<HTMLButtonElement>('[data-testid="in-popup"]')!.focus());
     act(() => controlProps.latest!.onRequestStart!());
-    act(() => copyLinkButton().focus());
+    act(() => otherControl().focus());
     act(() => controlProps.latest!.onArchivedRefusal!());
-    expect(document.activeElement).toBe(copyLinkButton());
+    expect(document.activeElement).toBe(otherControl());
   });
 
   it("clears the latch when the Project is restored", async () => {
@@ -205,9 +225,9 @@ describe("a Dropbox sync refusal latches the header read-only (#455)", () => {
 
   it("leaves focus the user moved elsewhere", async () => {
     const { resolve } = await pressSync("archived");
-    act(() => copyLinkButton().focus());
+    act(() => otherControl().focus());
     await resolve();
-    expect(document.activeElement).toBe(copyLinkButton());
+    expect(document.activeElement).toBe(otherControl());
     expect(group("Dropbox")).not.toBeNull();
   });
 
@@ -224,7 +244,7 @@ describe("a Stage move refusal latches the header read-only (#455)", () => {
     let finish: (value: "archived") => void = () => undefined;
     const onStageMove = vi.fn(() => new Promise<"archived">((resolve) => { finish = resolve; }));
     render(header(project(), { onStageMove }));
-    const trigger = host.querySelector<HTMLButtonElement>('[aria-label="Move project Stage"][role="combobox"]')!;
+    const trigger = host.querySelector<HTMLButtonElement>('[role="combobox"][aria-label^="Stage: "]')!;
     act(() => trigger.focus());
     await act(async () => { trigger.click(); await Promise.resolve(); });
     const option = [...document.querySelectorAll<HTMLElement>('[role="listbox"] [role="option"]')].find((element) => element.textContent === "Awaiting RAW")!;

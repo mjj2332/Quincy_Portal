@@ -184,7 +184,7 @@ describe("ProjectHeaderDeadline", () => {
     expect(trigger.querySelector('[data-testid="automatic-deadline-mark"]')?.textContent).toBe("Automatic");
     // #509: provenance is not a status, so no status pill carries the word.
     expect([...trigger.querySelectorAll('[data-slot="status-pill"]')].some((pill) => pill.textContent === "Automatic")).toBe(false);
-    expect(trigger.getAttribute("aria-label")).toMatch(/^Deadline: Fri 15 Jan · 09:00, Automatic/);
+    expect(trigger.getAttribute("aria-label")).toMatch(/^Deadline: Due Fri 15 Jan, 09:00, Automatic/);
     await rerenderSchedule(scheduleAt("2027-01-14T22:00:00.000Z", { source: "manual" }));
     expect(trigger.textContent).not.toContain("Automatic");
     expect(trigger.querySelector('[data-testid="automatic-deadline-mark"]')).toBeNull();
@@ -222,20 +222,20 @@ describe("ProjectHeaderDeadline", () => {
     expect(apiPutMock).not.toHaveBeenCalled();
   });
 
-  // #213: prototype 2a prints the scheduled Deadline as "Thu 18 Sep · 17:00" — weekday, day,
+  // #213 / #914 D4: the chip prints the scheduled Deadline as "Due Thu 18 Sep, 17:00" — weekday, day,
   // three-letter month, no year, then the civil time. Built from `localCivil`, never from the
   // instant, so the viewer's own zone cannot shift the date. September is the trap: recent ICU
   // data abbreviates it "Sept" for en-AU, so the month must not come from Intl.
   it("prints a scheduled Deadline as weekday, day, three-letter month and civil time", async () => {
     const host = await mount(scheduleAt("2027-01-14T22:00:00.000Z"));
     const trigger = host.querySelector('[data-testid="project-deadline-trigger"]')!;
-    expect(trigger.textContent).toContain("Fri 15 Jan · 09:00");
+    expect(trigger.textContent).toContain("Due Fri 15 Jan, 09:00");
     expect(trigger.textContent).not.toContain("2027");
-    expect(trigger.getAttribute("aria-label")).toMatch(/^Deadline: Fri 15 Jan · 09:00/);
+    expect(trigger.getAttribute("aria-label")).toMatch(/^Deadline: Due Fri 15 Jan, 09:00/);
     await rerenderSchedule(scheduleAt("2026-09-17T07:00:00.000Z", {
       deadline: { localCivil: "2026-09-17T17:00", zone: "Australia/Sydney", utcOffsetMinutes: 600, fold: 0, instant: "2026-09-17T07:00:00.000Z" },
     }));
-    expect(trigger.textContent).toContain("Thu 17 Sep · 17:00");
+    expect(trigger.textContent).toContain("Thu 17 Sep, 17:00");
   });
 
   // Sol (#213 review): the twelve-entry month table and the weekday lookup are user-visible data;
@@ -275,30 +275,39 @@ describe("ProjectHeaderDeadline", () => {
     }
   });
 
-  it("shows a caution Due-in pill inside the 72-hour window", async () => {
+  it("shows a caution countdown Badge inside the 72-hour window (D1's '2d')", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2027-01-14T00:00:00.000Z"));
+    vi.setSystemTime(new Date("2027-01-12T22:00:00.000Z"));
     try {
-      const host = await mount(scheduleAt("2027-01-15T09:00:00.000Z"));
+      const host = await mount(scheduleAt("2027-01-14T22:00:00.000Z"));
       const trigger = host.querySelector('[data-testid="project-deadline-trigger"]')!;
-      expect(trigger.textContent).toContain("Due in");
+      const badge = trigger.querySelector<HTMLElement>('[data-testid="project-deadline-countdown"]')!;
+      expect(badge.textContent).toBe("2d");
+      expect(badge.dataset.tone).toBe("caution");
+      expect(badge.getAttribute("data-variant") ?? badge.className).toMatch(/warning/);
+      expect(trigger.textContent).toContain("Due Fri 15 Jan, 09:00");
       expect(trigger.getAttribute("aria-label")).toMatch(/, Due in \d+[dhm]$/);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("refreshes the Due-in pill after its 60-second interval ticks", async () => {
+  it("refreshes the countdown after its 60-second interval ticks: '30m' at 23:59 becomes 'Today' after Sydney midnight", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2027-01-15T00:00:00.000Z"));
+    vi.setSystemTime(new Date("2027-01-14T12:59:30.000Z")); // 23:59:30 Sydney (UTC+11)
     try {
-      const host = await mount(scheduleAt("2027-01-15T00:59:30.000Z"));
+      const host = await mount(scheduleAt("2027-01-14T13:30:00.000Z", {
+        deadline: { localCivil: "2027-01-15T00:30", zone: "Australia/Sydney", utcOffsetMinutes: 660, fold: 0, instant: "2027-01-14T13:30:00.000Z" },
+      }));
       const trigger = host.querySelector('[data-testid="project-deadline-trigger"]')!;
-      expect(trigger.textContent).toContain("Due in 59m");
+      const badge = () => trigger.querySelector('[data-testid="project-deadline-countdown"]')!;
+      expect(badge().textContent).toBe("30m");
+      expect(trigger.getAttribute("aria-label")).toMatch(/, Due in 30m$/);
 
       await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
 
-      expect(trigger.textContent).toContain("Due in 58m");
+      expect(badge().textContent).toBe("Today");
+      expect(trigger.getAttribute("aria-label")).toMatch(/, Due today$/);
     } finally {
       vi.useRealTimers();
     }
@@ -348,12 +357,39 @@ describe("ProjectHeaderDeadline", () => {
     expect(popupDraft(reopened).day).toBe("2027-03-03");
   });
 
-  it("shows no editor at all when canEdit is false", async () => {
-    const host = await mount(emptySchedule, false);
-    const dialog = await openTrigger(host);
-    expect(dialog.querySelector("input")).toBeNull();
-    expect(dialog.querySelectorAll("button")).toHaveLength(0);
-    expect(dialog.querySelector('[role="group"][aria-label="Time slots"]')).toBeNull();
+  // #914 D6: a read-only role gets a flat value — no trigger, no chevron, no popover, no countdown.
+  it("shows no editor at all when canEdit is false: a flat value with no trigger or chevron", async () => {
+    const host = await mount(scheduleAt("2027-01-14T22:00:00.000Z"), false);
+    expect(host.querySelector('[data-testid="project-deadline-trigger"]')).toBeNull();
+    const value = host.querySelector<HTMLElement>('[data-header-value="deadline"]')!;
+    expect(value.textContent).toContain("Fri 15 Jan, 09:00");
+    expect(value.querySelector('[data-testid="project-deadline-countdown"]')).toBeNull();
+    expect(value.querySelectorAll("svg")).toHaveLength(1); // the clock, no chevron
+    expect(value.getAttribute("role")).toBeNull();
+    expect(host.querySelector("button")).toBeNull();
+  });
+
+  it("D1/D4: reads 'Today' on the due day in Sydney and drops 'Due'; 'Overdue 3h' in the critical tone once past", async () => {
+    vi.useFakeTimers();
+    // 2027-01-15 08:00 Sydney (UTC+11); the deadline is 17:00 the same Sydney day.
+    vi.setSystemTime(new Date("2027-01-14T21:00:00.000Z"));
+    try {
+      const host = await mount(scheduleAt("2027-01-15T06:00:00.000Z", {
+        deadline: { localCivil: "2027-01-15T17:00", zone: "Australia/Sydney", utcOffsetMinutes: 660, fold: 0, instant: "2027-01-15T06:00:00.000Z" },
+      }));
+      const trigger = host.querySelector('[data-testid="project-deadline-trigger"]')!;
+      const badge = () => trigger.querySelector<HTMLElement>('[data-testid="project-deadline-countdown"]')!;
+      expect(badge().textContent).toBe("Today");
+      expect(badge().dataset.tone).toBe("caution");
+      expect(trigger.textContent).not.toContain("Due Fri");
+      expect(trigger.textContent).toContain("Fri 15 Jan, 17:00");
+      vi.setSystemTime(new Date("2027-01-15T08:59:00.000Z")); // the next tick lands at 20:00 Sydney, three hours past
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(badge().textContent).toBe("Overdue 3h");
+      expect(badge().dataset.tone).toBe("critical");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps a dirty draft through a rerender with a new schedule object of the same version", async () => {

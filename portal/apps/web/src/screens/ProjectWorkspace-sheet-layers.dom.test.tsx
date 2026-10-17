@@ -148,7 +148,7 @@ async function press(key: string, target: EventTarget = document.activeElement ?
 const LAYERS: { name: string; trigger: () => HTMLElement | null | undefined; open: (trigger: HTMLElement) => Promise<void>; isOpen: () => boolean; escapeTarget?: () => Element | null }[] = [
   {
     name: "the stage Select",
-    trigger: () => document.querySelector<HTMLElement>('[aria-label="Move project Stage"]'),
+    trigger: () => document.querySelector<HTMLElement>('[role="combobox"][aria-label^="Stage: "]'),
     open: async (trigger) => { trigger.focus(); await click(trigger); await flush(); },
     isOpen: () => document.querySelector('[data-testid="project-sheet-overlay-slot"] [data-open] [role="listbox"]') !== null,
   },

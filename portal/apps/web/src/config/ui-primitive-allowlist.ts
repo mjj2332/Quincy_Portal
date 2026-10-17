@@ -31,7 +31,7 @@ export const UI_PRIMITIVE_ALLOWLIST: Record<string, UiPrimitiveAllowance> = {
   "components/ProjectCollaborationPanel.tsx": { count: 5, ledger: "baseline (#262)" },
   "components/ProjectFields.tsx": { count: 2, ledger: "baseline (#262); #487 removed the team checklist checkboxes and Try again button" },
   "components/ProjectHeaderDropbox.tsx": { count: 1, ledger: "baseline (#262)" },
-  "components/ProjectTeamCombobox.tsx": { count: 2, ledger: "baseline (#262)" },
+  "components/ProjectTeamCombobox.tsx": { count: 1, ledger: "baseline (#262); #914 moved the mutation Retry onto quincy/Button" },
   "components/SubtaskChecklist.tsx": { count: 5, ledger: "baseline (#262); the schedule picker (6 raw controls) moved to quincy/SubtaskScheduleControl.tsx (#372)" },
   "components/UploadDropzone.tsx": { count: 2, ledger: "baseline (#262)" },
   "screens/Admin.tsx": { count: 2, ledger: "baseline (#262)" },

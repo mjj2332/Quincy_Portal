@@ -21,8 +21,8 @@ vi.mock("../lib/stages", () => ({
     return { stages: stages.map((stage) => stage.key === "edited_review" && roleState.inactive ? { ...stage, active: false } : stage), presentationStageKey: (key: string) => !admin && key === "editing_autohdr" ? "editing" : key };
   },
 }));
-const teamProps = vi.hoisted(() => ({ latest: null as { archived?: boolean } | null }));
-vi.mock("./ProjectTeamCombobox", () => ({ ProjectTeamCombobox: (props: { archived?: boolean }) => { teamProps.latest = props; return <div />; } }));
+const teamProps = vi.hoisted(() => ({ latest: null as { archived?: boolean; presentation?: string; canEdit?: boolean } | null }));
+vi.mock("./ProjectTeamCombobox", () => ({ ProjectTeamCombobox: (props: { archived?: boolean; presentation?: string; canEdit?: boolean }) => { teamProps.latest = props; return <div />; } }));
 vi.mock("./ProjectDeadlineControl", () => ({ ProjectDeadlineControl: () => <div /> }));
 
 function project(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
@@ -42,7 +42,8 @@ function render(value: ReactNode) {
 }
 
 function stageTrigger() {
-  return host.querySelector<HTMLButtonElement>('[aria-label="Move project Stage"][role="combobox"]');
+  // #914 D1: the Stage chip is named "Stage: <label>" (no field label beside it any more).
+  return host.querySelector<HTMLButtonElement>('[role="combobox"][aria-label^="Stage: "]');
 }
 
 async function openStage(trigger: HTMLButtonElement) {
@@ -343,27 +344,20 @@ describe("Project header Stage control", () => {
     expect(dialog.querySelector('[data-testid="raw-monitored"]')).not.toBeNull();
   });
 
-  it("row 1 renders suburb · postcode, Shoot date pending when unset, — for a missing agency/agent pair, and Edit details only when canEdit", () => {
+  // #914 D1: the title with the suburb and postcode beside it, then one meta line: the shoot date and the client.
+  it("D1: renders the street with suburb and postcode beside it, then 'Shoot date pending' or 'Shoot Tue 16 Sep', and the client only when known", () => {
     render(<ProjectHeader {...baseProps(project())} />);
-    expect(host.textContent).toContain("Suburbia · 2000");
-    expect(host.textContent).toContain("Shoot date pending");
-    expect(host.textContent).not.toContain("— · —");
-    expect(host.textContent).toContain("Client —");
-    act(() => { root.render(<ProjectHeader {...baseProps(project({ agencyName: "Ray White" }))} />); });
-    expect(host.textContent).toContain("Ray White · —");
+    expect(host.querySelector("h2#project-overview-property")!.textContent).toBe("12 Example St");
+    expect(host.querySelector('[data-testid="project-header-place"]')?.textContent).toBe("Suburbia 2000");
+    const meta = () => host.querySelector('[data-testid="project-header-meta"]')!.textContent;
+    expect(meta()).toBe("Shoot date pending");
+    act(() => { root.render(<ProjectHeader {...baseProps(project({ shootDate: "2025-09-16", agencyName: "Ray White", agentName: "Jo Agent" }))} />); });
+    expect(meta()).toBe("Shoot Tue 16 Sep·Ray White, Jo Agent");
+    act(() => { root.render(<ProjectHeader {...baseProps(project({ agentName: "Jo Agent" }))} />); });
+    expect(meta()).toBe("Shoot date pending·Jo Agent");
+    // The old row's inline actions moved into ⋯ (D5).
     expect(host.querySelector('a[href="/projects/project-1/edit"]')).toBeNull();
-    act(() => { root.render(<ProjectHeader {...baseProps(project())} canEdit />); });
-    const editLink = host.querySelector<HTMLAnchorElement>('a[href="/projects/project-1/edit"]');
-    expect(editLink).not.toBeNull();
-    expect(editLink!.textContent).toBe("Edit details");
-  });
-
-  it("renders the production notes paragraph only when it is non-empty", () => {
-    render(<ProjectHeader {...baseProps(project())} />);
-    expect(host.textContent).not.toContain("Handle with care");
-    expect(host.querySelector('[data-testid="project-header"] p')).toBeNull();
-    act(() => { root.render(<ProjectHeader {...baseProps(project({ productionNotes: "Handle with care" }))} />); });
-    expect(host.textContent).toContain("Handle with care");
+    expect(host.querySelector('[data-testid="copy-project-link"]')).toBeNull();
   });
 
   it("labels the tab strip Workspace and does not point tabs at a tabpanel that does not exist", () => {
@@ -435,24 +429,32 @@ describe("Project header Stage control", () => {
     expect(host.querySelector("h2#project-overview-property")!.textContent).toBe("12 Example St");
   });
 
-  // #213: row 2 is the prototype's flat control row — four labels, in order, each once. "Team"
-  // is the cell label (the combobox is mocked to an empty <div/> here), "Deadline" the cell
-  // label above the trigger (whose own text is "Set deadline", lower-case d), "Dropbox" the cell
-  // label (the trigger carries its name in aria-label, not text). The old rail's "Production"
-  // section heading is gone. Text-only assertions: Guard A forbids class selectors in DOM tests.
-  it("row 2 is one flat row of four labelled controls — Stage, Team, Deadline, Dropbox — with no section headings and no label repeated (#213)", () => {
-    render(<ProjectHeader {...baseProps(project({
-      monitoredRawFolder: { source: "editor_input", path: "/Editor/x", webUrl: null, extraPaths: [] },
-    }))} canUpload hasRawFolder canEdit />);
-    const text = host.textContent ?? "";
-    expect(text).not.toContain("Production");
-    const positions = ["Stage", "Team", "Deadline", "Dropbox"].map((label) => {
-      expect(text.split(label).length - 1, `${label} appears exactly once`).toBe(1);
-      return text.indexOf(label);
-    });
-    expect(positions).toEqual([...positions].sort((a, b) => a - b));
-    expect(text).toContain("Set deadline");
-    expect(host.querySelector('[data-testid="project-deadline-trigger"]')!.getAttribute("aria-label")).toBe("Deadline: Set deadline");
+  // #914 D1: the status cluster reads Stage, Deadline, Team, then a rule, the whiteboard and ⋯, with no field labels; the
+  // whiteboard sits outside the tablist. Text and attribute assertions only: Guard A forbids class selectors in DOM tests.
+  it("D1: the cluster is Stage, Deadline, Team, Whiteboard, ⋯ in DOM order, with no field labels and the whiteboard outside the tablist", () => {
+    render(<ProjectHeader {...baseProps(project())} canEdit onOpenWhiteboard={vi.fn()} />);
+    const cluster = host.querySelector<HTMLElement>('[data-testid="project-status-cluster"]')!;
+    const names = [...cluster.querySelectorAll<HTMLElement>("button")].map((el) => el.getAttribute("aria-label") ?? "");
+    expect(names).toEqual(["Stage: Editing", "Deadline: Set deadline", "Open whiteboard", "More actions"]);
+    expect(teamProps.latest).toMatchObject({ presentation: "popover", canEdit: true, archived: false });
+    expect(cluster.textContent).not.toMatch(/Stage|Team|Dropbox/);
+    const whiteboard = host.querySelector('[data-testid="project-whiteboard-open"]')!;
+    expect(whiteboard.closest('[role="tablist"]')).toBeNull();
+    expect(host.querySelectorAll('[data-testid="project-whiteboard-open"]')).toHaveLength(1);
+    // Row B (the tabs) is a sibling after the labelled Row A section, so it can stick across the whole work area.
+    const section = host.querySelector('[data-testid="project-header"]')!;
+    expect(section.querySelector('[role="tablist"]')).toBeNull();
+    expect(section.nextElementSibling?.querySelector('[role="tablist"]')).not.toBeNull();
+  });
+
+  it("D6: a read-only role gets the Stage as a flat value with no chevron and no combobox", () => {
+    act(() => { roleState.role = "photographer"; });
+    render(<ProjectHeader {...baseProps(project())} />);
+    expect(stageTrigger()).toBeNull();
+    const value = host.querySelector<HTMLElement>('[data-header-value="stage"]')!;
+    expect(value.textContent).toBe("Editing");
+    expect(value.querySelector("svg")).toBeNull();
+    expect(value.getAttribute("role")).toBeNull();
   });
 
   it("omits the Dropbox block when uploads are allowed but there is no folder, mapping, or backend admin", () => {
@@ -684,25 +686,52 @@ describe("Project header tab strip", () => {
   });
 });
 
-describe("ProjectHeader Copy link (#367)", () => {
+describe("ProjectHeader ⋯ menu (#914 D5)", () => {
   beforeEach(() => { host = document.createElement("div"); document.body.append(host); root = createRoot(host); roleState.role = "editor"; roleState.inactive = false; });
   afterEach(() => { act(() => root.unmount()); document.body.replaceChildren(); Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true }); });
 
-  const headerProps = (activeTab: WorkspaceTab) => ({
-    project: project(), activeTab, availableTabs: ["raw"] as CollectionKind[], canUpload: false, canAdminBackend: false,
-    canEdit: false, hasRawFolder: false, autohdrBlocked: false, isSyncing: false, onSyncDropbox: vi.fn(), onActiveTabChange: vi.fn(),
+  const headerProps = (activeTab: WorkspaceTab, overrides: Partial<{ canEdit: boolean; canAdminBackend: boolean; project: ProjectDetail }> = {}) => ({
+    project: overrides.project ?? project(), activeTab, availableTabs: ["raw"] as CollectionKind[], canUpload: false, canAdminBackend: overrides.canAdminBackend ?? false,
+    canEdit: overrides.canEdit ?? false, hasRawFolder: false, autohdrBlocked: false, isSyncing: false, onSyncDropbox: vi.fn(), onActiveTabChange: vi.fn(),
   });
+  function remount() {
+    act(() => root.unmount()); document.body.replaceChildren();
+    host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+  }
+  async function openMore() {
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="project-more-actions"]')!;
+    expect(trigger.getAttribute("aria-label")).toBe("More actions");
+    await act(async () => { trigger.click(); await Promise.resolve(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].map((item) => item.textContent?.trim());
+  }
 
   it.each([
     ["raw", "?tab=raw"],
     ["collaboration", "?collaboration=open"],
-  ] as const)("copies the link for the shown %s tab", async (tab, query) => {
+  ] as const)("Copy link copies the link for the shown %s tab", async (tab, query) => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     render(<ProjectHeader {...headerProps(tab)} />);
-    const copy = host.querySelector<HTMLButtonElement>('[data-testid="copy-project-link"]')!;
-    expect(copy).not.toBeNull();
-    await act(async () => { copy.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })); await Promise.resolve(); });
+    await openMore();
+    const copy = document.querySelector<HTMLElement>('[data-testid="project-more-copy-link"]')!;
+    await act(async () => { copy.click(); await Promise.resolve(); });
     expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/projects/project-1${query}`);
+  });
+
+  it("offers Edit project details only to an editor, as a link, and hides Show in for a role without the production calendar", async () => {
+    render(<ProjectHeader {...headerProps("raw")} />);
+    expect(await openMore()).toEqual(["Copy link"]);
+    remount();
+    render(<ProjectHeader {...headerProps("raw", { canEdit: true })} />);
+    expect(await openMore()).toEqual(["Edit project details", "Copy link"]);
+    expect(document.querySelector('[data-testid="project-more-details"]')?.getAttribute("href")).toBe("/projects/project-1/edit");
+  });
+
+  it("reads 'Restore or delete' for an archived Project's Admin with backend access, and offers nothing to an archived editor (#455)", async () => {
+    render(<ProjectHeader {...headerProps("raw", { canEdit: true, canAdminBackend: true, project: project({ archivedAt: Date.now() }) })} />);
+    expect(await openMore()).toEqual(["Restore or delete", "Copy link"]);
+    remount();
+    render(<ProjectHeader {...headerProps("raw", { canEdit: true, project: project({ archivedAt: Date.now() }) })} />);
+    expect(await openMore()).toEqual(["Copy link"]);
   });
 });

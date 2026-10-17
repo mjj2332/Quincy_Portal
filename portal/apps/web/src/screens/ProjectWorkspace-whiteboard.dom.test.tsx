@@ -163,19 +163,17 @@ const openButton = () => document.querySelector<HTMLButtonElement>('[data-testid
 const boardRoot = () => document.querySelector<HTMLElement>('[data-testid="project-whiteboard"]');
 
 describe("the whiteboard entry button (#498)", () => {
-  it("sits right after the Collaboration tab, outside the tablist, and opens the board through the shell", async () => {
+  // #914 D1: the entry moved out of the tab row into the status cluster, before ⋯ — one button, outside every tablist.
+  it("sits in the header's status cluster before ⋯, outside every tablist, and opens the board through the shell", async () => {
     await renderSheet();
     const button = openButton()!;
     expect(button).not.toBeNull();
+    expect(document.querySelectorAll('[data-testid="project-whiteboard-open"]')).toHaveLength(1);
     expect(button.getAttribute("aria-label")).toBe("Open whiteboard");
     expect(button.closest('[role="tablist"]')).toBeNull();
-    // Beside the horizontally scrolling tab strip, never inside it (it would scroll out of view at 390px):
-    // the strip is the tablist's ancestor that sits directly under the wrapper that also holds the button.
-    let strip: Element = tab("Collaboration")!.closest('[role="tablist"]')!;
-    while (strip.parentElement && !strip.parentElement.contains(button)) strip = strip.parentElement;
-    expect(strip.contains(button)).toBe(false);
-    expect(strip.nextElementSibling!.contains(button)).toBe(true);   // a sibling after the scroller
-    expect(button.parentElement!.previousElementSibling!.contains(tab("Collaboration")!)).toBe(true);
+    const cluster = document.querySelector('[data-testid="project-status-cluster"]')!;
+    expect(cluster.contains(button)).toBe(true);
+    expect(button.compareDocumentPosition(cluster.querySelector('[data-testid="project-more-actions"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await click(button);
     expect(onOpenWhiteboard).toHaveBeenCalledTimes(1);
   });

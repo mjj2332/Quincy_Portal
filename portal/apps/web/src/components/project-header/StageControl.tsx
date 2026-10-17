@@ -1,25 +1,16 @@
 import { StageDot } from "../atoms";
+import { cn } from "../../lib/utils";
+import { HEADER_CHIP } from "./header-styles";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/reui/select";
 import type { useStages } from "../../lib/stages";
 import type { ProjectDetail } from "../../lib/project-data";
 
-// Stage select styling — carried over from ProjectOverviewRail.tsx (#202), restyled from a
-// native <select> onto the ReUI select's SelectTrigger <button> (#203). `disabled:opacity-100`
-// keeps the rail's sunken disabled treatment instead of also fading it. #213 follow-up: `w-fit`,
-// not the rail's `w-full` — in the stacked and two-per-line layouts the other three triggers are
-// content-sized, and a lone full-width select read as a different kind of control.
-const STAGE_SELECT =
-  "w-fit max-w-full cursor-pointer text-left justify-between disabled:opacity-100 " +
-  "min-h-[44px] " /* WCAG 2.5.5 Enhanced target, not a spacing token */ +
-  "pl-[14px] pr-[14px] py-[9px] " +
-  "rounded-[var(--radius-sm)] border-solid border-[length:var(--border-width-hair)] " +
-  "bg-card border-border text-foreground " +
-  "[font:var(--weight-regular)_var(--text-sm)/1.2_var(--font-sans)] " +
-  "transition-[background-color,color,border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] " +
-  "hover:not-disabled:bg-secondary hover:not-disabled:border-border-hover " +
-  "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
-  "focus-visible:outline-ring focus-visible:outline-offset-2 " +
-  "disabled:text-foreground-secondary disabled:bg-surface-sunken disabled:border-border disabled:cursor-not-allowed";
+// #914 (prototype project-header-revamp D1/D6 `.qb`): the status cluster's Stage chip, a stage dot, the label and the select's own
+// chevron, with no field label (the dot and the accessible name "Stage: …" carry it). `disabled:opacity-100` keeps the sunken
+// disabled treatment instead of also fading it. No tooltip: Base UI's Select trigger would need a `render` composition to take one,
+// and the name already says what it is.
+const STAGE_SELECT = cn(HEADER_CHIP, "justify-between text-left",
+  "disabled:opacity-100 disabled:text-foreground-secondary disabled:bg-surface-sunken disabled:border-border disabled:cursor-not-allowed");
 
 export function StageOption({ stageKey, label }: { stageKey: ProjectDetail["stageKey"]; label: string }) {
   return <span className="inline-flex items-center gap-[var(--space-2)]">
@@ -60,7 +51,7 @@ export function StageControl({ project, currentStageKey, stages, contractEnabled
       <SelectTrigger
         id={`project-stage-${project.id}`}
         data-focus-key={`rail-stage:${project.id}`}
-        aria-label="Move project Stage"
+        aria-label={`Stage: ${labelFor(currentStageKey)}`}
         aria-busy={pending || undefined}
         aria-disabled={unavailable ? "true" : undefined}
         // #206: the reason must be described, not just visually adjacent — only wired when a
