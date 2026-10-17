@@ -348,8 +348,9 @@ export function useReviewPaneControls({ open, onOpenChange, paneId, noun, shortc
     if (open) return null;
     const count = noun === "notes" && shownCount != null && shownCount > 0 ? shownCount : null;
     // W2's strip (prototype 44px, the icon then the count): the whole column is the one reopen target, so it is a single ghost button filling the strip.
-    // Adaptation (prototype over ReUI rule 1): the button fills the column edge to edge, so its own radius and side padding give way; the gap and block padding are spacing tokens.
-    return <div data-testid="video-review-strip" className="flex w-11 flex-none flex-col border-l border-border bg-card max-[721px]:hidden">
+    // Adaptation (prototype over ReUI rule 1): the button fills the column inside a --space-1 gutter, which is exactly room for the app-wide focus outline (2px at a 2px offset):
+    // the row clips its overflow, so an edge-to-edge button would lose its ring on three sides. Its side padding gives way to the 36px column; the gap and block padding are spacing tokens.
+    return <div data-testid="video-review-strip" className="flex w-11 flex-none flex-col border-l border-border bg-card p-[var(--space-1)] max-[721px]:hidden">
       <IconTip label={showLabel} {...(shortcut ? { keys: shortcut } : {})}>
         <Button
           ref={showRef}
@@ -360,7 +361,7 @@ export function useReviewPaneControls({ open, onOpenChange, paneId, noun, shortc
           aria-expanded={false}
           aria-controls={paneId}
           {...(shortcut ? { "aria-keyshortcuts": shortcut } : {})}
-          className="w-full flex-1 flex-col justify-start gap-[var(--space-2)] rounded-none px-0 py-[var(--space-2)]"
+          className="w-full flex-1 flex-col justify-start gap-[var(--space-2)] px-0 py-[var(--space-2)]"
           onClick={() => { pendingFocus.current = "hide"; onOpenChange(true); }}
         >
           <PanelRightOpen aria-hidden="true" />
