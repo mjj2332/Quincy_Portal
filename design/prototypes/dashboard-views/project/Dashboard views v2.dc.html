@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="./support.js"></script>
+  </head>
+  <body>
+    <x-dc>
+      <helmet data-dc-atomics>
+        <meta name="design_doc_mode" content="canvas" />
+        <style>
+          @font-face{font-family:"Mazius Review";src:url("./fonts/MaziusReview-Regular.otf") format("opentype");font-weight:400;font-display:swap}
+          @font-face{font-family:"Apfel Grotezk";src:url("./fonts/ApfelGrotezk-Regular.otf") format("opentype");font-weight:400;font-display:swap}
+          @font-face{font-family:"Athelas";src:url("./fonts/Athelas-Regular.ttf") format("truetype");font-weight:400;font-display:swap}
+          :root{
+            --ink-900:#0a0a0a;--ink-700:#232323;--paper-000:#fff;--paper-050:#faf8f2;--paper-100:#f4f0e7;--paper-200:#ece6d8;
+            --greige-100:#e4ded0;--greige-200:#cfc7b6;--greige-300:#b3aa97;--greige-400:#8f8775;--greige-500:#6d6657;--greige-600:#4d473c;
+            --signal-positive:#3f5b3a;--signal-caution:#9a6a1f;--signal-caution-text:#7b5519;--signal-critical:#7a2420;--signal-info:#2f3b4d;
+            --text-secondary:var(--greige-600);--hair:var(--greige-200);--hair-soft:var(--greige-100);
+            --font-display:"Mazius Review","Times New Roman",serif;--font-sans:"Apfel Grotezk","Helvetica Neue",Arial,sans-serif;--font-serif:"Athelas",Georgia,serif;--font-mono:ui-monospace,Menlo,monospace;
+          }
+          body{margin:0;background:#e9e6df;font-family:var(--font-sans);color:var(--ink-900)}
+          a{color:var(--signal-info)}a:hover{color:var(--ink-900)}
+          .dv-turn{padding:40px 44px 32px;border-bottom:1px solid rgba(0,0,0,.08)}
+          .dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 6px}
+          .dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#1a1a1a;color:#fff;border-radius:4px;text-decoration:none}
+          .dv-tname{font:600 13px/1.2 system-ui,sans-serif;color:#1a1a1a}
+          .dv-intro{max-width:1040px;margin:0 0 26px;font:13px/1.55 system-ui,sans-serif;color:rgba(0,0,0,.62)}
+          .dv-opts{display:flex;flex-direction:column;gap:40px;align-items:flex-start}
+          .dv-opt{display:flex;flex-direction:column;gap:9px}
+          .dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#1a1a1a;border-radius:5px;text-decoration:none}
+          .dv-olabel{display:flex;align-items:baseline;gap:8px;max-width:1240px;font:400 12px/1.45 system-ui,sans-serif;color:rgba(0,0,0,.62)}
+          .dv-card{background:#fff;border:1px solid rgba(0,0,0,.1);box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden}
+          .dv-next{margin:22px 0 0;font:12px/1.5 system-ui,sans-serif;color:rgba(0,0,0,.5)}
+          .dv-row{display:flex;gap:24px;align-items:flex-start}
+
+          .app{display:flex;width:1280px;background:var(--paper-050)}
+          .rail{width:232px;flex:none;border-right:1px solid var(--hair);background:var(--paper-000);display:flex;flex-direction:column;padding:14px 12px;gap:4px;box-sizing:border-box}
+          .rail.mini{width:56px;padding:14px 8px;align-items:center}
+          .railhd{display:flex;align-items:center;justify-content:space-between;height:32px;padding:0 6px 0 8px;margin-bottom:10px}
+          .logotype{font:400 21px var(--font-display);letter-spacing:-.01em}
+          .railtools{display:flex;align-items:center;gap:6px}
+          .bell{width:22px;height:22px;border:1px solid var(--hair);border-radius:50%;font:400 10px var(--font-mono);display:flex;align-items:center;justify-content:center;color:var(--text-secondary)}
+          .collapse{width:22px;height:22px;border:1px solid var(--hair);border-radius:4px;box-sizing:border-box;position:relative}
+          .collapse::after{content:"";position:absolute;left:6px;top:3px;bottom:3px;width:1px;background:var(--greige-300)}
+          .rsearch{display:flex;align-items:center;gap:8px;height:34px;padding:0 8px 0 10px;border:1px solid var(--hair);border-radius:4px;background:var(--paper-050);font-size:13px;color:var(--greige-400);margin-bottom:10px;box-sizing:border-box}
+          .mag{width:9px;height:9px;border:1.5px solid currentColor;border-radius:50%;position:relative;flex:none;margin-right:3px}
+          .mag::after{content:"";position:absolute;right:-5px;bottom:-3px;width:5px;height:1.5px;background:currentColor;transform:rotate(45deg)}
+          .kbd{margin-left:auto;font:400 10px var(--font-mono);color:var(--greige-500);border:1px solid var(--hair);border-radius:3px;padding:1px 5px;background:var(--paper-000)}
+          .navitem{display:flex;align-items:center;height:34px;padding:0 10px;font-size:13.5px;border-radius:4px}
+          .navsub{display:flex;align-items:center;gap:8px;height:30px;margin-left:16px;padding:0 10px;font-size:13px;color:var(--text-secondary);border-left:1px solid var(--hair)}
+          .navsub.on{color:var(--ink-900);border-left:1.5px solid var(--ink-900);background:var(--paper-100)}
+          .railft{margin-top:auto;display:flex;align-items:center;gap:8px;padding:10px 8px 0;border-top:1px solid var(--hair-soft);font-size:12.5px}
+          .ico{width:36px;height:36px;border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--greige-600)}
+          .ico.on{background:var(--paper-100);color:var(--ink-900)}
+          .g4{width:14px;height:14px;display:grid;grid-template-columns:1fr 1fr;gap:2px}
+          .g4 i{border:1.5px solid currentColor}
+          .ring{width:13px;height:13px;border:1.5px solid currentColor;border-radius:50%}
+          .qmark{font:400 24px var(--font-display);height:32px;margin-bottom:10px}
+          .main{flex:1;min-width:0;display:flex;flex-direction:column}
+          .shellhead{height:50px;flex:none;display:flex;align-items:center;gap:8px;padding:0 24px;border-bottom:1px solid var(--hair);background:var(--paper-000);font-size:12px;color:var(--text-secondary)}
+          .shellhead b{font-weight:400;color:var(--ink-900)}
+          .sepd{color:var(--greige-300)}
+          .tbar{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:1px solid var(--hair);background:var(--paper-050)}
+          .h1{font:400 26px/1.1 var(--font-display);letter-spacing:-.01em;margin:0 14px 0 0}
+          .seg{display:inline-flex;border:1px solid var(--hair);border-radius:4px;background:var(--paper-100);padding:2px}
+          .s{display:inline-flex;align-items:center;height:28px;padding:0 12px;border-radius:3px;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-secondary)}
+          .s.on{background:var(--paper-000);color:var(--ink-900);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+          .grow{flex:1}
+          .sel{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 10px;border:1px solid var(--hair);border-radius:4px;background:var(--paper-000);font-size:12.5px;white-space:nowrap}
+          .chev{width:6px;height:6px;flex:none;border-right:1.5px solid var(--ink-900);border-bottom:1.5px solid var(--ink-900);transform:translateY(-2px) rotate(45deg)}
+          .nv{width:32px;height:32px;border:1px solid var(--hair);border-radius:4px;background:var(--paper-000);display:inline-flex;align-items:center;justify-content:center;font-size:13px;box-sizing:border-box}
+          .range{font:400 18px var(--font-display);margin-left:6px;white-space:nowrap}
+          .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;height:32px;padding:0 12px;border:1px solid var(--ink-900);border-radius:4px;background:var(--paper-000);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}
+          .prim{background:var(--ink-900);color:var(--paper-050)}
+          .quiet{border-color:var(--hair)}
+          .av{width:22px;height:22px;border-radius:50%;background:var(--greige-100);font-size:9px;display:inline-flex;align-items:center;justify-content:center;flex:none;border:1.5px solid var(--paper-000);letter-spacing:.02em;box-sizing:border-box}
+          .av.none{background:transparent;border:1px dashed var(--greige-300)}
+          .av.sm{width:18px;height:18px;font-size:8px}
+
+          .gantt{display:flex;background:var(--paper-000);border-bottom:1px solid var(--hair)}
+          .gtree{flex:none;border-right:1px solid var(--greige-300);position:relative}
+          .gtree::after{content:"";position:absolute;right:-4px;top:50%;width:7px;height:28px;margin-top:-14px;border-left:1px solid var(--greige-300);border-right:1px solid var(--greige-300);background:var(--paper-000);z-index:5}
+          .ghd{height:56px;display:grid;align-items:end;padding:0 12px 8px 14px;border-bottom:1px solid var(--hair);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--greige-500);box-sizing:border-box;background:var(--paper-050)}
+          .c2{grid-template-columns:minmax(0,1fr) 44px;column-gap:10px}
+          .gr{height:36px;display:grid;align-items:center;padding:0 12px 0 14px;border-bottom:1px solid var(--hair-soft);font-size:13px;box-sizing:border-box}
+          .gp{background:var(--paper-050)}
+          .gname{display:flex;align-items:center;gap:8px;min-width:0;white-space:nowrap;overflow:hidden}
+          .gname small{color:var(--text-secondary);font-size:11.5px}
+          .ind{padding-left:22px;color:var(--ink-700)}
+          .done{color:var(--greige-400);text-decoration:line-through}
+          .tw{width:8px;height:8px;flex:none;border-right:1.5px solid var(--ink-900);border-bottom:1.5px solid var(--ink-900);transform:rotate(45deg) translate(-2px,-2px)}
+          .tw.shut{transform:rotate(-45deg)}
+          .cb{width:12px;height:12px;border:1px solid var(--greige-400);border-radius:2px;flex:none;box-sizing:border-box}
+          .cb.x{background:var(--ink-900);border-color:var(--ink-900)}
+          .gtl{flex:1;min-width:0;overflow:hidden}
+          .gweeks{display:flex;height:28px;border-bottom:1px solid var(--hair-soft);background:var(--paper-050)}
+          .gwk{flex:none;box-sizing:border-box;padding:8px 0 0 8px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--greige-500);border-right:1px solid var(--hair);white-space:nowrap;overflow:hidden}
+          .gdays{display:flex;height:28px;border-bottom:1px solid var(--hair);box-sizing:border-box;background:var(--paper-050)}
+          .gd{flex:none;box-sizing:border-box;display:flex;align-items:center;justify-content:center;font:400 10.5px var(--font-mono);color:var(--greige-600);border-right:1px solid var(--hair-soft)}
+          .gd.we{color:var(--greige-400)}
+          .gd.td{background:var(--ink-900);color:var(--paper-050)}
+          .gbody{position:relative}
+          .shade{position:absolute;top:0;bottom:0;background:var(--paper-100)}
+          .vline{position:absolute;top:0;bottom:0;width:1px;background:var(--hair-soft)}
+          .today{position:absolute;top:0;bottom:0;width:1.5px;background:var(--ink-900);z-index:3}
+          .trow{height:36px;position:relative;border-bottom:1px solid var(--hair-soft);box-sizing:border-box}
+          .trow.gp{background:rgba(250,248,242,.7)}
+          .bar{position:absolute;top:9px;height:18px;box-sizing:border-box;z-index:2;border:1px solid;border-radius:2px}
+          .pbar{top:12px;height:12px;border-width:1.5px;border-radius:0}
+          .fill{position:absolute;left:0;top:0;bottom:0}
+          .lbl{position:absolute;left:100%;top:50%;transform:translateY(-50%);margin-left:10px;font-size:11.5px;white-space:nowrap;color:var(--ink-700)}
+          .lock{position:absolute;left:-6px;top:50%;width:9px;height:9px;margin-top:-5px;background:var(--ink-900);transform:rotate(45deg)}
+          .grip{position:absolute;right:-5px;top:-5px;bottom:-5px;width:8px;background:var(--ink-900);border-radius:2px}
+          .grip::after{content:"";position:absolute;left:3px;top:5px;bottom:5px;width:2px;border-left:1px solid var(--paper-050);border-right:1px solid var(--paper-050);box-sizing:border-box}
+          .tbr .lock,.tbr .grip{display:none}
+          .pbar .fill{display:none}
+          .dn{opacity:.55}
+          .dia{position:absolute;top:12px;width:11px;height:11px;border:1.5px solid var(--ink-900);background:var(--paper-000);transform:rotate(45deg);box-sizing:border-box;z-index:2}
+          .ghost{position:absolute;height:18px;border:1px dashed var(--greige-400);border-radius:2px;box-sizing:border-box;z-index:1}
+          .lift{position:absolute;height:18px;border:1.5px solid var(--ink-900);background:rgba(154,106,31,.18);border-radius:2px;box-sizing:border-box;z-index:4;box-shadow:0 6px 16px rgba(10,10,10,.16)}
+          .lift.bad{border-color:var(--signal-critical);background:rgba(122,36,32,.1)}
+          .tip{position:absolute;z-index:6;background:var(--ink-900);color:var(--paper-050);font-size:11.5px;padding:6px 9px;border-radius:3px;white-space:nowrap}
+          .tip small{display:block;font:400 10px var(--font-mono);color:var(--greige-200);margin-top:2px}
+          .tip.bad{background:var(--signal-critical)}
+          .sched{position:absolute;left:12px;top:8px;height:20px;padding:0 8px;border:1px dashed var(--greige-300);border-radius:2px;font-size:10.5px;color:var(--greige-500);display:flex;align-items:center}
+          .st-cau{border-color:var(--signal-caution);background:rgba(154,106,31,.12)}
+          .st-inf{border-color:var(--signal-info);background:rgba(47,59,77,.1)}
+          .st-pos{border-color:var(--signal-positive);background:rgba(63,91,58,.12)}
+          .st-neu{border-color:var(--greige-400);background:var(--paper-100)}
+          .st-cau .fill{background:rgba(154,106,31,.4)}.st-inf .fill{background:rgba(47,59,77,.35)}.st-pos .fill{background:rgba(63,91,58,.4)}
+          .legend{display:flex;align-items:center;gap:22px;padding:10px 24px;font-size:11.5px;color:var(--text-secondary);background:var(--paper-050);flex-wrap:wrap}
+          .lg{display:inline-flex;align-items:center;gap:8px}
+          .lgd{width:9px;height:9px;background:var(--ink-900);transform:rotate(45deg)}
+          .lgo{width:9px;height:9px;border:1.5px solid var(--ink-900);transform:rotate(45deg);box-sizing:border-box}
+          .lgg{width:6px;height:16px;background:var(--ink-900);border-radius:2px}
+          .sw{width:22px;height:11px;border:1px solid;box-sizing:border-box}
+
+          .cal{display:flex;flex:1;min-height:0;background:var(--paper-000)}
+          .cside{width:264px;flex:none;border-right:1px solid var(--hair);padding:16px 16px 18px;display:flex;flex-direction:column;gap:18px;box-sizing:border-box;background:var(--paper-050);position:relative}
+          .mhd{display:flex;align-items:center;justify-content:space-between;font:400 16px var(--font-display);margin-bottom:8px}
+          .mhd span{font:400 12px var(--font-sans);color:var(--text-secondary);display:flex;gap:12px}
+          .mgrid{display:grid;grid-template-columns:repeat(7,1fr);row-gap:2px;font:400 11px var(--font-mono);text-align:center}
+          .mdow{color:var(--greige-400);font-size:9.5px;letter-spacing:.08em;padding-bottom:4px;text-transform:uppercase}
+          .mc{height:26px;display:flex;align-items:center;justify-content:center;position:relative;color:var(--ink-700)}
+          .mc.out{color:var(--greige-300)}
+          .mc.wk{background:var(--paper-200)}
+          .mc.now{background:var(--ink-900);color:var(--paper-050)}
+          .mc.hd::after{content:"";position:absolute;bottom:3px;left:50%;width:3px;height:3px;margin-left:-1.5px;border-radius:50%;background:currentColor;opacity:.7}
+          .sh{display:flex;align-items:center;justify-content:space-between;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--greige-500);padding-bottom:7px;border-bottom:1px solid var(--hair);margin-bottom:8px}
+          .sh b{font:400 10px var(--font-mono);letter-spacing:0;color:var(--ink-900)}
+          .un{display:flex;flex-direction:column;gap:1px;padding:5px 0}
+          .un span{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+          .un small{font:400 10.5px var(--font-mono);color:var(--text-secondary)}
+          .flab{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--greige-500);margin:0 0 6px}
+          .combo{display:flex;flex-wrap:wrap;align-items:center;gap:5px;min-height:36px;padding:5px 28px 5px 6px;border:1px solid var(--hair);border-radius:4px;background:var(--paper-000);box-sizing:border-box;position:relative}
+          .combo.open{border-color:var(--ink-900);outline:2px solid var(--ink-900);outline-offset:2px}
+          .combo .chev{position:absolute;right:11px;top:13px}
+          .chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 5px 0 3px;border:1px solid var(--hair);border-radius:12px;background:var(--paper-050);font-size:12px;white-space:nowrap}
+          .chip.txt{padding-left:9px}
+          .x{font-size:12px;color:var(--greige-400);line-height:1}
+          .swd{width:14px;height:9px;background:var(--ink-900);flex:none}
+          .swc{width:14px;height:9px;background:var(--paper-200);border:1px solid var(--greige-300);box-sizing:border-box;flex:none}
+          .dd{position:absolute;left:16px;right:16px;z-index:7;background:var(--paper-000);border:1px solid var(--hair);border-radius:4px;box-shadow:0 10px 30px rgba(10,10,10,.14);padding:4px}
+          .srch{height:32px;margin:0 2px 4px;border-bottom:1px solid var(--hair);display:flex;align-items:center;gap:8px;padding:0 8px;font-size:12.5px;color:var(--greige-400)}
+          .it{display:flex;align-items:center;gap:9px;height:34px;padding:0 9px;border-radius:3px;font-size:13px}
+          .it.hl{background:var(--paper-100)}
+          .it small{margin-left:auto;font:400 10.5px var(--font-mono);color:var(--text-secondary)}
+          .tick{width:9px;height:5px;border-left:1.5px solid var(--ink-900);border-bottom:1.5px solid var(--ink-900);transform:rotate(-45deg) translateY(-2px);margin-left:8px;flex:none}
+          .tick.off{visibility:hidden}
+          .uns{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border:1px dashed var(--greige-300);border-radius:2px;font-size:12px;background:var(--paper-000);margin-bottom:5px;white-space:nowrap;overflow:hidden}
+          .dots{width:6px;height:10px;flex:none;border-left:2px dotted var(--greige-400);border-right:2px dotted var(--greige-400)}
+          .cmain{flex:1;min-width:0;display:flex;flex-direction:column}
+          .wkhd{display:grid;grid-template-columns:56px repeat(7,minmax(0,1fr));border-bottom:1px solid var(--hair);background:var(--paper-050)}
+          .wd{height:34px;display:flex;align-items:center;gap:6px;padding:0 10px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--greige-600);border-left:1px solid var(--hair-soft)}
+          .wd b{font:400 12px var(--font-mono);letter-spacing:0;color:var(--ink-900);padding:1px 5px}
+          .wd.now b{background:var(--ink-900);color:var(--paper-050)}
+          .allday{display:grid;grid-template-columns:56px repeat(7,minmax(0,1fr));grid-auto-rows:24px;row-gap:3px;padding:5px 0;border-bottom:1px solid var(--hair);background:var(--paper-000)}
+          .gut{font:400 9.5px var(--font-mono);color:var(--greige-400);text-align:right;padding-right:8px}
+          .ad{margin:0 3px;display:flex;align-items:center;gap:6px;padding:0 7px;font-size:11.5px;background:var(--paper-200);border:1px solid var(--greige-300);border-radius:2px;white-space:nowrap;overflow:hidden;box-sizing:border-box}
+          .ad.dn{background:var(--paper-100);border-color:var(--hair);color:var(--greige-400);text-decoration:line-through;opacity:1}
+          .ad.more{border-right:0;border-top-right-radius:0;border-bottom-right-radius:0;margin-right:0}
+          .ad small{color:var(--text-secondary);font-size:10.5px}
+          .avx{width:16px;height:16px;border-radius:50%;background:var(--paper-000);border:1px solid var(--greige-300);font-size:7.5px;display:inline-flex;align-items:center;justify-content:center;flex:none;box-sizing:border-box}
+          .wkgrid{display:grid;grid-template-columns:56px repeat(7,minmax(0,1fr));position:relative}
+          .hr{height:44px;box-sizing:border-box;font:400 9.5px var(--font-mono);color:var(--greige-400);text-align:right;padding:2px 8px 0 0}
+          .dcol{position:relative;border-left:1px solid var(--hair-soft);background-image:linear-gradient(var(--hair-soft) 1px,transparent 1px);background-size:100% 44px}
+          .dcol.we{background-color:var(--paper-050)}
+          .ev{position:absolute;left:3px;right:6px;box-sizing:border-box;padding:4px 7px;font-size:11.5px;line-height:1.3;border-radius:2px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;background:var(--paper-200);border:1px solid var(--greige-300)}
+          .ev small{display:block;font:400 10px var(--font-mono);color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis}
+          .ev.dl{background:var(--ink-900);border-color:var(--ink-900);color:var(--paper-050)}
+          .ev.dl small{color:var(--greige-200)}
+          .nowline{position:absolute;left:56px;right:0;height:1.5px;background:var(--ink-900);z-index:3}
+          .nowline::before{content:"";position:absolute;left:-4px;top:-3px;width:8px;height:8px;border-radius:50%;background:var(--ink-900)}
+
+          .scrim{width:560px;padding:48px 0;background:rgba(10,10,10,.42);display:flex;justify-content:center}
+          .dlg{width:440px;background:var(--paper-000);border:1px solid var(--hair);box-shadow:0 24px 60px rgba(10,10,10,.28);padding:24px;display:flex;flex-direction:column;gap:14px;box-sizing:border-box}
+          .dlg h2{font:400 22px/1.15 var(--font-display);margin:0}
+          .dlg p{font:400 14px/1.5 var(--font-serif);color:var(--text-secondary);margin:0}
+          .chg{display:grid;grid-template-columns:70px 1fr;row-gap:6px;padding:12px 0;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);font-size:13px}
+          .chg span{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--greige-500);padding-top:2px}
+          .chg s{color:var(--greige-400)}
+          .warn{display:flex;gap:9px;font-size:12.5px;line-height:1.45;color:var(--signal-caution-text);background:rgba(154,106,31,.08);border:1px solid rgba(154,106,31,.35);padding:9px 11px}
+          .acts{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+          .strip{width:560px;background:var(--paper-000);position:relative;height:150px;overflow:hidden}
+          .toast{position:absolute;right:16px;bottom:14px;background:var(--ink-900);color:var(--paper-050);font-size:12.5px;padding:10px 12px;display:flex;gap:14px;align-items:center}
+          .toast u{text-underline-offset:3px}
+          .cap{font:400 11px/1.4 var(--font-mono);color:rgba(0,0,0,.55);margin:6px 0 0;max-width:560px}
+          .colstack{display:flex;flex-direction:column;gap:6px}
+        </style>
+      </helmet>
+
+      <section class="dv-turn" id="t2">
+        <div class="dv-thd"><a class="dv-tid" href="#t2">2</a><span class="dv-tname">Round 2 — stage-tinted Gantt taken forward, combobox calendar filters, write confirmations</span></div>
+        <p class="dv-intro">
+          Round 1 lives in <b>Dashboard views.dc.html</b> (options 1a–1e). Taken forward: the stage-tinted compact Gantt (was 1b), now with all projects and the drag states; the calendar sidebar’s Layers and People become <b>comboboxes</b> in the same chip-and-avatar form as the project page’s team field;
+          Gantt writes get a ReUI <code>alert-dialog</code> for deadline changes and live validation for subtasks. Month view (1d) and the single search (1e) are unchanged. Confirmed: Enter in the rail search from any screen lands on the Dashboard with the query applied; search is one shared state.
+        </p>
+
+        <div class="dv-opts">
+
+          <div class="dv-opt" id="2a">
+            <div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>Gantt — stage-tinted, compact tree, all projects. Shown mid-drag on “Twilight sky replacement” (dashed ghost = where it was, lifted bar = where it will land, tooltip = new dates). Subtask moves commit on drop with an Undo toast; a project’s deadline grip opens the confirmation in <a class="dv-oid" href="#2c">2c</a>.</div>
+            <div class="dv-card" data-screen-label="2a Gantt">
+              <div class="app">
+                <nav class="rail">
+                  <div class="railhd"><span class="logotype">Quincy</span><span class="railtools"><span class="bell">2</span><span class="collapse"></span></span></div>
+                  <div class="rsearch"><span class="mag"></span>Search projects…<span class="kbd">⌘K</span></div>
+                  <div class="navitem">Dashboard</div>
+                  <div class="navsub">List</div>
+                  <div class="navsub">Kanban</div>
+                  <div class="navsub on">Gantt</div>
+                  <div class="navsub">Calendar</div>
+                  <div class="navitem" style="margin-top:6px">Admin</div>
+                  <div class="railft"><span class="av">TL</span>Ting Rui Lee</div>
+                </nav>
+                <div class="main">
+                  <div class="shellhead">Home <span class="sepd">•</span> Dashboard <span class="sepd">•</span> <b>Gantt</b></div>
+                  <div class="tbar">
+                    <h1 class="h1">Dashboard</h1>
+                    <span class="seg"><span class="s">List</span><span class="s">Kanban</span><span class="s on">Gantt</span><span class="s">Calendar</span></span>
+                    <span class="grow"></span>
+                    <span class="btn">Today</span>
+                    <span class="sel">Week<span class="chev"></span></span>
+                    <span class="nv">‹</span><span class="nv">›</span>
+                    <span class="range">September 2026</span>
+                  </div>
+                  <div class="gantt">
+                    <div class="gtree" style="width:292px">
+                      <div class="ghd c2"><span>Project / subtask</span><span>Editor</span></div>
+                      <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="12">
+                        <div class="{{ r.treeCls }}">
+                          <span class="{{ r.nameCls }}"><span class="{{ r.markCls }}"></span>{{ r.name }} <small>{{ r.sub }}</small></span>
+                          <span class="{{ r.avCls }}">{{ r.who }}</span>
+                        </div>
+                      </sc-for>
+                    </div>
+                    <div class="gtl">
+                      <div class="gweeks"><sc-for list="{{ g.weeks }}" as="w" hint-placeholder-count="3"><div class="gwk" style="{{ w.style }}">{{ w.label }}</div></sc-for></div>
+                      <div class="gdays"><sc-for list="{{ g.days }}" as="d" hint-placeholder-count="18"><div class="{{ d.cls }}" style="{{ d.style }}">{{ d.label }}</div></sc-for></div>
+                      <div class="gbody">
+                        <sc-for list="{{ g.shades }}" as="sh" hint-placeholder-count="4"><div class="shade" style="{{ sh }}"></div></sc-for>
+                        <sc-for list="{{ g.lines }}" as="ln" hint-placeholder-count="18"><div class="vline" style="{{ ln }}"></div></sc-for>
+                        <div class="today" style="{{ g.todayStyle }}"></div>
+                        <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="12">
+                          <div class="{{ r.rowCls }}">
+                            <div class="{{ r.barCls }}" style="{{ r.barStyle }}"><div class="fill" style="{{ r.fillStyle }}"></div><span class="lock"></span><span class="grip"></span><span class="lbl">{{ r.label }}</span></div>
+                            <div class="dia" style="{{ r.diaStyle }}"></div>
+                            <div class="sched" style="{{ r.schedStyle }}">Unscheduled — drag here to place</div>
+                          </div>
+                        </sc-for>
+                        <div class="ghost" style="left:296px;top:117px;width:122px"></div>
+                        <div class="lift" style="left:338px;top:115px;width:122px"></div>
+                        <div class="tip" style="left:474px;top:105px">Tue 22 – Thu 24 Sep<small>+1 day · within deadline</small></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="legend">
+                    <span class="lg"><span class="lgd"></span>Shoot — fixed</span>
+                    <span class="lg"><span class="lgg"></span>Deadline — drag, then confirm</span>
+                    <span class="lg"><span class="lgo"></span>Due date only</span>
+                    <span class="grow"></span>
+                    <span class="lg"><span class="sw st-neu"></span>Scheduled</span>
+                    <span class="lg"><span class="sw st-inf"></span>RAW received</span>
+                    <span class="lg"><span class="sw st-cau"></span>Editing</span>
+                    <span class="lg"><span class="sw st-pos"></span>Review</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dv-opt" id="2b">
+            <div class="dv-olabel"><a class="dv-oid" href="#2b">2b</a>Calendar — week, with Layers and People as comboboxes (same chip + avatar field as the project page team combobox). People is drawn open: search row, avatar options, ticks, counts. Removing every chip means “all”. Unscheduled stays below as drag sources.</div>
+            <div class="dv-card" data-screen-label="2b Calendar week">
+              <div class="app">
+                <nav class="rail mini">
+                  <div class="qmark">Q</div>
+                  <div class="ico"><span class="mag"></span></div>
+                  <div class="ico on"><span class="g4"><i></i><i></i><i></i><i></i></span></div>
+                  <div class="ico"><span class="ring"></span></div>
+                  <div style="margin-top:auto"><span class="av">TL</span></div>
+                </nav>
+                <div class="main">
+                  <div class="shellhead">Home <span class="sepd">•</span> Dashboard <span class="sepd">•</span> <b>Calendar</b></div>
+                  <div class="tbar">
+                    <h1 class="h1">Dashboard</h1>
+                    <span class="seg"><span class="s">List</span><span class="s">Kanban</span><span class="s">Gantt</span><span class="s on">Calendar</span></span>
+                    <span class="grow"></span>
+                    <span class="btn">Today</span>
+                    <span class="sel">Week<span class="chev"></span></span>
+                    <span class="nv">‹</span><span class="nv">›</span>
+                    <span class="range">14 – 20 September 2026</span>
+                  </div>
+                  <div class="cal">
+                    <aside class="cside">
+                      <div>
+                        <div class="mhd">September 2026<span><i style="font-style:normal">‹</i><i style="font-style:normal">›</i></span></div>
+                        <div class="mgrid">
+                          <sc-for list="{{ dows }}" as="dw" hint-placeholder-count="7"><span class="mdow">{{ dw }}</span></sc-for>
+                          <sc-for list="{{ mini }}" as="m" hint-placeholder-count="35"><span class="{{ m.cls }}">{{ m.n }}</span></sc-for>
+                        </div>
+                      </div>
+                      <div>
+                        <div class="sh">Up next</div>
+                        <sc-for list="{{ upnext }}" as="u" hint-placeholder-count="3"><div class="un"><span>{{ u.t }}</span><small>{{ u.when }}</small></div></sc-for>
+                      </div>
+                      <div>
+                        <div class="flab">Layers</div>
+                        <div class="combo" style="flex-wrap:nowrap;overflow:hidden"><span class="chip"><span class="swd" style="margin-left:6px"></span>Deadlines<span class="x">×</span></span><span class="chip"><span class="swc" style="margin-left:6px"></span>Checklist<span class="x">×</span></span><span class="chev"></span></div>
+                      </div>
+                      <div>
+                        <div class="flab">People</div>
+                        <div class="combo" style="flex-wrap:nowrap;overflow:hidden"><span class="chip"><span class="av sm">AN</span>Anika<span class="x">×</span></span><span class="chip"><span class="av sm">RK</span>Rob<span class="x">×</span></span><span class="chip"><span class="av sm">JM</span>Jess<span class="x">×</span></span><span class="chev"></span></div>
+                      </div>
+                      <div>
+                        <div class="sh">Unscheduled<b>3</b></div>
+                        <sc-for list="{{ unscheduled }}" as="x" hint-placeholder-count="3"><div class="uns"><span class="dots"></span>{{ x }}</div></sc-for>
+                      </div>
+                    </aside>
+                    <div class="cmain">
+                      <div class="wkhd"><span></span><sc-for list="{{ week }}" as="d" hint-placeholder-count="7"><div class="{{ d.hdCls }}">{{ d.dow }} <b>{{ d.n }}</b></div></sc-for></div>
+                      <div class="allday">
+                        <span class="gut" style="grid-row:1;grid-column:1;padding-top:6px">All day</span>
+                        <sc-for list="{{ allday }}" as="e" hint-placeholder-count="3"><div class="{{ e.cls }}" style="{{ e.style }}"><span class="avx">{{ e.who }}</span>{{ e.t }} <small>{{ e.p }}</small></div></sc-for>
+                      </div>
+                      <div class="wkgrid">
+                        <div><sc-for list="{{ hours }}" as="h" hint-placeholder-count="13"><div class="hr">{{ h }}</div></sc-for></div>
+                        <sc-for list="{{ week }}" as="d" hint-placeholder-count="7">
+                          <div class="{{ d.colCls }}" style="height:572px">
+                            <sc-for list="{{ d.events }}" as="e" hint-placeholder-count="1"><div class="{{ e.cls }}" style="{{ e.style }}">{{ e.t }}<small>{{ e.meta }}</small></div></sc-for>
+                          </div>
+                        </sc-for>
+                        <div class="nowline" style="top:339px"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dv-opt" id="2c">
+            <div class="dv-olabel"><a class="dv-oid" href="#2c">2c</a>Gantt writes — confirmation and validation. Left: releasing a deadline grip opens a ReUI <code>alert-dialog</code>; nothing is saved until confirmed, Cancel snaps the bar back. Right: a subtask can’t be dropped where it would start before the shoot or end after the deadline — the bar turns oxblood while dragging and springs back; valid drops save at once with an Undo toast.</div>
+            <div class="dv-row">
+              <div class="dv-card" data-screen-label="2c Deadline confirm">
+                <div class="scrim">
+                  <div class="dlg">
+                    <h2>Move this deadline?</h2>
+                    <p>14 Wattle Street, Newtown. The client sees the new date, and reminders move with it.</p>
+                    <div class="chg"><span>From</span><div><s>Thu 24 Sep · 17:00</s></div><span>To</span><div>Mon 28 Sep · 17:00 <span style="letter-spacing:0;text-transform:none;font-size:12px;color:var(--text-secondary);padding:0">(+4 days)</span></div></div>
+                    <div class="warn">Anika already has 7/22 Harbour Road due Mon 28 Sep.</div>
+                    <div class="acts"><span class="btn quiet">Cancel</span><span class="btn prim">Move deadline</span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="colstack">
+                <div class="dv-card" data-screen-label="2c Blocked drop">
+                  <div class="strip">
+                    <div class="trow gp"><div class="bar pbar st-cau" style="left:40px;width:330px"><span class="lock"></span><span class="grip"></span></div></div>
+                    <div class="trow"><div class="ghost" style="left:200px;top:9px;width:126px"></div><div class="lift bad" style="left:296px;top:7px;width:126px"></div><div class="tip bad" style="left:296px;top:40px">Ends after the deadline<small style="color:#f4d9d6">Thu 24 Sep 17:00 · move the deadline first</small></div></div>
+                    <div class="trow"></div>
+                  </div>
+                </div>
+                <div class="dv-card" data-screen-label="2c Undo toast">
+                  <div class="strip" style="height:74px;background:var(--paper-050)"><div class="toast">Twilight sky replacement moved to 22 – 24 Sep<u>Undo</u></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+        <p class="dv-next">Try next: “put the Layers and People comboboxes in the toolbar instead of the sidebar” · “show the calendar event sheet (ReUI sheet) for editing a task” · “narrow / mobile Gantt”.</p>
+      </section>
+    </x-dc>
+    <script type="text/x-dc" data-dc-script data-props='{}'>
+      class Component extends DCLogic {
+        gantt(D) {
+          var dow = ['M','T','W','T','F','S','S'];
+          var days = [], shades = [], lines = [];
+          for (var i = 0; i < 18; i++) {
+            var n = 14 + i <= 30 ? 14 + i : i - 16;
+            var we = i % 7 >= 5;
+            days.push({ label: dow[i % 7] + ' ' + n, cls: 'gd' + (we ? ' we' : '') + (i === 4 ? ' td' : ''), style: { width: D + 'px' } });
+            if (we) shades.push({ left: i * D + 'px', width: D + 'px' });
+            lines.push({ left: (i + 1) * D - 1 + 'px' });
+          }
+          var weeks = [
+            { label: 'W38 · 14–20 Sep', style: { width: 7 * D + 'px' } },
+            { label: 'W39 · 21–27 Sep', style: { width: 7 * D + 'px' } },
+            { label: 'W40 · 28 Sep –', style: { width: 4 * D + 'px' } }
+          ];
+          var raw = [
+            { k: 'p', st: 'cau', name: '14 Wattle Street', sub: 'Newtown', who: 'AN', s: 1, e: 11 },
+            { k: 't', st: 'cau', name: 'Cull & select RAW', who: 'JM', s: 1, e: 3, done: true, prog: 100 },
+            { k: 't', st: 'cau', name: 'HDR blend — interiors', who: 'AN', s: 3, e: 8, prog: 40 },
+            { k: 't', st: 'cau', name: 'Twilight sky replacement', who: 'AN', s: 7, e: 10, dragging: true },
+            { k: 't', st: 'cau', name: 'Floorplan redraw', who: 'RK', ms: 8 },
+            { k: 't', st: 'cau', name: 'Agent copy review', who: '', none: true },
+            { k: 'p', st: 'inf', name: '7/22 Harbour Road', sub: 'Balmain', who: 'RK', s: 3, e: 15 },
+            { k: 't', st: 'inf', name: 'Video rough cut', who: 'RK', s: 4, e: 11, prog: 15 },
+            { k: 't', st: 'inf', name: 'Colour grade', who: 'RK', s: 10, e: 14, prog: 0 },
+            { k: 'p', st: 'pos', name: '3 Banksia Avenue', sub: 'Marrickville', who: 'AN', s: 0, e: 5 },
+            { k: 't', st: 'pos', name: 'Client revisions', who: 'AN', s: 3, e: 5, prog: 70 },
+            { k: 'p', st: 'neu', name: '88 Glebe Point Road', sub: 'Glebe', who: '', s: 9, e: 17, shut: true }
+          ];
+          var hide = { display: 'none' };
+          var rows = raw.map(function (r) {
+            var p = r.k === 'p';
+            var hasBar = r.s != null && !r.dragging;
+            return {
+              name: r.name, sub: r.sub || '', who: r.who,
+              treeCls: 'gr c2' + (p ? ' gp' : ''),
+              rowCls: 'trow' + (p ? ' gp' : ''),
+              nameCls: 'gname' + (p ? '' : ' ind') + (r.done ? ' done' : ''),
+              markCls: p ? 'tw' + (r.shut ? ' shut' : '') : 'cb' + (r.done ? ' x' : ''),
+              avCls: r.who ? 'av' : 'av none',
+              barCls: 'bar ' + (p ? 'pbar' : 'tbr') + ' st-' + r.st + (r.done ? ' dn' : ''),
+              barStyle: hasBar ? { left: r.s * D + (p ? 0 : 2) + 'px', width: (r.e - r.s) * D - (p ? 0 : 4) + 'px' } : hide,
+              fillStyle: { width: (r.prog || 0) + '%' },
+              label: p ? '' : r.name,
+              diaStyle: r.ms != null ? { left: r.ms * D + D / 2 - 6 + 'px' } : hide,
+              schedStyle: r.none ? {} : hide
+            };
+          });
+          return { days: days, shades: shades, lines: lines, weeks: weeks, rows: rows, todayStyle: { left: 4 * D + D / 2 + 'px' } };
+        }
+        renderVals() {
+          var H = 44, T0 = 7;
+          function ev(t, meta, from, to, dl) { return { t: t, meta: meta, cls: 'ev' + (dl ? ' dl' : ''), style: { top: (from - T0) * H + 1 + 'px', height: (to - from) * H - 2 + 'px' } }; }
+          var names = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+          var evs = {
+            1: [ev('Cull & select RAW', '09:00 – 11:30 · JM', 9, 11.5)],
+            3: [ev('Client revisions', '10:00 – 12:00 · AN', 10, 12), ev('Ingest check', '15:00 · RK · 7/22 Harbour', 15, 16)],
+            4: [ev('Export finals', '14:00 – 16:00 · AN', 14, 16), ev('Due · 3 Banksia Ave', '17:00', 17, 17.85, true)]
+          };
+          var week = names.map(function (d, i) {
+            return { dow: d, n: 14 + i, hdCls: 'wd' + (i === 4 ? ' now' : ''), colCls: 'dcol' + (i >= 5 ? ' we' : ''), events: evs[i] || [] };
+          });
+          var hours = [];
+          for (var h = T0; h < 20; h++) hours.push((h < 10 ? '0' : '') + h + ':00');
+          var has = { 15: 1, 17: 1, 18: 1, 21: 1, 22: 1, 24: 1, 28: 1, 30: 1 };
+          var mini = [];
+          for (var i = 0; i < 35; i++) {
+            var n = i === 0 ? 31 : i <= 30 ? i : i - 30;
+            var inM = i >= 1 && i <= 30;
+            mini.push({ n: n, cls: 'mc' + (inM ? '' : ' out') + (inM && n >= 14 && n <= 20 ? ' wk' : '') + (inM && n === 18 ? ' now' : '') + (inM && has[n] ? ' hd' : '') });
+          }
+          return {
+            g: this.gantt(42),
+            dows: ['Mo','Tu','We','Th','Fr','Sa','Su'],
+            mini: mini,
+            upnext: [
+              { t: 'Export finals — 3 Banksia Ave', when: 'Today · 14:00 · AN' },
+              { t: 'Deadline · 3 Banksia Avenue', when: 'Today · 17:00' },
+              { t: 'HDR blend — interiors', when: 'Ends Mon 21 Sep · AN' }
+            ],
+            people: [
+              { cls: 'it hl', av: 'av', i: 'AN', name: 'Anika Nair', n: 5, tick: 'tick' },
+              { cls: 'it', av: 'av', i: 'RK', name: 'Rob Keane', n: 3, tick: 'tick' },
+              { cls: 'it', av: 'av', i: 'JM', name: 'Jess Moore', n: 1, tick: 'tick' },
+              { cls: 'it', av: 'av', i: 'TL', name: 'Ting Rui Lee', n: 0, tick: 'tick off' },
+              { cls: 'it', av: 'av none', i: '', name: 'Unassigned', n: 3, tick: 'tick off' }
+            ],
+            unscheduled: ['Agent copy review · 14 Wattle St', 'Drone stills select · 7/22 Harbour Rd', 'Music licence · 7/22 Harbour Rd'],
+            week: week,
+            allday: [
+              { t: 'Cull & select RAW', p: '14 Wattle St', who: 'JM', cls: 'ad dn', style: { gridColumn: '3 / span 2', gridRow: '1' } },
+              { t: 'HDR blend — interiors', p: '14 Wattle St · to Mon 21', who: 'AN', cls: 'ad more', style: { gridColumn: '5 / span 4', gridRow: '1' } },
+              { t: 'Video rough cut', p: '7/22 Harbour Rd · to Thu 24', who: 'RK', cls: 'ad more', style: { gridColumn: '6 / span 3', gridRow: '2' } }
+            ],
+            hours: hours
+          };
+        }
+      }
+    </script>
+  </body>
+</html>

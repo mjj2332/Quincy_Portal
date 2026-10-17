@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dashboard views — round 3</title>
+    <script src="./support.js"></script>
+  </head>
+  <body>
+    <x-dc>
+      <helmet data-dc-atomics>
+        <meta name="design_doc_mode" content="canvas" />
+        <style>
+          @font-face{font-family:"Mazius Review";src:url("./fonts/MaziusReview-Regular.otf") format("opentype");font-weight:400;font-display:swap}
+          @font-face{font-family:"Apfel Grotezk";src:url("./fonts/ApfelGrotezk-Regular.otf") format("opentype");font-weight:400;font-display:swap}
+          @font-face{font-family:"Athelas";src:url("./fonts/Athelas-Regular.ttf") format("truetype");font-weight:400;font-display:swap}
+          :root{
+            --ink-900:#0a0a0a;--ink-700:#232323;--paper-000:#fff;--paper-050:#faf8f2;--paper-100:#f4f0e7;--paper-200:#ece6d8;
+            --greige-100:#e4ded0;--greige-200:#cfc7b6;--greige-300:#b3aa97;--greige-400:#8f8775;--greige-500:#6d6657;--greige-600:#4d473c;
+            --signal-positive:#3f5b3a;--signal-caution:#9a6a1f;--signal-caution-text:#7b5519;--signal-critical:#7a2420;--signal-info:#2f3b4d;
+            --text-secondary:var(--greige-600);--hair:var(--greige-200);--hair-soft:var(--greige-100);
+            --font-display:"Mazius Review","Times New Roman",serif;--font-sans:"Apfel Grotezk","Helvetica Neue",Arial,sans-serif;--font-mono:ui-monospace,Menlo,monospace;
+            --st-await:#6d6657;--st-raw:#9a6a1f;--st-edit:#2f3b4d;--st-erev:#2f6b66;--st-dlv:#3f5b3a;--st-dlv-wash:#e3e9da;
+            --pp-an:#3d5a80;--pp-rk:#9a6a1f;--pp-jm:#2f6b66;--pp-tl:#6b4a6e;
+          }
+          body{margin:0;background:#e9e6df;font-family:var(--font-sans);color:var(--ink-900)}
+          a{color:var(--signal-info)}a:hover{color:var(--ink-900)}
+          .r3 *,.r3 *::before,.r3 *::after{box-sizing:border-box}
+          :where(.r3 button){font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer}
+          .hide{display:none}
+
+          .dv-turn{padding:40px 44px 32px;border-bottom:1px solid rgba(0,0,0,.08)}
+          .dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 6px}
+          .dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#1a1a1a;color:#fff;border-radius:4px;text-decoration:none}
+          .dv-tname{font:600 13px/1.2 system-ui,sans-serif;color:#1a1a1a}
+          .dv-intro{max-width:1040px;margin:0 0 26px;font:13px/1.55 system-ui,sans-serif;color:rgba(0,0,0,.62)}
+          .dv-opts{display:flex;flex-direction:column;gap:40px;align-items:flex-start}
+          .dv-opt{display:flex;flex-direction:column;gap:9px}
+          .dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#1a1a1a;border-radius:5px;text-decoration:none}
+          .dv-olabel{display:flex;align-items:baseline;gap:8px;max-width:1240px;font:400 12px/1.45 system-ui,sans-serif;color:rgba(0,0,0,.62)}
+          .dv-card{background:#fff;border:1px solid rgba(0,0,0,.1);box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden}
+          .dv-row{display:flex;gap:24px;align-items:flex-start}
+          .dv-next{margin:22px 0 0;font:12px/1.5 system-ui,sans-serif;color:rgba(0,0,0,.5)}
+
+          /* colour roles: one --c per stage or person */
+          .c-await{--c:var(--st-await)}.c-raw{--c:var(--st-raw)}.c-edit{--c:var(--st-edit)}.c-erev{--c:var(--st-erev)}.c-dlv{--c:var(--st-dlv)}
+          .c-an{--c:var(--pp-an)}.c-rk{--c:var(--pp-rk)}.c-jm{--c:var(--pp-jm)}.c-tl{--c:var(--pp-tl)}.c-none{--c:var(--greige-500)}
+          .rv-hatch .c-erev{--c:var(--st-raw)}
+
+          /* shell */
+          .app{display:flex;width:1440px;background:var(--paper-050);font-size:14px}
+          .rail{width:232px;flex:none;border-right:1px solid var(--hair);background:var(--paper-000);display:flex;flex-direction:column;padding:14px 12px;gap:4px}
+          .rail.mini{width:56px;padding:14px 8px;align-items:center}
+          .railhd{display:flex;align-items:center;justify-content:space-between;height:32px;padding:0 6px 0 8px;margin-bottom:10px}
+          .logotype{font:400 22px var(--font-display);letter-spacing:-.01em}
+          .qmark{font:400 24px var(--font-display);height:32px;margin-bottom:10px}
+          .rsearch{display:flex;align-items:center;gap:8px;height:38px;padding:0 8px 0 10px;border:1px solid var(--hair);border-radius:6px;background:var(--paper-050);font-size:14px;color:var(--greige-500);margin-bottom:10px}
+          .kbd{margin-left:auto;font:400 12px var(--font-mono);color:var(--greige-600);border:1px solid var(--hair);border-radius:3px;padding:0 5px;background:var(--paper-000)}
+          .navitem{display:flex;align-items:center;height:36px;padding:0 10px;font-size:14px;border-radius:4px}
+          .navsub{display:flex;align-items:center;height:34px;margin-left:16px;padding:0 10px;font-size:14px;color:var(--text-secondary);border-left:1px solid var(--hair)}
+          .navsub.on{color:var(--ink-900);border-left:2px solid var(--ink-900);background:var(--paper-100)}
+          .railft{margin-top:auto;display:flex;align-items:center;gap:8px;padding:10px 8px 0;border-top:1px solid var(--hair-soft);font-size:14px}
+          .ico{width:40px;height:40px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--greige-600)}
+          .ico.on{background:var(--paper-100);color:var(--ink-900)}
+          .main{flex:1;min-width:0;display:flex;flex-direction:column}
+          .shellhead{height:48px;flex:none;display:flex;align-items:center;gap:8px;padding:0 24px;border-bottom:1px solid var(--hair);background:var(--paper-000);font-size:12px;color:var(--text-secondary)}
+          .shellhead b{font-weight:400;color:var(--ink-900)}
+          .sepd{color:var(--greige-400)}
+          .vbar{display:flex;align-items:center;gap:12px;padding:16px 24px 14px;background:var(--paper-050)}
+          .h1{font:400 30px/1.1 var(--font-display);letter-spacing:-.01em;margin:0 14px 0 0}
+          .tabs{display:inline-flex;gap:2px;padding:3px;border:1px solid var(--hair);border-radius:6px;background:var(--paper-100)}
+          .tab{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 14px;border-radius:4px;font-size:14px;color:var(--text-secondary)}
+          .tab.on{background:var(--paper-000);color:var(--ink-900);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+          .grow{flex:1}
+          .ctl{display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 12px;border:1px solid var(--hair);border-radius:6px;background:var(--paper-000);font-size:14px;white-space:nowrap}
+          .ctl.srch{width:240px;color:var(--greige-500)}
+          .ctl svg,.tab svg,.rsearch svg,.ico svg,.nv svg,.ib svg{flex:none}
+          .nbar{display:flex;align-items:center;gap:10px;padding:10px 24px;border-top:1px solid var(--hair);background:var(--paper-000);flex-wrap:wrap}
+          .btn{display:inline-flex;align-items:center;justify-content:center;height:34px;padding:0 14px;border:1px solid var(--ink-900);border-radius:4px;background:var(--paper-000);font-size:12px;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
+          .nv{width:34px;height:34px;border:1px solid var(--hair);border-radius:4px;background:var(--paper-000);display:inline-flex;align-items:center;justify-content:center}
+          .range{font:400 21px var(--font-display);margin-left:6px;white-space:nowrap}
+          .lab{font-size:12px;color:var(--text-secondary);letter-spacing:.08em;text-transform:uppercase}
+          .seg2{display:inline-flex;padding:2px;border:1px solid var(--hair);border-radius:6px;background:var(--paper-100)}
+          .seg2 button{height:30px;padding:0 14px;border-radius:4px;font-size:14px;color:var(--text-secondary)}
+          .seg2 button.on{background:var(--paper-000);color:var(--ink-900);box-shadow:0 1px 2px rgba(0,0,0,.1)}
+          .zoomv{font-size:14px;min-width:64px;text-align:center}
+          .keyrow{display:flex;align-items:center;gap:8px;padding:10px 24px;background:var(--paper-050);border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);flex-wrap:wrap}
+          .kchip{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 12px 0 9px;border:1px solid var(--hair);border-radius:16px;background:var(--paper-000);font-size:14px;white-space:nowrap}
+          .kchip b{font:400 12px var(--font-mono);color:var(--text-secondary)}
+          .ksym{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary);margin-left:12px;white-space:nowrap}
+          .sym-shoot{width:11px;height:11px;background:#fff;border:1.5px solid var(--ink-900);transform:rotate(45deg)}
+          .sym-grip{width:8px;height:18px;background:var(--ink-900);border-radius:2px}
+          .sym-due{width:12px;height:12px;background:#fff;border:2px solid var(--greige-500);transform:rotate(45deg)}
+          .sym-late{height:20px;padding:0 6px;border:1px solid var(--signal-critical);border-radius:4px;color:var(--signal-critical);display:inline-flex;align-items:center}
+
+          .av{width:26px;height:26px;border-radius:50%;background:var(--greige-100);font-size:12px;display:inline-flex;align-items:center;justify-content:center;flex:none;border:1.5px solid var(--paper-000);color:var(--ink-900)}
+          .av.none{background:var(--paper-000);border:1.5px dashed var(--greige-500)}
+          .av.pc{background:var(--c);color:#fff}
+          .sw{width:14px;height:14px;border-radius:3px;flex:none;background:var(--c)}
+          .sw.c-await{background:#fff;border:1.5px dashed var(--c)}
+          .sw.c-dlv{background:var(--st-dlv-wash);border:1.5px solid var(--c)}
+          .rv-hatch .sw.c-erev{background-image:repeating-linear-gradient(135deg,transparent 0 3px,rgba(255,255,255,.45) 3px 5px)}
+
+          /* timeline */
+          .gantt{display:flex;background:var(--paper-000);position:relative}
+          .gtree{width:376px;flex:none;border-right:1px solid var(--greige-300)}
+          .ghd{height:72px;display:grid;grid-template-columns:minmax(0,1fr) 64px 84px;column-gap:8px;align-items:end;padding:0 16px 12px;border-bottom:1px solid var(--greige-300);background:var(--paper-050);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-secondary)}
+          .ghd span:last-child{text-align:right}
+          .gr{height:40px;display:grid;grid-template-columns:minmax(0,1fr) 64px 84px;column-gap:8px;align-items:center;padding:0 16px;border-bottom:1px solid var(--hair-soft)}
+          .gr.gp{height:48px;background:var(--paper-100);border-top:1px solid var(--hair)}
+          .gr.hov,.trow.hov{background:#f7f4ec}
+          .gname{display:flex;align-items:center;gap:10px;min-width:0}
+          .gname.ind{padding-left:24px}
+          .nm{display:flex;flex-direction:column;min-width:0}
+          .nt{font-size:14px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink-900)}
+          .ind .nt{color:var(--ink-700)}
+          .nm small{font-size:12px;line-height:1.3;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+          .done .nt{color:var(--text-secondary);text-decoration:line-through;text-decoration-color:var(--greige-400)}
+          .tw{width:8px;height:8px;flex:none;border-right:1.5px solid var(--ink-900);border-bottom:1.5px solid var(--ink-900);transform:rotate(45deg) translate(-2px,-2px)}
+          .tw.shut{transform:rotate(-45deg)}
+          .cb{width:14px;height:14px;border:1.5px solid var(--greige-500);border-radius:3px;flex:none;position:relative}
+          .cb.x{background:var(--ink-900);border-color:var(--ink-900)}
+          .cb.x::after{content:"";position:absolute;left:3px;top:1px;width:4px;height:7px;border-right:1.5px solid #fff;border-bottom:1.5px solid #fff;transform:rotate(45deg)}
+          .avs{display:flex}
+          .avs .av+.av{margin-left:-7px}
+          .gdue{font-size:12px;color:var(--text-secondary);text-align:right;white-space:nowrap}
+          .gp .gdue{font-size:14px;color:var(--ink-900)}
+          .gdue.bad,.gp .gdue.bad{color:var(--signal-critical)}
+          .gtl{flex:1;min-width:0;overflow:hidden}
+          .gweeks{display:flex;height:28px;background:var(--paper-050);border-bottom:1px solid var(--hair-soft)}
+          .gwk{flex:none;padding:8px 0 0 10px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-secondary);border-right:1px solid var(--hair);white-space:nowrap;overflow:hidden}
+          .gdays{display:flex;height:44px;background:var(--paper-050);border-bottom:1px solid var(--greige-300)}
+          .gd{flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border-right:1px solid var(--hair-soft)}
+          .gd span{font-size:12px;line-height:1.1;color:var(--text-secondary)}
+          .gd b{font:400 14px/1.1 var(--font-mono);color:var(--ink-900)}
+          .gd.we span,.gd.we b{color:var(--greige-500)}
+          .gd.td{background:var(--ink-900)}
+          .gd.td span,.gd.td b{color:var(--paper-050)}
+          .gbody{position:relative}
+          .shade{position:absolute;top:0;bottom:0;background:rgba(10,10,10,.035)}
+          .vline{position:absolute;top:0;bottom:0;width:1px;background:var(--hair-soft)}
+          .tdcol{position:absolute;top:0;bottom:0;background:rgba(47,59,77,.07)}
+          .nowl{position:absolute;top:0;bottom:0;width:2px;background:var(--ink-900);z-index:1}
+          .trow{height:40px;position:relative;border-bottom:1px solid var(--hair-soft)}
+          .trow.gp{height:48px;background:rgba(244,240,231,.72);border-top:1px solid var(--hair)}
+          .bar{position:absolute;top:5px;height:28px;border-radius:4px;display:flex;align-items:center;gap:7px;padding:0 10px;font-size:14px;line-height:1;white-space:nowrap;z-index:2}
+          .gp .bar{top:9px}
+          .pbar{background:var(--c);color:#fff;padding-right:18px}
+          .pbar.c-await{background:#fff;color:var(--ink-900);border:1.5px dashed var(--c)}
+          .pbar.c-dlv{background:var(--st-dlv-wash);color:var(--ink-900);border:1.5px solid var(--c);padding-right:10px}
+          .rv-hatch .pbar.c-erev{background-image:repeating-linear-gradient(135deg,transparent 0 6px,rgba(255,255,255,.2) 6px 9px)}
+          .pbar.neutral{background:var(--paper-200);color:var(--ink-900);border:1px solid var(--greige-300)}
+          .pbar.clip{border-top-left-radius:0;border-bottom-left-radius:0}
+          .shoot{position:absolute;left:-6px;top:50%;width:12px;height:12px;margin-top:-6px;background:#fff;border:1.5px solid var(--ink-900);transform:rotate(45deg)}
+          .grip{position:absolute;right:0;top:0;bottom:0;width:9px;background:rgba(10,10,10,.38);border-radius:0 4px 4px 0}
+          .pbar.c-await .grip,.pbar.neutral .grip{background:var(--ink-900);border-radius:0 3px 3px 0}
+          .grip::after{content:"";position:absolute;left:3px;top:8px;bottom:8px;width:3px;border-left:1px solid rgba(255,255,255,.8);border-right:1px solid rgba(255,255,255,.8)}
+          .tbar{background:#fff;color:var(--ink-700);border:1.5px solid var(--c);overflow:hidden;padding-left:4px}
+          .tbar .fill{position:absolute;left:0;top:0;bottom:0;background:color-mix(in srgb,var(--c) 22%,transparent)}
+          .tbar.solid{background:var(--c);color:#fff}
+          .tbar.solid .fill{display:none}
+          .tbar.done{background:var(--paper-100);border-color:var(--greige-300);color:var(--text-secondary)}
+          .tbar.done .fill{display:none}
+          .tbar.unas{border-style:dashed;background:#fff;color:var(--ink-700)}
+          .tbar.late{border:2px solid var(--signal-critical)}
+          .bl{position:relative;overflow:hidden;text-overflow:ellipsis}
+          .bav{position:relative;width:22px;height:22px;border-radius:50%;background:var(--paper-000);border:1px solid var(--greige-300);font-size:12px;line-height:1;display:inline-flex;align-items:center;justify-content:center;flex:none;color:var(--ink-900)}
+          .solid .bav{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.6);color:#fff}
+          .tk{position:relative;width:11px;height:6px;flex:none;border-left:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg) translateY(-2px)}
+          .dia{position:absolute;top:12px;width:15px;height:15px;background:#fff;border:2px solid var(--c);transform:rotate(45deg);z-index:2}
+          .olbl{position:absolute;top:50%;transform:translateY(-50%);font-size:14px;line-height:1.4;padding:0 4px;margin-left:-4px;color:var(--ink-700);white-space:nowrap;z-index:2;background:rgba(255,255,255,.9);border-radius:3px}
+          .olbl.dn{color:var(--text-secondary)}
+          .chipbad{position:absolute;top:50%;transform:translateY(-50%);height:24px;padding:0 8px;display:inline-flex;align-items:center;border:1px solid var(--signal-critical);border-radius:4px;background:#fff;color:var(--signal-critical);font-size:12px;white-space:nowrap;z-index:3}
+          .sched{position:absolute;left:8px;top:5px;height:28px;padding:0 12px;display:flex;align-items:center;border:1.5px dashed var(--greige-400);border-radius:4px;font-size:12px;color:var(--text-secondary);background:#fff;z-index:2}
+          .tip{position:absolute;z-index:6;width:280px;background:var(--ink-900);color:var(--paper-050);padding:10px 12px 11px;border-radius:6px;box-shadow:0 10px 28px rgba(10,10,10,.22);display:flex;flex-direction:column;gap:4px}
+          .tip b{font-weight:400;font-size:14px;line-height:1.3}
+          .tip span{font-size:12px;line-height:1.35;color:var(--greige-200)}
+          .tbar.hovb{box-shadow:0 0 0 2px #fff,0 0 0 4px var(--ink-900)}
+
+          /* phone */
+          .ph{width:390px;height:844px;background:var(--paper-050);display:flex;flex-direction:column;overflow:hidden;font-size:14px}
+          .phd{height:56px;flex:none;display:flex;align-items:center;gap:10px;padding:0 6px 0 16px;background:var(--paper-000);border-bottom:1px solid var(--hair)}
+          .phd .qm{font:400 24px var(--font-display)}
+          .phd h2{font:400 22px var(--font-display);margin:0;flex:1}
+          .ib{width:44px;height:44px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px}
+          .ib.bd{border:1px solid var(--hair);background:var(--paper-000)}
+          .pctl{display:flex;flex-direction:column;gap:8px;padding:12px 16px;background:var(--paper-050);flex:none}
+          .pctl .r{display:flex;align-items:center;gap:8px}
+          .pctl .ctl{height:44px}
+          .pctl .btn,.pctl .nv{height:44px}
+          .pctl .nv{width:44px}
+          .pctl .range{font-size:19px}
+          .pdays{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));padding:0 16px;background:var(--paper-050);border-top:1px solid var(--hair);border-bottom:1px solid var(--greige-300);height:52px;flex:none}
+          .pdays .gd{border-right:0;width:auto}
+          .pdays .gd.td{border-radius:6px;margin:4px 2px}
+          .pbody{position:relative;padding:0 16px;flex:1;background:var(--paper-000)}
+          .pbg{position:absolute;left:16px;right:16px;top:0;bottom:0}
+          .prow{position:relative;padding:8px 0;border-bottom:1px solid var(--hair-soft)}
+          .prow.pp{background:rgba(244,240,231,.72);margin:0 -16px;padding:8px 16px;border-top:1px solid var(--hair)}
+          .pl{position:relative;z-index:2;display:flex;align-items:center;gap:8px;min-height:26px}
+          .pn{flex:1;min-width:0;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+          .pm{font-size:12px;color:var(--text-secondary);white-space:nowrap}
+          .pm.bad{color:var(--signal-critical)}
+          .pt{position:relative;height:24px;margin-top:6px}
+          .pt .bar{top:0;height:24px;padding:0}
+          .pt .tbar{height:20px;top:2px}
+          .pp .pt .pbar{padding:0}
+          .pbar.clipr{border-top-right-radius:0;border-bottom-right-radius:0}
+
+          /* calendar */
+          .cal{display:flex;background:var(--paper-000)}
+          .cside{width:288px;flex:none;border-right:1px solid var(--hair);padding:18px 16px 20px;display:flex;flex-direction:column;gap:22px;background:var(--paper-050)}
+          .mhd{display:flex;align-items:center;justify-content:space-between;font:400 18px var(--font-display);margin-bottom:8px}
+          .mgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));row-gap:2px;font:400 12px var(--font-mono);text-align:center}
+          .mdow{color:var(--text-secondary);font:400 12px var(--font-sans);padding-bottom:6px}
+          .mc{height:32px;display:flex;align-items:center;justify-content:center;position:relative;color:var(--ink-700)}
+          .mc.out{color:var(--greige-400)}
+          .mc.wk{background:var(--paper-200)}
+          .mc.now{background:var(--ink-900);color:var(--paper-050)}
+          .mc.hd::after{content:"";position:absolute;bottom:4px;left:50%;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:currentColor;opacity:.75}
+          .sh{display:flex;align-items:center;justify-content:space-between;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-secondary);padding-bottom:8px;border-bottom:1px solid var(--hair);margin-bottom:8px}
+          .sh b{font:400 12px var(--font-mono);letter-spacing:0;color:var(--ink-900)}
+          .un{display:flex;flex-direction:column;gap:2px;padding:6px 0}
+          .un span{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+          .un small{font-size:12px;color:var(--text-secondary)}
+          .flab{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-secondary);margin:0 0 6px}
+          .combo{display:flex;flex-wrap:nowrap;overflow:hidden;align-items:center;gap:6px;min-height:40px;padding:5px 30px 5px 6px;border:1px solid var(--hair);border-radius:6px;background:var(--paper-000);position:relative}
+          .chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 6px 0 4px;border:1px solid var(--hair);border-radius:14px;background:var(--paper-050);font-size:14px;white-space:nowrap}
+          .chip .av{width:22px;height:22px}
+          .chip .sw{margin-left:4px}
+          .x{font-size:14px;color:var(--greige-500);line-height:1}
+          .uns{display:flex;align-items:center;gap:8px;height:36px;padding:0 10px;border:1.5px dashed var(--greige-400);border-radius:4px;font-size:14px;background:var(--paper-000);margin-bottom:6px;white-space:nowrap;overflow:hidden}
+          .dots{width:6px;height:12px;flex:none;border-left:2px dotted var(--greige-500);border-right:2px dotted var(--greige-500)}
+          .cmain{flex:1;min-width:0;display:flex;flex-direction:column}
+          .wkhd{display:grid;grid-template-columns:64px repeat(7,minmax(0,1fr));border-bottom:1px solid var(--greige-300);background:var(--paper-050)}
+          .wd{height:44px;display:flex;align-items:center;gap:8px;padding:0 10px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-secondary);border-left:1px solid var(--hair-soft)}
+          .wd b{font:400 14px var(--font-mono);letter-spacing:0;color:var(--ink-900);padding:2px 6px;border-radius:3px}
+          .wd.now b{background:var(--ink-900);color:var(--paper-050)}
+          .allday{display:grid;grid-template-columns:64px repeat(7,minmax(0,1fr));grid-auto-rows:30px;row-gap:4px;padding:6px 0;border-bottom:1px solid var(--greige-300);background:var(--paper-000)}
+          .gut{font:400 12px var(--font-mono);color:var(--text-secondary);text-align:right;padding-right:10px}
+          .ad{margin:0 4px;display:flex;align-items:center;gap:7px;padding:0 8px;font-size:14px;background:color-mix(in srgb,var(--c) 16%,#fff);border:1.5px solid var(--c);border-radius:4px;white-space:nowrap;overflow:hidden}
+          .ad small{color:var(--text-secondary);font-size:12px}
+          .ad.dn{background:var(--paper-100);border-color:var(--greige-300);color:var(--text-secondary);text-decoration:line-through}
+          .ad.more{border-right:0;border-top-right-radius:0;border-bottom-right-radius:0;margin-right:0}
+          .ad .av{width:20px;height:20px;font-size:12px;border:1px solid var(--greige-300);background:var(--paper-000)}
+          .wkgrid{display:grid;grid-template-columns:64px repeat(7,minmax(0,1fr));position:relative}
+          .hr{height:52px;font:400 12px var(--font-mono);color:var(--text-secondary);text-align:right;padding:3px 10px 0 0}
+          .dcol{position:relative;border-left:1px solid var(--hair-soft);background-image:linear-gradient(var(--hair-soft) 1px,transparent 1px);background-size:100% 52px}
+          .dcol.we{background-color:rgba(10,10,10,.03)}
+          .dcol.td{background-color:rgba(47,59,77,.05)}
+          .ev{position:absolute;left:4px;right:6px;padding:6px 8px;font-size:14px;line-height:1.25;border-radius:4px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;background:color-mix(in srgb,var(--c) 14%,#fff);border:1.5px solid var(--c);color:var(--ink-900)}
+          .ev small{display:block;font-size:12px;line-height:1.35;color:var(--text-secondary);overflow:hidden;text-overflow:ellipsis}
+          .ev.dn{background:var(--paper-100);border-color:var(--greige-300);color:var(--text-secondary)}
+          .ev.evshoot{background:var(--paper-000);border:1.5px solid var(--ink-900);padding-left:24px}
+          .ev.evshoot::before{content:"";position:absolute;left:8px;top:11px;width:9px;height:9px;border:1.5px solid var(--ink-900);background:#fff;transform:rotate(45deg)}
+          .ev.dl{background:var(--ink-900);border-color:var(--ink-900);color:var(--paper-050)}
+          .ev.dl small{color:var(--greige-200)}
+          .ev.dl.bad{background:var(--signal-critical);border-color:var(--signal-critical)}
+          .ev.dl.bad small{color:#f4d9d6}
+          .ev.dl.ok{background:var(--st-dlv);border-color:var(--st-dlv)}
+          .ev.dl.ok small{color:#dfe8d9}
+          .nowline{position:absolute;left:64px;right:0;height:2px;background:var(--ink-900);z-index:3}
+          .nowline::before{content:"";position:absolute;left:-5px;top:-4px;width:10px;height:10px;border-radius:50%;background:var(--ink-900)}
+
+          /* key */
+          .spec{width:1026px;height:844px;background:var(--paper-000);padding:28px 32px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px 40px;align-content:start}
+          .spec h3{font:400 22px/1.2 var(--font-display);margin:0 0 6px}
+          .spec .lead{font-size:12px;color:var(--text-secondary);margin:0 0 10px;line-height:1.45}
+          .srow{display:grid;grid-template-columns:184px minmax(0,1fr);gap:14px;align-items:center;min-height:52px;border-bottom:1px solid var(--hair-soft)}
+          .sbar{position:relative;height:40px}
+          .sbar .bar{top:6px;left:8px}
+          .stx{display:flex;flex-direction:column;gap:3px;min-width:0}
+          .stx b{font-weight:400;font-size:14px}
+          .stx span{font-size:12px;line-height:1.4;color:var(--text-secondary)}
+          .stx code{font:400 12px var(--font-mono);color:var(--ink-700)}
+          .tyrow{display:grid;grid-template-columns:minmax(0,1fr) 180px;gap:12px;align-items:baseline;padding:9px 0;border-bottom:1px solid var(--hair-soft)}
+          .tyrow span:last-child{font:400 12px var(--font-mono);color:var(--text-secondary);text-align:right}
+          .span2{grid-column:1 / -1}
+          .tycols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:40px}
+        </style>
+      </helmet>
+
+      <section class="{{ rootCls }}" id="t3">
+        <div class="dv-turn">
+        <div class="dv-thd"><a class="dv-tid" href="#t3">3</a><span class="dv-tname">Round 3 — a timeline you can read: 14px labels, one colour per stage, colour by people</span></div>
+        <p class="dv-intro">
+          Round 2 is beside this one, round 1 beyond it. Taken forward from round 2: the stage-tinted Timeline, the deadline confirmation and drop validation (2c, unchanged), the calendar comboboxes. Changed: every label on the timeline is 14px (meta 12px, nothing smaller); rows are 48px for a project and 40px for a task; each of the five real pipeline stages gets its own treatment, so neighbouring projects no longer read as one beige band; task bars carry the project’s colour as their edge and their progress as the fill; a toolbar switch recolours bars by person. View names follow the shipped Portal: Table, Board, Calendar, Timeline.
+        </p>
+
+        <div class="dv-opts">
+
+          <div class="dv-opt" id="3a">
+            <div class="dv-olabel"><a class="dv-oid" href="#3a">3a</a>Timeline, desktop 1440, two-week zoom, coloured by stage. The key row doubles as a stage filter. Hover on “HDR blend — interiors” shows the full task. A label that doesn’t fit its bar sits to its right. Late work gets an oxblood edge and a “late” chip. Press People in the toolbar to recolour by assignee (3b is the same view, drawn that way).</div>
+            <div class="dv-card" data-screen-label="3a Timeline by stage">
+              <div class="app">
+                <nav class="rail">
+                  <div class="railhd"><span class="logotype">Quincy</span></div>
+                  <div class="rsearch"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.5"></circle><path d="M10.5 10.5 14 14"></path></svg>Search projects…<span class="kbd">⌘K</span></div>
+                  <div class="navitem">Dashboard</div>
+                  <div class="navsub">Table</div>
+                  <div class="navsub">Board</div>
+                  <div class="navsub">Calendar</div>
+                  <div class="navsub on">Timeline</div>
+                  <div class="navitem" style="margin-top:6px">Admin</div>
+                  <div class="railft"><span class="av">TL</span>Ting Rui Lee</div>
+                </nav>
+                <div class="main">
+                  <div class="shellhead">Home <span class="sepd">/</span> Dashboard <span class="sepd">/</span> <b>Timeline</b></div>
+                  <div class="vbar">
+                    <h1 class="h1">Dashboard</h1>
+                    <span class="tabs"><span class="tab">Table</span><span class="tab">Board</span><span class="tab">Calendar</span><span class="tab on">Timeline</span></span>
+                    <span class="grow"></span>
+                    <span class="ctl srch"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.5"></circle><path d="M10.5 10.5 14 14"></path></svg>Search</span>
+                    <button class="ctl"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2 4h12M4.5 8h7M7 12h2"></path></svg>Filter</button>
+                    <button class="ctl"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2 5h12M2 11h12"></path><circle cx="6" cy="5" r="1.6" fill="#fff"></circle><circle cx="10" cy="11" r="1.6" fill="#fff"></circle></svg>Display</button>
+                  </div>
+                  <div class="nbar">
+                    <button class="btn">Today</button>
+                    <button class="nv" aria-label="Previous two weeks"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 3 5 8l5 5"></path></svg></button>
+                    <button class="nv" aria-label="Next two weeks"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m6 3 5 5-5 5"></path></svg></button>
+                    <span class="range">14 – 29 September 2026</span>
+                    <span class="grow"></span>
+                    <span class="lab">Colour by</span>
+                    <span class="seg2"><button class="{{ segStage }}" aria-pressed="{{ pressStage }}" onClick="{{ toStage }}">Stage</button><button class="{{ segPeople }}" aria-pressed="{{ pressPeople }}" onClick="{{ toPeople }}">People</button></span>
+                    <span class="lab" style="margin-left:12px">Zoom</span>
+                    <button class="nv" aria-label="Zoom out"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 8h10"></path></svg></button>
+                    <span class="zoomv">2 weeks</span>
+                    <button class="nv" aria-label="Zoom in"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 8h10M8 3v10"></path></svg></button>
+                  </div>
+                  <div class="keyrow">
+                    <sc-for list="{{ g.keys }}" as="k" hint-placeholder-count="5"><button class="kchip"><span class="{{ k.dotCls }}">{{ k.dotText }}</span>{{ k.label }}<b>{{ k.n }}</b></button></sc-for>
+                    <span class="grow"></span>
+                    <span class="ksym"><span class="sym-shoot"></span>Shoot</span>
+                    <span class="ksym"><span class="sym-grip"></span>Deadline — drag to move</span>
+                    <span class="ksym"><span class="sym-due"></span>Due date only</span>
+                  </div>
+                  <div class="gantt">
+                    <div class="gtree">
+                      <div class="ghd"><span>Project / task</span><span>People</span><span>Due</span></div>
+                      <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="18">
+                        <div class="{{ r.treeCls }}">
+                          <span class="{{ r.nameCls }}"><span class="{{ r.markCls }}"></span><span class="{{ r.swCls }}"></span><span class="nm"><span class="nt">{{ r.name }}</span><small style="{{ r.subStyle }}">{{ r.sub }}</small></span></span>
+                          <span class="avs"><sc-for list="{{ r.people }}" as="a" hint-placeholder-count="1"><span class="{{ a.cls }}">{{ a.i }}</span></sc-for></span>
+                          <span class="{{ r.dueCls }}">{{ r.due }}</span>
+                        </div>
+                      </sc-for>
+                    </div>
+                    <div class="gtl">
+                      <div class="gweeks"><sc-for list="{{ g.weeks }}" as="w" hint-placeholder-count="3"><div class="gwk" style="{{ w.style }}">{{ w.label }}</div></sc-for></div>
+                      <div class="gdays"><sc-for list="{{ g.days }}" as="d" hint-placeholder-count="16"><div class="{{ d.cls }}" style="{{ d.style }}"><span>{{ d.dow }}</span><b>{{ d.n }}</b></div></sc-for></div>
+                      <div class="gbody">
+                        <sc-for list="{{ g.shades }}" as="sh" hint-placeholder-count="4"><div class="shade" style="{{ sh }}"></div></sc-for>
+                        <sc-for list="{{ g.lines }}" as="ln" hint-placeholder-count="16"><div class="vline" style="{{ ln }}"></div></sc-for>
+                        <div class="tdcol" style="{{ g.tdStyle }}"></div>
+                        <div class="nowl" style="{{ g.nowStyle }}"></div>
+                        <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="18">
+                          <div class="{{ r.rowCls }}">
+                            <div class="{{ r.barCls }}" style="{{ r.barStyle }}"><div class="fill" style="{{ r.fillStyle }}"></div><span class="shoot" style="{{ r.shootStyle }}"></span><span class="bav" style="{{ r.bavStyle }}">{{ r.bav }}</span><span class="tk" style="{{ r.tickStyle }}"></span><span class="bl">{{ r.inLabel }}</span><span class="grip" style="{{ r.gripStyle }}"></span></div>
+                            <div class="{{ r.diaCls }}" style="{{ r.diaStyle }}"></div>
+                            <span class="{{ r.olCls }}" style="{{ r.outStyle }}">{{ r.outLabel }}</span>
+                            <span class="chipbad" style="{{ r.chipStyle }}">{{ r.chip }}</span>
+                            <div class="sched" style="{{ r.schedStyle }}">Not scheduled · drag onto the timeline</div>
+                          </div>
+                        </sc-for>
+                        <div class="tip" style="{{ g.tipStyle }}"><b>{{ g.tip.title }}</b><span>{{ g.tip.l1 }}</span><span>{{ g.tip.l2 }}</span><span>{{ g.tip.l3 }}</span></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dv-opt" id="3b">
+            <div class="dv-olabel"><a class="dv-oid" href="#3b">3b</a>Same view, coloured by people — the “who is overloaded this fortnight” question. Task bars fill with the assignee’s colour (initials stay inside, so colour is never the only cue); project bars go neutral and show shoot → deadline; the stage stays visible as the swatch in the tree. Unassigned work is dashed. The key row lists open tasks per person.</div>
+            <div class="dv-card" data-screen-label="3b Timeline by people">
+              <div class="app">
+                <nav class="rail mini">
+                  <div class="qmark">Q</div>
+                  <div class="ico"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.5"></circle><path d="M10.5 10.5 14 14"></path></svg></div>
+                  <div class="ico on"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2 4h7M5 8h8M3 12h6"></path></svg></div>
+                  <div class="ico"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="5.5"></circle></svg></div>
+                  <div style="margin-top:auto"><span class="av">TL</span></div>
+                </nav>
+                <div class="main">
+                  <div class="shellhead">Home <span class="sepd">/</span> Dashboard <span class="sepd">/</span> <b>Timeline</b></div>
+                  <div class="vbar">
+                    <h1 class="h1">Dashboard</h1>
+                    <span class="tabs"><span class="tab">Table</span><span class="tab">Board</span><span class="tab">Calendar</span><span class="tab on">Timeline</span></span>
+                    <span class="grow"></span>
+                    <span class="ctl srch"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.5"></circle><path d="M10.5 10.5 14 14"></path></svg>Search</span>
+                    <button class="ctl">Filter</button>
+                    <button class="ctl">Display</button>
+                  </div>
+                  <div class="nbar">
+                    <button class="btn">Today</button>
+                    <button class="nv" aria-label="Previous two weeks"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 3 5 8l5 5"></path></svg></button>
+                    <button class="nv" aria-label="Next two weeks"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m6 3 5 5-5 5"></path></svg></button>
+                    <span class="range">14 – 29 September 2026</span>
+                    <span class="grow"></span>
+                    <span class="lab">Colour by</span>
+                    <span class="seg2"><button aria-pressed="false">Stage</button><button class="on" aria-pressed="true">People</button></span>
+                    <span class="lab" style="margin-left:12px">Zoom</span>
+                    <button class="nv" aria-label="Zoom out"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 8h10"></path></svg></button>
+                    <span class="zoomv">2 weeks</span>
+                    <button class="nv" aria-label="Zoom in"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 8h10M8 3v10"></path></svg></button>
+                  </div>
+                  <div class="keyrow">
+                    <sc-for list="{{ gp.keys }}" as="k" hint-placeholder-count="5"><button class="kchip"><span class="{{ k.dotCls }}">{{ k.dotText }}</span>{{ k.label }}<b>{{ k.n }}</b></button></sc-for>
+                    <span class="grow"></span>
+                    <span class="ksym"><span class="sym-shoot"></span>Shoot</span>
+                    <span class="ksym"><span class="sym-grip"></span>Deadline — drag to move</span>
+                    <span class="ksym"><span class="sym-late">late</span>Past due</span>
+                  </div>
+                  <div class="gantt">
+                    <div class="gtree" style="width:376px">
+                      <div class="ghd"><span>Project / task</span><span>People</span><span>Due</span></div>
+                      <sc-for list="{{ gp.rows }}" as="r" hint-placeholder-count="18">
+                        <div class="{{ r.treeCls }}">
+                          <span class="{{ r.nameCls }}"><span class="{{ r.markCls }}"></span><span class="{{ r.swCls }}"></span><span class="nm"><span class="nt">{{ r.name }}</span><small style="{{ r.subStyle }}">{{ r.sub }}</small></span></span>
+                          <span class="avs"><sc-for list="{{ r.people }}" as="a" hint-placeholder-count="1"><span class="{{ a.cls }}">{{ a.i }}</span></sc-for></span>
+                          <span class="{{ r.dueCls }}">{{ r.due }}</span>
+                        </div>
+                      </sc-for>
+                    </div>
+                    <div class="gtl">
+                      <div class="gweeks"><sc-for list="{{ gp.weeks }}" as="w" hint-placeholder-count="3"><div class="gwk" style="{{ w.style }}">{{ w.label }}</div></sc-for></div>
+                      <div class="gdays"><sc-for list="{{ gp.days }}" as="d" hint-placeholder-count="16"><div class="{{ d.cls }}" style="{{ d.style }}"><span>{{ d.dow }}</span><b>{{ d.n }}</b></div></sc-for></div>
+                      <div class="gbody">
+                        <sc-for list="{{ gp.shades }}" as="sh" hint-placeholder-count="4"><div class="shade" style="{{ sh }}"></div></sc-for>
+                        <sc-for list="{{ gp.lines }}" as="ln" hint-placeholder-count="16"><div class="vline" style="{{ ln }}"></div></sc-for>
+                        <div class="tdcol" style="{{ gp.tdStyle }}"></div>
+                        <div class="nowl" style="{{ gp.nowStyle }}"></div>
+                        <sc-for list="{{ gp.rows }}" as="r" hint-placeholder-count="18">
+                          <div class="{{ r.rowCls }}">
+                            <div class="{{ r.barCls }}" style="{{ r.barStyle }}"><div class="fill" style="{{ r.fillStyle }}"></div><span class="shoot" style="{{ r.shootStyle }}"></span><span class="bav" style="{{ r.bavStyle }}">{{ r.bav }}</span><span class="tk" style="{{ r.tickStyle }}"></span><span class="bl">{{ r.inLabel }}</span><span class="grip" style="{{ r.gripStyle }}"></span></div>
+                            <div class="{{ r.diaCls }}" style="{{ r.diaStyle }}"></div>
+                            <span class="{{ r.olCls }}" style="{{ r.outStyle }}">{{ r.outLabel }}</span>
+                            <span class="chipbad" style="{{ r.chipStyle }}">{{ r.chip }}</span>
+                            <div class="sched" style="{{ r.schedStyle }}">Not scheduled · drag onto the timeline</div>
+                          </div>
+                        </sc-for>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dv-opt" id="3c">
+            <div class="dv-olabel"><a class="dv-oid" href="#3c">3c</a>Left: Timeline on a phone (390). The name column would leave five days of track, so each row puts its label above its bar and the track gets the full width: one week, 14px names, 44px controls. Colour by sits under Display. Right: the key — stage and task-state treatments and the type sizes, for the build to map onto tokens.</div>
+            <div class="dv-row">
+              <div class="dv-card" data-screen-label="3c Timeline phone">
+                <div class="ph">
+                  <div class="phd"><span class="qm">Q</span><h2>Dashboard</h2><button class="ib" aria-label="Search"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="4.5"></circle><path d="M10.5 10.5 14 14"></path></svg></button><button class="ib" aria-label="Menu"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2 4.5h12M2 8h12M2 11.5h12"></path></svg></button></div>
+                  <div class="pctl">
+                    <div class="r"><button class="ctl" style="flex:1;justify-content:space-between">Timeline<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg></button><button class="ctl">Filter</button><button class="ib bd" aria-label="Display: colour by stage"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2 5h12M2 11h12"></path><circle cx="6" cy="5" r="1.6" fill="#fff"></circle><circle cx="10" cy="11" r="1.6" fill="#fff"></circle></svg></button></div>
+                    <div class="r"><button class="btn">Today</button><button class="nv" aria-label="Previous week"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 3 5 8l5 5"></path></svg></button><button class="nv" aria-label="Next week"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m6 3 5 5-5 5"></path></svg></button><span class="range">14 – 20 Sep</span></div>
+                  </div>
+                  <div class="pdays"><sc-for list="{{ ph.days }}" as="d" hint-placeholder-count="7"><div class="{{ d.cls }}"><span>{{ d.dow }}</span><b>{{ d.n }}</b></div></sc-for></div>
+                  <div class="pbody">
+                    <div class="pbg">
+                      <sc-for list="{{ ph.shades }}" as="sh" hint-placeholder-count="2"><div class="shade" style="{{ sh }}"></div></sc-for>
+                      <div class="tdcol" style="{{ ph.tdStyle }}"></div>
+                      <div class="nowl" style="{{ ph.nowStyle }}"></div>
+                    </div>
+                    <sc-for list="{{ ph.rows }}" as="r" hint-placeholder-count="9">
+                      <div class="{{ r.cls }}">
+                        <div class="pl"><span class="{{ r.markCls }}">{{ r.mark }}</span><span class="pn">{{ r.name }}</span><span class="{{ r.metaCls }}">{{ r.meta }}</span></div>
+                        <div class="pt"><div class="{{ r.barCls }}" style="{{ r.barStyle }}"><div class="fill" style="{{ r.fillStyle }}"></div><span class="shoot" style="{{ r.shootStyle }}"></span></div></div>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+              </div>
+
+              <div class="dv-card" data-screen-label="3c Key">
+                <div class="spec">
+                  <div>
+                    <h3>Stage — the project bar</h3>
+                    <p class="lead">Five stages, five treatments. Fill style separates the two light ones; the bar always prints the stage name, so colour is never the only cue.</p>
+                    <div class="srow"><div class="sbar"><div class="bar pbar c-await" style="width:150px">Awaiting RAW<span class="grip"></span></div></div><div class="stx"><b>Awaiting RAW</b><span>Hollow, dashed <code>greige-500</code> edge, ink text. Waiting on the shoot’s files.</span></div></div>
+                    <div class="srow"><div class="sbar"><div class="bar pbar c-raw" style="width:150px">RAW review<span class="grip"></span></div></div><div class="stx"><b>RAW review</b><span>Solid burnt ochre <code>#9a6a1f</code> · white text 4.71:1</span></div></div>
+                    <div class="srow"><div class="sbar"><div class="bar pbar c-edit" style="width:150px">Editing · autoHDR<span class="grip"></span></div></div><div class="stx"><b>Editing · autoHDR</b><span>Solid slate ink <code>#2f3b4d</code> · white 11.33:1</span></div></div>
+                    <div class="srow"><div class="sbar"><div class="bar pbar c-erev" style="width:150px">Edited review<span class="grip"></span></div></div><div class="stx"><b>Edited review</b><span>Solid teal <code>#2f6b66</code> · white 6.15:1 · a new token. The Tweaks panel switches it back to the shipped ochre + hatch.</span></div></div>
+                    <div class="srow"><div class="sbar"><div class="bar pbar c-dlv" style="width:150px"><span class="tk"></span>Delivered</div></div><div class="stx"><b>Delivered</b><span>Olive wash, olive edge · ink 15.96:1 · no grip, read-only</span></div></div>
+                  </div>
+                  <div>
+                    <h3>Task bar — states</h3>
+                    <p class="lead">A task takes its project’s colour as its edge, so a project and its tasks read as one group and the next project reads as another.</p>
+                    <div class="srow"><div class="sbar"><div class="bar tbar c-edit" style="width:150px"><div class="fill" style="width:60%"></div><span class="bav">AN</span><span class="bl">In progress</span></div></div><div class="stx"><b>In progress</b><span>White bar, stage edge, fill = share done (22% of the stage colour)</span></div></div>
+                    <div class="srow"><div class="sbar"><div class="bar tbar c-edit done" style="width:150px"><span class="bav">JM</span><span class="tk"></span><span class="bl">Done</span></div></div><div class="stx"><b>Done</b><span>Paper fill, greige edge, tick; title struck through in the tree</span></div></div>
+                    <div class="srow"><div class="sbar"><div class="bar tbar c-edit late" style="width:84px"><div class="fill" style="width:70%"></div><span class="bav">RK</span><span class="bl">Late</span></div><span class="chipbad" style="left:100px">1 day late</span></div><div class="stx"><b>Late</b><span>2px oxblood edge plus a chip that says how late</span></div></div>
+                    <div class="srow"><div class="sbar"><div class="dia c-edit" style="left:14px;top:12px"></div><span class="olbl" style="left:40px">Due Tue 22</span></div><div class="stx"><b>Due date only</b><span>Hollow diamond in the stage colour on its day</span></div></div>
+                    <div class="srow"><div class="sbar"><div class="bar tbar c-none unas" style="width:150px"><span class="bav" style="border-style:dashed;border-color:var(--greige-500)"></span><span class="bl">Unassigned</span></div></div><div class="stx"><b>Unassigned</b><span>Dashed edge, empty avatar</span></div></div>
+                    <div class="srow"><div class="sbar"><div class="sched" style="top:6px">Not scheduled</div></div><div class="stx"><b>Not scheduled</b><span>Dashed slot at the left of the track; drag it on to place</span></div></div>
+                  </div>
+                  <div class="span2">
+                    <h3>Type and size on the timeline</h3>
+                    <div class="tycols">
+                      <div>
+                        <div class="tyrow"><span style="font-size:14px">Project and task names, bar labels</span><span>14 · text-sm</span></div>
+                        <div class="tyrow"><span style="font-size:12px;color:var(--text-secondary)">Suburb, task due date, chips, key</span><span>12 · text-xs · 8.09:1</span></div>
+                        <div class="tyrow"><span style="font-size:14px">Project deadline in the Due column</span><span>14 · ink</span></div>
+                        <div class="tyrow"><span><b style="font:400 14px var(--font-mono)">18</b> <span style="font-size:12px;color:var(--text-secondary)">Fri</span></span><span>14 mono · 12 weekday</span></div>
+                      </div>
+                      <div>
+                        <div class="tyrow"><span style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-secondary)">W39 · 21–27 Sep</span><span>12 · caps · .08em</span></div>
+                        <div class="tyrow"><span style="font-size:14px">Project row 48 · task row 40 · bar 28</span><span>px</span></div>
+                        <div class="tyrow"><span style="font-size:14px">Day column at two-week zoom</span><span>52 px</span></div>
+                        <div class="tyrow"><span style="font-size:14px">Smallest text anywhere</span><span>12 px</span></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dv-opt" id="3d">
+            <div class="dv-olabel"><a class="dv-oid" href="#3d">3d</a>Calendar week, given the same palette and type. Events fill with a light wash of their project’s stage, edged in the full colour; shoots are outlined ink with the shoot diamond; deadlines stay solid (ink; oxblood once missed; olive once delivered). Hours are 52px, titles 14px, times 12px. The Layers and People comboboxes from round 2 stay.</div>
+            <div class="dv-card" data-screen-label="3d Calendar week">
+              <div class="app">
+                <nav class="rail mini">
+                  <div class="qmark">Q</div>
+                  <div class="ico"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.5"></circle><path d="M10.5 10.5 14 14"></path></svg></div>
+                  <div class="ico on"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="10" rx="1"></rect><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"></path></svg></div>
+                  <div class="ico"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="5.5"></circle></svg></div>
+                  <div style="margin-top:auto"><span class="av">TL</span></div>
+                </nav>
+                <div class="main">
+                  <div class="shellhead">Home <span class="sepd">/</span> Dashboard <span class="sepd">/</span> <b>Calendar</b></div>
+                  <div class="vbar">
+                    <h1 class="h1">Dashboard</h1>
+                    <span class="tabs"><span class="tab">Table</span><span class="tab">Board</span><span class="tab on">Calendar</span><span class="tab">Timeline</span></span>
+                    <span class="grow"></span>
+                    <span class="ctl srch"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="7" cy="7" r="4.5"></circle><path d="M10.5 10.5 14 14"></path></svg>Search</span>
+                    <button class="ctl">Filter</button>
+                    <button class="ctl">Display</button>
+                  </div>
+                  <div class="nbar">
+                    <button class="btn">Today</button>
+                    <button class="nv" aria-label="Previous week"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M10 3 5 8l5 5"></path></svg></button>
+                    <button class="nv" aria-label="Next week"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m6 3 5 5-5 5"></path></svg></button>
+                    <span class="range">14 – 20 September 2026</span>
+                    <span class="grow"></span>
+                    <span class="lab">Colour by</span>
+                    <span class="seg2"><button class="on" aria-pressed="true">Stage</button><button aria-pressed="false">People</button></span>
+                    <span class="seg2" style="margin-left:12px"><button>Day</button><button class="on">Week</button><button>Month</button></span>
+                  </div>
+                  <div class="keyrow">
+                    <sc-for list="{{ g.stageKeys }}" as="k" hint-placeholder-count="5"><button class="kchip"><span class="{{ k.dotCls }}">{{ k.dotText }}</span>{{ k.label }}</button></sc-for>
+                    <span class="grow"></span>
+                    <span class="ksym"><span class="sym-shoot"></span>Shoot</span>
+                    <span class="ksym"><span class="sym-grip" style="width:18px;height:12px"></span>Deadline</span>
+                  </div>
+                  <div class="cal">
+                    <aside class="cside">
+                      <div>
+                        <div class="mhd">September 2026</div>
+                        <div class="mgrid">
+                          <sc-for list="{{ dows }}" as="dw" hint-placeholder-count="7"><span class="mdow">{{ dw }}</span></sc-for>
+                          <sc-for list="{{ mini }}" as="m" hint-placeholder-count="35"><span class="{{ m.cls }}">{{ m.n }}</span></sc-for>
+                        </div>
+                      </div>
+                      <div>
+                        <div class="sh">Up next</div>
+                        <sc-for list="{{ upnext }}" as="u" hint-placeholder-count="3"><div class="un"><span>{{ u.t }}</span><small>{{ u.when }}</small></div></sc-for>
+                      </div>
+                      <div>
+                        <div class="flab">Layers</div>
+                        <div class="combo"><span class="chip"><span class="sw" style="background:var(--ink-900)"></span>Deadlines<span class="x">×</span></span><span class="chip"><span class="sw c-edit"></span>Tasks<span class="x">×</span></span></div>
+                      </div>
+                      <div>
+                        <div class="flab">People</div>
+                        <div class="combo"><span class="chip"><span class="av">AN</span>Anika<span class="x">×</span></span><span class="chip"><span class="av">RK</span>Rob<span class="x">×</span></span><span class="chip"><span class="av">JM</span>Jess<span class="x">×</span></span></div>
+                      </div>
+                      <div>
+                        <div class="sh">Not scheduled<b>3</b></div>
+                        <sc-for list="{{ unscheduled }}" as="x" hint-placeholder-count="3"><div class="uns"><span class="dots"></span>{{ x }}</div></sc-for>
+                      </div>
+                    </aside>
+                    <div class="cmain">
+                      <div class="wkhd"><span></span><sc-for list="{{ week }}" as="d" hint-placeholder-count="7"><div class="{{ d.hdCls }}">{{ d.dow }} <b>{{ d.n }}</b></div></sc-for></div>
+                      <div class="allday">
+                        <span class="gut" style="grid-row:1;grid-column:1;padding-top:8px">All day</span>
+                        <sc-for list="{{ allday }}" as="e" hint-placeholder-count="3"><div class="{{ e.cls }}" style="{{ e.style }}"><span class="av">{{ e.who }}</span>{{ e.t }} <small>{{ e.p }}</small></div></sc-for>
+                      </div>
+                      <div class="wkgrid">
+                        <div><sc-for list="{{ hours }}" as="h" hint-placeholder-count="12"><div class="hr">{{ h }}</div></sc-for></div>
+                        <sc-for list="{{ week }}" as="d" hint-placeholder-count="7">
+                          <div class="{{ d.colCls }}" style="height:624px">
+                            <sc-for list="{{ d.events }}" as="e" hint-placeholder-count="1"><div class="{{ e.cls }}" style="{{ e.style }}">{{ e.t }}<small>{{ e.meta }}</small></div></sc-for>
+                          </div>
+                        </sc-for>
+                        <div class="nowline" style="top:277px"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+        <p class="dv-next">Try next: “Table and Board with the same stage colours” · “the Display menu on the phone, open” · “month zoom on the Timeline”.</p>
+        </div>
+      </section>
+    </x-dc>
+    <script type="text/x-dc" data-dc-script data-props='{"reviewTone":{"editor":"enum","options":["teal","ochre-hatch"],"default":"teal","section":"Stage colours"},"$preview":{"width":1600,"height":4560}}'>
+      class Component extends DCLogic {
+        data() {
+          return [
+            { name: '12 Ocean Street', sub: 'Bondi', st: 'edit', team: ['RK'], s: 0, e: 3, late: 'Overdue · 1 day', tasks: [
+              { name: 'Cull & select RAW', who: 'JM', s: 0, e: 0, done: true },
+              { name: 'Retouch — hero shots', who: 'RK', s: 0, e: 3, prog: 70, late: '1 day late' } ] },
+            { name: '3 Banksia Avenue', sub: 'Marrickville', st: 'erev', team: ['AN'], s: -3, e: 4, tasks: [
+              { name: 'Client revisions', who: 'AN', s: 2, e: 4, prog: 70 },
+              { name: 'Export finals', who: 'AN', s: 4, e: 4, prog: 0 } ] },
+            { name: '14 Wattle Street', sub: 'Newtown', st: 'edit', team: ['AN', 'JM'], s: 1, e: 10, tasks: [
+              { name: 'Cull & select RAW', who: 'JM', s: 1, e: 2, done: true },
+              { name: 'HDR blend — interiors', who: 'AN', s: 3, e: 8, prog: 60, hover: true },
+              { name: 'Twilight sky replacement', who: 'AN', s: 7, e: 9, prog: 0 },
+              { name: 'Floorplan redraw', who: 'RK', ms: 8 },
+              { name: 'Agent copy review', who: '', none: true } ] },
+            { name: '7/22 Harbour Road', sub: 'Balmain', st: 'raw', team: ['RK', 'JM'], s: 3, e: 14, tasks: [
+              { name: 'RAW selects with agent', who: 'RK', s: 4, e: 7, prog: 30 },
+              { name: 'Video rough cut', who: 'RK', s: 7, e: 11, prog: 0 },
+              { name: 'Colour grade', who: '', s: 11, e: 14, prog: 0 } ] },
+            { name: '88 Glebe Point Road', sub: 'Glebe', st: 'await', team: ['TL'], s: 8, e: 15, shut: true, count: 3, tasks: [] },
+            { name: '51 Elizabeth Bay Road', sub: 'Elizabeth Bay', st: 'dlv', team: ['AN'], s: -4, e: 2, shut: true, count: 4, tasks: [] }
+          ];
+        }
+        dl(i) {
+          var dow = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+          var n = 14 + i; if (n > 30) n -= 30; if (n < 1) n += 31;
+          return dow[((i % 7) + 7) % 7] + ' ' + n;
+        }
+        stageLabels() {
+          return { await: 'Awaiting RAW', raw: 'RAW review', edit: 'Editing · autoHDR', erev: 'Edited review', dlv: 'Delivered' };
+        }
+        stageKeys(projects) {
+          var L = this.stageLabels();
+          return ['await', 'raw', 'edit', 'erev', 'dlv'].map(function (k) {
+            return { dotCls: 'sw c-' + k, dotText: '', label: L[k], n: projects.filter(function (p) { return p.st === k; }).length };
+          });
+        }
+        gantt(mode, withTip) {
+          var self = this, D = 52, N = 16, TODAY = 4, CW = 7.4;
+          var hide = { display: 'none' };
+          var L = this.stageLabels();
+          var dow = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+          var days = [], shades = [], lines = [];
+          for (var i = 0; i < N; i++) {
+            var we = i % 7 >= 5;
+            var n = 14 + i; if (n > 30) n -= 30;
+            days.push({ dow: dow[i % 7], n: n, cls: 'gd' + (we ? ' we' : '') + (i === TODAY ? ' td' : ''), style: { width: D + 'px' } });
+            if (we) shades.push({ left: i * D + 'px', width: D + 'px' });
+            lines.push({ left: (i + 1) * D - 1 + 'px' });
+          }
+          var weeks = [
+            { label: 'W38 · 14–20 Sep', style: { width: 7 * D + 'px' } },
+            { label: 'W39 · 21–27 Sep', style: { width: 7 * D + 'px' } },
+            { label: 'W40 · 28 Sep', style: { width: 2 * D + 'px' } }
+          ];
+          var projects = this.data();
+          var rows = [], y = 0, tip = null;
+          function avatar(w) { return w ? { i: w, cls: mode === 'people' ? 'av pc c-' + w.toLowerCase() : 'av' } : { i: '', cls: 'av none' }; }
+          projects.forEach(function (p) {
+            var s = Math.max(p.s, 0), e = Math.min(p.e, N - 1), clip = p.s < 0;
+            var left = s * D, width = (e - s + 1) * D - 2;
+            var label = mode === 'stage' ? L[p.st] : (clip ? 'Due ' : self.dl(p.s) + ' → ') + (p.e === TODAY ? 'today' : self.dl(p.e));
+            rows.push({
+              treeCls: 'gr gp', rowCls: 'trow gp',
+              nameCls: 'gname', markCls: p.shut ? 'tw shut' : 'tw', swCls: 'sw c-' + p.st,
+              name: p.name, sub: p.shut ? p.sub + ' · ' + p.count + ' tasks' : p.sub, subStyle: {},
+              people: p.team.map(avatar),
+              due: p.e === TODAY ? 'Today' : self.dl(p.e), dueCls: 'gdue' + (p.late ? ' bad' : ''),
+              barCls: 'bar pbar ' + (mode === 'stage' ? 'c-' + p.st : 'neutral') + (clip ? ' clip' : ''),
+              barStyle: { left: left + 'px', width: width + 'px' },
+              fillStyle: hide, shootStyle: clip ? hide : {}, gripStyle: p.st === 'dlv' ? hide : {},
+              tickStyle: p.st === 'dlv' && mode === 'stage' ? {} : hide,
+              bav: '', bavStyle: hide, inLabel: label,
+              diaCls: 'dia', diaStyle: hide, olCls: 'olbl', outLabel: '', outStyle: hide,
+              chip: p.late || '', chipStyle: p.late ? { left: left + width + 10 + 'px' } : hide, schedStyle: hide
+            });
+            y += 48;
+            if (p.shut) return;
+            p.tasks.forEach(function (t) {
+              var colorCls = mode === 'stage' ? 'c-' + p.st : (t.who ? 'c-' + t.who.toLowerCase() : 'c-none');
+              var r = {
+                treeCls: 'gr', rowCls: 'trow',
+                nameCls: 'gname ind' + (t.done ? ' done' : ''), markCls: 'cb' + (t.done ? ' x' : ''), swCls: 'hide',
+                name: t.name, sub: '', subStyle: hide,
+                people: [avatar(t.who)],
+                due: t.none ? '—' : self.dl(t.ms != null ? t.ms : t.e), dueCls: 'gdue' + (t.late ? ' bad' : ''),
+                barCls: 'bar tbar', barStyle: hide, fillStyle: hide, shootStyle: hide, gripStyle: hide, tickStyle: hide,
+                bav: t.who, bavStyle: hide, inLabel: '',
+                diaCls: 'dia ' + colorCls, diaStyle: hide, olCls: 'olbl' + (t.done ? ' dn' : ''), outLabel: '', outStyle: hide,
+                chip: t.late || '', chipStyle: hide, schedStyle: t.none ? {} : hide
+              };
+              if (t.ms != null) {
+                var cx = t.ms * D + D / 2;
+                r.diaStyle = { left: cx - 8 + 'px' };
+                r.outLabel = t.name + ' · due ' + self.dl(t.ms);
+                r.outStyle = { left: cx + 16 + 'px' };
+              } else if (!t.none) {
+                var bl = t.s * D + 3, bw = (t.e - t.s + 1) * D - 6;
+                var need = 22 + (t.who ? 29 : 0) + (t.done ? 18 : 0) + t.name.length * CW;
+                var fits = need <= bw;
+                r.barCls = 'bar tbar ' + colorCls + (mode === 'people' && t.who && !t.done ? ' solid' : '') + (t.done ? ' done' : '') + (t.late ? ' late' : '') + (!t.who ? ' unas' : '') + (t.hover && withTip ? ' hovb' : '');
+                r.barStyle = { left: bl + 'px', width: bw + 'px' };
+                r.fillStyle = { width: (t.prog || 0) + '%' };
+                r.bavStyle = t.who && bw >= 34 ? {} : hide;
+                r.tickStyle = t.done && fits ? {} : hide;
+                r.inLabel = fits ? t.name : '';
+                r.outLabel = fits ? '' : t.name;
+                r.outStyle = fits ? hide : { left: bl + bw + 8 + 'px' };
+                if (t.late) r.chipStyle = { left: bl + bw + 8 + (fits ? 0 : Math.round(t.name.length * CW) + 10) + 'px' };
+                if (t.hover && withTip) {
+                  r.treeCls += ' hov'; r.rowCls += ' hov';
+                  tip = { style: { left: bl + 24 + 'px', top: y + 42 + 'px' }, title: t.name, l1: 'Anika Nair · 14 Wattle Street, Newtown', l2: self.dl(t.s) + ' – ' + self.dl(t.e) + ' Sep · 6 days · 60% done', l3: 'Drag to move · drag an end to change dates' };
+                }
+              }
+              rows.push(r);
+              y += 40;
+            });
+          });
+          var keys;
+          if (mode === 'stage') {
+            keys = this.stageKeys(projects);
+          } else {
+            var names = { AN: 'Anika Nair', RK: 'Rob Keane', JM: 'Jess Moore' };
+            var all = [];
+            projects.forEach(function (p) { p.tasks.forEach(function (t) { all.push(t); }); });
+            keys = ['AN', 'RK', 'JM'].map(function (w) {
+              return { dotCls: 'av pc c-' + w.toLowerCase(), dotText: w, label: names[w], n: all.filter(function (t) { return t.who === w && !t.done; }).length + ' open' };
+            });
+            keys.push({ dotCls: 'av none', dotText: '', label: 'Unassigned', n: all.filter(function (t) { return !t.who; }).length + ' open' });
+          }
+          var empty = { title: '', l1: '', l2: '', l3: '' };
+          return {
+            days: days, shades: shades, lines: lines, weeks: weeks, rows: rows, keys: keys,
+            stageKeys: this.stageKeys(projects),
+            tdStyle: { left: TODAY * D + 'px', width: D + 'px' },
+            nowStyle: { left: TODAY * D + Math.round(D * 0.55) + 'px' },
+            tip: tip || empty, tipStyle: tip ? tip.style : hide
+          };
+        }
+        phone() {
+          var self = this, N = 7, TODAY = 4;
+          var hide = { display: 'none' };
+          var L = this.stageLabels();
+          function pct(v) { return (v / N * 100).toFixed(3) + '%'; }
+          var dow = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+          var days = dow.map(function (d, i) { return { dow: d, n: 14 + i, cls: 'gd' + (i >= 5 ? ' we' : '') + (i === TODAY ? ' td' : '') }; });
+          var rows = [];
+          this.data().slice(0, 3).forEach(function (p) {
+            var s = Math.max(p.s, 0), e = Math.min(p.e, N - 1);
+            rows.push({
+              cls: 'prow pp', markCls: 'sw c-' + p.st, mark: '', name: p.name,
+              metaCls: 'pm' + (p.late ? ' bad' : ''),
+              meta: p.late ? p.late : L[p.st].split(' · ')[0] + ' · due ' + (p.e === TODAY ? 'today' : self.dl(p.e)),
+              barCls: 'bar pbar c-' + p.st + (p.s < 0 ? ' clip' : '') + (p.e > N - 1 ? ' clipr' : ''),
+              barStyle: { left: pct(s), width: 'calc(' + pct(e - s + 1) + ' - 2px)' },
+              fillStyle: hide, shootStyle: p.s < 0 ? hide : {}
+            });
+            p.tasks.filter(function (t) { return !t.none && t.ms == null && t.s < N; }).slice(0, 2).forEach(function (t) {
+              var te = Math.min(t.e, N - 1);
+              rows.push({
+                cls: 'prow', markCls: 'av', mark: t.who, name: t.name,
+                metaCls: 'pm' + (t.late ? ' bad' : ''),
+                meta: t.done ? 'Done' : t.late ? t.late : 'Due ' + self.dl(t.e),
+                barCls: 'bar tbar c-' + p.st + (t.done ? ' done' : '') + (t.late ? ' late' : '') + (t.e > N - 1 ? ' clipr' : ''),
+                barStyle: { left: 'calc(' + pct(t.s) + ' + 2px)', width: 'calc(' + pct(te - t.s + 1) + ' - 4px)' },
+                fillStyle: { width: (t.prog || 0) + '%' }, shootStyle: hide
+              });
+            });
+          });
+          return {
+            days: days, rows: rows,
+            shades: [{ left: pct(5), width: pct(2) }],
+            tdStyle: { left: pct(TODAY), width: pct(1) },
+            nowStyle: { left: 'calc(' + pct(TODAY + 0.55) + ')' }
+          };
+        }
+        renderVals() {
+          var self = this;
+          var mode = (this.state && this.state.colorBy) || 'stage';
+          var tone = this.props.reviewTone ?? 'teal';
+          var H = 52, T0 = 8;
+          function ev(t, meta, from, to, cls) { return { t: t, meta: meta, cls: 'ev ' + cls, style: { top: (from - T0) * H + 2 + 'px', height: (to - from) * H - 4 + 'px' } }; }
+          var evs = {
+            0: [ev('Cull & select RAW', '09:00 – 11:30 · JM · 12 Ocean St', 9, 11.5, 'c-edit dn')],
+            1: [ev('Shoot · 14 Wattle St', '10:00 – 12:00 · TL', 10, 12, 'evshoot')],
+            2: [ev('Client revisions', '10:00 – 12:00 · AN · 3 Banksia Ave', 10, 12, 'c-erev'), ev('Due · 51 Elizabeth Bay Rd', '17:00 · delivered', 17, 18, 'dl ok')],
+            3: [ev('Shoot · 7/22 Harbour Rd', '09:00 – 11:00 · TL', 9, 11, 'evshoot'), ev('Retouch — hero shots', '13:00 – 16:00 · RK · 12 Ocean St', 13, 16, 'c-edit'), ev('Due · 12 Ocean St', '17:00 · 1 day overdue', 17, 18, 'dl bad')],
+            4: [ev('Export finals', '14:00 – 16:00 · AN · 3 Banksia Ave', 14, 16, 'c-erev'), ev('Due · 3 Banksia Ave', '17:00', 17, 18, 'dl')]
+          };
+          var names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+          var week = names.map(function (d, i) {
+            return { dow: d, n: 14 + i, hdCls: 'wd' + (i === 4 ? ' now' : ''), colCls: 'dcol' + (i >= 5 ? ' we' : '') + (i === 4 ? ' td' : ''), events: evs[i] || [] };
+          });
+          var hours = [];
+          for (var h = T0; h < 20; h++) hours.push((h < 10 ? '0' : '') + h + ':00');
+          var has = { 14: 1, 15: 1, 16: 1, 17: 1, 18: 1, 22: 1, 24: 1, 28: 1, 29: 1 };
+          var mini = [];
+          for (var i = 0; i < 35; i++) {
+            var n = i === 0 ? 31 : i <= 30 ? i : i - 30;
+            var inM = i >= 1 && i <= 30;
+            mini.push({ n: n, cls: 'mc' + (inM ? '' : ' out') + (inM && n >= 14 && n <= 20 ? ' wk' : '') + (inM && n === 18 ? ' now' : '') + (inM && has[n] ? ' hd' : '') });
+          }
+          return {
+            rootCls: 'r3' + (tone === 'ochre-hatch' ? ' rv-hatch' : ''),
+            g: this.gantt(mode, true),
+            gp: this.gantt('people', false),
+            ph: this.phone(),
+            segStage: mode === 'stage' ? 'on' : '',
+            segPeople: mode === 'people' ? 'on' : '',
+            pressStage: mode === 'stage' ? 'true' : 'false',
+            pressPeople: mode === 'people' ? 'true' : 'false',
+            toStage: function () { self.setState({ colorBy: 'stage' }); },
+            toPeople: function () { self.setState({ colorBy: 'people' }); },
+            dows: ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'],
+            mini: mini,
+            upnext: [
+              { t: 'Export finals — 3 Banksia Ave', when: 'Today · 14:00 · AN' },
+              { t: 'Deadline · 3 Banksia Avenue', when: 'Today · 17:00' },
+              { t: 'HDR blend — interiors', when: 'Ends Tue 22 Sep · AN' }
+            ],
+            unscheduled: ['Agent copy review · 14 Wattle St', 'Drone stills select · 7/22 Harbour Rd', 'Music licence · 7/22 Harbour Rd'],
+            week: week,
+            allday: [
+              { t: 'Cull & select RAW', p: '14 Wattle St', who: 'JM', cls: 'ad c-edit dn', style: { gridColumn: '3 / span 2', gridRow: '1' } },
+              { t: 'HDR blend — interiors', p: '14 Wattle St · to Tue 22', who: 'AN', cls: 'ad c-edit more', style: { gridColumn: '5 / span 4', gridRow: '1' } },
+              { t: 'RAW selects with agent', p: '7/22 Harbour Rd · to Mon 21', who: 'RK', cls: 'ad c-raw more', style: { gridColumn: '6 / span 3', gridRow: '2' } }
+            ],
+            hours: hours
+          };
+        }
+      }
+    </script>
+  </body>
+</html>

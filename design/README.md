@@ -22,6 +22,7 @@ against.
 | Prototype | Work | Frames |
 |---|---|---|
 | `prototypes/video-review-revamp/` | Video review revamp, #879–#884 | P1–P10 phone, F1–F4, W1–W4, T1–T5, V1–V6 |
+| `prototypes/dashboard-views/` | Dashboard Timeline and Calendar revamp (not yet planned or built); round 3 is current | 3a–3d, 2c carried forward |
 | `prototypes/project-header-revamp/` | Project header revamp (not yet planned or built); one hand-authored HTML page, not a design export | D1–D6 desktop, T1 tablet, M1–M6 phone, A1 alternative |
 
 ## What does not belong here
