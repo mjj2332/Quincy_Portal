@@ -6,7 +6,7 @@ import { mountGuest } from "./mount-guest";
 
 const LINK = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 let host: HTMLElement | null = null;
-afterEach(() => { host?.remove(); host = null; vi.restoreAllMocks(); });
+afterEach(() => { host?.remove(); host = null; vi.restoreAllMocks(); window.sessionStorage.clear(); });
 const flush = async () => { for (let i = 0; i < 4; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); };
 
 describe("mountGuest: the fragment is scrubbed before the chunk is requested", () => {
@@ -58,5 +58,21 @@ describe("mountGuest: the fragment is scrubbed before the chunk is requested", (
     await act(async () => { mountGuest(host!, importer as never, vi.fn()); });
     await flush();
     expect(seen[0]).toEqual({ token: "boot-token", initialVideoId: film, pageSlug: slug });
+  });
+
+  it("after an ordinary reload (the fragment already scrubbed) still hands GuestApp the Delivery page, with no token (#882)", async () => {
+    const slug = "14-harbour-st-mosman-d234xz";
+    window.history.replaceState(null, "", `/d/review?link=${LINK}#t=boot-token&p=${slug}`);
+    const seen: unknown[] = [];
+    const importer = vi.fn(() => Promise.resolve({ GuestApp: (props: unknown) => { seen.push(props); return null; } }));
+    host = document.createElement("div"); document.body.appendChild(host);
+    await act(async () => { mountGuest(host!, importer as never, vi.fn()); });
+    await flush();
+    host.remove();
+    // The reload: the same scrubbed address, a fresh boot.
+    host = document.createElement("div"); document.body.appendChild(host);
+    await act(async () => { mountGuest(host!, importer as never, vi.fn()); });
+    await flush();
+    expect(seen.at(-1)).toEqual({ token: null, initialVideoId: null, pageSlug: slug });
   });
 });

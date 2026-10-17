@@ -460,8 +460,6 @@ describe("film tiles (#882)", () => {
   const PAGE_SLUG = "12-example-st-23456b";
   const tileOf = (n: number) => document.querySelector<HTMLElement>(`[data-testid="delivery-film-item"][data-handle="${handle(n)}"]`)!;
   const openOf = (n: number) => tileOf(n).querySelector<HTMLElement>('[data-testid="delivery-film-open"]')!;
-  let assign: (address: string) => void;
-  beforeEach(() => { assign = vi.fn<(address: string) => void>(); });
   const showFilms = async (items: DeliveryPageDto["items"], props: Props = {}) => { await show(page(items), { pageSlug: PAGE_SLUG, ...props }); await click(tab("Film")); };
 
   it("is the guest poster tile in paper colours: poster, Version, duration, title and the open-note count, no inline player", async () => {
@@ -489,12 +487,21 @@ describe("film tiles (#882)", () => {
     expect(reviewAddress(REVIEW, PAGE_SLUG)).toBe(`${REVIEW}&p=${PAGE_SLUG}`);
     expect(reviewAddress(REVIEW, null)).toBe(REVIEW);
   });
-  it("calls the injected same-tab navigation with the review address and the slug", async () => {
-    const { FilmList } = await import("./FilmList");
-    mounted = await render(<FilmList items={[film(1, { review: { url: REVIEW } })]} hrefs={hrefs} unlock={{}} onRequestUnlock={() => undefined} pageSlug={PAGE_SLUG} assign={assign} />);
-    await click(openOf(1));
-    expect(assign).toHaveBeenCalledTimes(1); expect(assign).toHaveBeenCalledWith(`${REVIEW}&p=${PAGE_SLUG}`);
+  it("opens the review through a real same-tab link to the review address and the slug (story 28), so open-in-new-tab works", async () => {
+    await showFilms([film(1, { review: { url: REVIEW } })]);
+    const open = openOf(1);
+    expect(open.tagName).toBe("A");
+    expect(open.getAttribute("href")).toBe(`${REVIEW}&p=${PAGE_SLUG}`);
+    expect(open.hasAttribute("target")).toBe(false); expect(open.hasAttribute("download")).toBe(false);
+    expect(open.textContent).toBe("Video 01");
     expect(document.querySelector('[data-testid="delivery-film-player"]')).toBeNull();
+  });
+  it("keeps a button only where the tile acts rather than navigates: the plain player (no review) and a locked film", async () => {
+    await show(page([film(1), locked(2, { kind: "video", label: "Video 02", url: null, thumbUrl: null })]), { pageSlug: PAGE_SLUG });
+    await click(tab("Film"));
+    expect(openOf(1).tagName).toBe("BUTTON"); expect(openOf(1).hasAttribute("href")).toBe(false);
+    await click(tab("Premium"));
+    expect(openOf(2).tagName).toBe("BUTTON");
   });
   it("has no new-tab link and no Review & feedback button any more", async () => {
     await showFilms([film(1, { review: { url: REVIEW } })]);
@@ -545,6 +552,28 @@ describe("film tiles (#882)", () => {
       expect(pause.mock.contexts).toContain(video);
     } finally { pause.mockRestore(); }
   });
+  it("the plain player shows a loading line until the film's metadata is in (iOS fetches no frames before play), then the film alone", async () => {
+    await showFilms([film(1)]); await click(openOf(1)); await flush();
+    const loading = byTestId("delivery-film-player-loading")!;
+    expect(loading.getAttribute("role")).toBe("status"); expect(loading.textContent).toContain("Loading");
+    await act(async () => { byTestId("delivery-film-player-video")!.dispatchEvent(new Event("loadedmetadata")); });
+    expect(byTestId("delivery-film-player-loading")).toBeNull();
+    expect(byTestId("delivery-film-player-error")).toBeNull();
+  });
+  it("a film that fails to load is an inline error with Try again, which loads it afresh", async () => {
+    await showFilms([film(1)]); await click(openOf(1)); await flush();
+    const first = byTestId("delivery-film-player-video")!;
+    await act(async () => { first.dispatchEvent(new Event("error")); });
+    const error = byTestId("delivery-film-player-error")!;
+    expect(error.getAttribute("role")).toBe("alert"); expect(error.textContent).toMatch(/Couldn't play this film/);
+    expect(byTestId("delivery-film-player-video")).toBeNull(); expect(byTestId("delivery-film-player-loading")).toBeNull();
+    // Download original and Close stay: a film that will not stream may still download.
+    expect(byTestId("delivery-film-player-download")).not.toBeNull(); expect(byTestId("delivery-film-player-close")).not.toBeNull();
+    await click(byTestId("delivery-film-player-retry"));
+    const second = byTestId("delivery-film-player-video")!;
+    expect(second).not.toBe(first); expect(second.getAttribute("src")).toBe(film(1).url);
+    expect(byTestId("delivery-film-player-error")).toBeNull(); expect(byTestId("delivery-film-player-loading")).not.toBeNull();
+  });
   it("the plain player closes by itself when the film is relocked", async () => {
     mounted = await render(<Harness initial={page([film(1)])} after={page([locked(1, { kind: "video", label: "Video 01", url: null, thumbUrl: null })])} />);
     await click(tab("Film")); await click(openOf(1)); await flush();
@@ -563,16 +592,22 @@ describe("film tiles (#882)", () => {
     expect(byTestId("delivery-film-menu")).toBeNull();
     await click(openOf(1)); expect(onRequestUnlock).toHaveBeenCalledWith(handle(1));
   });
+  it("names the locked tile's whole-tile control for what it does: it requests the unlock", async () => {
+    await show(page([locked(1, { kind: "video", label: "Video 01", url: null, thumbUrl: null })]));
+    await click(tab("Premium"));
+    expect(openOf(1).getAttribute("aria-label")).toBe("Request unlock: Video 01");
+  });
   it("a locked tile shows today's unlock states and the requested line", async () => {
     await show(page([locked(1, { kind: "video", label: "Video 01", url: null, thumbUrl: null })]), { unlockState: { [handle(1)]: { kind: "requested" } } });
     await click(tab("Premium"));
     expect(byTestId("delivery-unlock-status")!.textContent).toBe("Requested. The studio will be in touch.");
     expect([...document.querySelectorAll("button")].some((b) => b.textContent === "Request unlock")).toBe(false);
   });
-  it("lays the grid out as auto-fill 280 px columns, one column under 721 px, and a lone film across the row (D32, D33)", async () => {
+  it("lays the grid out as auto-fill 280 px columns, one column at 721 px and under the page's container (not the window), and a lone film across the row (D32, D33)", async () => {
     await showFilms([film(1), film(2)]);
     const grid = byTestId("delivery-film")!.className;
-    expect(grid).toContain("grid-cols-[repeat(auto-fill,minmax(280px,1fr))]"); expect(grid).toContain("max-[721px]:grid-cols-1"); expect(grid).toContain("has-[>li:only-child]:grid-cols-1");
+    expect(grid).toContain("grid-cols-[repeat(auto-fill,minmax(280px,1fr))]"); expect(grid).toContain("@max-[721px]:grid-cols-1"); expect(grid).toContain("has-[>li:only-child]:grid-cols-1");
+    expect(grid.split(" ")).not.toContain("max-[721px]:grid-cols-1");
   });
 });
 

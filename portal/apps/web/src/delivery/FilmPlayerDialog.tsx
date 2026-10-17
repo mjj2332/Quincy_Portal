@@ -1,8 +1,10 @@
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import type { DeliveryItemDto } from "@quincy/shared";
 import { DownloadIcon, XIcon } from "lucide-react";
+import { EmptyState } from "../components/quincy/EmptyState";
 import { Button } from "../components/reui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "../components/reui/dialog";
+import { Spinner } from "../components/reui/spinner";
 import type { DeliveryHrefs } from "./delivery-model";
 
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
@@ -12,6 +14,8 @@ const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
  * (absent when `hrefs` is null, which is Preview) and Close; no notes, no code, no Version. The reui dialog on the same inverse stage as `quincy/EmbeddedVideoDialog` (which is not importable here: it plays
  * a staff whiteboard media id). `item` is null while closed. A film that can no longer be played (relocked, or its URL gone) closes the dialog: the parent passes null. The video pauses when the dialog
  * closes or the page goes away, because a detached `<video>` keeps playing sound (docs/lessons.md "A removed `<video>` does not stop"). Focus returns to the tile that opened it.
+ * Until the film's metadata is in, a spinner sits over the poster (one status line); a film that fails to load is an inline error with Try again, which mounts a fresh `<video>` (a failed element does not reload
+ * by itself). Title, Download original and Close stay through both, so a film that will not stream can still be downloaded.
  */
 export function FilmPlayerDialog({ item, hrefs, returnFocusTo, onClose }: { item: DeliveryItemDto | null; hrefs: DeliveryHrefs | null; returnFocusTo: RefObject<HTMLElement | null>; onClose: () => void }) {
   const playable = item !== null && !item.locked && item.url !== null ? item : null;
@@ -31,10 +35,32 @@ export function FilmPlayerDialog({ item, hrefs, returnFocusTo, onClose }: { item
   </Dialog>;
 }
 
+type Load = "loading" | "ready" | "failed";
+
 function PlainVideo({ item, url }: { item: DeliveryItemDto; url: string }) {
+  const [load, setLoad] = useState<Load>("loading");
+  // Try again remounts the element under a new key: the old one has given up on its source.
+  const [attempt, setAttempt] = useState(0);
+  if (load === "failed") {
+    return <div className="grid place-items-center bg-invert px-[var(--space-4)] py-[var(--space-6)]">
+      <EmptyState size="compact" tone="error" role="alert" data-testid="delivery-film-player-error" title="Couldn't play this film. Check your connection and try again.">
+        <Button type="button" variant="outline" data-testid="delivery-film-player-retry" className={`mt-[var(--space-2)] ${TOUCH}`} onClick={() => { setLoad("loading"); setAttempt((n) => n + 1); }}>Try again</Button>
+      </EmptyState>
+    </div>;
+  }
+  return <div className="grid place-items-center bg-invert">
+    <PlainVideoElement key={attempt} item={item} url={url} onReady={() => { setLoad("ready"); }} onFailed={() => { setLoad("failed"); }} />
+    {load === "loading" && <div role="status" data-testid="delivery-film-player-loading" className="pointer-events-none flex items-center gap-[var(--space-2)] text-invert-foreground [grid-area:1/1] [font:var(--type-label)]">
+      <Spinner aria-hidden="true" role="presentation" className="size-5" /><span className="sr-only">Loading the film</span>
+    </div>}
+  </div>;
+}
+
+function PlainVideoElement({ item, url, onReady, onFailed }: { item: DeliveryItemDto; url: string; onReady: () => void; onFailed: () => void }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => { const video = ref.current; return () => { video?.pause(); }; }, []);
-  return <div className="grid place-items-center bg-invert">
-    <video ref={ref} controls playsInline autoPlay src={url} poster={item.thumbUrl ?? undefined} aria-label={item.label} data-testid="delivery-film-player-video" className="max-h-[calc(90dvh-var(--space-8))] w-full object-contain" />
-  </div>;
+  return <video ref={ref} controls playsInline autoPlay src={url} poster={item.thumbUrl ?? undefined} aria-label={item.label} data-testid="delivery-film-player-video"
+    // Metadata is enough to call it loaded: iOS Safari fetches no frame data until the viewer presses play, so `loadeddata` alone would leave the spinner up.
+    onLoadedMetadata={onReady} onLoadedData={onReady} onError={onFailed}
+    className="max-h-[calc(90dvh-var(--space-8))] w-full object-contain [grid-area:1/1]" />;
 }

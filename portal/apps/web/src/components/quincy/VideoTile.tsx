@@ -15,7 +15,9 @@ import type { StatusTone } from "./StatusPill";
  * (`guest/guest-boundary.guard.test.ts`). `tone="paper"` (#882, D30) is the light tile for the light Delivery page: a hairline border, the same black poster. `locked` (D37) is a Premium film the viewer has not unlocked:
  * a light box with a lock and "Film · locked" and no Version, duration or count (`version` and `durationMs` are null there, and also on a film with no review to open, D36).
  *
- * The whole tile opens: the title is the one `<button>` and stretches over the tile (`after:inset-0`); the tick, the menu and the footer sit above it (`z-10`), so each is its own control.
+ * The whole tile opens: the title is the one open control and stretches over the tile (`after:inset-0`); the tick, the menu and the footer sit above it (`z-10`), so each is its own control.
+ * With an `href` the open control is a native `<a>` in the same tab (#882, story 28: the Delivery page's review tile is one link, so open-in-new-tab and copy-link work); with `onOpen` it is a
+ * `<button>`, for a tile whose open is an action rather than a navigation (a screen state, the plain player, an unlock request). `openLabel` renames it when the action is not "open this film".
  */
 export type VideoTileStatus = { tone: StatusTone; /** Drawn beside the dot. */ short: string; /** Read aloud and in the tile's summary. */ full: string };
 
@@ -24,8 +26,15 @@ const CHIP = "border-transparent bg-[var(--scrim-badge)] text-invert-foreground"
 // The tick sits on a poster that may be any colour: a paper border on a translucent ink fill reads on dark and light alike (prototype tiles.jsx).
 const TICK = "appearance-none relative rounded-[var(--radius-sm)] border-[length:var(--border-width-bold)] border-solid border-invert-foreground bg-[color-mix(in_srgb,var(--ink-900)_35%,transparent)] checked:bg-invert-foreground checked:before:absolute checked:before:left-[5px] checked:before:top-[1px] checked:before:h-[10px] checked:before:w-[5px] checked:before:rotate-45 checked:before:border-solid checked:before:border-b-2 checked:before:border-r-2 checked:before:border-invert checked:before:content-['']";
 const MONO = "[font-family:var(--font-mono)]";
+// The open control, link or button: 44px tall, one line of body type (truncated: the button's own text, the link's inner span, since a flex box does not ellipsize), stretched over the whole tile by its ::after.
+const OPEN = "min-h-11 min-w-0 flex-1 text-foreground [font:var(--weight-regular)_var(--text-base)/var(--leading-normal)_var(--font-sans)] after:absolute after:inset-0 after:content-['']";
 
-export function VideoTile({ title, posterUrl, version, durationMs, openNotes, onOpen, tone = "ink", locked = false, status, linked, premium, select, menu, drop, footer, testId = "video-tile", openTestId = "video-tile-open", dataVideoId }: {
+/** How the tile opens: a link (`href`, same tab) or an action (`onOpen`); never both. */
+type VideoTileOpen =
+  | { /** A same-tab address: the open control is a native `<a>`. */ href: string; onOpen?: undefined }
+  | { /** `trigger` is the open control, where focus returns when the viewer closes. */ onOpen: (trigger: HTMLElement) => void; href?: undefined };
+
+export function VideoTile({ title, posterUrl, version, durationMs, openNotes, href, onOpen, openLabel, tone = "ink", locked = false, status, linked, premium, select, menu, drop, footer, testId = "video-tile", openTestId = "video-tile-open", dataVideoId }: VideoTileOpen & {
   title: string;
   posterUrl: string | null;
   /** Null where the page does not know or must not say (a locked film, or no review to open on the Delivery page): no chip, no words. */
@@ -33,8 +42,8 @@ export function VideoTile({ title, posterUrl, version, durationMs, openNotes, on
   durationMs: number | null;
   /** Open root notes on `version`; null when unknown. Shown only above zero. */
   openNotes: number | null;
-  /** `trigger` is the open control, where focus returns when the viewer closes. */
-  onOpen: (trigger: HTMLElement) => void;
+  /** The open control's accessible name when the tile does something other than open the film (a locked tile requests an unlock); it keeps the title in it. Default: the title. */
+  openLabel?: string;
   tone?: "ink" | "paper";
   /** A locked Premium film (D37): no poster, no facts; `premium` is implied and drawn in the menu's place unless a `menu` is given. */
   locked?: boolean;
@@ -94,11 +103,13 @@ export function VideoTile({ title, posterUrl, version, durationMs, openNotes, on
         <Checkbox aria-label={`Select ${title}`} checked={select.selected} onChange={select.onToggle} className={TICK} />
       </label>}
       <div className="flex items-center gap-[var(--space-2)] px-[var(--space-3)] py-[var(--space-2)]">
-        <button
-          type="button" data-testid={openTestId} data-video-id={dataVideoId} aria-describedby={summaryId}
-          onClick={(event) => { onOpen(event.currentTarget); }}
-          className="min-h-11 min-w-0 flex-1 cursor-pointer truncate border-0 bg-transparent p-0 text-left text-foreground [font:var(--weight-regular)_var(--text-base)/var(--leading-normal)_var(--font-sans)] after:absolute after:inset-0 after:content-['']"
-        >{title}</button>
+        {href !== undefined
+          ? <a href={href} data-testid={openTestId} data-video-id={dataVideoId} aria-describedby={summaryId} aria-label={openLabel} className={cn(OPEN, "flex items-center no-underline")}><span className="min-w-0 truncate">{title}</span></a>
+          : <button
+            type="button" data-testid={openTestId} data-video-id={dataVideoId} aria-describedby={summaryId} aria-label={openLabel}
+            onClick={(event) => { onOpen?.(event.currentTarget); }}
+            className={cn(OPEN, "cursor-pointer truncate border-0 bg-transparent p-0 text-left")}
+          >{title}</button>}
         <span id={summaryId} className="sr-only">{summary}</span>
         {menu && <div className="relative z-10 shrink-0">{menu}</div>}
       </div>

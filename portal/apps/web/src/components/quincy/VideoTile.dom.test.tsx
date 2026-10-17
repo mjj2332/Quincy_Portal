@@ -66,6 +66,27 @@ describe("VideoTile", () => {
     expect(onOpen).toHaveBeenCalledWith(open);
   });
 
+  it("with an href the open control is a same-tab link that stretches over the tile, keeping the summary and the touch size (#882, story 28)", async () => {
+    const { onOpen: _unused, ...linkBase } = base;
+    const el = await mount(<VideoTile {...linkBase} href="/d/review?link=x#t=y" />);
+    const open = el.querySelector<HTMLElement>('[data-testid="video-tile-open"]')!;
+    expect(open.tagName).toBe("A");
+    expect(open.getAttribute("href")).toBe("/d/review?link=x#t=y");
+    expect(open.hasAttribute("target")).toBe(false);
+    expect(open.textContent).toBe("Kitchen walkthrough");
+    expect(el.ownerDocument.getElementById(open.getAttribute("aria-describedby")!)!.textContent).toBe("v3, 1:32, 2 open notes on v3");
+    for (const kept of ["min-h-11", "after:absolute", "after:inset-0", "items-center"]) expect(open.className).toContain(kept);
+    expect(open.querySelector("span")!.className).toContain("truncate");
+    expect(el.querySelector("button")).toBeNull();
+  });
+
+  it("an openLabel names the open control for what it does, keeping the title in the name", async () => {
+    const el = await mount(<VideoTile {...base} openLabel="Request unlock: Kitchen walkthrough" />);
+    const open = el.querySelector<HTMLElement>('[data-testid="video-tile-open"]')!;
+    expect(open.tagName).toBe("BUTTON");
+    expect(open.getAttribute("aria-label")).toBe("Request unlock: Kitchen walkthrough");
+  });
+
   it("ticks without opening, and the tick, a menu and a footer are separate controls", async () => {
     const onOpen = vi.fn(); const onToggle = vi.fn();
     const el = await mount(<VideoTile {...base} onOpen={onOpen} select={{ selected: false, onToggle }} menu={<button type="button">Menu</button>} footer={<p>footer</p>} />);

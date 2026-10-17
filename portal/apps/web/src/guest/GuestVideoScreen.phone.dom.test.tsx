@@ -423,3 +423,86 @@ describe("the guest phone ⋯ and delivery (#879 PR 3b, P10 / P2)", () => {
     expect(releasedChip.compareDocumentPosition(byId("guest-identity")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
+
+describe("the Delivery review link on a phone: downloads need no code, writing still does (#882, ADR 0025)", () => {
+  const SLUG = "14-harbour-st-mosman-d234xz";
+  const MANIFEST = { included: [{ videoId: vid(1), title: "Film 1", version: 11, bytes: 1024 }], leftOut: [], totalBytes: 1024, tooLarge: false, archive: { state: "ready", pending: 0 } };
+  const released = { ...versionOf(11), released: true, downloadUrl: `${BASE}/versions/${asset(11)}/download` };
+  const press = async (element: HTMLElement) => { await act(async () => { element.click(); }); await flush(4); };
+  const menu = () => byId("video-header-menu")!;
+  const verifyDialogs = () => document.querySelectorAll('[data-testid="guest-verify-dialog"]').length;
+  /** An unverified guest on the Delivery review link (`codeRequired: false`), opened from the Delivery page, on film 1 of two. */
+  async function openFromDeliveryPage() {
+    session = { ...SESSION, verified: false, email: null, name: null, link: { ...SESSION.link, allow: { ...SESSION.link.allow, approve: true, download: true, comments: true } } };
+    videos = [{ ...videoOf(1), versions: [released, versionOf(10)] }, videoOf(2)];
+    const base = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === `${BASE}/download-policy`) return json({ codeRequired: false });
+      if (url === `${BASE}/downloads`) return json(MANIFEST);
+      return base(input, init);
+    }) as unknown as typeof fetch;
+    window.history.replaceState(null, "", `/d/review?link=${LINK}`);
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => { root!.render(<GuestApp token="tok123" pageSlug={SLUG} />); });
+    await flush();
+    await vi.waitFor(() => { expect(document.querySelector('[data-testid="guest-video-row"] button')).not.toBeNull(); });
+    await press(document.querySelector<HTMLElement>('[data-testid="guest-video-row"] button')!);
+    await vi.waitFor(() => { expect(byId("review-phone-bar")).not.toBeNull(); });
+    // The policy read lands on its own.
+    await flush();
+  }
+
+  it("Back is a real link to the Delivery page, in the phone bar", async () => {
+    await openFromDeliveryPage();
+    const back = byId("guest-back-to-page")!;
+    expect(back.tagName).toBe("A");
+    expect(back.getAttribute("href")).toBe(`/d/${SLUG}`);
+    expect(byId("review-phone-bar")!.contains(back)).toBe(true);
+    expect(back.textContent).toContain("Back to the delivery page");
+  });
+
+  it("the ⋯ Download row is an anchor to the film's download and opens no verify dialog", async () => {
+    await openFromDeliveryPage();
+    await press(menu());
+    const row = byId("guest-download")!;
+    expect(row.tagName).toBe("A");
+    expect(row.getAttribute("href")).toBe(released.downloadUrl);
+    expect(row.hasAttribute("download")).toBe(true);
+    // The browser's own download; the test document cannot follow it.
+    document.addEventListener("click", (event) => { event.preventDefault(); }, { once: true });
+    await press(row);
+    expect(verifyDialogs()).toBe(0);
+    expect(byId("review-action-sheet")).toBeNull();
+  });
+
+  it("⋯ Download all… opens its dialog with no code, and closing it returns focus to the ⋯", async () => {
+    await openFromDeliveryPage();
+    await press(menu());
+    await press(byId("guest-download-all")!);
+    expect(verifyDialogs()).toBe(0);
+    expect(byId("review-action-sheet")).toBeNull();
+    await vi.waitFor(() => { expect(byId("guest-download-all-start")).not.toBeNull(); });
+    expect(byId("guest-download-all-dialog")).not.toBeNull();
+    await press(byId("guest-download-all-close")!);
+    await flush(6);
+    expect(byId("guest-download-all-dialog")).toBeNull();
+    expect(document.activeElement).toBe(menu());
+  });
+
+  it("Approve still asks for verification", async () => {
+    await openFromDeliveryPage();
+    await press(byId("review-phone-bar")!.querySelector<HTMLElement>('[data-testid="guest-approve"]')!);
+    expect(verifyDialogs()).toBe(1);
+    expect(byId("guest-decision-dialog")).toBeNull();
+  });
+
+  it("Add a note still asks for verification", async () => {
+    await openFromDeliveryPage();
+    expect(area()).toBeNull();
+    await press(byId("guest-compose-shell-open")!);
+    expect(verifyDialogs()).toBe(1);
+  });
+});

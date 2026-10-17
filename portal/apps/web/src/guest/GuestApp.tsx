@@ -79,6 +79,13 @@ function GuestPage({ token: initialToken, initialVideoId, pageSlug, onSignedOut 
     void readOverlays(opened).then((list) => { if (overlayTicket.current === mine) setOverlays(list); });
   }, [readOverlays]);
 
+  // Only the newest download-policy read applies, as with the overlays: a slow answer from an earlier enter must not overwrite a later one.
+  const policyTicket = useRef(0);
+  const refreshPolicy = useCallback((opened: GuestApi) => {
+    const mine = ++policyTicket.current;
+    void opened.downloadPolicy().then((policy) => { if (policyTicket.current === mine) setCodeRequired(policy.codeRequired); });
+  }, []);
+
   const unavailable = useCallback(() => { setScreen({ name: "unavailable" }); }, []);
   // The one verify dialog for the page and its one continuation slot: Download all, a decision and the single Download all all ask it, so two of them can never each open their own.
   const { verify, dialog: verifyDialog } = useGuestVerify(setSession, unavailable);
@@ -96,7 +103,7 @@ function GuestPage({ token: initialToken, initialVideoId, pageSlug, onSignedOut 
     if (list.kind === "gone") { setScreen({ name: "unavailable" }); return; }
     if (list.kind === "transient") { fail(() => { void enter(opened, next); }); return; }
     commitVideos(list.value);
-    void opened.downloadPolicy().then((policy) => { setCodeRequired(policy.codeRequired); });
+    refreshPolicy(opened);
     // The optional overlays read lands on its own, under the ticket fence: a stalled read never holds the Videos back.
     refreshOverlays(opened);
     const wanted = wantedVideo.current;
@@ -111,7 +118,7 @@ function GuestPage({ token: initialToken, initialVideoId, pageSlug, onSignedOut 
       setNotice("That video is no longer available on this link. Here is what is.");
     }
     setScreen(list.value.length === 1 ? { name: "video", index: 0 } : { name: "list" });
-  }, [fail, commitVideos, refreshOverlays]);
+  }, [fail, commitVideos, refreshOverlays, refreshPolicy]);
 
   const exchange = useCallback(async (opened: GuestApi, tokenValue: string, passcode?: string) => {
     const result = await opened.exchange(tokenValue, passcode);
