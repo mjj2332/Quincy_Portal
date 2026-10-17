@@ -73,7 +73,8 @@ const VERSION_SELECT_ID = "video-review-version";
 /** The title never shrinks below this many characters, so a crowded bar truncates it last, not to nothing (#878). */
 const TITLE_FLOOR = "min-w-[10ch]";
 /** A phone sheet tab (#879, P1 `.tab`): the head's 44px row, the underline on its bottom edge, its own width (PR 3a). */
-const PHONE_TAB = "max-[721px]:!h-11 max-[721px]:flex-none max-[721px]:px-[var(--space-3)] max-[721px]:after:!bottom-0";
+// Tabs sit left at their own width at every width (P1 and W1 `.tabs` / `.tab`); only the phone's taller 44px row and its underline position are phone-only.
+const PHONE_TAB = "flex-none px-[var(--space-3)] max-[721px]:!h-11 max-[721px]:after:!bottom-0";
 const BAR_LABEL = "@max-[1400px]:sr-only";
 
 /**
@@ -591,11 +592,11 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     const notesLabel = slots ? "Notes" : "Details";
     const sidePane = tabbed
       ? <Tabs value={deliveryOnly ? "delivery" : sideTab} onValueChange={(next) => { setSideTab(next === "delivery" ? "delivery" : "main"); }} className="min-h-0 flex-1 gap-0">
-        {/* A phone's tabs sit left, each its own width (#879 PR 3a, P1 `.tabs`); the open-note count is a Badge beside Notes at every width (W1, #881). */}
-        <div data-sheet-part="head" className="flex shrink-0 items-center border-l border-b border-border bg-card pe-[var(--space-2)] max-[721px]:border-l-0 max-[721px]:ps-[var(--space-3)]">
+        {/* Tabs sit left, each its own width (#879 PR 3a, P1 and W1 `.tabs`); the open-note count is a Badge beside Notes at every width (W1, #881). */}
+        <div data-sheet-part="head" className="flex shrink-0 items-center gap-[var(--space-1)] border-l border-b border-border bg-card pe-[var(--space-2)] max-[721px]:border-l-0 max-[721px]:ps-[var(--space-3)]">
           {deliveryOnly
             ? <><h3 id={deliveryHeadingId} data-testid="video-pane-delivery-heading" className="m-0 flex min-h-8 min-w-0 flex-1 items-center px-[var(--space-4)] text-foreground [font:var(--type-body)]">Delivery</h3><VideoVersionDetails>{detailsRows}</VideoVersionDetails></>
-            : <TabsList variant="line" className="min-w-0 flex-1 rounded-none bg-card px-[var(--space-3)] max-[721px]:!h-11 max-[721px]:justify-start max-[721px]:!p-0">
+            : <TabsList variant="line" className="min-w-0 flex-1 justify-start rounded-none bg-card px-[var(--space-3)] max-[721px]:!h-11 max-[721px]:!p-0">
               <TabsTrigger value="main" data-testid="video-pane-tab-main" className={PHONE_TAB} onClick={openSheet}>{notesLabel}{slots?.openCount != null && <><span className="sr-only"> </span><Badge variant="secondary" data-testid="video-pane-tab-count" className="tabular-nums">{slots.openCount}</Badge><span className="sr-only"> open</span></>}</TabsTrigger>
               <TabsTrigger value="delivery" data-testid="video-pane-tab-delivery" className={PHONE_TAB} onClick={openSheet}>Delivery</TabsTrigger>
             </TabsList>}

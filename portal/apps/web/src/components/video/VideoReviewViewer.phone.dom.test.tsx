@@ -204,9 +204,10 @@ describe("the phone sheet head (#879 PR 3a, P1)", () => {
     await mount({ delivery: true, notes: true });
     const deadline = Date.now() + 5000; while (!tid("video-pane-tab-count") && Date.now() < deadline) await flush(1);
     const main = tid("video-pane-tab-main")!;
-    expect(main.closest("[role=tablist]")!.className).toContain("max-[721px]:justify-start");
-    expect(main.className).toContain("max-[721px]:flex-none");
-    expect(tid("video-pane-tab-delivery")!.className).toContain("max-[721px]:flex-none");
+    // Left-packed at every width now (W1 `.tabs` matches P1), so the classes are unconditional.
+    expect(main.closest("[role=tablist]")!.className.split(/\s+/)).toContain("justify-start");
+    expect(main.className.split(/\s+/)).toContain("flex-none");
+    expect(tid("video-pane-tab-delivery")!.className.split(/\s+/)).toContain("flex-none");
     const count = tid("video-pane-tab-count")!;
     expect(main.contains(count)).toBe(true);
     expect(count.getAttribute("data-slot")).toBe("badge");
