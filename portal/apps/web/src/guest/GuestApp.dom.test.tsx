@@ -224,17 +224,23 @@ describe("a Delivery deep link (#847)", () => {
 
   describe("Back to the Delivery page (D34)", () => {
     const PAGE = "14-harbour-st-mosman-d234xz";
-    it("is a native link to /d/<slug>, not a button, and survives without any history call", async () => {
+    it("is a native link to /d/<slug> naming the film on screen (so the page returns to its tile), not a button, and survives without any history call", async () => {
       const push = vi.spyOn(window.history, "pushState"); const replace = vi.spyOn(window.history, "replaceState");
       replace.mockClear();
       await openDeep(vid(2), "tok123", PAGE);
       const back = byId("guest-back-to-page") as HTMLAnchorElement;
-      expect(back.tagName).toBe("A"); expect(back.getAttribute("href")).toBe(`/d/${PAGE}`);
+      expect(back.tagName).toBe("A"); expect(back.getAttribute("href")).toBe(`/d/${PAGE}#v=${vid(2)}`);
       expect(push).not.toHaveBeenCalled();
     });
     it("is absent when the link was not opened from a Delivery page", async () => {
       await openDeep(vid(2));
       expect(byId("guest-back-to-page")).toBeNull();
+    });
+    it("follows the film on screen when the viewer moves to another one", async () => {
+      await openDeep(vid(1), "tok123", PAGE);
+      await click(button("Next video"));
+      expect(title()).toBe("Film 2");
+      expect(byId("guest-back-to-page")!.getAttribute("href")).toBe(`/d/${PAGE}#v=${vid(2)}`);
     });
     it("is on the film list too, where a reload lands (no film in the address), so the page is still one tap away", async () => {
       await openDeep(null, null, PAGE);
