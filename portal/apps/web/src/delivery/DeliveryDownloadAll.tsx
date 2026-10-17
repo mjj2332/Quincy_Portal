@@ -10,6 +10,7 @@ import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../com
 import { RadioGroup, RadioGroupItem } from "../components/reui/radio-group";
 import { Spinner } from "../components/reui/spinner";
 import { formatBytes } from "../guest/guest-format";
+import { ZipListScroll } from "../guest/ZipListScroll";
 import { NOTICE_SPINNER, PREPARE_TIMEOUT_COPY, READY_HINT_COPY, usePreparedDownload, type PrepareOutcome } from "../lib/use-prepared-download";
 import type { DeliveryApi } from "./delivery-api";
 import { TOUCH } from "./UnlockControl";
@@ -113,7 +114,7 @@ function ZipPanel({ api, size, onClose, onGone }: { api: Pick<DeliveryApi, "zipM
   const archive = prepared.status === "idle" || prepared.status === "checking" ? (manifest?.archive.state ?? "ready") : prepared.status;
   const canDownload = manifest !== null && manifest.photos > 0 && !manifest.tooLarge && archive === "ready";
   return <>
-    <div data-testid="delivery-zip-body" className="min-h-0 flex-1 overflow-y-auto"><ZipBody loaded={loaded} archive={archive} prepareWait={prepareWait} pollWait={pollWait} onRetry={load} onCheckAgain={() => void startPrepared()} /></div>
+    <ZipListScroll testId="delivery-zip-body"><ZipBody loaded={loaded} archive={archive} prepareWait={prepareWait} pollWait={pollWait} onRetry={load} onCheckAgain={() => void startPrepared()} /></ZipListScroll>
     <DialogFooter className="shrink-0">
       <Button type="button" variant="outline" data-testid="delivery-zip-close" className={TOUCH} onClick={onClose}>Close</Button>
       {!canDownload && manifest !== null && manifest.photos > 0 && !manifest.tooLarge && archive === "preparing" && <Button type="button" disabled data-testid="delivery-zip-start-pending" className={TOUCH}><Spinner aria-hidden="true" role="presentation" />Download zip</Button>}
