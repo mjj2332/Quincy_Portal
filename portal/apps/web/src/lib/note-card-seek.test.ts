@@ -19,7 +19,7 @@ afterEach(() => { document.getSelection()?.removeAllRanges(); document.body.repl
 const click = (target: EventTarget | null, over: Partial<Parameters<typeof isCardSeekClick>[0]> = {}) => ({
   target, defaultPrevented: false, button: 0, detail: 1, ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, clientX: 100, clientY: 100, ...over,
 });
-const tap = (over: Partial<CardGesture> = {}): CardGesture => ({ x: 100, y: 100, cancelled: false, menuOpen: false, scroll: scrollSnapshot(card), ...over });
+const tap = (over: Partial<CardGesture> = {}): CardGesture => ({ x: 100, y: 100, cancelled: false, moved: false, menuOpen: false, scroll: scrollSnapshot(card), ...over });
 
 describe("isCardSeekClick (#901)", () => {
   it("a plain tap on the card's text seeks, with or without a recorded pointerdown", () => {
@@ -98,6 +98,7 @@ describe("isCardSeekClick (#901)", () => {
   it("a cancelled gesture, or one that only dismissed the card's open menu, does not seek", () => {
     expect(isCardSeekClick(click(body), card, tap({ cancelled: true }), null)).toBe(false);
     expect(isCardSeekClick(click(body), card, tap({ menuOpen: true }), null)).toBe(false);
+    expect(isCardSeekClick(click(body), card, tap({ moved: true }), null)).toBe(false); // went past the slop and came back
   });
 
   it("a list that scrolled between pointerdown and click does not seek", () => {

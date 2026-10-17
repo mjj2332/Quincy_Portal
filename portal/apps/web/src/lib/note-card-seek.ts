@@ -30,6 +30,8 @@ export type CardGesture = {
   y: number;
   /** A `pointercancel` (the browser took the touch for a scroll) or a second pointer. */
   cancelled: boolean;
+  /** The pointer went past the tap slop at some point, even if it came back: a drag, not a tap. */
+  moved: boolean;
   /** The card's own "⋯" menu was open: this press only dismisses it. */
   menuOpen: boolean;
   /** Every scroll position from the card up to the page, so a list that scrolled under the finger does not count as a tap. */
@@ -62,12 +64,16 @@ export function isCardSeekClick(event: ClickLike, card: Element, gesture: CardGe
   if (control !== null && card.contains(control)) return false;
   if (selection !== null && !selection.isCollapsed && selectionTouches(selection, card)) return false;
   if (gesture !== null) {
-    if (gesture.cancelled || gesture.menuOpen) return false;
-    if (Math.max(Math.abs(event.clientX - gesture.x), Math.abs(event.clientY - gesture.y)) > TAP_SLOP) return false;
+    if (gesture.cancelled || gesture.moved || gesture.menuOpen) return false;
+    if (pastSlop(gesture, event)) return false;
     const now = scrollSnapshot(card);
     if (now.length !== gesture.scroll.length || now.some((value, index) => value !== gesture.scroll[index])) return false;
   }
   return true;
+}
+
+function pastSlop(gesture: CardGesture, point: Pick<MouseEvent, "clientX" | "clientY">): boolean {
+  return Math.max(Math.abs(point.clientX - gesture.x), Math.abs(point.clientY - gesture.y)) > TAP_SLOP;
 }
 
 function selectionTouches(selection: Selection, card: Element): boolean {
@@ -79,6 +85,7 @@ function selectionTouches(selection: Selection, card: Element): boolean {
 
 export type NoteCardSeekProps = {
   onPointerDownCapture?: (event: ReactPointerEvent<HTMLElement>) => void;
+  onPointerMoveCapture?: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerCancelCapture?: (event: ReactPointerEvent<HTMLElement>) => void;
   onClick?: (event: ReactMouseEvent<HTMLElement>) => void;
 };
@@ -95,7 +102,11 @@ export function useNoteCardSeek(seek: (() => void) | null, menuOpen: () => boole
   return {
     onPointerDownCapture: (event) => {
       if (!event.isPrimary) { if (gesture.current) gesture.current.cancelled = true; return; }
-      gesture.current = { x: event.clientX, y: event.clientY, cancelled: false, menuOpen: menuOpen(), scroll: scrollSnapshot(event.currentTarget) };
+      gesture.current = { x: event.clientX, y: event.clientY, cancelled: false, moved: false, menuOpen: menuOpen(), scroll: scrollSnapshot(event.currentTarget) };
+    },
+    onPointerMoveCapture: (event) => {
+      const seen = gesture.current;
+      if (seen !== null && event.isPrimary && !seen.moved && pastSlop(seen, event)) seen.moved = true;
     },
     onPointerCancelCapture: () => { if (gesture.current) gesture.current.cancelled = true; },
     onClick: (event) => {

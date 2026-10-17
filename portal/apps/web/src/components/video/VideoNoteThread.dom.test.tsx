@@ -669,6 +669,8 @@ describe("the whole card seeks to its frame (#901)", () => {
     await tap(tid("video-note-body")!, { dy: 7 });
     await tap(tid("video-note-body")!, { cancel: true });
     await tap(tid("video-note-body")!, { between: () => { host.scrollTop = 30; } });
+    // Away past the slop and back to the start (Sol review): still a drag, not a tap.
+    await tap(tid("video-note-body")!, { between: () => { tid("video-note-body")!.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: 50, clientY: 70, isPrimary: true, pointerType: "mouse" })); } });
     expect(onSeek).not.toHaveBeenCalled();
     await tap(tid("video-note-body")!, { dx: 5, dy: -5 });
     expect(onSeek).toHaveBeenCalledTimes(1);
