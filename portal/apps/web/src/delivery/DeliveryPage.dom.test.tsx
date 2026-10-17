@@ -467,10 +467,11 @@ describe("back from a film's review (#882 follow-up)", () => {
   });
   afterEach(() => { delete (Element.prototype as Partial<Element>).scrollIntoView; });
 
-  it("opens the Film tab and brings the returning film's tile to the centre, focused, without an animated scroll", async () => {
+  const itemOf = (n: number) => openOf(n).closest('[data-testid="delivery-film-item"]')!;
+  it("opens the Film tab and brings the returning film's whole tile to the centre, without an animated scroll, focusing its open link", async () => {
     await show(page(films()), { returnToVideo: vid(3) });
     expect(tab("Film")!.getAttribute("aria-selected")).toBe("true");
-    expect(scrolled).toEqual([{ target: openOf(3), options: { block: "center" } }]);
+    expect(scrolled).toEqual([{ target: itemOf(3), options: { block: "center" } }]);
     expect(document.activeElement).toBe(openOf(3));
   });
   it("leaves a plain open of the page at the top of its first tab", async () => {
@@ -486,7 +487,7 @@ describe("back from a film's review (#882 follow-up)", () => {
   it("does not pull the viewer back to the tile when the page re-renders with fresh data (an unlock refetch)", async () => {
     const { root } = await show(page(films()), { returnToVideo: vid(2) });
     await act(async () => { root.render(<DeliveryPage dto={page([...films(), photo(5)])} returnToVideo={vid(2)} hrefs={hrefs} onRequestUnlock={() => undefined} unlockState={{}} />); });
-    expect(scrolled.map((entry) => entry.target)).toEqual([openOf(2)]);
+    expect(scrolled.map((entry) => entry.target)).toEqual([openOf(2).closest('[data-testid="delivery-film-item"]')]);
   });
 });
 

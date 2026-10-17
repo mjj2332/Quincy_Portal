@@ -149,13 +149,14 @@ export function DeliveryPage(props: DeliveryPageProps) {
   const [returning] = useState(() => returnTargetOf(tabs, props.returnToVideo ?? null));
   const [chosen, setChosen] = useState<DeliveryTabId | null>(returning?.tab ?? null);
   const page = useRef<HTMLElement | null>(null);
-  // Back from a review lands on the tile it opened: a jump, not an animated scroll (the page sets no smooth scroll-behavior, so there is no motion for reduced motion to stop), centred so the sticky tab bar never covers it, then focus without a second scroll.
+  // Back from a review lands on the tile it opened: a jump, not an animated scroll (the page sets no smooth scroll-behavior, so there is no motion for reduced motion to stop), the TILE centred (not its title link, which sits at the tile's foot) so the sticky tab bar never covers its poster, then focus on its open link without a second
+  // scroll (the browser's own `:focus-visible` draws the ring).
   useEffect(() => {
     if (returning === null) return;
     const item = [...(page.current?.querySelectorAll<HTMLElement>('[data-testid="delivery-film-item"]') ?? [])].find((element) => element.dataset.handle === returning.handle);
     const open = item?.querySelector<HTMLElement>('[data-testid="delivery-film-open"]');
-    if (!open) return;
-    open.scrollIntoView({ block: "center" });
+    if (!item || !open) return;
+    item.scrollIntoView({ block: "center" });
     open.focus({ preventScroll: true });
   }, [returning]);
   const active = tabs.some((tab) => tab.id === chosen) ? chosen : (tabs[0]?.id ?? null);
