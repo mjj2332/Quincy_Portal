@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from "react";
-import { Link2, Lock, Upload } from "lucide-react";
+import { Link2, Lock, MessageSquare, Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LazyImage } from "../LazyImage";
 import { Badge } from "../reui/badge";
@@ -90,7 +90,7 @@ export function VideoTile({ title, posterUrl, version, durationMs, openNotes, hr
       </div>
     </div>
     <div className="pointer-events-none absolute inset-x-[var(--space-2)] bottom-[var(--space-2)] flex items-end justify-between gap-[var(--space-2)]">
-      {openNotes !== null && openNotes > 0 ? <Badge variant="invert" data-testid={`${testId}-open-notes`} className={cn(CHIP, "tabular-nums")}>{openNotes}</Badge> : <span />}
+      {openNotes !== null && openNotes > 0 ? <Badge variant="invert" data-testid={`${testId}-open-notes`} className={cn(CHIP, "gap-[var(--space-1)] tabular-nums")}><MessageSquare aria-hidden="true" className="size-3" />{openNotes}</Badge> : <span />}
       {durationMs !== null ? <Badge variant="invert" className={cn(CHIP, MONO)}>{formatDuration(durationMs)}</Badge> : <span />}
     </div>
   </>;
