@@ -1,15 +1,15 @@
 import { Hono } from "hono";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { guestVideoListResponseSchema } from "@quincy/shared";
-import { GUEST_WINDOW_MS } from "../src/guest/rate-limit";
+import { GUEST_WINDOW_MS, ipBucket } from "../src/guest/rate-limit";
 import { attachment, mountGuestDownloads, safeFileName } from "../src/guest/download";
 import type { AppEnv } from "../src/env";
 import { hashToken } from "../src/lib/opaque-token";
 import { baseEnv, database, ids, mp4Bytes, seedFixture } from "./embedded-media-support";
-import { addMember, clearGuestRows, grant, guestFetch, HYGIENE, linkPath, openGuestGate, seedGuestLink, startSession, type LinkInput } from "./guest-support";
+import { addMember, clearGuestRows, cookieName, grant, guestFetch, HYGIENE, linkPath, openGuestGate, seedGuestLink, startSession, type LinkInput } from "./guest-support";
 import { box, buildMp4, videoTrack } from "../../../packages/shared/src/testing/mp4-builder";
 import { seedPage, wipeDelivery } from "./delivery-support";
-import { clearVideoFlags, markVersionRemoved, seedVideoVersion, setVideoFlags } from "./video-review-support";
+import { clearVideoFlags, markVersionRemoved, seedVideoVersion, setVideoFlags, SEED_STROKES_JSON } from "./video-review-support";
 import { NATIVE_ZIP_FLAG, ZIP_LEGACY_MAX_BYTES } from "../src/lib/object-crc";
 import { crc32 } from "node:zlib";
 
@@ -984,13 +984,13 @@ describe("the Delivery review link downloads without a code (#882, ADR 0025)", (
       const limited = await post(link, prepPath(link.id), "203.0.113.7"); expect(limited.status).toBe(429); expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
       expect((await post(link, prepPath(link.id), "203.0.113.8")).status).toBe(200);
       expect(await countOf("zipprep:guest:%")).toBe(0); expect(await countOf("zipprep:ip:%")).toBe(21);
-      expect(await countOf(`zipprep:link:${link.id}`)).toBe(21); // the refused 21st took nothing from the link bucket
+      expect(await countOf("zipprep:anon-link:%")).toBe(21); // D1 caps a LIKE pattern at 50 bytes; the refused 21st took nothing from the link bucket
     });
     it("a zip start is 10 per address in 15 minutes; a refused start spends nothing; the address bucket never holds the raw address", async () => {
       const { link } = await unverified();
       for (let index = 0; index < 10; index += 1) { const zip = await guestFetch(zipPath(link.id), { cookie: link.cookie, ip: "203.0.113.9" }); expect(zip.status, `zip ${index + 1}`).toBe(200); await zip.arrayBuffer(); }
       const limited = await guestFetch(zipPath(link.id), { cookie: link.cookie, ip: "203.0.113.9" }); expect(limited.status).toBe(429);
-      expect(await countOf("zip:ip:%")).toBe(10); expect(await countOf(`zip:link:${link.id}`)).toBe(10); expect(await countOf("zip:guest:%")).toBe(0);
+      expect(await countOf("zip:ip:%")).toBe(10); expect(await countOf(`zip:anon-link:${link.id}`)).toBe(10); expect(await countOf(`zip:link:${link.id}`)).toBe(0); expect(await countOf("zip:guest:%")).toBe(0);
       expect(await allAudits()).toHaveLength(10);
       const buckets = (await database.DB.prepare("SELECT bucket FROM guest_rate_limits").all<Json>()).results.map((row) => row.bucket as string);
       expect(buckets.join(" ")).not.toContain("203.0.113.9");
@@ -1000,6 +1000,136 @@ describe("the Delivery review link downloads without a code (#882, ADR 0025)", (
       const { call } = interposed({ before: [[/INSERT INTO audit_log/, () => database.DB.prepare("UPDATE client_links SET allow_download = 0 WHERE id = ?").bind(link.id).run()]] });
       expect((await call(zipPath(link.id), link.cookie, "GET", { "cf-connecting-ip": "203.0.113.10" })).status).toBe(403);
       expect(await countOf("zip:%")).toBe(0);
+    });
+  });
+
+  describe("split quotas and throttled storage checks for anonymous callers (#882 review)", () => {
+    const seedBucket = (bucket: string, count: number) => database.DB.prepare("INSERT INTO guest_rate_limits (bucket, window_start, count) VALUES (?, ?, ?)").bind(bucket, Math.floor(Date.now() / GUEST_WINDOW_MS) * GUEST_WINDOW_MS, count).run();
+    const prepHeaders = { origin: baseEnv.APP_ORIGIN, "content-type": "application/json" };
+    it("anonymous zip starts use their own link bucket: exhausting it leaves a verified guest's Download all open", async () => {
+      const { link } = await unverified();
+      for (let index = 0; index < 30; index += 1) { const zip = await guestFetch(zipPath(link.id), { cookie: link.cookie, ip: `203.0.113.${100 + Math.floor(index / 10)}` }); expect(zip.status, `anon zip ${index + 1}`).toBe(200); await dispose(zip); }
+      expect((await guestFetch(zipPath(link.id), { cookie: link.cookie, ip: "203.0.113.200" })).status).toBe(429);
+      expect(await countOf(`zip:anon-link:${link.id}`)).toBe(30); expect(await countOf(`zip:link:${link.id}`)).toBe(0);
+      const { cookie } = await startSession(link); const guestId = await verifyCookie(cookie!);
+      const zip = await guestFetch(zipPath(link.id), { cookie: cookie! }); expect(zip.status).toBe(200); await dispose(zip);
+      expect(await countOf(`zip:link:${link.id}`)).toBe(1); expect(await countOf(`zip:guest:${guestId}`)).toBe(1);
+    });
+    it("anonymous prepares use their own link bucket, and a verified guest keeps `zipprep:link:`", async () => {
+      const { link } = await unverified();
+      await seedBucket(`zipprep:anon-link:${link.id}`, 60);
+      expect((await post(link, prepPath(link.id), "203.0.113.30")).status).toBe(429);
+      const { cookie } = await startSession(link); await verifyCookie(cookie!);
+      expect((await post({ id: link.id, cookie: cookie! }, prepPath(link.id))).status).toBe(200);
+      expect(await countOf(`zipprep:link:${link.id}`)).toBe(1);
+    });
+    it("the manifest: the 61st storage check from one address is 429 before any R2 HEAD", async () => {
+      const { link } = await unverified(); const ip = "203.0.113.40";
+      await seedBucket(await ipBucket("zipcheck", ip, Math.floor(Date.now() / GUEST_WINDOW_MS) * GUEST_WINDOW_MS), 59);
+      const ok = interposed({}); expect((await ok.call(manifestPath(link.id), link.cookie, "GET", { "cf-connecting-ip": ip })).status).toBe(200);
+      const over = interposed({}); const limited = await over.call(manifestPath(link.id), link.cookie, "GET", { "cf-connecting-ip": ip });
+      expect(limited.status).toBe(429); expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0); expect(over.reads).toEqual([]);
+    });
+    it("all.zip: the 61st storage check from one address is 429 before any R2 HEAD, with no zip start spent and no audit row", async () => {
+      const { link } = await unverified(); const ip = "203.0.113.41";
+      await seedBucket(await ipBucket("zipcheck", ip, Math.floor(Date.now() / GUEST_WINDOW_MS) * GUEST_WINDOW_MS), 60);
+      const { call, reads } = interposed({}); const limited = await call(zipPath(link.id), link.cookie, "GET", { "cf-connecting-ip": ip });
+      expect(limited.status).toBe(429); expect(reads).toEqual([]); expect(await countOf("zip:%")).toBe(0); expect(await allAudits()).toHaveLength(0);
+    });
+    it("the anonymous link pool of checks (300) refuses every address once spent; a verified guest is never charged a check", async () => {
+      const { link } = await unverified();
+      await seedBucket(`zipcheck:anon-link:${link.id}`, 300);
+      expect((await guestFetch(manifestPath(link.id), { cookie: link.cookie })).status).toBe(429);
+      expect((await guestFetch(zipPath(link.id), { cookie: link.cookie })).status).toBe(429);
+      const { cookie } = await startSession(link); await verifyCookie(cookie!);
+      expect((await guestFetch(manifestPath(link.id), { cookie: cookie! })).status).toBe(200);
+      expect(await countOf("zipcheck:%")).toBe(300);
+    });
+    it("the manifest refuses (401, no manifest body) when delivery_review is set to 0 after the set is read", async () => {
+      const { link } = await unverified();
+      const { call } = interposed({ after: [[/FROM review_link_videos rv JOIN videos v/, () => database.DB.prepare("UPDATE client_links SET delivery_review = 0 WHERE id = ?").bind(link.id).run()]] });
+      const response = await call(manifestPath(link.id), link.cookie, "GET");
+      expect(response.status).toBe(401); expect(await response.json()).toEqual({ error: "verification_required" });
+    });
+    it("prepare refuses (401) when delivery_review is set to 0 before enqueue, and nothing is queued", async () => {
+      const { link, v2 } = await unverified(); const queue = { sent: [] as unknown[], sendBatch: async (messages: Array<{ body: unknown }>) => { for (const message of messages) queue.sent.push(message.body); } };
+      const big = ZIP_LEGACY_MAX_BYTES + 1; await setBytes(v2.assetId, big);
+      await database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_at) VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1").bind(NATIVE_ZIP_FLAG, Date.now()).run();
+      try {
+        const { call } = interposed({ after: [[/FROM review_link_videos rv JOIN videos v/, () => database.DB.prepare("UPDATE client_links SET delivery_review = 0 WHERE id = ?").bind(link.id).run()]] }, { heads: { [v2.key]: { etag: "big-etag", size: big } }, queue });
+        const response = await call(prepPath(link.id), link.cookie, "POST", prepHeaders);
+        expect(response.status).toBe(401); expect(queue.sent).toEqual([]);
+        expect((await database.DB.prepare("SELECT COUNT(*) AS n FROM object_crc32_work").first<Json>())!.n).toBe(0);
+      } finally { await database.DB.batch([database.DB.prepare("DELETE FROM feature_flags WHERE key = ?").bind(NATIVE_ZIP_FLAG), database.DB.prepare("DELETE FROM object_crc32_work")]); }
+    });
+    it("a single download whose Delivery flag is lost during the R2 read is 401, not the missing-object stub", async () => {
+      const { link, v2 } = await unverified();
+      const original = database.MEDIA.get.bind(database.MEDIA);
+      const spy = vi.spyOn(database.MEDIA, "get").mockImplementationOnce(async (...args: Parameters<typeof original>) => { await database.DB.prepare("UPDATE client_links SET delivery_review = 0 WHERE id = ?").bind(link.id).run(); return original(...args); });
+      try {
+        const response = await interposed({}).call(downloadPath(link.id, v2.assetId), link.cookie, "GET", { range: "bytes=100-" });
+        expect(response.status).toBe(401); expect(await response.json()).toEqual({ error: "verification_required" }); expect(await allAudits()).toHaveLength(0);
+      } finally { spy.mockRestore(); }
+    });
+  });
+
+  describe("the unverified revocation matrix: lost access is the stub, with no audit row and no R2 read", () => {
+    const mutations: Array<[string, (linkId: string) => Promise<unknown>]> = [
+      ["link revoked", (id) => database.DB.prepare("UPDATE client_links SET revoked_at = ?, revoked_by = ? WHERE id = ?").bind(Date.now(), ids.member, id).run()],
+      ["token_generation bumped", (id) => database.DB.prepare("UPDATE client_links SET token_generation = token_generation + 1 WHERE id = ?").bind(id).run()],
+      ["session expired", (id) => database.DB.prepare("UPDATE guest_sessions SET created_at = ?, expires_at = ? WHERE link_id = ?").bind(Date.now() - 2000, Date.now() - 1000, id).run()],
+      ["Delivery page switched off", () => database.DB.prepare("UPDATE delivery_pages SET enabled = 0 WHERE project_id = ?").bind(ids.project).run()],
+    ];
+    const post = { origin: baseEnv.APP_ORIGIN, "content-type": "application/json" };
+    const requests: Array<[string, string, (link: { id: string }, assetId: string) => string, Record<string, string>]> = [
+      ["GET full", "GET", (l, a) => downloadPath(l.id, a), {}], ["Range", "GET", (l, a) => downloadPath(l.id, a), { range: "bytes=100-" }], ["HEAD", "HEAD", (l, a) => downloadPath(l.id, a), {}],
+      ["manifest", "GET", (l) => manifestPath(l.id), {}], ["prepare", "POST", (l) => linkPath(l.id, "/downloads/prepare"), post], ["all.zip", "GET", (l) => zipPath(l.id), {}],
+    ];
+    for (const [mutation, mutate] of mutations) for (const [label, method, path, headers] of requests) {
+      it(`${label} after: ${mutation}`, async () => {
+        const { link, v2 } = await unverified(); const stub = await stubBody(); await mutate(link.id);
+        const { call, reads } = interposed({}); const response = await call(path(link, v2.assetId), link.cookie, method, headers);
+        expect(response.status).toBe(404); if (method !== "HEAD") expect(await response.text()).toBe(stub.body);
+        expect(reads).toEqual([]); expect(await allAudits()).toHaveLength(0);
+      });
+    }
+  });
+
+  describe("a Delivery session token replayed against an ordinary link", () => {
+    it("is the stub for the download, the manifest and all.zip (the cookie is bound to its own link)", async () => {
+      const dr = await unverified(); const ordinary = await unverified({ ordinary: true }); const stub = await stubBody();
+      const replayed = `${cookieName(ordinary.link.id)}=${dr.link.cookie.split("=")[1]}`;
+      for (const [name, path] of [["download", downloadPath(ordinary.link.id, ordinary.v2.assetId)], ["manifest", manifestPath(ordinary.link.id)], ["all.zip", zipPath(ordinary.link.id)]] as const) {
+        expect(await probe(await guestFetch(path, { cookie: replayed })), name).toEqual(stub);
+      }
+      expect(await allAudits()).toHaveLength(0);
+    });
+  });
+
+  describe("an unverified Delivery session cannot write annotations or media", () => {
+    const rows = async () => ({
+      notes: (await database.DB.prepare("SELECT COUNT(*) AS n FROM video_notes").first<Json>())!.n, markup: (await database.DB.prepare("SELECT COUNT(*) AS n FROM video_note_markup").first<Json>())!.n,
+      media: (await database.DB.prepare("SELECT COUNT(*) AS n FROM embedded_media").first<Json>())!.n, cleanup: (await database.DB.prepare("SELECT COUNT(*) AS n FROM embedded_media_cleanup").first<Json>())!.n,
+      limits: await countOf("media:%"),
+    });
+    it("note create and edit with markup, and media presign, direct, complete, poster and abort are 401 and change no storage", async () => {
+      await setVideoFlags("video_review_markup");
+      const { link, v2 } = await unverified(); const before = await rows(); const media = crypto.randomUUID(); const note = crypto.randomUUID();
+      const strokes = JSON.parse(SEED_STROKES_JSON) as unknown[];
+      const calls: Array<[string, string, unknown]> = [
+        ["POST", linkPath(link.id, `/versions/${v2.assetId}/notes`), { body: "hi", startFrame: 20, markup: strokes, drawingFrame: 20 }],
+        ["PATCH", linkPath(link.id, `/notes/${note}`), { body: "hi", markup: strokes, drawingFrame: 20 }],
+        ["POST", linkPath(link.id, "/media"), { name: "a.png", contentType: "image/png", bytes: 10 }],
+        ["PUT", linkPath(link.id, `/media/${media}/direct`), "x"],
+        ["POST", linkPath(link.id, `/media/${media}/complete`), {}],
+        ["PUT", linkPath(link.id, `/media/${media}/poster`), "x"],
+        ["POST", linkPath(link.id, `/media/${media}/abort`), {}],
+      ];
+      for (const [method, path, body] of calls) {
+        const response = await guestFetch(path, { method, cookie: link.cookie, body });
+        expect(response.status, `${method} ${path}`).toBe(401); expect(await response.json(), `${method} ${path}`).toEqual({ error: "verification_required" });
+      }
+      expect(await rows()).toEqual(before);
     });
   });
 
@@ -1031,10 +1161,17 @@ describe("the Delivery review link downloads without a code (#882, ADR 0025)", (
       expect(response.status).toBe(200); expect(await response.json()).toEqual({ codeRequired: false });
       const ordinary = await unverified({ ordinary: true }); expect(await (await policy(ordinary.link, ordinary.link.cookie)).json()).toEqual({ codeRequired: true });
     });
-    it("is the same stub as the other guest reads with no session, a revoked link or the delivery part off; it has no write method; the body carries nothing else", async () => {
+    it("is the same stub as the other guest reads with no session, a revoked or expired link, or the delivery part off; it has no write method; the body carries nothing else", async () => {
       const dr = await unverified(); const stub = await stubBody();
       expect(await probe(await policy(dr.link, null))).toEqual(stub);
       expect((await guestFetch(policyPath(dr.link.id), { method: "POST", cookie: dr.link.cookie })).status).toBe(404);
+      for (const [name, mutate] of [
+        ["revoked", (id: string) => database.DB.prepare("UPDATE client_links SET revoked_at = ?, revoked_by = ? WHERE id = ?").bind(Date.now(), ids.member, id).run()],
+        ["expired", (id: string) => database.DB.prepare("UPDATE client_links SET expires_at = ? WHERE id = ?").bind(Date.now() - 1000, id).run()],
+      ] as const) {
+        await clearGuestRows(); await wipeDelivery(); const fresh = await unverified(); expect((await policy(fresh.link, fresh.link.cookie)).status, `${name} before`).toBe(200);
+        await mutate(fresh.link.id); expect(await probe(await policy(fresh.link, fresh.link.cookie)), name).toEqual(stub);
+      }
       await database.DB.prepare("DELETE FROM feature_flags WHERE key = 'video_review_delivery'").run();
       expect(await probe(await policy(dr.link, dr.link.cookie))).toEqual(stub);
     });

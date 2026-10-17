@@ -134,7 +134,9 @@ async function downloadOne(c: Ctx): Promise<Response> {
   const served = await serveR2Object(c, state.r2Key, { ...VIDEO_STREAM_HEADERS, "content-disposition": attachment(entryName(state.title, state.version)) }, "Video object not found",
     () => stillAllowed(c.env.DB, session, assetId));
   // A missing object after the access check is not an oracle, but it must still read as the stub.
-  return served.status === 404 ? guestNotFound(c) : served;
+  if (served.status !== 404) return served;
+  // The flag may have been lost during the read: that is a 401, not a missing object.
+  return await stillAllowed(c.env.DB, session, assetId) ? guestNotFound(c) : refusedBecause(c, session, assetId);
 }
 
 // -- Download all --
@@ -178,19 +180,29 @@ function archiveState(assessed: ZipAssessment): GuestArchiveState {
   }
 }
 
+/** An unverified session costs nothing to mint, so the storage HEAD pass it triggers is throttled by address and by an anonymous-only link pool (as the Delivery `dlcheck`). A check is never refunded. */
+async function checkLimited(c: Ctx, session: GuestSession, now: number): Promise<Response | null> {
+  const attempt = await reserveAllOrNone(c.env.DB, [{ bucket: await ipBucket("zipcheck", clientAddress(c.req.raw), windowStart(now)), limit: GUEST_LIMITS.zipCheckIp }, { bucket: `zipcheck:anon-link:${session.link.id}`, limit: GUEST_LIMITS.zipCheckAnonLink }], now);
+  return attempt.limited ? tooMany(attempt.retryAfterSeconds) : null;
+}
+
 /** Read-only: the page polls this, and a GET must not queue work (that is `prepare`'s job). */
 async function manifest(c: Ctx): Promise<Response> {
   const entered = await enter(c); if (entered instanceof Response) return entered;
-  const { session } = entered;
+  const { session, guestId, answer } = entered;
   const { included, leftOut } = await readDownloadSet(c.env.DB, session.link.id, session.link.projectId);
+  if (guestId === null && included.length > 0 && !tooLarge(included)) { const limited = await checkLimited(c, session, Date.now()); if (limited) return answer(limited); }
   const archive: GuestArchiveState = included.length === 0 ? { state: "ready", pending: 0 }
     : tooLarge(included) ? { state: "too_large", pending: 0 }
     : archiveState(await assessZip(c.env, included, { source: "guest-downloads-manifest", enqueue: "never", headWhenOff: false }));
-  return c.json(guestDownloadManifestSchema.parse({
+  const body = guestDownloadManifestSchema.parse({
     included: included.map(({ videoId, title, version, bytes }) => ({ videoId, title, version, bytes })),
     leftOut: leftOut.map(({ title, reason }) => ({ title, reason })),
     totalBytes: totalOf(included), tooLarge: tooLarge(included), archive,
-  } satisfies GuestDownloadManifest));
+  } satisfies GuestDownloadManifest);
+  // The credential is re-read at the end: access lost while the set was built or the objects HEADed must not hand over the manifest.
+  if (!await stillAllowed(c.env.DB, session, null)) return refusedBecause(c, session, undefined);
+  return c.json(body);
 }
 
 /**
@@ -201,15 +213,18 @@ async function prepare(c: Ctx): Promise<Response> {
   const entered = await enter(c); if (entered instanceof Response) return entered;
   const { session, guestId, answer } = entered;
   const now = Date.now();
-  // A session with no guest costs nothing to mint, so its per-guest bucket would mean nothing: key it by address (hashed, as the Delivery zips do). The link bucket is the same for both.
+  // A session with no guest costs nothing to mint, so its per-guest bucket would mean nothing: key it by address (hashed, as the Delivery zips do).
   const principal = guestId === null ? { bucket: await ipBucket("zipprep", clientAddress(c.req.raw), windowStart(now)), limit: GUEST_LIMITS.zipPrepareIp } : { bucket: `zipprep:guest:${guestId}`, limit: GUEST_LIMITS.zipPrepareGuest };
-  const buckets = [principal, { bucket: `zipprep:link:${session.link.id}`, limit: GUEST_LIMITS.zipPrepareLink }];
+  // Anonymous callers have their own link pool, so they can never exhaust the verified client's Download all.
+  const buckets = [principal, guestId === null ? { bucket: `zipprep:anon-link:${session.link.id}`, limit: GUEST_LIMITS.zipPrepareAnonLink } : { bucket: `zipprep:link:${session.link.id}`, limit: GUEST_LIMITS.zipPrepareLink }];
   // An address already over its limit must not also burn the link's slots (anyone holding the link could then lock every other visitor out of Download all): the unverified path takes both buckets or neither.
   const attempt = guestId === null ? await reserveAllOrNone(c.env.DB, buckets, now) : await reserveAttempts(c.env.DB, buckets, now);
   if (attempt.limited) return answer(tooMany(attempt.retryAfterSeconds));
   const { included } = await readDownloadSet(c.env.DB, session.link.id, session.link.projectId);
   if (included.length === 0) return answer(c.json({ error: "nothing_to_download" }, 409));
   if (tooLarge(included)) return answer(c.json({ error: "zip_too_large", maxEntries: GUEST_ZIP_MAX_ENTRIES, maxBytes: GUEST_ZIP_MAX_BYTES }, 422));
+  // No CRC work is queued after access is lost.
+  if (!await stillAllowed(c.env.DB, session, null)) return refusedBecause(c, session, undefined);
   const assessed = await assessZip(c.env, included, { source: "guest-downloads-prepare", enqueue: "always" });
   return answer(c.json(assessed.kind === "preparing" ? { ...archiveState(assessed), retryAfterSeconds: assessed.retryAfterSeconds } : archiveState(assessed)));
 }
@@ -278,6 +293,7 @@ async function downloadAll(c: Ctx): Promise<Response> {
   if (included.length === 0) return answer(c.json({ error: "nothing_to_download" }, 409));
   if (tooLarge(included)) return answer(c.json({ error: "zip_too_large", maxEntries: GUEST_ZIP_MAX_ENTRIES, maxBytes: GUEST_ZIP_MAX_BYTES }, 422));
   // The gate: a missing or resized object fails here, before byte 0 and before the audit row, and so does a set whose CRC-32s are still being prepared or that is too big for the old writer.
+  if (guestId === null) { const limited = await checkLimited(c, session, Date.now()); if (limited) return answer(limited); }
   const assessed = await assessZip(c.env, included, { source: "guest-download-all", enqueue: "when_blocked" });
   const refusal = archiveRefusal(c, assessed); if (refusal) return answer(refusal);
   const notice = leftOutText(leftOut);
@@ -291,8 +307,8 @@ async function downloadAll(c: Ctx): Promise<Response> {
   // failed plan never costs a start.
   // Both buckets are taken together or not at all (#824), so a refused start changes neither; a start that then fails gives back exactly one slot in each, as the Delivery zips do.
   const at = Date.now();
-  const guestBucket = guestId === null ? await ipBucket("zip", clientAddress(c.req.raw), windowStart(at)) : `zip:guest:${guestId}`; const linkBucket = `zip:link:${session.link.id}`;
-  const attempt = await reserveAllOrNone(c.env.DB, [{ bucket: guestBucket, limit: guestId === null ? GUEST_LIMITS.zipIp : GUEST_LIMITS.zipGuest }, { bucket: linkBucket, limit: GUEST_LIMITS.zipLink }], at);
+  const guestBucket = guestId === null ? await ipBucket("zip", clientAddress(c.req.raw), windowStart(at)) : `zip:guest:${guestId}`; const linkBucket = guestId === null ? `zip:anon-link:${session.link.id}` : `zip:link:${session.link.id}`;
+  const attempt = await reserveAllOrNone(c.env.DB, [{ bucket: guestBucket, limit: guestId === null ? GUEST_LIMITS.zipIp : GUEST_LIMITS.zipGuest }, { bucket: linkBucket, limit: guestId === null ? GUEST_LIMITS.zipAnonLink : GUEST_LIMITS.zipLink }], at);
   if (attempt.limited) return answer(tooMany(attempt.retryAfterSeconds));
   const refund = async () => { await refundAttempt(c.env.DB, guestBucket, at); await refundAttempt(c.env.DB, linkBucket, at); };
   const written = await c.env.DB.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
