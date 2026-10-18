@@ -1,0 +1,58 @@
+/* The note composer: one box. Row 1 is the anchor chip and the text; row 2 is the tools (left) and visibility + send (right). */
+.cmp-wrap { position: relative; padding: 12px; border-top: 1px solid var(--border); background: var(--card); }
+.cmp-wrap.cmp-phone { padding: 8px 10px 10px; }
+.cmp { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 10px 10px 6px 12px; border-radius: var(--radius-lg); background: var(--ink-700); border: 1px solid color-mix(in srgb, var(--border) 60%, transparent); transition: border-color var(--dur-fast) var(--ease-standard); }
+.cmp:focus-within, .cmp.focus { border-color: var(--border-hover); }
+.cmp-text { position: relative; min-height: 24px; max-height: 168px; overflow-y: auto; font-size: 15px; line-height: 24px; color: var(--foreground); }
+.cmp-chip { float: left; display: inline-flex; align-items: center; gap: 4px; margin: 1px 8px 0 0; height: 22px; padding: 0 7px; border-radius: var(--radius-sm); font: 12px/1 var(--font-mono); font-variant-numeric: tabular-nums; background: color-mix(in srgb, var(--star-amber) 18%, transparent); color: var(--caution-inv); white-space: nowrap; user-select: none; }
+.cmp-chip .live { opacity: .6; }
+.cmp-chip .x { display: inline-flex; margin-right: -3px; padding: 2px; border: 0; border-radius: 3px; background: transparent; color: inherit; cursor: pointer; }
+.cmp-chip .x:hover { background: color-mix(in srgb, var(--star-amber) 25%, transparent); }
+.cmp-edit { outline: 0; min-height: 24px; word-break: break-word; }
+.cmp-edit:empty::before { content: attr(data-ph); color: var(--muted-fg); pointer-events: none; }
+.cmp-edit p { margin: 0; }
+.cmp-edit ul, .cmp-edit ol { margin: 0; padding-left: 22px; clear: both; }
+.cmp-edit code { font: 13px var(--font-mono); padding: 1px 4px; border-radius: 3px; background: var(--ink-600); }
+.cmp-edit a { color: var(--foreground); text-decoration: underline; text-decoration-color: var(--greige-400); }
+.fake-sel { background: color-mix(in srgb, #4a7bd6 55%, transparent); color: inherit; border-radius: 2px; }
+
+.cmp-files { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 2px; }
+.cmp-file { display: inline-flex; align-items: center; gap: 8px; height: 40px; max-width: 100%; padding: 0 4px; border-radius: var(--radius-md); background: var(--ink-800); border: 1px solid color-mix(in srgb, var(--border) 55%, transparent); font-size: 13px; color: var(--foreground); }
+.cmp-file .thumb { width: 32px; height: 32px; flex: none; border-radius: 5px; display: flex; align-items: center; justify-content: center; color: var(--fg2); background: repeating-linear-gradient(135deg, rgba(255,255,255,.05) 0 5px, transparent 5px 10px), var(--ink-600); }
+.cmp-file .nm { min-width: 0; max-width: 15ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmp-file .meta { color: var(--fg2); font-size: 12px; white-space: nowrap; }
+.cmp-file .rm { display: inline-flex; padding: 4px; border: 0; border-radius: 5px; background: transparent; color: var(--fg2); cursor: pointer; }
+.cmp-file .rm:hover { background: var(--ink-600); color: var(--foreground); }
+.cmp-file.drawing .thumb { color: var(--caution-inv); background: color-mix(in srgb, var(--star-amber) 14%, transparent); }
+
+.cmp-row { display: flex; align-items: center; gap: 2px; margin-left: -6px; }
+.cmp-tool { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--fg2); cursor: pointer; transition: background-color var(--dur-fast), color var(--dur-fast); }
+.cmp-tool:hover { background: var(--ink-600); color: var(--foreground); }
+.cmp-tool[aria-pressed="true"] { color: var(--caution-inv); background: color-mix(in srgb, var(--star-amber) 16%, transparent); }
+.cmp-phone .cmp-tool { width: 44px; height: 44px; }
+.cmp-sp { flex: 1; }
+.cmp-vis { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px 0 10px; border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--radius-pill); background: transparent; color: var(--foreground); font-size: 13px; cursor: pointer; white-space: nowrap; transition: background-color var(--dur-fast); }
+.cmp-vis:hover, .cmp-vis[aria-expanded="true"] { background: var(--ink-600); }
+.cmp-phone .cmp-vis { height: 40px; }
+.cmp-send { width: 32px; height: 32px; margin-left: 6px; flex: none; border: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--primary); color: var(--primary-fg); cursor: pointer; transition: opacity var(--dur-fast); }
+.cmp-send:disabled { opacity: .35; cursor: default; }
+.cmp-phone .cmp-send { width: 40px; height: 40px; }
+
+.cmp-menu { position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 20; width: 270px; padding: 4px; border-radius: var(--radius-md); background: var(--ink-800); border: 1px solid var(--border); box-shadow: 0 12px 32px rgba(0,0,0,.45); animation: rise var(--dur-base) var(--ease-entrance); }
+.cmp-opt { display: grid; grid-template-columns: 18px 1fr 16px; gap: 10px; align-items: start; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; text-align: left; cursor: pointer; color: var(--foreground); }
+.cmp-opt:hover { background: var(--ink-700); }
+.cmp-opt b { font-weight: 400; font-size: 14px; line-height: 20px; display: block; }
+.cmp-opt span { display: block; font-size: 12px; color: var(--fg2); line-height: 1.4; }
+.cmp-opt svg { margin-top: 2px; }
+
+.cmp-bubble { position: absolute; z-index: 25; display: flex; align-items: center; gap: 1px; padding: 3px; border-radius: var(--radius-md); background: var(--paper-050); color: var(--ink-900); box-shadow: 0 8px 24px rgba(0,0,0,.4); animation: fade var(--dur-fast) var(--ease-standard); white-space: nowrap; }
+.cmp-bubble button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 0; border-radius: 5px; background: transparent; color: var(--ink-900); cursor: pointer; }
+.cmp-bubble button:hover { background: var(--paper-200); }
+.cmp-bubble button[aria-pressed="true"] { background: var(--ink-900); color: var(--paper-050); }
+.cmp-bubble .sep { width: 1px; height: 18px; margin: 0 3px; background: var(--greige-200); }
+.cmp-phone .cmp-bubble button { width: 40px; height: 40px; }
+
+/* Player bar without the in/out and pen buttons. */
+.kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 5px; border: 1px solid var(--greige-600); border-radius: 4px; font: normal 11px/1 var(--font-mono); color: var(--fg2); }
+.hints { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--fg2); white-space: nowrap; overflow: hidden; min-width: 0; }
+.hints > span { display: inline-flex; align-items: center; gap: 4px; }

@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Note Composer</title>
+  <link rel="stylesheet" href="quincy.css" />
+  <link rel="stylesheet" href="composer.css" />
+  <link rel="stylesheet" href="composer-draw.css" />
+  <style>
+    .dv-box { max-width: 1100px; border: 1px solid var(--greige-300); background: var(--paper-000); padding: 16px 20px; margin: 16px 0; font-size: 15px; line-height: 1.5; }
+    .dv-box h3 { margin: 0 0 8px; font: 400 20px/1.3 var(--font-display); }
+    .dv-box ul, .dv-box ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+    .dv-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 32px; max-width: 1100px; }
+    .win { width: 1280px; height: 760px; border-radius: 10px; overflow: hidden; box-shadow: 0 24px 64px rgba(10,10,10,.2); display: flex; flex-direction: column; }
+    .rail { width: 380px; display: flex; flex-direction: column; background: var(--card); border-radius: 10px; overflow: hidden; box-shadow: 0 16px 40px rgba(10,10,10,.18); }
+    .rail-notes { position: relative; overflow: hidden; }
+    .rail-notes::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 40px; background: linear-gradient(var(--card), transparent); pointer-events: none; }
+    .fs-controls { position: absolute; left: 0; right: 0; bottom: 0; padding: 40px 24px 14px; background: var(--scrim-caption); z-index: 6; }
+  </style>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+  <script src="icons.js"></script>
+  <script src="composer-icons.js"></script>
+  <script type="text/babel" src="kit.jsx"></script>
+  <script type="text/babel" src="composer.jsx"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const O = ({ id }) => <a className="dv-oid" href={`#${id}`}>{id}</a>;
+    const Frame = ({ id, label, children, note }) => <div className="dv-opt" id={id} data-screen-label={id}>
+      <div className="dv-olabel"><O id={id} />{label}</div>
+      {children}
+      {note && <p className="dv-onote">{note}</p>}
+    </div>;
+    const still = (t = 5) => ({ t, duration: FILM.duration, playing: false, setPlaying() {}, toggle() {}, seek() {} });
+
+    const SEL = { html: "Pull the <span class=\"fake-sel\">kitchen grade</span> back a touch — it reads warm next to the pool shot.", bubble: { left: 70, top: -44 }, active: {} };
+    const FILES = [
+      { id: "f1", name: "harbour-drone-ref.mov", kind: "video", size: "24.1 MB" },
+      { id: "f2", name: "agent-headshot.jpg", kind: "image", size: "640 KB" },
+    ];
+    const STROKES = [
+      { tool: "rectangle", color: "#e64b3c", pts: [[30, 32], [60, 68]] },
+      { tool: "arrow", color: "#f0a020", pts: [[82, 18], [63, 34]] },
+    ];
+
+    /** C1: the desktop review, live. The pen makes the film the canvas. */
+    function DesktopLive() {
+      const pb = usePlayback(FILM.duration, 5);
+      const mk = useMarkup();
+      const [active, setActive] = useState("n1");
+      return <div className="win" data-surface="inverse">
+        <header style={{ height: 52, flex: "none", display: "flex", alignItems: "center", gap: 12, padding: "0 12px 0 8px", borderBottom: "1px solid var(--border)", background: "var(--card)" }}>
+          <button className="ibtn"><Icon n="chevron-left" size={18} />Video</button>
+          <span style={{ fontSize: 15 }}>{FILM.title}</span>
+          <span className="chip">v3 · latest<Icon n="chevron-down" size={12} /></span>
+          <StatusPill caret />
+        </header>
+        <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+            <div style={{ position: "relative", flex: 1, minHeight: 0, margin: "16px 20px 0" }} onClick={() => { if (!mk.on) pb.toggle(); }}><Film label={"film frame · 16:9\nno timecode overlay on the picture"}><DrawLayer mk={mk} /></Film></div>
+            <div style={{ flex: "none", padding: "4px 20px 14px" }}>
+              <Scrubber pb={pb} />
+              <PlayerBar pb={pb} />
+            </div>
+          </div>
+          <aside style={{ width: 380, flex: "none", display: "flex", flexDirection: "column", background: "var(--card)", borderLeft: "1px solid var(--border)" }}>
+            <div className="tabs"><button className="tab on">Notes<span className="count">4</span></button><button className="tab">Delivery</button></div>
+            <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}><NotesFilter />{NOTES.map((n) => <NoteItem key={n.id} note={n} active={active === n.id} onPick={(x) => { setActive(x.id); pb.seek(x.t); pb.setPlaying(false); }} />)}</div>
+            <NoteComposer pb={pb} mk={mk} />
+          </aside>
+        </div>
+      </div>;
+    }
+
+    /** F1: Full screen, live. Add note floats the same box above the controls. */
+    function FullScreenLive() {
+      const pb = usePlayback(FILM.duration, 5);
+      const mk = useMarkup();
+      const [open, setOpen] = useState(true);
+      return <div className="win" data-surface="inverse" style={{ position: "relative", height: 720, background: "#000" }}>
+        <div style={{ position: "absolute", inset: 0 }} onClick={() => { if (!mk.on) pb.toggle(); }}><Film label={"film · Full screen"}><DrawLayer mk={mk} /></Film></div>
+        {open && <div style={{ position: "absolute", left: "50%", bottom: 112, width: 560, transform: "translateX(-50%)", zIndex: 8 }}><NoteComposer pb={pb} mk={mk} floating /></div>}
+        <div className="fs-controls"><Scrubber pb={pb} /><PlayerBar pb={pb} fullscreen addNote={open} onAddNote={() => setOpen(!open)} /></div>
+      </div>;
+    }
+
+    /** A rail crop: the foot of the notes list and the composer. */
+    function Rail({ demo, variant, notes = NOTES.slice(3), h = 330 }) {
+      return <div className="rail" data-surface="inverse" style={{ height: h }}>
+        <div className="rail-notes" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>{notes.map((n) => <NoteItem key={n.id} note={n} />)}</div>
+        <NoteComposer pb={still()} demo={demo} variant={variant} />
+      </div>;
+    }
+
+    /** R1: a reply form, under its note in the list. */
+    function ReplyRail() {
+      return <div className="rail" data-surface="inverse" style={{ height: 300 }}>
+        <NoteItem note={NOTES[0]} active />
+        <div className="reply-wrap"><NoteComposer pb={still()} variant="reply" demo={{ focus: true }} /></div>
+      </div>;
+    }
+
+    /** A phone: film, the notes sheet, the composer, and the keyboard when it is up. */
+    function Phone({ demo = {}, keyboard }) {
+      const mk = useMarkup(demo.markup);
+      return <PhoneFrame safari={keyboard ? null : "full"} time="11:50">
+        <div style={{ position: "relative", height: keyboard ? 170 : 220, flex: "none" }}><Film label="film"><DrawLayer mk={mk} /></Film></div>
+        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", background: "var(--card)", borderRadius: "14px 14px 0 0" }}>
+          <div className="grabber"></div>
+          <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>{NOTES.slice(0, 3).map((n) => <NoteItem key={n.id} note={n} />)}</div>
+          <NoteComposer pb={still()} phone demo={demo} mk={mk} />
+        </div>
+        {keyboard && <Keyboard />}
+      </PhoneFrame>;
+    }
+
+    const DECIDED = [
+      ["The box", [
+        "Staff, guest, Full screen, edit and reply all use this box. Chip inline before the text; tools bottom left; visibility (staff) and a round Send bottom right.",
+        "Chip: pencil when there is a drawing, then the time or In → Out with ×. It follows the playhead until the note starts.",
+        "In/out: one button, three presses (In → Out → clear). I and O still work.",
+        "Paperclip: photos and videos only (Embedded media), shown as a strip under the text — in the composer and in every posted note, old ones included.",
+        "Visibility: a menu with each option's description; resets to Internal after every note.",
+        "Selected text → bubble: Bold, Italic, Strike, Link | Bulleted, Numbered. Docked to the box's top edge on a phone.",
+      ]],
+      ["Drawing", [
+        "The pen swaps the bottom row for the drawing row (as Frame.io): ‹ Done | Pen, Arrow, Line, Rectangle | colour | Undo, Redo, Clear.",
+        "Phone: the same with Clear moved into the colour popover, so every target stays 44 px.",
+        "Stroke width is fixed (the middle one). Visibility and Send hide while drawing; the text stays editable; Esc or ‹ returns.",
+        "Clear is how a drawing is removed: no drawing card, no Remove drawing button.",
+        "Video notes only: the photo Lightbox keeps its floating toolbar.",
+      ]],
+      ["Removed", [
+        "The timecode chip above the box; Set in / Set out; the fixed toolbar; the hint line; Post.",
+        "The player bar's in/out and pen buttons, everywhere. The phone's + tray and frame step.",
+        "The timecode · frame chip on the picture, in every viewer.",
+        "The floating drawing pill over the film (video).",
+      ]],
+    ];
+
+    function App() {
+      return <>
+        <div className="dv-top">
+          <h1>Note composer</h1>
+          <p>Round 2, after the grilling (2026-10-19). One box after Frame.io's comment field, for every place a note or reply is written on a Video. Formatting lives in a bubble over selected text, as in ReUI <code>rich-text-editor-2</code> (no slash commands); drawing lives in the box's bottom row.</p>
+          <div className="dv-box"><div className="dv-cols">
+            {DECIDED.map(([h, items]) => <div key={h}><h3>{h}</h3><ul>{items.map((x) => <li key={x}>{x}</li>)}</ul></div>)}
+          </div></div>
+        </div>
+
+        <section className="dv-turn">
+          <div className="dv-thd"><span className="dv-tid">Desktop</span><span className="dv-tname">The review page and Full screen</span></div>
+          <p className="dv-tdesc">Live: type, select words, press In/out, add a photo, press the pen and draw on the film, change colour, undo, ‹ back, send (⌘↵).</p>
+          <div className="dv-opts">
+            <Frame id="C1" label="Desktop review · live" note="No in/out or pen in the player bar; no timecode on the picture."><DesktopLive /></Frame>
+            <Frame id="F1" label="Full screen · Add note open · live" note="The same box, 560 px, centred above the controls. Add note or Esc closes it."><FullScreenLive /></Frame>
+          </div>
+        </section>
+
+        <section className="dv-turn">
+          <div className="dv-thd"><span className="dv-tid">Rail</span><span className="dv-tname">Composer states, 380 px rail</span></div>
+          <p className="dv-tdesc">Each frame is a live composer started in a given state.</p>
+          <div className="dv-opts">
+            <Frame id="C2" label="Empty" note="Send is disabled until there is text, media or a drawing."><Rail /></Frame>
+            <Frame id="C3" label="Text selected → bubble"><Rail demo={{ sel: SEL, focus: true }} /></Frame>
+            <Frame id="C4" label="Range, drawing, media" note="The pencil on the chip says there is a drawing. Media is a strip under the text."><Rail demo={{ html: "Swap this window for the harbour drone shot — reference attached.", marks: { in: 5, out: 8.48 }, files: FILES, markup: { strokes: STROKES } }} h={370} /></Frame>
+            <Frame id="C5" label="Visibility menu" note="The removed hint line lives here."><Rail demo={{ html: "Love this drone pass — keep it.", visibility: "public", menu: true }} h={360} /></Frame>
+            <Frame id="C6" label="Drawing row" note="‹ Done | tools | colour | Undo, Redo, Clear. Visibility and Send are hidden until ‹."><Rail demo={{ html: "Lower third is misspelled.", markup: { on: true, tool: "rectangle", strokes: STROKES } }} /></Frame>
+            <Frame id="C7" label="Colour popover"><Rail demo={{ html: "Lower third is misspelled.", palette: true, markup: { on: true, strokes: STROKES } }} /></Frame>
+          </div>
+        </section>
+
+        <section className="dv-turn">
+          <div className="dv-thd"><span className="dv-tid">Variants</span><span className="dv-tname">Guest, reply, edit</span></div>
+          <div className="dv-opts">
+            <Frame id="G1" label="Guest reviewer" note="No visibility: a guest's note is always public. The pen hides when drawing is off for the Project."><Rail variant="guest" notes={visibleNotes("guest").slice(-2)} /></Frame>
+            <Frame id="R1" label="Reply" note="Paperclip and Send only: a reply inherits its note's anchor and visibility."><ReplyRail /></Frame>
+            <Frame id="E1" label="Edit" note="Keeps in/out and the pen; visibility is a fixed label; Cancel / Save."><Rail variant="edit" demo={{ html: "Kitchen grade is a touch warm — pulling it back in v4.", marks: { in: 18.6, out: 24 }, focus: true }} /></Frame>
+          </div>
+        </section>
+
+        <section className="dv-turn">
+          <div className="dv-thd"><span className="dv-tid">Phone</span><span className="dv-tname">Same box, 44 px tools</span></div>
+          <p className="dv-tdesc">The two-row box at rest too. No frame step on a phone.</p>
+          <div className="dv-opts">
+            <Frame id="P1" label="At rest"><Phone /></Frame>
+            <Frame id="P2" label="Keyboard up · text selected"><Phone keyboard demo={{ sel: SEL, focus: true }} /></Frame>
+            <Frame id="P3" label="Keyboard up · range, media, client-visible"><Phone keyboard demo={{ html: "Swap this window for the harbour drone shot.", marks: { in: 5, out: 8.48 }, files: FILES.slice(0, 1), visibility: "public", focus: true }} /></Frame>
+            <Frame id="P4" label="Drawing · keyboard down" note="The pen lowers the keyboard; the film is the canvas. Tapping the text raises it and the drawing row stays."><Phone demo={{ html: "Lower third is misspelled.", markup: { on: true, tool: "arrow", strokes: STROKES } }} /></Frame>
+            <Frame id="P5" label="Colour popover · Clear drawing"><Phone demo={{ html: "Lower third is misspelled.", palette: true, markup: { on: true, strokes: STROKES } }} /></Frame>
+          </div>
+        </section>
+      </>;
+    }
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
