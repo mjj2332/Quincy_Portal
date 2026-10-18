@@ -209,6 +209,8 @@ describe("Dashboard Kanban sort control", () => {
   });
 
   it("renders the Sydney deadline on the Board card, with no RAW count (#432)", async () => {
+    // RAW received is hidden for a new viewer (#923); this viewer turned it on.
+    window.localStorage.setItem("quincy:dashboard:table:admin-1", JSON.stringify({ groupBy: "none", hiddenColumns: [] }));
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(1); });
     await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card"]')).not.toBeNull());
     const link = document.querySelector('[data-testid="board-card"]')!;

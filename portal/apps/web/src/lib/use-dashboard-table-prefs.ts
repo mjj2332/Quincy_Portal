@@ -4,7 +4,7 @@ import { normalizeTablePrefs, readTablePrefs, writeTablePrefs, type TablePrefs }
 type Held = { principalId: string; prefs: TablePrefs };
 
 /**
- * The Dashboard Table's per-viewer Display preferences (#431): Group by and the hidden columns,
+ * The Dashboard Table's per-viewer Display preferences (#431): Group by, the hidden columns and (#923) Show Delivered,
  * kept in `localStorage` under `quincy:dashboard:table:<principalId>` (`lib/dashboard-table-model.ts`).
  *
  * An identity switch re-reads for the NEW viewer during the same render, and a setter captured for

@@ -62,14 +62,20 @@ export function BoardDisplayContent({ value, onChange, stages, disabled = false 
   );
 }
 
-/** The Table's Group by (None, Stage, Client) and the hideable columns. Address is never offered. */
-export function TableDisplayContent({ groupBy, onGroupByChange, hiddenColumns, hideableColumns, onColumnVisibilityChange }: {
+/**
+ * The Table's Group by (None, Stage, Client), the hideable columns (Project is never offered) and, since #923,
+ * "Show: Delivered Projects" (a viewer preference, not a Filter rule). The Show group renders once the caller
+ * wires `onShowDeliveredChange`: a checkbox with no handler would be a control that does nothing.
+ */
+export function TableDisplayContent({ groupBy, onGroupByChange, hiddenColumns, hideableColumns, onColumnVisibilityChange, showDelivered = true, onShowDeliveredChange }: {
   groupBy: TableGroupBy;
   onGroupByChange: (next: TableGroupBy) => void;
   hiddenColumns: readonly HideableColumnId[];
-  /** The columns this viewer can see at all (no Priority for an External Editor). */
+  /** The columns this viewer can see at all (no Priority or Progress for an External Editor). */
   hideableColumns: readonly HideableColumnId[];
   onColumnVisibilityChange: (column: HideableColumnId, visible: boolean) => void;
+  showDelivered?: boolean;
+  onShowDeliveredChange?: (show: boolean) => void;
 }) {
   const narrow = useMediaQuery(TABLE_NARROW_QUERY);
   return (
@@ -85,13 +91,22 @@ export function TableDisplayContent({ groupBy, onGroupByChange, hiddenColumns, h
       <DropdownMenuSeparator />
       <DropdownMenuGroup>
         <DropdownMenuLabel>Columns</DropdownMenuLabel>
-        {narrow && <p data-testid="table-display-narrow-note" className={DISPLAY_NOTE_CLASS}>On narrow screens the Table shows Address and Deadline only.</p>}
+        {narrow && <p data-testid="table-display-narrow-note" className={DISPLAY_NOTE_CLASS}>On narrow screens the Table is a list; columns apply on wider screens.</p>}
         {hideableColumns.map((column) => (
           <DropdownMenuCheckboxItem key={column} checked={!hiddenColumns.includes(column)} onCheckedChange={(checked) => onColumnVisibilityChange(column, checked)}>
             {TABLE_COLUMN_LABELS[column]}
           </DropdownMenuCheckboxItem>
         ))}
       </DropdownMenuGroup>
+      {onShowDeliveredChange && (
+        <>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>Show</DropdownMenuLabel>
+            <DropdownMenuCheckboxItem checked={showDelivered} onCheckedChange={onShowDeliveredChange}>Delivered Projects</DropdownMenuCheckboxItem>
+          </DropdownMenuGroup>
+        </>
+      )}
     </>
   );
 }
