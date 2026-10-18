@@ -6,6 +6,7 @@ import { peopleToneColor } from "../lib/dashboard-appearance";
 import type { ColourBy, PeopleKeyEntry } from "../lib/timeline-colour-by";
 import { cn } from "../lib/utils";
 import { Eyebrow } from "./quincy/Eyebrow";
+import { KEY_ROW_CLASS, KEY_ROW_LIST_CLASS, KEY_ROW_TRAILING_CLASS } from "./quincy/StageKeyRow";
 
 /**
  * #916 / #920: the Timeline's Colour by controls, frame 3b (`design/prototypes/dashboard-views`,
@@ -83,22 +84,24 @@ const UNASSIGNED_SWATCH_COLOR = peopleToneColor({ kind: "unassigned" });
 
 export function PeopleKeyRow({ people, unassignedOpen, trailing }: { people: readonly PeopleKeyEntry[]; unassignedOpen: number; trailing?: ReactNode }) {
   return (
-    <div role="group" aria-label="People key" data-testid="people-key-row" className="flex flex-wrap items-center gap-2">
-      {people.map((person) => (
-        <PeopleKeyChip key={person.personId} swatch={<PersonToneAvatar initials={person.initials} color={person.color} />} label={person.label} open={person.open} />
-      ))}
-      <PeopleKeyChip
-        swatch={
-          <span
-            aria-hidden="true"
-            className="size-6.5 shrink-0 rounded-full border-[length:var(--border-width-mid)] border-dashed border-(--person-color) bg-card"
-            style={{ "--person-color": UNASSIGNED_SWATCH_COLOR } as CSSProperties}
-          />
-        }
-        label="Unassigned"
-        open={unassignedOpen}
-      />
-      {trailing !== undefined && <div className="ms-auto flex items-center gap-2">{trailing}</div>}
+    <div role="group" aria-label="People key" data-testid="people-key-row" className={KEY_ROW_CLASS}>
+      <div className={KEY_ROW_LIST_CLASS}>
+        {people.map((person) => (
+          <PeopleKeyChip key={person.personId} swatch={<PersonToneAvatar initials={person.initials} color={person.color} />} label={person.label} open={person.open} />
+        ))}
+        <PeopleKeyChip
+          swatch={
+            <span
+              aria-hidden="true"
+              className="size-6.5 shrink-0 rounded-full border-[length:var(--border-width-mid)] border-dashed border-(--person-color) bg-card"
+              style={{ "--person-color": UNASSIGNED_SWATCH_COLOR } as CSSProperties}
+            />
+          }
+          label="Unassigned"
+          open={unassignedOpen}
+        />
+      </div>
+      {trailing !== undefined && <div className={KEY_ROW_TRAILING_CLASS}>{trailing}</div>}
     </div>
   );
 }

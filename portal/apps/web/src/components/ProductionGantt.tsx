@@ -227,7 +227,8 @@ import { EmptyState } from "./quincy/EmptyState";
 import { AvatarStack } from "./quincy/AvatarStack";
 import { Notice } from "./quincy/Notice";
 import { StageKeyRow } from "./quincy/StageKeyRow";
-import { GanttKeyDrawer, GanttPhoneRowLabel, phoneRowMeta, phoneRowProjectId, usePhoneTapGuard, type GanttPhoneRow } from "./ProductionGanttPhone";
+import { KeyDrawer, KeyDrawerTrigger, useKeyDrawer } from "./quincy/KeyDrawer";
+import { GanttPhoneRowLabel, phoneRowMeta, phoneRowProjectId, usePhoneTapGuard, type GanttPhoneRow } from "./ProductionGanttPhone";
 import { SubtaskAssigneePicker, type AssigneePickerBaseline } from "./quincy/SubtaskAssigneePicker";
 import { type RetainedSchedule } from "./quincy/SubtaskScheduleControl";
 import { Skeleton } from "./reui/skeleton";
@@ -365,16 +366,19 @@ function ProductionGanttNav({
   zoomTargetRef,
   colourBy,
   onColourByChange,
+  keyTrigger,
 }: {
   onToday: () => void;
   zoomTargetRef: (el: HTMLDivElement | null) => void;
   /** #920: frame 3b's "Colour by: Stage | People", before Zoom. Phones get it in the Key drawer (#921, D7). */
   colourBy: ColourBy;
   onColourByChange: (next: ColourBy) => void;
+  /** #916 design review (should-fix 5): a phone's Key button, at the end of this row; the drawer's root lives outside the chart. */
+  keyTrigger?: ReactNode;
 }) {
   const { today } = useGanttNavigation();
   return (
-    <GanttNav>
+    <GanttNav data-testid="production-gantt-nav">
       <TooltipProvider delay={600} closeDelay={0} timeout={300}>
         <GanttNavToday
           onClick={() => {
@@ -387,11 +391,14 @@ function ProductionGanttNav({
           <GanttNavPrev />
           <GanttNavNext />
         </div>
-        <GanttTitle />
+        {/* #916 design review: on a phone the range takes the line under the controls, so Today, the zoom, the arrows and
+            Key share one row (all five and the range need ~450pt; a 402pt phone has ~346pt here). */}
+        <GanttTitle className="max-[721px]:order-last max-[721px]:basis-full" />
         <div className="grow" />
         <TimelineColourBySwitch colourBy={colourBy} onColourByChange={onColourByChange} className="max-[721px]:hidden" />
         {/* #738: GanttView portals its zoom buttons here (hidden below 1024px with `zoomControl`). */}
         <div ref={zoomTargetRef} data-testid="gantt-nav-zoom" className="flex items-center" />
+        {keyTrigger}
       </TooltipProvider>
     </GanttNav>
   );
@@ -453,6 +460,8 @@ const GANTT_METRICS_TOUCH: GanttMetrics = { ...GANTT_METRICS, minRowHeight: 2.75
  * padding around each, so a row is 72px, the frame's. Week fits its 7 days to the track (owner decision), whatever the
  * phone's width; pinch zoom still scales from there.
  */
+/** #916 design review: a bar's outside title is 14px, as its inside label is (frame 3a `.olbl`); the vendor's inherits `text-xs`. */
+const GANTT_CLASS_NAMES = { barLabel: "text-sm" };
 const GANTT_METRICS_PHONE: GanttMetrics = { laneHeight: 1.75, rowPadding: 0.375, inlineLabelHeight: 1.625, unitsPerLane: { week: 7 } };
 
 export function GanttRowAttentionBadge({ reason }: { reason: ProductionGanttAttentionReason }) {
@@ -589,10 +598,10 @@ function GanttResourceLabel({
   const retryChildren = childLoadRetryByProjectResourceId.get(resource.id);
   const showAttention = !!attention && !hideAttentionBadgeFor.has(resource.id);
   return (
-    <span className="flex min-w-0 items-center gap-1.5 max-[721px]:flex-col max-[721px]:items-stretch max-[721px]:justify-center max-[721px]:gap-0.5">
-      {/* The street keeps a `--space-9` (96px = the old 6rem) floor while taking every remaining
-          pixel; the attention badge yields to it (see `hideAttentionBadgeFor`). */}
-      <span className="min-w-0 min-[721px]:min-w-[var(--space-9)] flex-1 truncate max-[721px]:flex-none">
+    // #916 design review (blockers 1-2), frame 3a `.nm`: a 14px name over a 12px meta line ("3 of 5 done", the
+    // attention badge, the child Retry) at every width. Beside the name, the meta overran it and the People column.
+    <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5 text-sm leading-[var(--leading-snug)]">
+      <span className="min-w-0 truncate">
         {projectHrefFor && resource.id.startsWith("project:") ? (
           <ProjectCalendarAnchor
             testId="gantt-project-link"
@@ -603,8 +612,8 @@ function GanttResourceLabel({
         ) : resource.title}
       </span>
       {(showAttention || retryChildren || doneLabel) && (
-        // #689: a plain layout wrapper. Desktop: `contents` (children stay inline beside the name). Phone: line 2.
-        <span data-testid="gantt-row-label-meta" className="min-w-0 min-[721px]:contents max-[721px]:flex max-[721px]:items-center max-[721px]:gap-1.5 max-[721px]:overflow-hidden">
+        // #689: line 2 under the name (every width since the #916 design review).
+        <span data-testid="gantt-row-label-meta" className="flex min-w-0 items-center gap-1.5 overflow-hidden">
           {doneLabel && <span data-testid="gantt-row-done-count" className="min-w-0 shrink-0 truncate text-xs text-foreground-secondary">{doneLabel}</span>}
           {showAttention && <GanttRowAttentionBadge reason={attention.reason} />}
           {retryChildren && <GanttChildLoadErrorBadge onRetry={retryChildren} />}
@@ -2138,6 +2147,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   const interactions = useMemo(() => ({ drag: live, resize: live, selectSlot: false }), [live]);
   // #921: a tap on a phone bar opens its Project; a press that travelled was a scroll.
   const phoneTap = usePhoneTapGuard();
+  // #916 design review: the phone Key drawer's root (in the always-mounted band) and its trigger (in the nav) share this.
+  const keyDrawer = useKeyDrawer();
 
   // #255: ONE always-mounted root. The filters bar and the Stage key row (#919) sit above the loading / error /
   // chart slot and never unmount with it, so an edit keeps focus on the control the user just used
@@ -2241,6 +2252,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             onCollapsedGroupsChange={setCollapsedGroups}
             selectedRows={highlightedRowId ? [highlightedRowId] : NO_SELECTED_ROWS}
             barLabel="auto"
+            classNames={GANTT_CLASS_NAMES}
             displayScheduleHint
             displayCreateTaskHint={false}
             canCreateTask={phone ? GANTT_NEVER_CREATE : canCreateTask}
@@ -2256,7 +2268,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             renderEventTrailing={phone ? undefined : renderEventTrailing}
             className="min-h-0 flex-1"
           >
-            <ProductionGanttNav onToday={armLanding} zoomTargetRef={setZoomTarget} colourBy={colourBy} onColourByChange={setColourBy} />
+            <ProductionGanttNav onToday={armLanding} zoomTargetRef={setZoomTarget} colourBy={colourBy} onColourByChange={setColourBy} keyTrigger={phone ? <KeyDrawerTrigger drawer={keyDrawer} testIdPrefix="production-gantt" /> : undefined} />
             <GanttToolbar />
             <GanttView zoomControlTarget={zoomTarget} />
           </Gantt>
@@ -2272,18 +2284,19 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   );
   return (
     <div ref={containerRef} className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)]" data-testid="production-gantt-root" {...itemMenu.wrapperProps}>
-      <div data-testid="production-gantt-key" className="border-y-[length:var(--border-width-hair)] border-border bg-background py-[var(--space-2)]">
-        {phone ? (
-          // #921 (D7): a phone's key is a 44px Key button and a Drawer holding the active key row (Stage, or People under
-          // Colour by People) and #920's Colour by switch (the nav's copy hides below 721px). It lives in this always-mounted
-          // band (#255), so a chip's Filter write, which re-pends the chart below, never unmounts the open Drawer.
-          <GanttKeyDrawer colourBySlot={<TimelineColourBySwitch colourBy={colourBy} onColourByChange={setColourBy} />}>
-            {keyRow}
-          </GanttKeyDrawer>
-        ) : (
-          keyRow
-        )}
-      </div>
+      {phone ? (
+        // #921 (D7): a phone's key is a 44px Key button and a Drawer holding the active key row (Stage, or People under
+        // Colour by People) and #920's Colour by switch (the nav's copy hides below 721px). The drawer's root sits here,
+        // always mounted (#255), so a chip's Filter write, which re-pends the chart below, never unmounts the open Drawer;
+        // its trigger sits in the nav row (#916 design review), so the phone draws no key band of its own.
+        <KeyDrawer drawer={keyDrawer} testIdPrefix="production-gantt" colourBySlot={<TimelineColourBySwitch colourBy={colourBy} onColourByChange={setColourBy} />}>
+          {keyRow}
+        </KeyDrawer>
+      ) : (
+        <div data-testid="production-gantt-key" className="border-y-[length:var(--border-width-hair)] border-border bg-background py-[var(--space-2)]">
+          {keyRow}
+        </div>
+      )}
       {commands.settle.recoveryReason && (
         <Notice role="alert" data-testid="production-gantt-recovery-notice" className="flex items-center justify-between gap-[var(--space-4)]">
           <span>{commands.settle.recoveryReason}</span>

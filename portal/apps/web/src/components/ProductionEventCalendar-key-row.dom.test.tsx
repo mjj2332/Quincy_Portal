@@ -115,14 +115,53 @@ describe("the Calendar's Stage key row (#922, frame 3d)", () => {
     expect(keyBand().textContent).not.toMatch(/Shoot/);
   });
 
-  it("is drawn on the phone toolbar too", async () => {
-    h.teardown();
-    h = createHarness();
-    stubMedia(["(max-width: 720px)", "(pointer: coarse)", "(max-width: 1100px)"]);
-    stubCalendarFetch({ range: rangeResponse() });
-    await h.render(week({ subview: "agenda" }));
-    expect(keyKeys()).toEqual(EVERY);
-    const controls = document.querySelector('[data-testid="event-calendar-controls"]')!;
-    expect(controls.compareDocumentPosition(keyBand()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  // #916 design review, item 4 (owner decision): on a phone the inline row wrapped to three rows of 44pt chips (~150pt) above
+  // the agenda. The key moves into the Timeline's Key drawer, opened from a 44pt Key button in the controls row; no Colour by.
+  describe("at phone width", () => {
+    beforeEach(() => {
+      h.teardown();
+      h = createHarness();
+      stubMedia(["(max-width: 720px)", "(pointer: coarse)", "(max-width: 1100px)"]);
+      stubCalendarFetch({ range: rangeResponse() });
+    });
+    const keyButton = () => document.querySelector<HTMLButtonElement>('[data-testid="event-calendar-key-button"]');
+    const drawer = () => document.querySelector<HTMLElement>('[data-testid="event-calendar-key-drawer"]');
+    async function openKey() {
+      await act(async () => { keyButton()!.click(); await Promise.resolve(); });
+      for (let i = 0; i < 4; i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    }
+
+    it("draws no key band; a 44pt Key button sits in the controls row", async () => {
+      await h.render(week({ subview: "agenda" }));
+      expect(document.querySelector('[data-testid="event-calendar-key"]')).toBeNull();
+      const button = keyButton()!;
+      expect(button).not.toBeNull();
+      expect(button.textContent).toBe("Key");
+      expect(button.className.split(/\s+/)).toContain("h-11");
+      expect(button.closest('[data-testid="event-calendar-controls"]')).not.toBeNull();
+      expect(drawer()).toBeNull();
+    });
+
+    it("the Key drawer holds every Stage chip and the Deadline symbol, and no Colour by switch", async () => {
+      await h.render(week({ subview: "agenda" }));
+      await openKey();
+      const opened = drawer()!;
+      expect(opened).not.toBeNull();
+      expect([...opened.querySelectorAll("button[data-stage-key]")].map((chip) => chip.getAttribute("data-stage-key"))).toEqual(EVERY);
+      expect(opened.querySelector('[data-testid="event-calendar-key-deadline"]')).not.toBeNull();
+      expect(opened.querySelector('[data-testid^="timeline-colour-by"]')).toBeNull();
+    });
+
+    it("a chip press in the drawer is one Filter write, and the drawer stays open across it", async () => {
+      const writes: DashboardFilter[] = [];
+      await h.render(week({ subview: "agenda", stageKeys: ["raw_review"] }), { onFilterChange: (next) => writes.push(next) });
+      await openKey();
+      await act(async () => { drawer()!.querySelector<HTMLButtonElement>('button[data-stage-key="editing"]')!.click(); });
+      expect(writes).toHaveLength(1);
+      expect(stagesOf(writes[0]!)).toEqual(["raw_review", "editing"]);
+      await h.rerender(week({ subview: "agenda", stageKeys: ["raw_review", "editing"] }), { onFilterChange: (next) => writes.push(next) });
+      expect(drawer()?.hasAttribute("data-open")).toBe(true);
+      expect(drawer()!.querySelector('button[data-stage-key="editing"]')!.getAttribute("aria-pressed")).toBe("true");
+    });
   });
 });

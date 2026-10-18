@@ -45,7 +45,7 @@ export type StageFilterOption = { key: StagePresentationKey; label: string };
 export type StageToneOption = StageFilterOption & { tone: StageTone };
 
 /** One chip of the Timeline's Stage key (`StageKeyRow`'s entry). */
-export type GanttKeyEntry = StageToneOption & { pressed: boolean; disabled: boolean };
+export type GanttKeyEntry = StageToneOption & { pressed: boolean; picked: boolean; disabled: boolean };
 
 // ---------------------------------------------------------------------------
 // The Delivered pair and the empty-state recovery. The Timeline's Display (#430) and the shared
@@ -172,11 +172,13 @@ export function ganttKeyEntries({ stageOptions, filters }: { stageOptions: reado
   const filter = normalizeDashboardFilter(filters);
   // The stages the filter can still match (every stage when no Stage rule narrows it): exact for a flat filter and a tree alike.
   const scope = new Set<StagePresentationKey>(dashboardFilterStageScope(dashboardFilterTreeOf(filter)));
-  return stageOptionsWithTone(stageOptions).map((option) => ({
-    ...option,
-    pressed: scope.has(option.key) && (option.key !== "delivered" || filters.delivered),
-    disabled: toggleStageInDashboardFilter(filter, option.key) === null,
-  }));
+  // #916 design review: a Stage rule narrows the key when it leaves a listed Stage out. Only then are the pressed chips
+  // "picked" (an ink edge), so the key at rest stays frame 3a's row of hairline chips.
+  const narrowed = stageOptions.some((option) => !scope.has(option.key));
+  return stageOptionsWithTone(stageOptions).map((option) => {
+    const pressed = scope.has(option.key) && (option.key !== "delivered" || filters.delivered);
+    return { ...option, pressed, picked: pressed && narrowed, disabled: toggleStageInDashboardFilter(filter, option.key) === null };
+  });
 }
 
 /** Each stage option with its tone: the one place a key chip or a Stage filter option takes its swatch from. */

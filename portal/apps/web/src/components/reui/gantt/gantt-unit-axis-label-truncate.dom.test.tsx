@@ -121,3 +121,24 @@ describe("follow-up to 0c8432aa (#219 dr3-219a MEDIUM #1): the day/unit axis hea
     expect(dayCell!.contains(labelEl)).toBe(true);
   });
 });
+
+// #916 design review (should-fix 6): on the phone's seven-day week a day is ~52pt, and the today pill's own padding cut
+// "Sun 18" to "Sun…". The pill sizes to its label instead: it never truncates, and the today cell drops its own padding.
+describe("#916 design review: the today pill sizes to its label", () => {
+  it("the today cell's pill keeps its whole label (no truncate) and the cell gives it the full width", async () => {
+    await render(
+      <Gantt resources={RESOURCES} events={[]} date={new Date()} scale="week" timeZone="UTC">
+        <GanttView />
+      </Gantt>,
+    );
+    const today = host.querySelector<HTMLElement>("[data-gantt-axis] [data-today]");
+    expect(today).not.toBeNull();
+    const pill = today!.querySelector("span")!;
+    const tokens = (el: HTMLElement) => el.className.split(/\s+/);
+    expect(tokens(pill)).not.toContain("truncate");
+    expect(tokens(pill)).toContain("shrink-0");
+    expect(tokens(pill)).toContain("whitespace-nowrap");
+    expect(tokens(today!)).toContain("px-0");
+    expect(tokens(today!)).not.toContain("px-1.5");
+  });
+});

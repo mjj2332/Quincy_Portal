@@ -346,6 +346,12 @@
  * floors still apply. `metrics.unitsPerLane` fits that many units to the measured lane (the phone's Week: 7 days); the
  * body's width state moved up beside the metrics so the unit model can read it. Collapse toggles, row checkboxes,
  * columns and create rows live in the tree, so the inline placement has none. `gantt-inline-labels.dom.test.tsx`.
+ *
+ * 2026-10-18, #916 design review - CHANGED, class tokens and one prop. (a) The unit axis's today pill sizes to its label
+ * (`shrink-0 whitespace-nowrap`, no `truncate`) and its cell drops its `px-1.5`: on the phone's seven-day week the pill
+ * read "Sun…" (`gantt-unit-axis-label-truncate.dom.test.tsx`). The Dashboard Timeline is the only caller
+ * (`ProductionGantt.import-boundary.guard.test.ts`). (b) The outside bar title merges `classNames.barLabel` last
+ * (`gantt.tsx`'s entry of the same date).
  */
 
 import {
@@ -3017,7 +3023,9 @@ function GanttView({
                 data-today={unit.isToday || undefined}
                 data-off={unit.isOff || undefined}
                 className={cn(
-                  "flex min-w-0 items-center justify-center px-1.5 text-center",
+                  "flex min-w-0 items-center justify-center text-center",
+                  // #916 design review: the today cell gives its pill the full unit (see the pill below)
+                  unit.isToday ? "px-0" : "px-1.5",
                   "text-muted-foreground",
                   unit.isToday && "text-primary font-medium"
                 )}
@@ -3029,9 +3037,11 @@ function GanttView({
                     because unit labels are short day/date strings). `truncate` now lives on a
                     non-flex child span instead, mirroring `gantt-bar.tsx:532` and the ghost
                     title fix. */}
-                {/* today reads as a soft pill, not just tinted text */}
+                {/* today reads as a soft pill, not just tinted text. #916 design review (Quincy): it sizes to
+                    its label and never truncates; on the phone's seven-day week (~52pt a day) the pill's own
+                    padding cut "Sun 18" to "Sun…". Wider than its unit, it overhangs evenly (centred). */}
                 {unit.isToday ? (
-                  <span className="bg-primary/10 truncate rounded-full px-1.5 py-px">
+                  <span className="bg-primary/10 shrink-0 rounded-full px-1.5 py-px whitespace-nowrap">
                     {unit.label}
                   </span>
                 ) : (
@@ -5259,7 +5269,9 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
                           ? dependencySourceIds.has(segment.occurrence.eventId)
                             ? "start-full ms-4"
                             : "start-full ms-2"
-                          : "end-full me-2"
+                          : "end-full me-2",
+                      // QUINCY ADDITION (#916 design review): the consumer's outside-title classes, last
+                      viewConfig.classNames?.barLabel
                     )}
                   >
                     {segment.occurrence.event.title}

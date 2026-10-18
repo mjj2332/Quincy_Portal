@@ -251,6 +251,53 @@ describe("ProductionGantt — Colour by People, frame 3b (#920)", () => {
     const chips = [...row!.querySelectorAll<HTMLElement>('[data-testid="people-key-chip"]')].map((chip) => chip.textContent);
     expect(chips).toEqual(["ANAnika Nair2 open", "RKRob Keane1 open", "Unassigned1 open"]);
     expect(row!.querySelector("button")).toBeNull();
+    // #916 design review (nit): the symbols stay beside the chips' own wrapping list, never on a row alone.
+    const sameDay = row!.querySelector('[data-testid="gantt-key-same-day"]')!;
+    expect(sameDay.parentElement!.parentElement).toBe(row);
+    expect(sameDay.parentElement!.className.split(/\s+/)).toContain("shrink-0");
+    expect(row!.className.split(/\s+/)).not.toContain("flex-wrap");
+  });
+
+  // Session row 18: "Unassigned 327 open" beside "13 shown". The count is the drawn Projects' own Subtasks: the local QA
+  // fixtures assign nobody, and "Pagination 260" alone holds 260 open Subtasks. A Project the Filter drops leaves the count.
+  it("counts only the Subtasks of the Projects the Timeline shows, and follows the Filter", async () => {
+    const OTHER_ID = "11111111-1111-4111-8111-920000000002";
+    const other: GanttProjectRowDto = {
+      ...PROJECT,
+      id: OTHER_ID,
+      street: "88 Glebe Point Road",
+      checklist: { completed: 0, total: 2 },
+      children: {
+        rows: [
+          makeTask({ id: "22222222-2222-4222-8222-920000000011", title: "Sky swap", projectId: OTHER_ID }),
+          makeTask({ id: "22222222-2222-4222-8222-920000000012", title: "Twilight edit", projectId: OTHER_ID, assignees: [ROB] }),
+        ],
+        total: 2, returned: 2, truncated: false, nextCursor: null,
+      },
+    };
+    apiGetMock.mockReset();
+    apiGetMock.mockImplementation((path: string) => {
+      if (!path.startsWith("/api/production-gantt")) return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      return Promise.resolve(ganttResponse(path.includes("q=Wattle") ? [PROJECT] : [PROJECT, other]));
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const mount = async (q: string) => {
+      await act(async () => {
+        root.render(
+          <QueryClientProvider client={client}>
+            <ProductionGantt identity={identity} q={q} filters={DEFAULT_GANTT_FACET_FILTERS} onFiltersChange={() => {}} />
+          </QueryClientProvider>,
+        );
+        await Promise.resolve();
+      });
+      for (let i = 0; i < 3; i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    };
+    const chips = () => [...host.querySelectorAll<HTMLElement>('[data-testid="people-key-chip"]')].map((chip) => chip.textContent);
+    await mount("");
+    await choose(host, "people");
+    expect(chips()).toEqual(["ANAnika Nair2 open", "RKRob Keane2 open", "Unassigned2 open"]);
+    await mount("Wattle");
+    expect(chips()).toEqual(["ANAnika Nair2 open", "RKRob Keane1 open", "Unassigned1 open"]);
   });
 
   it("People draws the tree's People column avatars in each person's colour; a shared Subtask's stay neutral", async () => {

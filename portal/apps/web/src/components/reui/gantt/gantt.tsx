@@ -141,6 +141,10 @@
  * `inlineLabelHeight` (that label line) and `unitsPerLane` (that many units fill the visible lane at zoom 1,
  * overriding `unitWidths` once the lane is measured), both read by the inline placement only. Rendered by `gantt-view.tsx`;
  * covered by `gantt-inline-labels.dom.test.tsx`.
+ *
+ * 2026-10-18, #916 design review — ADDED, additive (unset: nothing changes): `GanttClassNames.barLabel`, merged last onto
+ * the title `gantt-view.tsx` draws beside a bar whose label sits outside it. The vendor's outside title inherits the root's
+ * `text-xs`; the Dashboard Timeline sets 14px there (frame 3a `.olbl`). `classNames` is already in `VIEW_CONFIG_KEYS`.
  */
 
 import {
@@ -2160,6 +2164,8 @@ interface GanttClassNames {
   baseline?: string
   /** The dependency-arrow layer (an SVG; color flows from currentColor). */
   dependencies?: string
+  /** Quincy addition (#916 design review): the title drawn beside a bar whose label sits outside it. */
+  barLabel?: string
 }
 
 /** Row context handed to tree-panel column and label renderers. */

@@ -85,6 +85,17 @@ describe("ganttKeyEntries (#916 / #919, frame 3a key row)", () => {
     expect(pressed(ganttKeyEntries({ stageOptions: adminOptions, filters: { stageKeys: ["raw_review", "delivered"], delivered: true } }))).toEqual(["raw_review", "delivered"]);
   });
 
+  // #916 design review, should-fix 3: a pressed chip on the canvas was ~1.03:1 against an unpressed one. While a Stage
+  // rule narrows the Filter, the Stages it keeps are "picked" (an ink edge); with no Stage rule nothing is, so the key at
+  // rest stays frame 3a's row of hairline chips.
+  it("picks the pressed stages only while a Stage rule narrows the Filter", () => {
+    const picked = (entries: ReturnType<typeof ganttKeyEntries>) => entries.filter((entry) => entry.picked).map((entry) => entry.key);
+    expect(picked(ganttKeyEntries({ stageOptions: adminOptions, filters: { stageKeys: [], delivered: false } }))).toEqual([]);
+    expect(picked(ganttKeyEntries({ stageOptions: adminOptions, filters: { stageKeys: [], delivered: true } }))).toEqual([]);
+    expect(picked(ganttKeyEntries({ stageOptions: adminOptions, filters: { stageKeys: ["raw_review"], delivered: false } }))).toEqual(["raw_review"]);
+    expect(picked(ganttKeyEntries({ stageOptions: adminOptions, filters: { stageKeys: ["raw_review", "delivered"], delivered: true } }))).toEqual(["raw_review", "delivered"]);
+  });
+
   it("takes each tone from the appearance module, and labels from the role-aware stage list", () => {
     const entries = ganttKeyEntries({ stageOptions: editorOptions, filters: { stageKeys: [], delivered: true } });
     for (const entry of entries) expect(entry.tone).toEqual(stageTone(entry.key));

@@ -106,6 +106,7 @@ import { ganttKeyEntries, ganttShowDeliveredRecovery, productionStageFilterOptio
 import { toggleStageInDashboardFilter } from "../lib/dashboard-filter-query";
 import { useStages } from "../lib/stages";
 import { StageKeyRow } from "./quincy/StageKeyRow";
+import { KeyDrawer, KeyDrawerTrigger, useKeyDrawer } from "./quincy/KeyDrawer";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "./reui/sheet";
 import { Skeleton } from "./reui/skeleton";
 import { EmptyState } from "./quincy/EmptyState";
@@ -330,9 +331,15 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
     const next = toggleStageInDashboardFilter(calendar, key);
     if (next) onFilterChange?.(next);
   }, [calendar, onFilterChange]);
-  const keyRow = (
+  const stageKeyRow = <StageKeyRow entries={keyEntries} onToggle={toggleStage} trailing={<CalendarKeySymbols />} />;
+  // #916 design review, item 4 (owner decision): on a phone the inline row wrapped to ~150pt of chips above the agenda, so
+  // it moves into the Timeline's Key drawer, opened from a 44pt Key button in the controls row. No Colour by here.
+  const keyDrawer = useKeyDrawer();
+  const keyRow = phoneViewport ? (
+    <KeyDrawer drawer={keyDrawer} testIdPrefix="event-calendar">{stageKeyRow}</KeyDrawer>
+  ) : (
     <div data-testid="event-calendar-key" className="shrink-0 border-y-[length:var(--border-width-hair)] border-border bg-background px-[var(--space-2)] py-[var(--space-2)]">
-      <StageKeyRow entries={keyEntries} onToggle={toggleStage} trailing={<CalendarKeySymbols />} />
+      {stageKeyRow}
     </div>
   );
 
@@ -750,6 +757,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
                         <EventCalendarNavPrev className="min-h-[44px] min-w-[44px]" />
                         <EventCalendarNavNext className="min-h-[44px] min-w-[44px]" />
                       </div>
+                      <KeyDrawerTrigger drawer={keyDrawer} testIdPrefix="event-calendar" />
                     </div>
                   </TooltipProvider>
                 </EventCalendarNav>

@@ -228,8 +228,12 @@ describe("ProductionGantt phone view (#921, frame 3c)", () => {
     it("the Stage key is a 44px Key button that opens a Drawer holding the key row and the symbols", async () => {
       await mountAt(720, coarse);
       expect(inlineKeyRow()).toBeNull();
+      // #916 design review (should-fix 5, nit 3): the Key button sits in the nav row beside Today and the arrows; the
+      // key band (its own row between two hairlines) is gone on a phone.
+      expect(has("production-gantt-key")).toBe(false);
       const button = keyButton()!;
       expect(button).not.toBeNull();
+      expect(button.closest('[data-testid="production-gantt-nav"]')).not.toBeNull();
       expect(button.textContent).toContain("Key");
       expect(button.className).toContain("h-11");
       expect(button.getAttribute("aria-haspopup")).toBe("dialog");
@@ -255,6 +259,7 @@ describe("ProductionGantt phone view (#921, frame 3c)", () => {
     expect(has("gantt-tree-column")).toBe(true);
     expect(inlineLabels()).toHaveLength(0);
     expect(inlineKeyRow()).not.toBeNull();
+    expect(has("production-gantt-key")).toBe(true);
     expect(keyButton()).toBeNull();
     expect(plus()).not.toBeNull();
   });

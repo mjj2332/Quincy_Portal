@@ -25,6 +25,10 @@
 //    it). Item 6's pill and size are named once (`CHIP_PILL`, `CHIP_SIZE`) and exported as
 //    `toggleChipDisplayClassName`: the same pill, drawn pressed, for a display-only chip that is not a control
 //    (`ProductionGanttColourBy.tsx`'s People key chip, owner decision D6), so the two never drift.
+// 9. #916 design review (should-fix 3): item 6's chip takes an ink edge while `data-picked` is set
+//    (`data-picked:border-foreground`): a Stage the Filter's Stage rule keeps. Pressed alone is the surface paper on the
+//    canvas, which read ~1.03:1 against an unpressed chip. Scoped to `variant="chip"`; the display-only People chip
+//    (`toggleChipDisplayClassName`) is never picked, so it keeps the hairline.
 import { Toggle as TogglePrimitive } from "@base-ui/react/toggle"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
@@ -40,7 +44,7 @@ const toggleVariants = cva(
       variant: {
         default: "bg-transparent",
         outline: "border border-input bg-transparent hover:bg-muted",
-        chip: `${CHIP_PILL} bg-transparent text-foreground-secondary hover:bg-muted hover:text-foreground aria-pressed:bg-card aria-pressed:text-foreground`,
+        chip: `${CHIP_PILL} bg-transparent text-foreground-secondary hover:bg-muted hover:text-foreground aria-pressed:bg-card aria-pressed:text-foreground data-picked:border-foreground`,
         segment: "rounded-[var(--radius-sm)] bg-transparent font-normal text-foreground-secondary hover:bg-transparent hover:text-foreground aria-pressed:bg-card aria-pressed:text-foreground aria-pressed:shadow-[var(--shadow-sm)]",
       },
       size: {
