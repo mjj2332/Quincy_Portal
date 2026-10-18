@@ -55,10 +55,13 @@ import {
   deriveProductionCalendarWindow,
   formatDashboardFilterTree,
   formatSydneyCivilMinute,
+  roleHasCapability,
   type CalendarEventDto,
   type DashboardCalendarState,
+  type DashboardFilter,
   type ProductionCalendarFilters,
   type ProductionCalendarRangeResponse,
+  type StagePresentationKey,
   subtaskIdFromCalendarEntityId,
 } from "@quincy/shared";
 import type { DashboardIdentity } from "../lib/dashboard-projects";
@@ -99,7 +102,10 @@ import { EventCalendarContent } from "./reui/event-calendar/event-calendar-conte
 import { Button } from "./reui/button";
 import { Button as QuincyButton } from "./quincy/Button";
 import { CalendarIcon } from "lucide-react";
-import { ganttShowDeliveredRecovery } from "../lib/production-gantt-filters";
+import { ganttKeyEntries, ganttShowDeliveredRecovery, productionStageFilterOptions } from "../lib/production-gantt-filters";
+import { toggleStageInDashboardFilter } from "../lib/dashboard-filter-query";
+import { useStages } from "../lib/stages";
+import { StageKeyRow } from "./quincy/StageKeyRow";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "./reui/sheet";
 import { Skeleton } from "./reui/skeleton";
 import { EmptyState } from "./quincy/EmptyState";
@@ -155,6 +161,11 @@ export type ProductionEventCalendarProps = {
   onShownProjectsChange?: (count: number | null) => void;
   /** #430: the empty state's "Show delivered Projects" (Stage = Delivered with delivered Projects hidden). */
   onShowDeliveredProjects?: () => void;
+  /**
+   * #922, frame 3d: the Stage key row doubles as a Stage filter. A press is one Filter write through the
+   * Dashboard (its `writeFilter` → `writeCalendarState`), so the Delivered pair and its notice hold (#430).
+   */
+  onFilterChange?: (next: DashboardFilter) => void;
   /** #464: land on this Project (select and ring its events, focus its chip) and report the outcome. */
   focus?: ProductionEventCalendarFocus | null;
   onFocusSettled?: (token: number, outcome: ProductionEventCalendarFocusOutcome) => void;
@@ -238,6 +249,19 @@ const MORE_SELECTOR = '[data-slot="event-calendar-more"]';
  * fill is already `--late`, so it inherits the chip's paper text. Grid chips get it from `ChipContent`,
  * agenda rows from the vendor's `renderAgendaEventTrailing`, which keeps the row's own time column.
  */
+/**
+ * #922, frame 3d's trailing key (`.ksym`): the Deadline chip's ink swatch in 12px meta type. Frame 3d also
+ * keys a Shoot diamond; the Calendar draws no shoot events (plan, frame-3d conflicts), so it is left out.
+ */
+function CalendarKeySymbols(): JSX.Element {
+  return (
+    <span className="inline-flex items-center gap-2 text-xs text-foreground-secondary" data-testid="event-calendar-key-deadline">
+      <span aria-hidden="true" className="h-3 w-4.5 shrink-0 rounded-xs bg-(--ink-900)" />
+      Deadline
+    </span>
+  );
+}
+
 function LateLabel({ data }: { data: ProductionEventCalendarData | undefined }): JSX.Element | null {
   const appearance = data?.appearance;
   if (!appearance?.lateLabel) return null;
@@ -273,7 +297,7 @@ function ChipContent({ id, data, title }: { id: string; data: ProductionEventCal
   );
 }
 
-export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppliedFilters, onAcceptGateChange, onSettleStateChange, onAccessLoss, projectHrefFor, onOpenProject, onShownProjectsChange, onShowDeliveredProjects, focus = null, onFocusSettled }: ProductionEventCalendarProps): JSX.Element {
+export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppliedFilters, onAcceptGateChange, onSettleStateChange, onAccessLoss, projectHrefFor, onOpenProject, onShownProjectsChange, onShowDeliveredProjects, onFilterChange, focus = null, onFocusSettled }: ProductionEventCalendarProps): JSX.Element {
   const query = useProductionCalendarRange({ identity, calendar, enabled: true, bounds: true });
 
   // Up next: a second, read-only agenda range from today (Sydney), same filters, outside any gate.
@@ -294,6 +318,23 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   // #652: the sheet opens on Close calendar, not Previous month (the first tabbable, since the rail precedes the close).
   const railCloseRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { if (!narrow) setRailOpen(false); }, [narrow]);
+
+  // #922, frame 3d: the Timeline's key row (#919) on the Calendar, built by the same entry builder. Every
+  // role-aware Stage is a chip (#254), pressed for the Stages this request shows (`showDeliveredProjects`
+  // is the Delivered half of the pair); a press is one Filter write through the Dashboard.
+  const { stages } = useStages();
+  const canAdminBackend = roleHasCapability(identity.role, "adminBackend");
+  const stageOptions = useMemo(() => productionStageFilterOptions(stages, canAdminBackend), [stages, canAdminBackend]);
+  const keyEntries = useMemo(() => ganttKeyEntries({ stageOptions, filters: { ...calendar, delivered: calendar.showDeliveredProjects } }), [stageOptions, calendar]);
+  const toggleStage = useCallback((key: StagePresentationKey) => {
+    const next = toggleStageInDashboardFilter(calendar, key);
+    if (next) onFilterChange?.(next);
+  }, [calendar, onFilterChange]);
+  const keyRow = (
+    <div data-testid="event-calendar-key" className="shrink-0 border-y-[length:var(--border-width-hair)] border-border bg-background px-[var(--space-2)] py-[var(--space-2)]">
+      <StageKeyRow entries={keyEntries} onToggle={toggleStage} trailing={<CalendarKeySymbols />} />
+    </div>
+  );
 
   // ---------------------------------------------------------------------------------------------
   // The scheduling controller, composed as `ProductionGantt.tsx` does.
@@ -735,6 +776,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
                 )}
               </div>
               )}
+              {keyRow}
               <EventCalendarContent className="min-h-0 flex-1" />
             </div>
           </div>
