@@ -1,5 +1,6 @@
 import type { StageKey } from "@quincy/shared";
 import type { ProjectStageKey } from "../../lib/stages";
+import { PHONE_VIEWPORT_QUERY } from "../../lib/use-media-query";
 
 /**
  * The Board's column geometry and Stage-key spellings, shared by the Board (`board.tsx`) and its loading
@@ -12,19 +13,11 @@ export function semanticStageKey(value: ProjectStageKey): StageKey {
 }
 
 /**
- * The key a Stage COLUMN draws its label with (#923): Editing is one Stage, and "· autoHDR" is a Project's
- * variant (`StageLabel` adds it for `editing_autohdr`), so an Admin's `editing_autohdr` column reads "Editing".
- */
-export function columnLabelKey(value: ProjectStageKey): ProjectStageKey {
-  return value === "editing_autohdr" ? "editing" : value;
-}
-
-/**
  * The phone Board (frame 4f), exactly what `max-[721px]:` compiles to (width < 721, so 720 is phone and 721 is
  * not), so the Board's script and its classes never disagree at the edge. Not `(max-width: 721px)`, which also
  * matches 721.
  */
-export const BOARD_PHONE_QUERY = "(width < 721px)";
+export const BOARD_PHONE_QUERY = PHONE_VIEWPORT_QUERY;
 
 /**
  * Frame 4e column sizes (#923). A working column is fluid (`flex-1`) over the 280px floor, so four of them fill

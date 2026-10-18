@@ -1078,6 +1078,15 @@ describe("the Dashboard draws the shell's chrome in its own view bar (#923 D2)",
     expect(host.querySelector('[data-shell-header]')?.getAttribute("data-shell-header")).toBe("page");
   });
 
+  it("the Project sheet open over the Dashboard keeps the header away: the Dashboard is still mounted behind it", async () => {
+    const host = await renderAt("/projects/123e4567-e89b-42d3-a456-426614174000");
+    expect(document.querySelector('[data-testid="project-sheet-body"]')?.textContent).toContain("Project");
+    expect(viewBar(host)).not.toBeNull();
+    expect(host.querySelector('[data-testid="shell-header"]')).toBeNull();
+    expect(host.querySelector('[data-testid="shell-breadcrumb"]')).toBeNull();
+    expect(host.querySelector('[data-shell-header]')?.getAttribute("data-shell-header")).toBe("page");
+  });
+
   it("other screens keep the shell header and breadcrumb, and it comes back on leaving the Dashboard", async () => {
     const host = await renderAt("/?view=board");
     expect(host.querySelector('[data-testid="shell-header"]')).toBeNull();

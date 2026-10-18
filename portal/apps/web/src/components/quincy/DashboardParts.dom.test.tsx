@@ -59,14 +59,14 @@ describe("DoneProgress", () => {
   const tone = stageTone("editing");
 
   it("prints N of M done over a bar tinted to the tone", async () => {
-    const host = await mount(<DoneProgress done={{ done: 2, total: 5, label: "2 of 5 done" }} tone={tone} />);
+    const host = await mount(<DoneProgress done={{ done: 2, total: 5, label: "2 of 5 done" }} tone={tone} known />);
     expect(byId(host, "done-progress").textContent).toContain("2 of 5 done");
     expect(byId(host, "done-progress").style.getPropertyValue("--progress-tone")).toBe(tone.color);
     expect(host.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("40");
   });
 
   it("says No tasks for a known empty checklist, and nothing for an unknown one", async () => {
-    const host = await mount(<DoneProgress done={null} tone={tone} />);
+    const host = await mount(<DoneProgress done={null} tone={tone} known />);
     expect(host.textContent).toBe("No tasks");
     await act(async () => { root!.render(<DoneProgress done={null} tone={tone} known={false} />); await Promise.resolve(); });
     expect(host.textContent).toBe("");

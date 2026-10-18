@@ -1,4 +1,4 @@
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext } from "react";
 import { ChevronRight } from "lucide-react";
 import { formatSydneyCivil, type Role } from "@quincy/shared";
 import { Button } from "./reui/button";
@@ -68,20 +68,6 @@ export function ProjectThumb({ project, retryToken, onFailedChange }: { project:
       <CoverMedia project={project} retryToken={retryToken} onFailedChange={onFailedChange} placeholderClassName="!text-[length:var(--text-sm)]" />
     </span>
   );
-}
-
-/** A failed cover's retry, sitting above the row link's overlay. */
-export function useCoverRetry() {
-  const [failed, setFailed] = useState(false);
-  const [token, setToken] = useState(0);
-  const retry = (
-    failed ? (
-      <Button type="button" size="xs" variant="secondary" className="relative z-[1] mt-[var(--space-2)]" onClick={() => { setFailed(false); setToken((current) => current + 1); }}>
-        Retry cover image
-      </Button>
-    ) : null
-  );
-  return { token, setFailed, retry };
 }
 
 function deadlineViewOf(project: ProjectSummary, appearance: ProjectAppearance): ProjectDeadlineView | null {

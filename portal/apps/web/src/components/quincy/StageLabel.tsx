@@ -11,7 +11,7 @@ import { StageToneSwatch } from "./StageKeyRow";
 export function StageLabel({ stageKey, label, className }: { stageKey: string | null | undefined; label: string; className?: string }) {
   const tone = stageTone(stageKey);
   return (
-    <span data-testid="stage-label" data-stage={tone.stage} className={cn("inline-flex min-w-0 items-center gap-2 text-sm text-foreground", className)}>
+    <span data-testid="stage-label" data-stage={tone.stage} className={cn("inline-flex min-w-0 items-center gap-[var(--space-2)] text-sm text-foreground", className)}>
       <StageToneSwatch tone={tone} />
       <span className="truncate">{label}</span>
       {stageKey === "editing_autohdr" && <span className="shrink-0 text-xs text-muted-foreground">· autoHDR</span>}

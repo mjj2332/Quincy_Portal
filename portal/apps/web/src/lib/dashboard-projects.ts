@@ -1,4 +1,4 @@
-import { canonicalDashboardEditorIds, canonicalDashboardPriorities, canonicalDashboardStages, dashboardFilterArchivedMode, dashboardFilterFingerprint, dashboardProjectsFilterQueryParams, normalizeDashboardFilter, type DashboardFilter, type ExternalProjectSummaryDto, type Role } from "@quincy/shared";
+import { canonicalDashboardEditorIds, canonicalDashboardPriorities, canonicalDashboardStages, dashboardFilterArchivedMode, dashboardFilterFingerprint, dashboardProjectsFilterQueryParams, normalizeDashboardFilter, type DashboardFilter, type ExternalProjectSummaryDto, type ProjectChecklistCounts, type Role } from "@quincy/shared";
 import { keepPreviousData, skipToken, useQuery, type Query, type UseQueryResult } from "@tanstack/react-query";
 import { apiGet } from "./api";
 import { externalApiGet, externalProjectSummaryToDashboard } from "./external-api-response";
@@ -114,7 +114,7 @@ function dashboardProjectsPath(filter: DashboardProjectsKeyFilter, q: string): s
  * hide Board mutation controls). The server's deprecated order maps are never read: the Board order is
  * derived from the data (#470, #475).
  */
-function validChecklist(value: unknown): value is { completed: number; total: number } {
+function validChecklist(value: unknown): value is ProjectChecklistCounts {
   if (typeof value !== "object" || value === null) return false;
   const { completed, total } = value as { completed?: unknown; total?: unknown };
   return Number.isInteger(completed) && Number.isInteger(total) && (completed as number) >= 0 && (completed as number) <= (total as number);

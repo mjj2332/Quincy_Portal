@@ -1,7 +1,8 @@
 import { InternalLink } from "./InternalLink";
 import { AvatarStack } from "./quincy/AvatarStack";
 import { Badge } from "./reui/badge";
-import { GroupToggle, ProjectDeadline, ProjectThumb, projectPlace, useCells, useCoverRetry, type GroupRowData, type TableRowData } from "./DashboardTableParts";
+import { GroupToggle, ProjectDeadline, ProjectThumb, projectPlace, useCells, type GroupRowData, type TableRowData } from "./DashboardTableParts";
+import { useCoverRetry } from "./board/card";
 import type { ProjectSummary } from "../lib/kanban-interaction";
 
 /**

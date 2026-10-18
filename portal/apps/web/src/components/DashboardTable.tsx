@@ -8,6 +8,7 @@ import { DataGridScrollArea } from "./reui/data-grid/data-grid-scroll-area";
 import { DataGridTable } from "./reui/data-grid/data-grid-table";
 import { Frame, FramePanel } from "./reui/frame";
 import { Button } from "./reui/button";
+import { useCoverRetry } from "./board/card";
 import { Skeleton } from "./reui/skeleton";
 import { InternalLink } from "./InternalLink";
 import { AvatarStack } from "./quincy/AvatarStack";
@@ -15,7 +16,7 @@ import { DoneProgress } from "./quincy/DoneProgress";
 import { EmptyState } from "./quincy/EmptyState";
 import { PriorityStars } from "./quincy/PriorityStars";
 import { StageLabel } from "./quincy/StageLabel";
-import { CellContext, GroupToggle, ProjectDeadline, ProjectThumb, oldestLateText, projectPlace, useCells, useCoverRetry, type CellContextValue, type GroupRowData, type ProjectRowData, type TableRowData } from "./DashboardTableParts";
+import { CellContext, GroupToggle, ProjectDeadline, ProjectThumb, oldestLateText, projectPlace, useCells, type CellContextValue, type GroupRowData, type ProjectRowData, type TableRowData } from "./DashboardTableParts";
 import { TablePhoneList } from "./TablePhoneList";
 import { formatDashboardDate } from "../screens/dashboard-helpers";
 import { useCapabilities } from "../lib/capabilities";
@@ -39,7 +40,8 @@ import {
 } from "../lib/dashboard-table-model";
 import type { ProjectSummary } from "../lib/kanban-interaction";
 import { rawCounts } from "../lib/raw-counts";
-import { useStages } from "../lib/stages";
+import { useStages, type ProjectStageKey } from "../lib/stages";
+import { columnLabelKey } from "../lib/dashboard-appearance";
 import { useMediaQuery } from "../lib/use-media-query";
 import { cn } from "../lib/utils";
 
@@ -331,7 +333,7 @@ export function DashboardTable({ projects, role, groupBy, hiddenColumns, canPrio
       id: `group:${group.key}`,
       group,
       // A Stage group's swatch; `editing_autohdr` draws as Editing, its label from the Stage definitions.
-      stageKey: groupBy === "stage" ? (group.key === "editing_autohdr" ? "editing" : group.key) : null,
+      stageKey: groupBy === "stage" ? columnLabelKey(group.key as ProjectStageKey) : null,
       appearance: stageGroupAppearance(group.rows, now),
       subRows: group.rows.map(projectRow),
     }));

@@ -20,7 +20,7 @@ import {
   setDashboardSearchDraftDuringComposition,
   subscribeDashboardSearch,
 } from "../../lib/dashboard-search-store";
-import { useMediaQuery } from "../../lib/use-media-query";
+import { PHONE_VIEWPORT_QUERY, useMediaQuery } from "../../lib/use-media-query";
 
 /**
  * The Dashboard toolbar's project search — #217, moved out of the rail by #427 (ADR 0015). A REAL
@@ -75,7 +75,7 @@ export type DashboardSearchProps = {
 
 export function DashboardSearch({ principalId = "", focusRequest = null, onFocusRequestHandled, className }: DashboardSearchProps) {
   // The long hint does not fit the narrow bar's share of the row: "Search…" at <=721px.
-  const narrow = useMediaQuery("(max-width: 721px)");
+  const narrow = useMediaQuery(PHONE_VIEWPORT_QUERY);
   const search = useSyncExternalStore(
     subscribeDashboardSearch,
     () => getDashboardSearchSnapshotForPrincipal(principalId),

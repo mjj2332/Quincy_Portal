@@ -29,21 +29,3 @@ export const stageColors: Record<ProjectStageKey, string> = {
 export function stageColorFor(stageKey: ProjectStageKey | null | undefined): string {
   return (stageKey !== null && stageKey !== undefined ? stageColors[stageKey] : undefined) ?? stageColors.awaiting_raw;
 }
-
-/**
- * #923: `stagePatternFor` and the Board's `StageSwatch` are gone. Edited review has its own tone (`stageTone`), so
- * nothing draws the hatch. This class stays only because `production-gantt-adapter.test.ts` asserts that no bar
- * carries it; delete it with that assertion.
- *
- * #257: the hatch itself — a `background-image`-only Tailwind arbitrary class, so it layers over
- * whatever tint the bar shell or swatch already paints (`background-color` is untouched). Modelled
- * on the Gantt's own off-day hatch (`gantt-view.tsx`): 135° stripes 2px wide every 6px, drawn from
- * the element's `--gantt-event-color` at 30% so they read clearly without competing with the 40% progress fill, while a bar's title stays
- * legible over them. `data-completed:bg-none` drops it on a completed bar, which stays neutral
- * (`gantt-bar.tsx`'s own completed treatment), and `data-milestone:bg-none` on a zero-length bar,
- * whose transparent shell would otherwise paint stripes behind the milestone diamond. No colour literal (gantt-skin guard Detector 3), and
- * kept here in TS rather than CSS because `--gantt-event-color` is set inline by the Gantt, not
- * defined in `styles/` (the design-system guard would read it as a phantom token).
- */
-export const STAGE_HATCH_CLASS =
-  "bg-[repeating-linear-gradient(135deg,transparent,transparent_4px,color-mix(in_oklab,var(--gantt-event-color)_30%,transparent)_4px,color-mix(in_oklab,var(--gantt-event-color)_30%,transparent)_6px)] data-completed:bg-none data-milestone:bg-none";
