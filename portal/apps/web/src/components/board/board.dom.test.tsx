@@ -7,7 +7,8 @@ import { createElement, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KeyboardSensor, MeasuringStrategy, MouseSensor, TouchSensor, type DragEndEvent } from "@dnd-kit/core";
-import { BoardSkeleton, ProjectKanbanBoard2, type ProjectKanbanBoard2Props } from "./board";
+import { ProjectKanbanBoard2, type ProjectKanbanBoard2Props } from "./board";
+import { BoardSkeleton } from "./board-skeleton";
 import { KanbanCard2 } from "./card";
 import { STAR_GUARD_WINDOW_MS } from "../../lib/star-click-guard";
 import { lateLabel, projectLateness, stageTone } from "../../lib/dashboard-appearance";
@@ -381,6 +382,16 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     const [project, value] = (props.onPriorityChange as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(project.id).toBe("source");
     expect(value).toBe(2);
+  });
+
+  // #923 D4: the compact card draws PriorityStars' small glyph; the hit cells are PriorityStars' own (its tests).
+  it("draws the compact card's stars with the small glyph, editable and read-only alike (#923 D4)", async () => {
+    await renderBoard({ canPrioritize: true, projects: [project("source", "awaiting_raw")] });
+    const radios = [...host.querySelectorAll<HTMLElement>('[role="radio"]')];
+    expect(radios.length, "anchor: the editable stars").toBe(5);
+    expect(radios.every((radio) => radio.classList.contains("text-sm"))).toBe(true);
+    await renderBoard({ canPrioritize: false, projects: [project("source", "awaiting_raw", { priority: 3 })] });
+    expect(host.querySelector<HTMLElement>('[role="img"][aria-label="Priority 3 of 5 stars"]')?.classList.contains("text-sm")).toBe(true);
   });
 
   it("gives a non-Admin no priority control, and no ghost row where none is set (#81)", async () => {
@@ -2183,6 +2194,67 @@ describe("ProjectKanbanBoard2 — phone Stage pills (#923, frame 4f)", () => {
     const { act } = await import("react");
     await act(async () => { pills()[0]!.click(); await Promise.resolve(); });
     expect(pills()[0]!.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  // #923 S5: a pill must land on real cards, so a phone never draws the 48px rail. The stored choice is the viewer's
+  // wide-screen preference and stays as it is: no toggle is offered on a phone, and nothing writes it.
+  describe("Delivered on a phone", () => {
+    const withDelivered = [...stages, { key: "delivered", label: "Delivered", displayOrder: 5, active: true }] as const;
+    let media: { set(phone: boolean): void; restore(): void };
+
+    function phoneMedia(initial: boolean) {
+      const original = window.matchMedia;
+      const listeners = new Set<() => void>();
+      let phone = initial;
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: (query: string) => ({
+          get matches() { return phone && query === "(width < 721px)"; },
+          media: query,
+          onchange: null,
+          addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+          removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+          addListener: (listener: () => void) => listeners.add(listener),
+          removeListener: (listener: () => void) => listeners.delete(listener),
+          dispatchEvent: () => false,
+        }),
+      });
+      return {
+        set(next: boolean) { phone = next; for (const listener of [...listeners]) listener(); },
+        restore() { Object.defineProperty(window, "matchMedia", { configurable: true, value: original }); },
+      };
+    }
+
+    afterEach(() => media.restore());
+
+    const delivered = () => host.querySelector<HTMLElement>('[data-testid="board-column"][data-stage-key="delivered"]')!;
+    const toggles = () => host.querySelectorAll('[data-testid="board-column-collapse"], [data-testid="board-column-expand"]');
+
+    it("is a full column with its cards, though the viewer keeps it collapsed, and offers no collapse control", async () => {
+      media = phoneMedia(true);
+      const onToggleStageCollapsed = vi.fn();
+      await renderBoard({ activeStages: withDelivered, projects: [project("a", "awaiting_raw"), project("d", "delivered")], collapsedStageKeys: ["delivered"], onToggleStageCollapsed });
+      expect(delivered().hasAttribute("data-collapsed")).toBe(false);
+      expect(delivered().querySelector('[data-testid="board-card"]')?.textContent).toContain("d Street");
+      expect(toggles()).toHaveLength(0);
+
+      const { act } = await import("react");
+      await act(async () => { media.set(false); await Promise.resolve(); });
+      expect(delivered().getAttribute("data-collapsed"), "wide again: the stored choice still holds").toBe("true");
+      expect(toggles().length).toBeGreaterThan(0);
+      expect(onToggleStageCollapsed).not.toHaveBeenCalled();
+    });
+
+    it("keeps the columns it had for the whole of a drag when the width crosses the phone breakpoint", async () => {
+      media = phoneMedia(true);
+      await renderBoard({ activeStages: withDelivered, projects: [project("source", "awaiting_raw"), project("d", "delivered")], collapsedStageKeys: ["delivered"], onToggleStageCollapsed: vi.fn() });
+      await fireDnd("onDragStart", { active: { id: "source" } });
+      const { act } = await import("react");
+      await act(async () => { media.set(false); await Promise.resolve(); });
+      expect(delivered().hasAttribute("data-collapsed"), "no droppable changes mid-drag").toBe(false);
+      await fireDnd("onDragCancel", { active: { id: "source" } });
+      expect(delivered().getAttribute("data-collapsed")).toBe("true");
+    });
   });
 
   it("disables the pills for the whole of a drag, then gives them back", async () => {

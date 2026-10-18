@@ -18,11 +18,10 @@ import { boardAnimateLayoutChanges, flipDeltas, playFlip, type FlipSnapshot } fr
 import type { KanbanSortMode } from "../../screens/dashboard-helpers";
 import { useStarClickGuard } from "../../lib/star-click-guard";
 import type { PipelineStage, ProjectStageKey } from "../../lib/stages";
-import { usePrefersReducedMotion } from "../../lib/use-media-query";
+import { useMediaQuery, usePrefersReducedMotion } from "../../lib/use-media-query";
 import { stageGroupAppearance } from "../../lib/dashboard-project-appearance";
 import { ScrollArea, ScrollBar } from "../reui/scroll-area";
 import { Button } from "../reui/button";
-import { Skeleton } from "../reui/skeleton";
 import { Toggle } from "../reui/toggle";
 import { EmptyState } from "../quincy/EmptyState";
 import { LateChip } from "../quincy/LateChip";
@@ -33,6 +32,7 @@ import { InternalLink } from "../InternalLink";
 import { KanbanCard2 } from "./card";
 import { cardMoveTo, moveToChoices } from "./card-actions";
 import type { CardMenuConfig } from "./card-menu";
+import { BOARD_PHONE_QUERY, COLUMN_SIZE_CLASS, COLUMN_SURFACE_CLASS, RAIL_SIZE_CLASS, columnLabelKey, semanticStageKey } from "./board-layout";
 
 /**
  * Keyboard drag keys (#432): Space picks a card up, so Enter is free to open it (the card's link is
@@ -48,19 +48,6 @@ const boardKeyboardCodes = { start: ["Space"], cancel: ["Escape"], end: ["Space"
  */
 const boardNoShiftStrategy = () => null;
 
-/** `editing` is the role-safe presentation of `editing_autohdr`. */
-function semanticStageKey(value: ProjectStageKey): StageKey {
-  return value === "editing" ? "editing_autohdr" : value;
-}
-
-/**
- * The key a Stage COLUMN draws its label with (#923): Editing is one Stage, and "· autoHDR" is a Project's
- * variant (`StageLabel` adds it for `editing_autohdr`), so an Admin's `editing_autohdr` column reads "Editing".
- */
-function columnLabelKey(value: ProjectStageKey): ProjectStageKey {
-  return value === "editing_autohdr" ? "editing" : value;
-}
-
 /** Frame 4h "empty": each empty column says so in its own words (Awaiting RAW's carries New shoot). */
 const EMPTY_COLUMN_COPY: Record<StageKey, string> = {
   awaiting_raw: "No shoots waiting for RAW.",
@@ -69,19 +56,6 @@ const EMPTY_COLUMN_COPY: Record<StageKey, string> = {
   edited_review: "Nothing waiting for review.",
   delivered: "Nothing delivered yet.",
 };
-
-/**
- * Frame 4e column sizes (#923). A working column is fluid (`flex-1`) over the 280px floor, so four of them fill
- * a 1440 screen beside the resting Delivered rail; `[contain:inline-size]` keeps a long street from widening a
- * column (its intrinsic width is the floor), so the `w-max min-w-full` row is exactly the screen until the
- * floors overflow it, and then it scrolls. 280px still clears #81's touch constraint: five 44px star targets
- * need 220px. On a phone a column is the viewport's width (`100cqw` of the `@container` viewport) and snaps.
- * None of this changes during a drag, so `MeasuringStrategy.Always` re-measures nothing that moved.
- */
-const COLUMN_SIZE_CLASS = "flex-1 min-w-[17.5rem] [contain:inline-size] snap-start max-[721px]:w-[100cqw] max-[721px]:flex-none";
-/** The collapsed rail: 48px at every width, still a snap point on a phone. */
-const RAIL_SIZE_CLASS = "w-12 shrink-0 snap-start";
-const COLUMN_SURFACE_CLASS = "bg-[var(--paper-050)] min-h-0 border border-[length:var(--border-width-hair)] border-border opacity-100";
 
 /**
  * #923 D3: "+ New shoot" in Awaiting RAW only, for a viewer with `createProject`, to `/projects/new` with no
@@ -140,52 +114,6 @@ function StagePills({ stages, counts, active, disabled, onSelect }: {
             <StageLabel stageKey={columnLabelKey(stage.key)} label={stage.label} />
             <span className="font-mono text-xs tabular-nums text-foreground-secondary">{counts[stage.key] ?? 0}</span>
           </Toggle>
-        );
-      })}
-    </div>
-  );
-}
-
-/**
- * Frame 4h's loading column, exported for the Dashboard to mount while the one Projects query loads (#923 S5): a
- * column shell per Stage (its label when the Stages are known) holding two skeleton compact cards in the
- * card's own shape. Collapsed Stages draw as rails, so the Board does not jump when it lands.
- */
-export function BoardSkeleton({ stages, collapsedStageKeys = [] }: { stages?: readonly PipelineStage[]; collapsedStageKeys?: readonly StageKey[] }) {
-  const shells: readonly (PipelineStage | null)[] = stages ?? [null, null, null, null];
-  return (
-    <div data-testid="board-skeleton" aria-busy="true" className="flex min-h-0 w-full flex-1 gap-[var(--space-4)] overflow-hidden">
-      <span className="sr-only">Loading projects</span>
-      {shells.map((stage, index) => {
-        if (stage && collapsedStageKeys.includes(semanticStageKey(stage.key))) {
-          return (
-            <div key={stage.key} aria-hidden="true" data-testid="board-skeleton-column" className={`${RAIL_SIZE_CLASS} ${COLUMN_SURFACE_CLASS} flex flex-col items-center gap-[var(--space-3)] py-[var(--space-3)] max-[721px]:hidden`}>
-              <StageToneSwatch tone={stageTone(stage.key)} />
-            </div>
-          );
-        }
-        return (
-          <div key={stage?.key ?? index} aria-hidden="true" data-testid="board-skeleton-column" className={`${COLUMN_SIZE_CLASS} ${COLUMN_SURFACE_CLASS} flex flex-col ${index > 0 ? "max-[721px]:hidden" : ""}`}>
-            <div className="flex h-11 shrink-0 items-center gap-[var(--space-2)] ps-[var(--space-3)] pe-[var(--space-2)] border-b border-b-border">
-              {stage ? <StageLabel stageKey={columnLabelKey(stage.key)} label={stage.label} /> : <Skeleton className="h-3 w-24" />}
-              <Skeleton className="h-3 w-10" />
-            </div>
-            <div className="flex flex-col gap-[var(--space-3)] p-[var(--space-3)]">
-              {[0, 1].map((card) => (
-                <div key={card} data-testid="board-skeleton-card" className="flex flex-col gap-[var(--space-2)] border border-[length:var(--border-width-hair)] border-border bg-card p-[var(--space-3)]">
-                  <div className="flex items-center gap-2.5">
-                    <Skeleton className="h-7.5 w-11 shrink-0" data-testid="board-skeleton-thumb" />
-                    <div className="flex min-w-0 flex-1 flex-col gap-[var(--space-1)]">
-                      <Skeleton className="h-3 w-[70%]" />
-                      <Skeleton className="h-2.5 w-1/2" />
-                    </div>
-                  </div>
-                  <Skeleton className="h-2.5 w-[60%]" />
-                  <Skeleton className="h-2.5 w-[90%]" />
-                </div>
-              ))}
-            </div>
-          </div>
         );
       })}
     </div>
@@ -309,7 +237,8 @@ class FlipScope extends Component<FlipScopeProps> {
  * Layout follows ReUI's `tempo-tasks` Kanban board, sized to frame 4e since #923 (`COLUMN_SIZE_CLASS`): each
  * column is its own bordered surface separated by a `--space-4` gap, fluid over a 280px floor inside a
  * full-width horizontal scroll area, with a collapsed Stage (Delivered, by default) resting as a 48px rail. On a
- * phone (frame 4f) a column is the viewport's width and snaps, and the Stage pills above scroll the strip.
+ * phone (frame 4f) a column is the viewport's width and snaps, the Stage pills above scroll the strip, and no
+ * Stage rests as a rail (#923 S5).
  */
 export type ProjectKanbanBoard2Props = ProjectKanbanBoardProps & {
   /** The viewer holds `createProject`: Awaiting RAW offers "+ New shoot" (#923 D3). */
@@ -492,6 +421,15 @@ export function ProjectKanbanBoard2({
   // from under A's drag. A Board-side lock, not a Dashboard guard — the Dashboard still sees the drag
   // as active while the drop's own `onMove` runs, so a guard there would refuse every real drop.
   const [dragActive, setDragActive] = useState(false);
+
+  // #923 S5: on a phone (frame 4f) every column is drawn in full, Delivered included, so a Stage pill always lands
+  // on real cards and never on the 48px rail; the phone column header has no collapse control. The stored choice
+  // (`collapsedStageKeys`) is the viewer's wide-screen preference and is left exactly as it is. A width that
+  // crosses the breakpoint mid-drag waits for the drop: swapping a rail for a column would mount droppables under
+  // `MeasuringStrategy.Always`, the loop lessons.md bans.
+  const phoneNow = useMediaQuery(BOARD_PHONE_QUERY);
+  const [phone, setPhone] = useState(phoneNow);
+  if (!dragActive && phone !== phoneNow) setPhone(phoneNow);
 
   // Frame 4f's phone pills (#923). The pressed pill names the column at the strip's start: a press scrolls there,
   // a swipe moves the pill. While a press's own smooth scroll runs, the swipe sync stands down, or the pill would
@@ -822,7 +760,7 @@ export function ProjectKanbanBoard2({
                 {activeStages.map((stage) => {
                   const stageProjects = columns[stage.key] ?? [];
                   const stageKey = semanticStageKey(stage.key);
-                  const collapsed = collapsedStageKeys?.includes(stageKey) ?? false;
+                  const collapsed = !phone && (collapsedStageKeys?.includes(stageKey) ?? false);
                   // #923: the column's count and "N late" are the appearance module's group summary, so they agree
                   // with the cards (Delivered and archived Projects are never late).
                   const group = stageGroupAppearance(stageProjects, now ?? Date.now());
@@ -830,7 +768,7 @@ export function ProjectKanbanBoard2({
                   const offersNewShoot = canCreateProject && stageKey === "awaiting_raw";
                   // The collapse control: a ghost icon button, disabled for the whole of a drag (toggling
                   // droppables mid-drag under `MeasuringStrategy.Always` is the loop lessons.md bans).
-                  const toggle = (label: string, expanded: boolean) => onToggleStageCollapsed && (
+                  const toggle = (label: string, expanded: boolean) => onToggleStageCollapsed && !phone && (
                     <Button
                       type="button"
                       variant="ghost"

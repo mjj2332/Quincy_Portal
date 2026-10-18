@@ -263,6 +263,7 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
               bottom gap instead. */}
           <div className={`relative z-[1] flex items-center gap-2 ${canPrioritize ? "" : "pb-3"}`} data-testid="board-card-footer-slot">
             <PriorityStars
+              glyph="sm"
               priority={project.priority}
               street={project.street}
               canPrioritize={canPrioritize}

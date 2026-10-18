@@ -55,6 +55,12 @@ vi.mock("../lib/stages", () => ({
   }),
 }));
 const shellBottom = vi.hoisted(() => vi.fn(() => 0));
+/** The Dashboard's clock (`useNow`), overridable per test; null is the real hook's value. */
+const clock = vi.hoisted(() => ({ now: null as number | null }));
+vi.mock("../lib/use-now", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/use-now")>();
+  return { useNow: (intervalMs?: number) => { const real = actual.useNow(intervalMs); return clock.now ?? real; } };
+});
 vi.mock("../lib/shell-chrome", () => ({ shellChromeBottom: () => shellBottom() }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
 vi.mock("../components/board/board", () => ({ ProjectKanbanBoard2: () => <div data-testid="dashboard-board" /> }));
@@ -130,6 +136,7 @@ function projectsResponse() {
 beforeEach(() => {
   auth.role = "admin";
   auth.caps = new Set(["adminBackend", "createProject", "prioritizeProjects", "editProject", "moveProjectStage"]);
+  clock.now = null;
   currentUser = "user-1";
   narrow = false;
   projects = sortFixture();
@@ -985,10 +992,36 @@ describe("the Table component (#923: now, Show Delivered, footer, skeleton)", ()
     expect(status.querySelectorAll('[data-testid="table-skeleton-row"]').length).toBeGreaterThanOrEqual(5);
   });
 
-  it("Show Delivered sits in the Table's Display menu once the Dashboard wires it", async () => {
+  it("Show Delivered sits in the Table's Display menu, on by default, and turning it off hides Delivered for this viewer (#923 S5)", async () => {
     await renderTable();
     await openDisplay();
-    // Wiring `onShowDeliveredChange` is the Dashboard's (#923 S5); until then the group is absent, never a dead checkbox.
-    expect(groupCheckboxes("Show").every((item) => item.textContent === "Delivered Projects")).toBe(true);
+    const show = groupCheckboxes("Show");
+    expect(show.map((item) => item.textContent)).toEqual(["Delivered Projects"]);
+    expect(show[0]!.getAttribute("aria-checked")).toBe("true");
+    expect(rowIds()).toEqual(BY_DEADLINE);
+    await click(show[0]!);
+    expect(rowIds()).toEqual(["p2", "p4", "p3"]);
+    expect(table().querySelector('[data-testid="project-table-footer"]')?.textContent).toBe("3 of 5 projects · Delivered hidden by Display");
+    expect(JSON.parse(storage.get(tablePrefsKey("user-1"))!).showDelivered).toBe(false);
+  });
+
+  it("a stored Show Delivered off is read back, and the empty state's action turns it on again (#923 S5)", async () => {
+    projects = [row("d1", { stageKey: "delivered" })];
+    storage.set(tablePrefsKey("user-1"), JSON.stringify({ groupBy: "none", hiddenColumns: [], showDelivered: false }));
+    await renderTable();
+    expect(table().textContent).toContain("Delivered projects are hidden by Display.");
+    const action = [...table().querySelectorAll("button")].find((button) => button.textContent === "Show delivered projects")!;
+    await click(action);
+    expect(rowIds()).toEqual(["d1"]);
+    expect(JSON.parse(storage.get(tablePrefsKey("user-1"))!).showDelivered).toBe(true);
+  });
+
+  it("reads lateness from the Dashboard's clock, not its own (#923 S5)", async () => {
+    // The Table's own fallback is the real time, years before this Deadline; only the Dashboard's clock makes it late.
+    projects = [row("t1", { deadlineAt: day(0), deadlineLocalCivil: civil(0) })];
+    clock.now = day(3);
+    await renderTable();
+    expect(rowFor("t1").querySelector('[data-testid="project-table-project"]')!.getAttribute("data-late")).toBe("true");
+    expect(rowFor("t1").querySelector('[data-testid="late-chip"]')).not.toBeNull();
   });
 });
