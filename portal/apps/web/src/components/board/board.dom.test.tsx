@@ -1902,7 +1902,7 @@ async function act_(callback: () => Promise<void> | void): Promise<void> {
   await act(async () => { await callback(); await Promise.resolve(); });
 }
 
-// #432: the column header's count and overdue figure, and the collapsed rail.
+// #432: the column header's count and late figure, and the collapsed rail (#923: from the appearance module).
 describe("ProjectKanbanBoard2 — column headers and collapse (#432, #923)", () => {
   const NOW = Date.UTC(2026, 8, 10);
   const PAST = NOW - 86_400_000;
@@ -1926,7 +1926,7 @@ describe("ProjectKanbanBoard2 — column headers and collapse (#432, #923)", () 
     project("late", "awaiting_raw", { deadlineAt: PAST }),
     project("later", "awaiting_raw", { deadlineAt: PAST - 1000 }),
     project("ontime", "awaiting_raw", { deadlineAt: FUTURE }),
-    // Archived Projects are never overdue (`isOverdueProject`), however late their deadline.
+    // Archived Projects are never late (`projectLateness`), however late their deadline.
     project("archived-late", "raw_review", { deadlineAt: PAST, archivedAt: "2026-09-02T00:00:00.000Z" }),
     project("review-late", "raw_review", { deadlineAt: PAST }),
   ];
@@ -1941,7 +1941,6 @@ describe("ProjectKanbanBoard2 — column headers and collapse (#432, #923)", () 
     const late = first.querySelector('[data-testid="board-column-late"]');
     expect(late?.textContent).toBe(`${firstGroup.lateCount} late`);
     expect(late?.textContent).toBe("2 late");
-    expect(late?.getAttribute("data-testid")).toBe("board-column-late");
     expect([...late!.classList]).toEqual(expect.arrayContaining(["text-late", "border-late"]));
     const second = column("RAW review")!;
     expect(second.querySelector('[data-testid="board-column-count"]')?.textContent).toBe("2");
