@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dashboard views — round 4</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics><meta name="design_doc_mode" content="canvas" /></helmet>
+<div id="r4root"></div>
+</x-dc>
+<script>
+// Round 4 frames are generated from data below so each frame shares one vocabulary.
+const svg = (d, s = 16) => `<svg width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const I = {
+  table: svg('<rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M2 6h12M6 6v7.5"/>'),
+  board: svg('<rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M5.5 5v4M8 5v2.5M10.5 5v5.5"/>'),
+  cal: svg('<rect x="2" y="3.5" width="12" height="10" rx="1.5"/><path d="M2 7h12M5.5 2v3M10.5 2v3"/>'),
+  time: svg('<path d="M2.5 4h7M4.5 8h9M2.5 12h6"/>'),
+  search: svg('<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/>'),
+  filter: svg('<path d="M2 3h12l-4.5 5.5V13l-3-1.5v-3z"/>'),
+  display: svg('<path d="M2 4.5h6M11 4.5h3M2 11.5h3M8 11.5h6"/><circle cx="9.5" cy="4.5" r="1.5"/><circle cx="6.5" cy="11.5" r="1.5"/>'),
+  plus: svg('<path d="M8 3v10M3 8h10"/>'),
+  chevD: svg('<path d="m4 6 4 4 4-4"/>', 14),
+  chevR: svg('<path d="m6 4 4 4-4 4"/>', 14),
+  chevL: svg('<path d="m10 4-4 4 4 4"/>', 14),
+  dots: svg('<circle cx="3.5" cy="8" r=".9" fill="currentColor"/><circle cx="8" cy="8" r=".9" fill="currentColor"/><circle cx="12.5" cy="8" r=".9" fill="currentColor"/>'),
+  sort: svg('<path d="m5 6 3-3 3 3M5 10l3 3 3-3"/>', 12),
+  grid: svg('<rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/>'),
+  mega: svg('<path d="M3 6.5v3l7 3v-9zM10 5.5c2 .3 3 1.3 3 2.5s-1 2.2-3 2.5M5 9.8l.8 3"/>'),
+  shield: svg('<path d="M8 2 3 4v4c0 3 2.2 5 5 6 2.8-1 5-3 5-6V4z"/>'),
+  bell: svg('<path d="M4 11V7a4 4 0 0 1 8 0v4l1 1.5H3zM6.5 14h3"/>'),
+  gear: svg('<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.8M8 12.4v1.8M1.8 8h1.8M12.4 8h1.8M3.6 3.6l1.3 1.3M11.1 11.1l1.3 1.3M3.6 12.4l1.3-1.3M11.1 4.9l1.3-1.3"/>'),
+  star: '<svg width="13" height="13" viewBox="0 0 16 16"><path d="m8 1.6 1.9 4.1 4.5.5-3.4 3 1 4.4L8 11.3l-3.9 2.3 1-4.4-3.4-3 4.5-.5z" fill="currentColor"/></svg>',
+};
+
+const STAGES = [
+  { key: "await", label: "Awaiting RAW" },
+  { key: "raw", label: "RAW review" },
+  { key: "edit", label: "Editing" },
+  { key: "erev", label: "Edited review" },
+  { key: "dlv", label: "Delivered" },
+];
+const covers = [
+  "linear-gradient(160deg,#c9bda5 0%,#a89a7f 45%,#6f6553 100%)",
+  "linear-gradient(170deg,#b9c3c7 0%,#8c9a9f 50%,#4f5b5e 100%)",
+  "linear-gradient(150deg,#d8cdb6 0%,#b7a27e 55%,#7c6a4c 100%)",
+  "linear-gradient(165deg,#c4c9bb 0%,#97a08a 50%,#5b6450 100%)",
+  "linear-gradient(155deg,#d6c7b8 0%,#b29a86 50%,#77614f 100%)",
+  "linear-gradient(170deg,#bfc4cc 0%,#8e96a3 50%,#565d6a 100%)",
+];
+// today: Mon 19 Oct 2026, Sydney
+const P = [
+  { s: "await", v: "Smoke", st: "17 Gibson Street", sb: "Newtown", cl: "Ray White Newtown", ag: "Priya Sharma", sh: "Tue 20 Oct", due: "Wed 21 Oct · 17:00", late: 0, d: 0, t: 0, ed: [], pr: 0 },
+  { s: "await", st: "44 Wilson Street", sb: "Darlington", cl: "McGrath Inner West", ag: "Tom Reid", sh: "Wed 21 Oct", due: "Thu 22 Oct · 12:00", late: 0, d: 0, t: 0, ed: [], pr: 3 },
+  { s: "await", st: "9/120 Glebe Point Road", sb: "Glebe", cl: "BresicWhitney", ag: "Ana López", sh: "Thu 22 Oct", due: "Fri 23 Oct · 17:00", late: 0, d: 0, t: 0, ed: ["M"], pr: 2 },
+  { s: "raw", st: "5/11 Bank Street", sb: "North Sydney", cl: "Belle Property", ag: "James Park", sh: "Fri 9 Oct", due: "Mon 12 Oct · 17:00", late: 7, d: 1, t: 5, ed: ["M"], pr: 4 },
+  { s: "raw", st: "62 Cecil Street", sb: "Paddington", cl: "Laing+Simmons", ag: "Grace Kim", sh: "Thu 15 Oct", due: "Sat 17 Oct · 10:00", late: 2, d: 2, t: 4, ed: ["A", "M"], pr: 5 },
+  { s: "raw", st: "18 Ruthven Street", sb: "Bondi Junction", cl: "Ray White Bondi", ag: "Sam Lee", sh: "Fri 16 Oct", due: "Tue 20 Oct · 17:00", late: 0, d: 0, t: 3, ed: ["T"], pr: 3 },
+  { s: "edit", v: "autoHDR", st: "2026.10.06 — Made in Mada October", sb: "Event", cl: "Mada Group", ag: "In house", sh: "Tue 6 Oct", due: "Thu 15 Oct · 12:00", late: 4, d: 3, t: 6, ed: ["A", "M", "M"], pr: 4 },
+  { s: "edit", st: "31 Nelson Street", sb: "Annandale", cl: "Richardson & Wrench", ag: "Mia Chen", sh: "Mon 12 Oct", due: "Mon 19 Oct · 17:00", late: 0, today: true, d: 4, t: 5, ed: ["M"], pr: 2 },
+  { s: "edit", st: "7 Arthur Street", sb: "Surry Hills", cl: "Ray White Newtown", ag: "Priya Sharma", sh: "Wed 14 Oct", due: "Thu 22 Oct · 17:00", late: 0, d: 1, t: 4, ed: ["T"], pr: 1 },
+  { s: "erev", st: "2026.10.12 — SHADOW · William Kozma Broker Event", sb: "Event", cl: "Shadow Agency", ag: "William Kozma", sh: "Mon 12 Oct", due: "Thu 15 Oct · 10:00", late: 4, d: 5, t: 6, ed: ["A", "M", "T"], pr: 5 },
+  { s: "erev", st: "103 Victoria Road", sb: "Rozelle", cl: "Belle Property", ag: "James Park", sh: "Tue 13 Oct", due: "Tue 20 Oct · 12:00", late: 0, d: 4, t: 4, ed: ["M"], pr: 3 },
+  { s: "dlv", st: "25 Albion Street", sb: "Waverley", cl: "McGrath Inner West", ag: "Tom Reid", sh: "Fri 2 Oct", due: "Wed 7 Oct · 17:00", late: 0, d: 5, t: 5, ed: ["A"], pr: 2 },
+  { s: "dlv", st: "14 Harris Street", sb: "Pyrmont", cl: "BresicWhitney", ag: "Ana López", sh: "Mon 5 Oct", due: "Fri 9 Oct · 17:00", late: 0, d: 4, t: 4, ed: ["M"], pr: 0 },
+];
+P.forEach((p, i) => (p.cv = covers[i % covers.length]));
+const byStage = (k) => P.filter((p) => p.s === k);
+const lateCount = (k) => byStage(k).filter((p) => p.late).length;
+const stageOf = (k) => STAGES.find((s) => s.key === k);
+
+const sw = (k) => `<span class="sw c-${k}"></span>`;
+const stageCell = (p) => `<span class="stg">${sw(p.s)}<span>${stageOf(p.s).label}</span>${p.v ? `<span class="vt">· ${p.v}</span>` : ""}</span>`;
+const lateChip = (n) => (n ? `<span class="late">${n} day${n > 1 ? "s" : ""} late</span>` : "");
+const lateCnt = (n) => (n ? `<span class="late">${n} late</span>` : "");
+const av = (e) => (e.length ? `<span class="avs">${e.map((x) => `<span class="av">${x}</span>`).join("")}</span>` : `<span class="av none" title="No editor"></span>`);
+const stars = (n, sm) => `<span class="stars${sm ? " sm" : ""}">${[1, 2, 3, 4, 5].map((i) => `<span class="${i <= n ? "on" : ""}">${I.star}</span>`).join("")}</span>`;
+const prog = (p) => (p.t ? `<span class="prog c-${p.s}"><span class="pt">${p.d} of ${p.t} done</span><span class="pb"><i style="width:${Math.round((p.d / p.t) * 100)}%"></i></span></span>` : `<span class="muted">No tasks</span>`);
+const due = (p) => `<span class="due${p.late ? " is-late" : ""}${p.today ? " is-today" : ""}">${p.today ? "Today · 17:00" : p.due}</span>`;
+const cover = (p, cls = "") => `<span class="cv ${cls}" style="background:${p.cv}"></span>`;
+
+const rail = `<nav class="rail"><span class="qm">Q</span><span class="ri on">${I.grid}</span><span class="ri">${I.mega}</span><span class="ri">${I.shield}</span><span class="grow"></span><span class="ri">${I.bell}</span><span class="ri">${I.gear}</span><span class="av me">QA</span></nav>`;
+const TABS = [["table", "Table"], ["board", "Board"], ["cal", "Calendar"], ["time", "Timeline"]];
+const tabs = (on, slim) => `<div class="tabs">${TABS.map(([k, l]) => `<span class="tab${k === on ? " on" : ""}" title="${l}">${I[k]}${slim && k !== on ? "" : `<span>${l}</span>`}</span>`).join("")}</div>`;
+const tools = ({ srchW = 280, compact = false, filters = 0 } = {}) => `<div class="tools">
+  <span class="btn pri">${I.plus}<span>New shoot</span></span>
+  ${compact ? `<span class="ib" title="Search">${I.search}</span>` : `<span class="srch" style="width:${srchW}px">${I.search}<span>Search address, suburb, client…</span><span class="kbd">⌘K</span></span>`}
+  <span class="btn">${I.filter}<span>Filter</span>${filters ? `<span class="cnt">${filters}</span>` : ""}</span>
+  <span class="btn">${I.display}<span>Display</span></span>
+</div>`;
+const header = (on, opts) => `<header class="vh">${tabs(on)}<span class="grow"></span>${tools(opts)}</header>`;
+const app = (w, on, body, opts) => `<div class="app" style="width:${w}px">${rail}<div class="main">${header(on, opts)}${body}</div></div>`;
+
+const before = `<div class="app" style="width:1440px">${rail}<div class="main">
+  <div class="crumb">Home <span class="sepd">—</span> Dashboard <span class="sepd">—</span> <b>Board</b></div>
+  <div class="old-title"><span class="h1">Projects</span><span class="muted">36 active projects</span><span class="badge-late">10 OVERDUE</span><span class="grow"></span><span class="btn pri old">NEW SHOOT</span></div>
+  <div class="old-tabs">${tabs("board")}<span class="grow"></span><span class="srch" style="width:300px">${I.search}<span>Search address, suburb, client…</span><span class="kbd">⌘K</span></span><span class="btn old">${I.filter}<span>FILTER</span></span><span class="btn old">${I.display}<span>DISPLAY</span></span></div>
+  <div class="ghost-content">Board starts here — 208px below the top bar</div>
+</div></div>`;
+
+const thead = `<div class="tr th"><span></span><span>Project ${I.sort}</span><span>Stage ${I.sort}</span><span>Client ${I.sort}</span><span>Shoot ${I.sort}</span><span>Deadline ${I.sort}</span><span>Progress</span><span>Editors</span><span>Priority ${I.sort}</span></div>`;
+const trow = (p, cls = "") => `<div class="tr ${cls}${p.late ? " r-late" : ""}">
+  <span class="ck"></span>
+  <span class="proj">${cover(p, "th")}<span class="pn"><b>${p.st}</b><small>${p.sb}</small></span></span>
+  ${stageCell(p)}
+  <span class="two"><span>${p.cl}</span><small>${p.ag}</small></span>
+  <span class="num">${p.sh}</span>
+  <span class="dl">${due(p)}${lateChip(p.late)}</span>
+  ${prog(p)}
+  ${av(p.ed)}
+  ${stars(p.pr, true)}
+</div>`;
+const groupRow = (s, open) => {
+  const ps = byStage(s.key);
+  return `<div class="tr grp${open ? "" : " shut"}"><span class="chev">${open ? I.chevD : I.chevR}</span><span class="gname">${sw(s.key)}<b>${s.label}</b><span class="cnt">${ps.length}</span>${lateCnt(lateCount(s.key))}</span><span></span><span></span><span></span><span class="gsum">${ps.filter((p) => p.late).length ? "Oldest late: " + ps.filter((p) => p.late).sort((a, b) => b.late - a.late)[0].late + " days" : ""}</span><span class="gsum">${ps.reduce((a, p) => a + p.d, 0)} of ${ps.reduce((a, p) => a + p.t, 0)} done</span><span></span><span></span></div>`;
+};
+const tableGrouped = `<div class="tbl">${thead}${STAGES.map((s) => groupRow(s, s.key !== "dlv") + (s.key !== "dlv" ? byStage(s.key).map((p) => trow(p)).join("") : "")).join("")}</div>`;
+const flat = [...P].filter((p) => p.s !== "dlv").sort((a, b) => b.late - a.late || (a.today ? -1 : 0));
+const tableFlat = `<div class="tbl dense">${thead.replace("Deadline " + I.sort, "Deadline " + I.chevD)}${flat.map((p) => trow(p)).join("")}<div class="tfoot"><span>11 of 13 projects · Delivered hidden by Display</span><span class="grow"></span><span class="pg">${I.chevL}<span>1</span>${I.chevR}</span></div></div>`;
+
+const cardFull = (p) => `<div class="card c-${p.s}${p.late ? " k-late" : ""}">
+  ${cover(p, "big")}<span class="cmenu">${I.dots}</span>
+  <div class="cb"><b class="ct">${p.st}</b><span class="cs">${p.sb} · Shoot ${p.sh}</span>
+  <span class="cd">${due(p)}${lateChip(p.late)}</span>
+  ${p.t ? prog(p) : ""}
+  </div>
+  <div class="cf">${stars(p.pr)}<span class="grow"></span>${av(p.ed)}</div>
+</div>`;
+const cardCompact = (p) => `<div class="card cc c-${p.s}${p.late ? " k-late" : ""}">
+  <div class="cct">${cover(p, "th")}<span class="pn"><b>${p.st}</b><small>${p.sb} · Shoot ${p.sh}</small></span><span class="cmenu sm">${I.dots}</span></div>
+  <span class="cd">${due(p)}${lateChip(p.late)}</span>
+  <div class="cf">${p.t ? prog(p) : `<span class="muted">No tasks</span>`}<span class="grow"></span>${stars(p.pr, true)}${av(p.ed)}</div>
+</div>`;
+const colHead = (s) => `<div class="kh">${sw(s.key)}<b>${s.label}</b><span class="cnt">${byStage(s.key).length}</span>${lateCnt(lateCount(s.key))}<span class="grow"></span><span class="ib sm" title="Collapse">${I.chevL}</span></div>`;
+const rested = (s) => `<div class="kcol rest"><span class="ib sm">${I.chevR}</span>${sw(s.key)}<span class="vlab">${s.label}<span class="cnt">${byStage(s.key).length}</span></span></div>`;
+const board = (card, cols = 4) => `<div class="kb">${STAGES.slice(0, cols).map((s) => `<div class="kcol">${colHead(s)}<div class="kl">${byStage(s.key).map(card).join("")}<span class="addc">${I.plus}<span>New shoot</span></span></div></div>`).join("")}${STAGES.slice(cols).map(rested).join("")}</div>`;
+
+const tabletHdr = `<div class="app" style="width:1024px">${rail}<div class="main"><header class="vh">${tabs("board")}<span class="grow"></span>${tools({ srchW: 200 })}</header><div class="ghost-content sm">—</div></div></div>`;
+const tablet768 = `<div class="app" style="width:768px">${rail}<div class="main"><header class="vh">${tabs("board", true)}<span class="grow"></span>${tools({ compact: true })}</header><div class="ghost-content sm">—</div></div></div>`;
+const phoneHdr = (on, body) => `<div class="phone"><div class="sbar">9:41</div>
+  <header class="pvh"><span class="vsel">${I[on === "Board" ? "board" : "table"]}<span>${on}</span>${I.chevD}</span><span class="grow"></span><span class="ib">${I.search}</span><span class="ib">${I.filter}</span><span class="ib">${I.display}</span><span class="ib pri">${I.plus}</span></header>
+  ${body}</div>`;
+const phoneBoard = phoneHdr("Board", `<div class="pstages">${STAGES.map((s, i) => `<span class="pst${i === 1 ? " on" : ""}">${sw(s.key)}<span>${s.label}</span><span class="cnt">${byStage(s.key).length}</span></span>`).join("")}</div>
+  <div class="pkl"><div class="pkh">${sw("raw")}<b>RAW review</b><span class="cnt">3</span>${lateCnt(2)}</div>${byStage("raw").map(cardCompact).join("")}</div>`);
+const phoneTable = phoneHdr("Table", `<div class="plist"><div class="pgh">${sw("raw")}<b>RAW review</b><span class="cnt">3</span>${lateCnt(2)}</div>${byStage("raw").map((p) => `<div class="prow">${cover(p, "th")}<span class="pn"><b>${p.st}</b><small>${p.sb}</small><span class="cd">${due(p)}${lateChip(p.late)}</span></span>${av(p.ed)}</div>`).join("")}<div class="pgh">${sw("edit")}<b>Editing</b><span class="cnt">3</span>${lateCnt(1)}</div>${byStage("edit").map((p) => `<div class="prow">${cover(p, "th")}<span class="pn"><b>${p.st}</b><small>${p.sb}${p.v ? " · " + p.v : ""}</small><span class="cd">${due(p)}${lateChip(p.late)}</span></span>${av(p.ed)}</div>`).join("")}</div>`);
+
+const states = `<div class="states">
+  <div class="kcol st"><div class="kh">${sw("erev")}<b>Edited review</b><span class="cnt">0</span></div><div class="empty"><span>Nothing waiting for review.</span><span class="btn sm">${I.plus}<span>New shoot</span></span></div></div>
+  <div class="kcol st"><div class="kh">${sw("edit")}<b>Editing</b><span class="skel w40"></span></div><div class="kl">${[1, 2].map(() => `<div class="card cc"><div class="cct"><span class="skel th"></span><span class="pn"><span class="skel w70"></span><span class="skel w50"></span></span></div><span class="skel w60"></span><span class="skel w90"></span></div>`).join("")}</div></div>
+  <div class="kcol st"><div class="kh">${sw("raw")}<b>RAW review</b></div><div class="err"><b>Couldn't load these projects.</b><span>Check your connection, then try again.</span><span class="btn sm">Retry</span></div></div>
+</div>`;
+
+const css = `
+@font-face{font-family:"Mazius Review";src:url("./fonts/MaziusReview-Regular.woff2") format("woff2");font-weight:400;font-display:swap}
+@font-face{font-family:"Apfel Grotezk";src:url("./fonts/ApfelGrotezk-Regular.woff2") format("woff2");font-weight:400;font-display:swap}
+:root{
+--ink-900:#0a0a0a;--ink-700:#232323;--paper-000:#fff;--paper-050:#faf8f2;--paper-100:#f4f0e7;--paper-200:#ece6d8;
+--greige-100:#e4ded0;--greige-200:#cfc7b6;--greige-300:#b3aa97;--greige-400:#8f8775;--greige-500:#6d6657;--greige-600:#4d473c;
+--late:#7a2420;--late-wash:#f6e9e4;
+--text-secondary:var(--greige-600);--hair:var(--greige-200);--hair-soft:var(--greige-100);
+--font-display:"Mazius Review","Times New Roman",serif;--font-sans:"Apfel Grotezk","Helvetica Neue",Arial,sans-serif;--font-mono:ui-monospace,Menlo,monospace;
+--st-await:#6d6657;--st-raw:#9a6a1f;--st-edit:#2f3b4d;--st-erev:#2f6b66;--st-dlv:#3f5b3a;--st-dlv-wash:#e3e9da;
+}
+body{margin:0;background:#e9e6df;font-family:var(--font-sans);color:var(--ink-900)}
+.r4 *,.r4 *::before,.r4 *::after{box-sizing:border-box}
+.dv-turn{padding:40px 44px 32px;border-bottom:1px solid rgba(0,0,0,.08)}
+.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 6px}
+.dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#1a1a1a;color:#fff;border-radius:4px;text-decoration:none}
+.dv-tname{font:600 13px/1.2 system-ui,sans-serif;color:#1a1a1a}
+.dv-intro{max-width:1040px;margin:0 0 26px;font:13px/1.55 system-ui,sans-serif;color:rgba(0,0,0,.62)}
+.dv-intro li{margin:2px 0}
+.dv-opts{display:flex;flex-direction:column;gap:44px;align-items:flex-start}
+.dv-opt{display:flex;flex-direction:column;gap:9px}
+.dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#1a1a1a;border-radius:5px;text-decoration:none}
+.dv-opt:target .dv-oid{background:#2a78d6;color:#fff}
+.dv-olabel{display:flex;align-items:baseline;gap:8px;max-width:1240px;font:400 12px/1.45 system-ui,sans-serif;color:rgba(0,0,0,.62)}
+.dv-card{background:#fff;border:1px solid rgba(0,0,0,.1);box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden}
+.dv-row{display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap}
+.dv-next{margin:22px 0 0;font:12px/1.5 system-ui,sans-serif;color:rgba(0,0,0,.5)}
+.dv-note{font:12px/1.5 system-ui,sans-serif;color:rgba(0,0,0,.55);max-width:360px}
+.c-await{--c:var(--st-await)}.c-raw{--c:var(--st-raw)}.c-edit{--c:var(--st-edit)}.c-erev{--c:var(--st-erev)}.c-dlv{--c:var(--st-dlv)}
+.grow{flex:1}.muted{color:var(--text-secondary);font-size:12px}
+svg{flex:none}
+.app{display:flex;background:var(--paper-050);font-size:14px;min-height:0}
+.rail{width:56px;flex:none;border-right:1px solid var(--hair);background:var(--paper-000);display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 0}
+.qm{width:36px;height:36px;border-radius:8px;background:var(--ink-900);color:#fff;font:400 22px/36px var(--font-display);text-align:center;margin-bottom:10px}
+.ri{width:36px;height:36px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--greige-600)}
+.ri.on{background:var(--paper-100);color:var(--ink-900);border:1px solid var(--hair)}
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.av{width:26px;height:26px;border-radius:50%;background:var(--greige-100);font-size:12px;display:inline-flex;align-items:center;justify-content:center;flex:none;border:1.5px solid var(--paper-000);color:var(--ink-900)}
+.av.none{background:transparent;border:1.5px dashed var(--greige-400)}
+.av.me{background:var(--ink-900);color:#fff;margin-top:6px}
+.avs{display:inline-flex}.avs .av+.av{margin-left:-7px}
+.vh{height:56px;flex:none;display:flex;align-items:stretch;gap:16px;padding:0 24px;border-bottom:1px solid var(--hair);background:var(--paper-050)}
+.tabs{display:flex;align-items:stretch;gap:20px}
+.tab{display:inline-flex;align-items:center;gap:7px;font-size:14px;color:var(--text-secondary);border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap}
+.tab.on{color:var(--ink-900);border-bottom-color:var(--ink-900)}
+.tools{display:flex;align-items:center;gap:8px}
+.btn{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 12px;border:1px solid var(--hair);border-radius:6px;background:var(--paper-000);font-size:14px;white-space:nowrap}
+.btn.pri{background:var(--ink-900);border-color:var(--ink-900);color:#fff}
+.btn.sm{height:30px;font-size:12px}
+.btn .cnt{background:var(--ink-900);color:#fff;border-radius:9px;min-width:18px;height:18px;font-size:12px;display:inline-flex;align-items:center;justify-content:center;padding:0 5px}
+.srch{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 8px 0 10px;border:1px solid var(--hair);border-radius:6px;background:var(--paper-000);font-size:14px;color:var(--greige-500);white-space:nowrap;overflow:hidden}
+.srch span:nth-child(2){flex:1;overflow:hidden;text-overflow:ellipsis}
+.kbd{font:400 12px var(--font-mono);color:var(--greige-600);border:1px solid var(--hair);border-radius:3px;padding:0 5px;background:var(--paper-050)}
+.ib{width:34px;height:34px;border:1px solid var(--hair);border-radius:6px;background:var(--paper-000);display:inline-flex;align-items:center;justify-content:center;flex:none}
+.ib.sm{width:26px;height:26px;border-color:transparent;background:transparent;color:var(--greige-600)}
+.ib.pri{background:var(--ink-900);border-color:var(--ink-900);color:#fff}
+.crumb{height:44px;display:flex;align-items:center;gap:8px;padding:0 24px;font-size:14px;color:var(--text-secondary);background:var(--paper-100)}
+.crumb b{font-weight:400;color:var(--ink-900)}.sepd{color:var(--greige-400)}
+.old-title{display:flex;align-items:center;gap:14px;padding:30px 24px 20px}
+.h1{font:400 40px/1 var(--font-display)}
+.badge-late{font-size:12px;letter-spacing:.06em;color:var(--late);border:1px solid #e3c9c3;background:var(--late-wash);border-radius:4px;padding:2px 6px}
+.btn.old{height:40px;border-radius:8px;font-size:12px;letter-spacing:.08em}
+.btn.pri.old{border-radius:12px;height:44px;padding:0 16px}
+.old-tabs{display:flex;align-items:stretch;gap:12px;height:52px;margin:0 24px;border-bottom:1px solid var(--hair)}
+.old-tabs .tools,.old-tabs .srch,.old-tabs .btn{align-self:center}
+.ghost-content{margin:16px 24px 20px;height:120px;border:1.5px dashed var(--greige-300);border-radius:8px;display:flex;align-items:center;justify-content:center;font:12px system-ui;color:var(--greige-500)}
+.ghost-content.sm{height:60px}
+.tbl{background:var(--paper-000);margin:16px 24px 24px;border:1px solid var(--hair);border-radius:8px;overflow:hidden}
+.tr{display:grid;grid-template-columns:36px minmax(0,2.3fr) 170px minmax(0,1.3fr) 96px 220px 128px 92px 92px;column-gap:12px;align-items:center;min-height:52px;padding:0 14px 0 6px;border-bottom:1px solid var(--hair-soft)}
+.tbl.dense .tr{min-height:44px}
+.tr.th{min-height:40px;background:var(--paper-050);font-size:12px;color:var(--text-secondary);border-bottom:1px solid var(--hair)}
+.tr.th span{display:inline-flex;align-items:center;gap:4px}
+.tr.grp{min-height:44px;background:var(--paper-100);border-top:1px solid var(--hair);border-bottom:1px solid var(--hair)}
+.tr.grp.shut{background:var(--paper-050)}
+.chev{display:flex;justify-content:center;color:var(--greige-600)}
+.gname{display:flex;align-items:center;gap:8px;font-size:14px}.gname b{font-weight:400}
+.gsum{font-size:12px;color:var(--text-secondary)}
+.cnt{font:400 12px var(--font-mono);color:var(--text-secondary)}
+.ck{width:14px;height:14px;border:1.5px solid var(--greige-300);border-radius:3px;justify-self:center}
+.proj{display:flex;align-items:center;gap:10px;min-width:0}
+.cv{display:block;flex:none;border-radius:4px}
+.cv.th{width:44px;height:30px}
+.pn{display:flex;flex-direction:column;min-width:0;gap:1px}
+.pn b{font-weight:400;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pn small,.two small{font-size:12px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.two{display:flex;flex-direction:column;min-width:0;font-size:14px}.two span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.num{font-size:14px;font-variant-numeric:tabular-nums}
+.stg{display:inline-flex;align-items:center;gap:8px;font-size:14px;white-space:nowrap;min-width:0}
+.vt{color:var(--text-secondary);font-size:12px}
+.sw{width:12px;height:12px;border-radius:3px;flex:none;background:var(--c)}
+.sw.c-await{background:#fff;border:1.5px dashed var(--c)}
+.sw.c-dlv{background:var(--st-dlv-wash);border:1.5px solid var(--c)}
+.dl{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.due{font-size:14px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.due.is-late{color:var(--late)}
+.due.is-today{color:var(--ink-900)}
+.due.is-today::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ink-900);margin:0 6px 1px 0}
+.late{display:inline-flex;align-items:center;height:20px;padding:0 6px;border:1px solid var(--late);border-radius:4px;color:var(--late);font-size:12px;white-space:nowrap}
+.prog{display:flex;flex-direction:column;gap:4px;min-width:0}
+.pt{font-size:12px;color:var(--text-secondary);font-variant-numeric:tabular-nums}
+.pb{display:block;height:4px;border-radius:2px;background:var(--paper-200);overflow:hidden}
+.pb i{display:block;height:100%;background:var(--c)}
+.stars{display:inline-flex;gap:3px;color:var(--greige-200)}
+.stars .on{color:var(--greige-600)}
+.stars.sm{gap:1px}
+.tr.r-late{box-shadow:inset 3px 0 0 var(--late)}
+.tfoot{display:flex;align-items:center;gap:10px;padding:10px 16px;font-size:12px;color:var(--text-secondary);background:var(--paper-050)}
+.pg{display:inline-flex;align-items:center;gap:10px;color:var(--ink-900)}
+.kb{display:flex;gap:16px;padding:16px 24px 24px;align-items:flex-start}
+.kcol{flex:1;min-width:0;background:var(--paper-100);border:1px solid var(--hair);border-radius:8px;display:flex;flex-direction:column}
+.kh{display:flex;align-items:center;gap:8px;height:44px;padding:0 8px 0 12px;font-size:14px;border-bottom:1px solid var(--hair)}
+.kh b{font-weight:400}
+.kl{display:flex;flex-direction:column;gap:10px;padding:10px}
+.addc{display:flex;align-items:center;justify-content:center;gap:6px;height:34px;border:1px dashed var(--greige-300);border-radius:6px;font-size:12px;color:var(--text-secondary)}
+.kcol.rest{flex:none;width:44px;align-items:center;gap:10px;padding:8px 0;align-self:stretch}
+.vlab{writing-mode:vertical-rl;transform:rotate(180deg);font-size:14px;display:flex;gap:8px;align-items:center}
+.card{position:relative;background:var(--paper-000);border:1px solid var(--hair);border-radius:6px;overflow:hidden;display:flex;flex-direction:column}
+.card.k-late{border-color:#d9b9b2}
+.card::before{content:"";position:absolute;left:0;top:0;right:0;height:3px;background:var(--c);z-index:1}
+.card.c-await::before{background:repeating-linear-gradient(90deg,var(--c) 0 6px,transparent 6px 10px)}
+.cv.big{width:100%;aspect-ratio:21/9;border-radius:0}
+.cmenu{position:absolute;top:10px;right:10px;width:28px;height:28px;border-radius:6px;background:rgba(255,255,255,.92);display:flex;align-items:center;justify-content:center}
+.cmenu.sm{position:static;background:transparent;width:24px;height:24px;margin-left:auto;color:var(--greige-600)}
+.cb{display:flex;flex-direction:column;gap:6px;padding:12px 12px 4px}
+.ct{font:400 18px/1.2 var(--font-display);letter-spacing:-.005em}
+.cs{font-size:12px;color:var(--text-secondary)}
+.cd{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cf{display:flex;align-items:center;gap:8px;padding:8px 12px 10px}
+.card .prog{margin-top:2px}
+.card.cc{padding:12px 12px 0;gap:8px}
+.cct{display:flex;align-items:center;gap:10px;min-width:0}
+.card.cc .cf{padding:6px 0 10px}
+.card.cc .prog{flex:1;max-width:120px}
+.phone{width:390px;height:844px;border-radius:44px;border:10px solid #1b1b1b;background:var(--paper-050);overflow:hidden;display:flex;flex-direction:column;font-size:14px}
+.sbar{height:44px;display:flex;align-items:center;padding:0 28px;font-size:14px}
+.pvh{display:flex;align-items:center;gap:8px;height:60px;padding:0 16px;border-bottom:1px solid var(--hair)}
+.pvh .ib{width:44px;height:44px}
+.vsel{display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 12px;border:1px solid var(--hair);border-radius:6px;background:var(--paper-000)}
+.pstages{display:flex;gap:8px;padding:12px 16px;overflow:hidden;border-bottom:1px solid var(--hair)}
+.pst{display:inline-flex;align-items:center;gap:8px;height:36px;padding:0 12px;border:1px solid var(--hair);border-radius:18px;background:var(--paper-000);white-space:nowrap}
+.pst.on{border-color:var(--ink-900)}
+.pkl{display:flex;flex-direction:column;gap:10px;padding:12px 16px}
+.pkh{display:flex;align-items:center;gap:8px}.pkh b{font-weight:400}
+.plist{display:flex;flex-direction:column}
+.pgh{display:flex;align-items:center;gap:8px;height:44px;padding:0 16px;background:var(--paper-100);border-bottom:1px solid var(--hair)}.pgh b{font-weight:400}
+.prow{display:flex;align-items:flex-start;gap:12px;padding:12px 16px;border-bottom:1px solid var(--hair-soft);background:var(--paper-000)}
+.prow .pn{flex:1;gap:3px}
+.states{display:flex;gap:16px;padding:16px;width:1000px;background:var(--paper-050)}
+.kcol.st{flex:1}
+.empty,.err{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:16px 12px;font-size:14px}
+.empty{color:var(--text-secondary)}
+.err b{font-weight:400;color:var(--late)}.err span{font-size:12px;color:var(--text-secondary)}
+.skel{display:block;height:10px;border-radius:4px;background:linear-gradient(90deg,var(--paper-200),var(--paper-100),var(--paper-200))}
+.skel.th{width:44px;height:30px}.w40{width:40px}.w50{width:50%}.w60{width:60%}.w70{width:70%;height:12px}.w90{width:90%}
+`;
+
+const dc = (id, label, inner) => `<div class="dv-opt" id="${id}"><div class="dv-olabel"><a class="dv-oid" href="#${id}">${id}</a>${label}</div><div class="dv-card">${inner}</div></div>`;
+const link = (id) => `<a class="dv-oid" href="#${id}">${id}</a>`;
+
+const section = `<section class="dv-turn r4" id="t4">
+  <div class="dv-thd"><a class="dv-tid" href="#t4">4</a><span class="dv-tname">Round 4 — one-row header, Table and Board in the round 3 palette</span></div>
+  <div class="dv-intro"><p>What changed and why:</p><ul>
+    <li><b>Header (${link("4a")}):</b> one 56px row. View tabs left; New shoot, search, Filter and Display right. The breadcrumb, the "Projects" title, the "36 active" line and the page-level overdue badge are gone: lateness now lives where it is actionable (column and group headers, each row's deadline). The view starts 152px higher at 1440.</li>
+    <li><b>Same vocabulary as the Timeline and Calendar:</b> stage swatches and tones from round 3, sentence-case stage names (no letter-spaced capitals), 14px body / 12px meta, the oxblood "N days late" chip, "N of M done" with a bar in the stage tone.</li>
+    <li><b>Table (${link("4b")}, ${link("4c")}):</b> rows drop from 72px to 52px (44px dense). The street is 14px sans, not display serif, so it no longer truncates at 20 characters.</li>
+    <li><b>Board (${link("4d")}, ${link("4e")}):</b> a 3px stage edge on each card ties it to its column; Delivered rests as a collapsed rail so four working columns fit at 1440.</li>
+    <li><b>Kept from today:</b> cover photos (placeholders here), priority stars, editor avatars, the card menu, drag between columns.</li>
+  </ul></div>
+  <div class="dv-opts">
+    ${dc("4a", "Header, before and after at 1440 (Board view). Before: breadcrumb + title row + tab row = 208px above content. After: one 56px row. New shoot sits first in the right-hand group, as you sketched; search shows ⌘K; Filter shows its rule count when set.", `<div style="padding:0">${before}</div><div style="height:12px;background:#e9e6df"></div>${app(1440, "board", `<div class="ghost-content">Board starts here — 56px below the top</div>`)}`)}
+    <div class="dv-row">
+      ${dc("4a-t", "Tablet 1024: the same row, search narrows to 200px.", tabletHdr)}
+      ${dc("4a-s", "Tablet 768: search collapses to an icon that opens the ⌘K field, and only the current view keeps its tab label (the others show their icon, with the name as a tooltip).", tablet768)}
+    </div>
+    ${dc("4b", "Table, grouped by Stage (default). Group rows carry the swatch, count, late count, oldest lateness and the group's task progress. Delivered starts collapsed. A late row gets a 3px oxblood edge plus the chip; today's deadline gets a dot.", app(1440, "table", tableGrouped))}
+    ${dc("4c", "Table, flat and dense (Display → Group by: None). Sorted by Deadline with late first; Delivered hidden by Display; footer shows the count and pages. Same columns, 44px rows.", app(1440, "table", tableFlat, { filters: 1 }))}
+    ${dc("4d", "Board with covers. Column header: swatch, sentence-case stage, count, late count, collapse. Cards: 21:9 cover (was 16:9), street in display serif, suburb and shoot on one line, deadline + late chip, task progress, stars and editors on one footer line. Delivered rests as a rail.", app(1440, "board", board(cardFull)))}
+    ${dc("4e", "Board, compact (Display → Card: Compact). No large cover: a 44×30 thumb beside the street, everything else on two lines. About twice as many cards above the fold.", app(1440, "board", board(cardCompact)))}
+    <div class="dv-row">
+      ${dc("4f", "Phone Board: view picker + icon actions in one row; stage pills switch columns (swipe also works); compact cards.", phoneBoard)}
+      ${dc("4g", "Phone Table: a grouped list, not a grid. Each row: thumb, street, suburb, deadline + late chip, editors.", phoneTable)}
+      <div class="dv-note"><p><b>Phone header:</b> four tabs plus four buttons can't share one row at 390, so the tabs become a view picker (Board ▾) and the actions become 44px icons, with New shoot as the black one.</p><p><b>Not decided:</b> whether the Board's compact card (${link("4e")}) should be the default on tablet too.</p></div>
+    </div>
+    ${dc("4h", "States every data region needs: an empty column with an action, a loading skeleton, an inline error with Retry.", states)}
+  </div>
+  <p class="dv-next">Try next: "${link("4d")} but with the compact card from ${link("4e")} when a column has more than 6 cards" · "${link("4b")} grouped by Editor instead of Stage" · "put New shoot at the far right in ${link("4a")}"</p>
+</section>`;
+
+const st = document.createElement("style"); st.textContent = css; document.head.appendChild(st);
+const put = () => { const el = document.getElementById("r4root"); if (el && !el.firstChild) { el.innerHTML = section; if (location.hash) { const t = document.getElementById(location.hash.slice(1)); t && t.scrollIntoView(); } } };
+(function wait() { put(); if (!document.getElementById("r4root")) requestAnimationFrame(wait); })();
+new MutationObserver(put).observe(document.body, { childList: true, subtree: true });
+</script>
+</body>
+</html>
