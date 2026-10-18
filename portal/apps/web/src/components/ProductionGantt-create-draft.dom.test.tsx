@@ -448,7 +448,7 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
     });
   });
 
-  it("a group title beside the + can shrink and ends in an ellipsis: truncate and min-w-0 below 721px, the 96px floor only above (#686)", async () => {
+  it("a group title beside the + can shrink and ends in an ellipsis (#686); with the meta on its own line under it (#916 review, blocker 2) it needs no width floor at any width", async () => {
     await mount();
     // The label span beside the + holds the title span first.
     const title = plus(STREET_A)!.previousElementSibling!.firstElementChild as HTMLElement;
@@ -456,7 +456,7 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
     const tokens = title.className.split(/\s+/);
     expect(tokens).toContain("truncate");
     expect(tokens).toContain("min-w-0");
-    expect(tokens).toContain("min-[721px]:min-w-[var(--space-9)]");
+    expect(tokens).not.toContain("min-[721px]:min-w-[var(--space-9)]");
     expect(tokens).not.toContain("min-w-[var(--space-9)]");
   });
 
