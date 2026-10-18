@@ -55,6 +55,7 @@ import {
   deriveProductionCalendarWindow,
   formatDashboardFilterTree,
   formatSydneyCivilMinute,
+  PRODUCTION_CALENDAR_ZONE,
   roleHasCapability,
   type CalendarEventDto,
   type DashboardCalendarState,
@@ -267,6 +268,33 @@ function LateLabel({ data }: { data: ProductionEventCalendarData | undefined }):
   const appearance = data?.appearance;
   if (!appearance?.lateLabel) return null;
   return <span className={cn("shrink-0 text-xs", appearance.kind === "range" && "text-late")} data-testid="event-calendar-late">{appearance.lateLabel}</span>;
+}
+
+const HEADER_WEEKDAY = new Intl.DateTimeFormat("en-AU", { timeZone: PRODUCTION_CALENDAR_ZONE, weekday: "short" });
+const HEADER_WEEKDAY_NARROW = new Intl.DateTimeFormat("en-AU", { timeZone: PRODUCTION_CALENDAR_ZONE, weekday: "narrow" });
+const HEADER_DATE = new Intl.DateTimeFormat("en-AU", { timeZone: PRODUCTION_CALENDAR_ZONE, day: "numeric" });
+
+/**
+ * #916 design review (should-fix 6), frame 3d (`.wd.now b`): the week / day header marks today with a pill around the
+ * date number only, sized to its content, with the weekday before it as plain text. The vendor default wrapped the
+ * whole "Sun 18" in a `max-w-full truncate` chip, which ellipsised to "Sun…" in a narrow column. Below 721px it keeps
+ * the vendor's stacked weekday-over-number with the circled numeral. The month view's weekday row stays the vendor's.
+ */
+function renderTimeGridDayHeader({ day, view, isToday }: { day: Date; view: string; isToday: boolean }): JSX.Element | undefined {
+  if (view === "month") return undefined;
+  const date = HEADER_DATE.format(day);
+  return (
+    <>
+      <span className="flex flex-col items-center leading-tight min-[721px]:hidden">
+        <span className="text-muted-foreground">{HEADER_WEEKDAY_NARROW.format(day)}</span>
+        <span className={cn(isToday && "mx-auto flex size-5 items-center justify-center rounded-full bg-primary font-light text-primary-foreground")}>{date}</span>
+      </span>
+      <span className="max-[721px]:hidden" data-testid="event-calendar-day-header">
+        {HEADER_WEEKDAY.format(day)}{" "}
+        {isToday ? <span data-testid="event-calendar-today-date" className="inline-block rounded-sm bg-primary px-1.5 font-semibold text-primary-foreground">{date}</span> : date}
+      </span>
+    </>
+  );
 }
 
 function ChipContent({ id, data, title }: { id: string; data: ProductionEventCalendarData | undefined; title: string }): JSX.Element {
@@ -709,6 +737,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
           onViewChange={(view) => { const subview = calendarViewToSubview(view); if (subview && subview !== calendar.subview) navigate({ subview }); }}
           onSlotClick={(slot) => { if (slot.view === "month") navigate({ subview: "day", date: sydneyCivilDate(slot.date) }); }}
           eventClassName={(occurrence) => productionEventCalendarEventClassName(occurrence.event.data, landedProjectId !== null && occurrence.event.data?.dto.project.id === landedProjectId)}
+          renderDayHeader={renderTimeGridDayHeader}
           renderMoreIndicator={({ day, count, segments }) => <span data-more-event-ids={segments.map((segment) => String(segment.occurrence.event.id)).join(" ")} data-more-day={sydneyCivilDate(day)}>{`+${count} more`}</span>}
           renderEvent={({ occurrence }) => <ChipContent id={String(occurrence.event.id)} data={occurrence.event.data} title={occurrence.event.title} />}
           // #922, frame 3d: 14px titles and 12px times; agenda rows add the late label after their own content.
