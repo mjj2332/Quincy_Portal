@@ -5,6 +5,7 @@ Integration branch: `feat/916-dashboard-views`. Synthesised from blind Opus and 
 
 ## Owner decisions (2026-10-18)
 
+- **D-phone-cal (2026-10-18, owner):** on phone widths the Calendar Stage key moves into the same Key drawer as the phone Timeline (no Colour by there). The Calendar week all-day lane is left uncapped.
 - **Done Subtask:** paper-100 fill, solid `--text-muted` edge, tick. Amend the #247 "done bar rests as an outline" guard to the new look (scoped to the Dashboard variant).
 - **Key chip vs complex Filter:** root AND with at most one plain Stage leaf → toggle it. OR root, negated, nested or repeated Stage rule → chip disabled, titled "Edit Stage in Filter". Never rewrite a complex tree.
 - **People-mode key row:** person chips ("N open") + Unassigned, display-only; no People filter write.
