@@ -1,15 +1,13 @@
 /**
- * #921 (frame 3c): the phone row's meta line and the Key drawer's Colour by slot. The meta reads the drawn bar's own
- * appearance, so it can never disagree with the bar; the slot is where #920's Colour by switch goes (D7).
+ * #921 (frame 3c): the phone row's meta line. It reads the drawn bar's own appearance, so it can never disagree with the
+ * bar. The Key drawer's tests moved with it to `quincy/KeyDrawer.dom.test.tsx`.
  */
 process.env.TZ = "America/Los_Angeles";
 
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { GanttChecklistRowDto, GanttProjectRowDto, StagePresentationKey } from "@quincy/shared";
 import { stageTone } from "../lib/dashboard-appearance";
-import { GanttKeyDrawer, phoneRowMeta, phoneRowProjectId, type GanttPhoneRow } from "./ProductionGanttPhone";
+import { phoneRowMeta, phoneRowProjectId, type GanttPhoneRow } from "./ProductionGanttPhone";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 if (!Element.prototype.getAnimations) Element.prototype.getAnimations = () => [];
@@ -56,29 +54,5 @@ describe("phoneRowMeta (frame 3c `.pm`)", () => {
   it("a tap on a Subtask opens its parent Project", () => {
     expect(phoneRowProjectId(taskRow({}).data!)).toBe("p-1");
     expect(phoneRowProjectId(projectRow({ late: false }).data!)).toBe("p-1");
-  });
-});
-
-describe("GanttKeyDrawer", () => {
-  let host: HTMLDivElement;
-  let root: Root;
-  beforeEach(() => {
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-  });
-  afterEach(async () => {
-    await act(async () => { root.unmount(); await Promise.resolve(); });
-    document.body.replaceChildren();
-  });
-
-  it("holds the key row and the Colour by switch", async () => {
-    await act(async () => {
-      root.render(<GanttKeyDrawer colourBySlot={<span data-testid="colour-by-slot">Colour by</span>}><span data-testid="stage-key-row" /></GanttKeyDrawer>);
-    });
-    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="production-gantt-key-button"]')!.click(); await Promise.resolve(); });
-    const drawer = document.querySelector('[data-testid="production-gantt-key-drawer"]')!;
-    expect(drawer.querySelector('[data-testid="colour-by-slot"]')).not.toBeNull();
-    expect(drawer.querySelector('[data-testid="stage-key-row"]')).not.toBeNull();
   });
 });

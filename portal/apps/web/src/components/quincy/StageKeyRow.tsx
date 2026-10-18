@@ -24,6 +24,11 @@ export type StageKeyEntry<K extends string = StagePresentationKey> = {
   tone: StageTone;
   /** The Filter shows this Stage. */
   pressed: boolean;
+  /**
+   * A Stage rule narrows the Filter and keeps this Stage (#916 design review): the chip takes an ink edge, so the Stages
+   * a filter keeps read apart from the ones it drops (pressed alone is the surface paper on the canvas, ~1.03:1).
+   */
+  picked?: boolean;
   /** The Filter's Stage rule is too complex for a chip to rewrite. */
   disabled: boolean;
 };
@@ -53,6 +58,15 @@ export function StageToneSwatch({ tone, className }: { tone: StageTone; classNam
   );
 }
 
+/**
+ * The key row's layout, shared with the Timeline's `PeopleKeyRow`: the chips wrap inside their own list, and the trailing
+ * slot (the key symbols) sits beside that list at its first row's height. With one wrapping row, "Same day" wrapped onto a
+ * row by itself at narrower widths (#916 design review).
+ */
+export const KEY_ROW_CLASS = "flex items-start gap-2";
+export const KEY_ROW_LIST_CLASS = "flex min-w-0 flex-1 flex-wrap items-center gap-2";
+export const KEY_ROW_TRAILING_CLASS = "flex h-8 shrink-0 items-center gap-2 whitespace-nowrap max-[721px]:h-11 pointer-coarse:h-11";
+
 export function StageKeyRow<K extends string = StagePresentationKey>({
   entries,
   onToggle,
@@ -65,34 +79,37 @@ export function StageKeyRow<K extends string = StagePresentationKey>({
   "aria-label"?: string;
 }) {
   return (
-    <div role="group" aria-label={ariaLabel} data-testid="stage-key-row" className="flex flex-wrap items-center gap-2">
-      {entries.map((entry) => {
-        const chip = (
-          <Toggle
-            key={entry.key}
-            variant="chip"
-            size="chip"
-            pressed={entry.pressed}
-            disabled={entry.disabled}
-            title={entry.disabled ? STAGE_KEY_DISABLED_TITLE : undefined}
-            data-stage-key={entry.key}
-            onPressedChange={() => onToggle(entry.key)}
-          >
-            <StageToneSwatch tone={entry.tone} />
-            {entry.label}
-          </Toggle>
-        );
-        // A disabled button takes no pointer events, so its own title never shows on hover; the
-        // wrapper carries it for the pointer, the button for assistive tech.
-        return entry.disabled ? (
-          <span key={entry.key} title={STAGE_KEY_DISABLED_TITLE} className="inline-flex">
-            {chip}
-          </span>
-        ) : (
-          chip
-        );
-      })}
-      {trailing !== undefined && <div className="ms-auto flex items-center gap-2">{trailing}</div>}
+    <div role="group" aria-label={ariaLabel} data-testid="stage-key-row" className={KEY_ROW_CLASS}>
+      <div className={KEY_ROW_LIST_CLASS}>
+        {entries.map((entry) => {
+          const chip = (
+            <Toggle
+              key={entry.key}
+              variant="chip"
+              size="chip"
+              pressed={entry.pressed}
+              disabled={entry.disabled}
+              data-picked={entry.picked || undefined}
+              title={entry.disabled ? STAGE_KEY_DISABLED_TITLE : undefined}
+              data-stage-key={entry.key}
+              onPressedChange={() => onToggle(entry.key)}
+            >
+              <StageToneSwatch tone={entry.tone} />
+              {entry.label}
+            </Toggle>
+          );
+          // A disabled button takes no pointer events, so its own title never shows on hover; the
+          // wrapper carries it for the pointer, the button for assistive tech.
+          return entry.disabled ? (
+            <span key={entry.key} title={STAGE_KEY_DISABLED_TITLE} className="inline-flex">
+              {chip}
+            </span>
+          ) : (
+            chip
+          );
+        })}
+      </div>
+      {trailing !== undefined && <div className={KEY_ROW_TRAILING_CLASS}>{trailing}</div>}
     </div>
   );
 }

@@ -295,6 +295,23 @@ describe("ProductionGantt — completion reaches the DOM (fix-220-sol1 #4)", () 
     expect(host.querySelector('[data-testid="gantt-row-done-count"]')?.textContent).toBe("3 of 5 done");
   });
 
+  // #916 design review, blockers 1-2 (frame 3a `.nm`: a 14px `.nt` name over a 12px `small` line). jsdom has no
+  // layout, so the stack is read off the label's own classes: a column at every width, never `contents` inline.
+  it("the tree name is 14px and \"3 of 5 done\" is a 12px second line under it, never beside it", async () => {
+    await render(host, root, [makeProject({ id: PARTIAL_PROGRESS_PROJECT_ID, street: PARTIAL_PROGRESS_STREET, checklist: { completed: 3, total: 5 } })]);
+    const count = host.querySelector<HTMLElement>('[data-testid="gantt-row-done-count"]')!;
+    const meta = count.closest<HTMLElement>('[data-testid="gantt-row-label-meta"]')!;
+    const label = meta.parentElement!;
+    const name = label.firstElementChild as HTMLElement;
+    const tokens = (el: HTMLElement) => el.className.split(/\s+/);
+    expect(name.textContent).toBe(PARTIAL_PROGRESS_STREET);
+    expect(tokens(label)).toContain("text-sm");
+    expect(tokens(label)).toContain("flex-col");
+    expect(tokens(label).filter((token) => token.endsWith(":flex-row") || token.endsWith(":items-center"))).toEqual([]);
+    expect(tokens(meta).filter((token) => token.endsWith("contents"))).toEqual([]);
+    expect(tokens(count)).toContain("text-xs");
+  });
+
   it("a WIDE hollow-start bar (no shoot date, long duration) places its title/time INSIDE — no data-label-outside on the bar", async () => {
     const project = makeProject({
       id: WIDE_HOLLOW_PROJECT_ID,
@@ -338,6 +355,23 @@ describe("ProductionGantt — completion reaches the DOM (fix-220-sol1 #4)", () 
     // label-outside layout path and not merely asserting the attribute in isolation.
     const outsideOccurrences = [...host.querySelectorAll("span")].filter((candidate) => candidate.textContent === NARROW_HOLLOW_STREET && !bar.contains(candidate));
     expect(outsideOccurrences.length).toBeGreaterThan(0);
+  });
+
+  it("a bar's outside label is 14px, as the inside one is (#916 design review, frame 3a `.olbl`)", async () => {
+    const project = makeProject({
+      id: NARROW_HOLLOW_PROJECT_ID,
+      street: NARROW_HOLLOW_STREET,
+      shootDate: null,
+      shootDateCivil: null,
+      createdAt: isoDate(0) + "T00:00:00.000Z",
+      deadline: { at: `${isoDate(1)}T05:00:00.000Z`, localCivil: `${isoDate(1)}T15:00`, version: 1, reminderOffsetsMinutes: [], overdue: false },
+    });
+    await render(host, root, [project]);
+    const bar = findByAriaLabelIncluding(host, NARROW_HOLLOW_STREET);
+    const label = host.querySelector<HTMLElement>('[data-testid="gantt-bar-label"]');
+    expect(label?.textContent).toBe(NARROW_HOLLOW_STREET);
+    expect(bar.contains(label)).toBe(false);
+    expect(label!.className.split(/\s+/)).toContain("text-sm");
   });
 });
 

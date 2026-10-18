@@ -1,15 +1,11 @@
-import { useCallback, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { XIcon } from "lucide-react";
+import { useCallback, useRef, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type { GanttChecklistRowDto, GanttProjectRowDto, StagePresentationKey } from "@quincy/shared";
-import { Button } from "@/components/reui/button";
-import { Drawer, DrawerClose, DrawerContent, DrawerTitle, DrawerTrigger } from "@/components/reui/drawer";
 import { lateLabel, stageTone } from "../lib/dashboard-appearance";
 import { formatWeekdayDayOrToday, sydneyDayKey } from "../lib/date-format";
 import type { ProductionGanttRowData } from "../lib/production-gantt-adapter";
 import { TAP_SLOP } from "../lib/tap-slop";
 import { cn } from "../lib/utils";
 import { AvatarStack } from "./quincy/AvatarStack";
-import { Button as QuincyButton } from "./quincy/Button";
 import { StageToneSwatch } from "./quincy/StageKeyRow";
 
 /**
@@ -17,7 +13,8 @@ import { StageToneSwatch } from "./quincy/StageKeyRow";
  * At <= 720px the Timeline is view-only and draws no tree column (the vendor's `treePanel.placement: "inline"`):
  * each row's label (`.pl`: a mark, the name, a meta line) sits above its bar. The Stage key collapses to a 44px
  * "Key" button that opens a ReUI `Drawer` (owner decision D7: the Colour by switch lives in it too, not under
- * Display). `ProductionGantt.tsx` wires these; this file never imports the vendored gantt.
+ * Display); that drawer moved to `quincy/KeyDrawer.tsx` (#916 design review) for the Calendar to share.
+ * `ProductionGantt.tsx` wires these; this file never imports the vendored gantt.
  */
 
 /** A drawn row's facts: from its event when it has a bar, from the attention list when it has none. */
@@ -89,40 +86,4 @@ export function usePhoneTapGuard() {
     return Math.hypot(event.clientX - press.x, event.clientY - press.y) < TAP_SLOP;
   }, []);
   return { onPointerDownCapture, isTap };
-}
-
-/**
- * The phone's key: a 44px "Key" button opening a bottom `Drawer` that holds the same key row the wider layouts draw
- * (`children`: the `StageKeyRow`, whose chips still write the Filter, or #920's `PeopleKeyRow`), and the Colour by switch.
- *
- * `colourBySlot` is the Colour by switch's place (D7). #920 owns that control and its state (`useTimelineColourBy`, held by
- * `ProductionGantt`); this drawer only gives it a home. Never a second Colour by state here.
- */
-export function GanttKeyDrawer({ children, colourBySlot }: { children: ReactNode; colourBySlot?: ReactNode }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <Drawer open={open} onOpenChange={setOpen} swipeDirection="down" showSwipeHandle>
-      <DrawerTrigger
-        data-testid="production-gantt-key-button"
-        render={<QuincyButton type="button" variant="secondary" className="h-11 min-w-11" />}
-      >
-        Key
-      </DrawerTrigger>
-      <DrawerContent
-        data-testid="production-gantt-key-drawer"
-        className="border-border bg-background text-foreground shadow-[var(--shadow-lg)] data-[swipe-direction=down]:rounded-t-[var(--radius-lg)]"
-      >
-        <div className="flex shrink-0 items-center justify-between gap-[var(--space-2)] ps-[var(--space-4)] pe-[var(--space-2)] pt-[var(--space-2)]">
-          <DrawerTitle className="m-0 text-foreground [font:var(--weight-regular)_var(--text-md)/var(--leading-snug)_var(--font-display)]">Key</DrawerTitle>
-          <DrawerClose aria-label="Close key" render={<Button type="button" variant="ghost" size="icon-header" className="shrink-0 rounded-[var(--radius-pill)]" />}>
-            <XIcon aria-hidden="true" />
-          </DrawerClose>
-        </div>
-        <div className="flex min-h-0 flex-col gap-[var(--space-4)] overflow-y-auto px-[var(--space-4)] pt-[var(--space-2)] pb-[calc(var(--space-6)+env(safe-area-inset-bottom))]">
-          {children}
-          {colourBySlot}
-        </div>
-      </DrawerContent>
-    </Drawer>
-  );
 }

@@ -1685,28 +1685,25 @@ describe("ProductionGantt — Add task row (#344)", () => {
     expect(hiddenToasts()).toBe(0);
   });
 
-  it("9. at <=720px the warning sits on a second line under the project name; desktop layout is unchanged (#689)", async () => {
+  it("9. the warning sits on a second line under the project name at every width (#689; #916 design review)", async () => {
     resetFixture({ canEditDeadline: false, noDeadline: true });
     await render();
     const badge = host.querySelector<HTMLElement>(`[data-testid="gantt-row-attention-missing_deadline"]`)!;
     const tokens = badge.className.split(/\s+/);
     for (const token of ["min-w-0", "truncate", "min-[1024px]:shrink-0"]) expect(tokens, token).toContain(token);
     expect(tokens).not.toContain("shrink-0");
-    expect(tokens).not.toContain("max-[721px]:max-w-[45%]");
     expect(badge.getAttribute("title")).toBe("Deadline not set");
 
     const meta = badge.closest<HTMLElement>(`[data-testid="gantt-row-label-meta"]`)!;
     expect(meta).not.toBeNull();
     const metaTokens = meta.className.split(/\s+/);
-    for (const token of ["min-[721px]:contents", "max-[721px]:flex", "min-w-0", "max-[721px]:overflow-hidden"]) expect(metaTokens, token).toContain(token);
+    for (const token of ["flex", "min-w-0", "overflow-hidden"]) expect(metaTokens, token).toContain(token);
+    expect(metaTokens.filter((token) => token.endsWith("contents"))).toEqual([]);
 
     const outer = meta.parentElement!;
-    const outerTokens = outer.className.split(/\s+/);
-    for (const token of ["max-[721px]:flex-col", "max-[721px]:items-stretch", "max-[721px]:justify-center"]) expect(outerTokens, token).toContain(token);
-    expect(outerTokens).not.toContain("max-[721px]:items-start");
+    expect(outer.className.split(/\s+/)).toContain("flex-col");
 
     const title = meta.previousElementSibling as HTMLElement;
-    expect(title.className.split(/\s+/)).toContain("max-[721px]:flex-none");
     expect(title.className.split(/\s+/)).toContain("truncate");
 
     // the phone density breakpoint is `(max-width: 720px)` (width <= 720); `max-[720px]:` compiles to width < 720, leaving 720 in neither variant (#692).

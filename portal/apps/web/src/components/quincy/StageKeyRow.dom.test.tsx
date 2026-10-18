@@ -51,6 +51,13 @@ describe("StageKeyRow: the Stage key that doubles as a Stage filter (#916)", () 
     expect(chip(host, "Editing").getAttribute("aria-pressed")).toBe("false");
   });
 
+  it("marks a chip the Filter's Stage rule picks, so a pressed chip reads apart from the rest (#916 design review)", async () => {
+    const host = await mount(<StageKeyRow entries={[entry("raw_review", "RAW review", { picked: true }), entry("editing", "Editing", { pressed: false })]} onToggle={() => {}} />);
+    expect(chip(host, "RAW review").hasAttribute("data-picked")).toBe(true);
+    expect(chip(host, "Editing").hasAttribute("data-picked")).toBe(false);
+    expect(chip(host, "RAW review").className.split(/\s+/)).toContain("data-picked:border-foreground");
+  });
+
   it("hands the Stage to onToggle when a chip is pressed", async () => {
     const onToggle = vi.fn();
     const host = await mount(<StageKeyRow entries={ENTRIES} onToggle={onToggle} />);
@@ -85,5 +92,21 @@ describe("StageKeyRow: the Stage key that doubles as a Stage filter (#916)", () 
     const trailing = host.querySelector('[data-testid="trailing"]')!;
     expect(trailing.textContent).toBe("Colour by");
     expect(group.lastElementChild?.contains(trailing)).toBe(true);
+  });
+
+  // #916 design review (nit): "Same day" wrapped onto a row by itself. The chips wrap inside their own list and the trailing
+  // slot stays beside that list, on its first row.
+  it("wraps the chips in their own list, so the trailing slot never wraps onto a row alone", async () => {
+    const host = await mount(<StageKeyRow entries={ENTRIES} onToggle={() => {}} trailing={<span data-testid="trailing">Same day</span>} />);
+    const group = host.querySelector<HTMLElement>('[role="group"]')!;
+    const tokens = (el: Element) => el.className.split(/\s+/);
+    expect(tokens(group)).not.toContain("flex-wrap");
+    const list = chip(host, "RAW review").parentElement!;
+    expect(list).not.toBe(group);
+    expect(tokens(list)).toContain("flex-wrap");
+    const slot = host.querySelector('[data-testid="trailing"]')!.parentElement!;
+    expect(slot.parentElement).toBe(group);
+    expect(tokens(slot)).toContain("shrink-0");
+    expect(tokens(slot)).toContain("whitespace-nowrap");
   });
 });
