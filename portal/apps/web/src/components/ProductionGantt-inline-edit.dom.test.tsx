@@ -532,8 +532,8 @@ describe("ProductionGantt — People and Due columns (#365)", () => {
     expect(host.querySelector('[data-testid="gantt-team-trigger"]')).not.toBeNull();
   });
 
-  it("T7c in the names-only layout (here 720px) the People and Due columns are not rendered, and the row link is still there", async () => {
-    const viewport = mockViewport({ width: 720 });
+  it("T7c in the names-only layout (here 721px; #921: a phone has its own row label) the People and Due columns are not rendered, and the row link is still there", async () => {
+    const viewport = mockViewport({ width: 721 });
     try {
       await render();
       expect(host.querySelector('[data-testid="gantt-project-link"]')).not.toBeNull();

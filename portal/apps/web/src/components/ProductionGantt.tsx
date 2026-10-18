@@ -223,6 +223,7 @@ import { EmptyState } from "./quincy/EmptyState";
 import { AvatarStack } from "./quincy/AvatarStack";
 import { Notice } from "./quincy/Notice";
 import { StageKeyRow } from "./quincy/StageKeyRow";
+import { GanttKeyDrawer, GanttPhoneRowLabel, phoneRowMeta, phoneRowProjectId, usePhoneTapGuard, type GanttPhoneRow } from "./ProductionGanttPhone";
 import { SubtaskAssigneePicker, type AssigneePickerBaseline } from "./quincy/SubtaskAssigneePicker";
 import { type RetainedSchedule } from "./quincy/SubtaskScheduleControl";
 import { Skeleton } from "./reui/skeleton";
@@ -320,6 +321,13 @@ const GANTT_ROW_LINK = "truncate focus-visible:outline-[length:var(--border-widt
 
 const NO_LOADED_PROJECTS: readonly GanttProjectRowDto[] = [];
 const NO_SELECTED_ROWS: string[] = [];
+/** #921: the phone Timeline draws no collapse toggles, so nothing is collapsed there (a group collapsed at a wider width would hide its rows with no way back). */
+const NO_COLLAPSED_GROUPS: string[] = [];
+/** #921: the phone Timeline is view-only (frame 3c): no drag, no resize (so no Deadline grip and no Space adjust), no slot create. */
+const GANTT_INTERACTIONS_PHONE = { drag: false, resize: false, selectSlot: false } as const;
+const GANTT_NEVER_CREATE = () => false;
+/** #921, frame 3c: no tree column; each row's label sits above its bar and the track takes the full width. */
+const GANTT_TREE_PANEL_PHONE: GanttTreePanelConfig = { placement: "inline" };
 
 /**
  * #415: scroll the Gantt so the given Project row sits directly under the sticky timeline header.
@@ -424,6 +432,12 @@ const ATTENTION_SHORT_TEXT: Record<ProductionGanttAttentionReason, string> = {
 const GANTT_METRICS: GanttMetrics = { laneHeight: 1.75, rowPadding: 0.375, unitWidths: { week: 3.25 } };
 /** #693.2, #695: a phone or coarse-pointer row is 44px so each row's 44px + fills it and adjacent targets never intersect. */
 const GANTT_METRICS_TOUCH: GanttMetrics = { ...GANTT_METRICS, minRowHeight: 2.75 };
+/**
+ * #921, frame 3c (`.prow` / `.pl` / `.pt`): a 26px label line over a 28px bar (owner: 28px bars on a phone too), 6px
+ * padding around each, so a row is 72px, the frame's. Week fits its 7 days to the track (owner decision), whatever the
+ * phone's width; pinch zoom still scales from there.
+ */
+const GANTT_METRICS_PHONE: GanttMetrics = { laneHeight: 1.75, rowPadding: 0.375, inlineLabelHeight: 1.625, unitsPerLane: { week: 7 } };
 
 export function GanttRowAttentionBadge({ reason }: { reason: ProductionGanttAttentionReason }) {
   const critical = CRITICAL_ATTENTION_REASONS.has(reason);
@@ -1516,6 +1530,39 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     [attentionByResourceId, childLoadRetryByProjectResourceId, hideAttentionBadgeFor, doneLabelByProjectResourceId, projectHrefFor, onOpenProject],
   );
 
+  // #921, frame 3c: the phone row label, drawn by the vendor's inline placement above each bar. Facts come from the row's
+  // event when it has a bar (the DRAWN range and appearance, so the meta and the bar agree) and from the attention list
+  // when it has none (no Deadline, an unresolved schedule), so those rows keep their reason and a Project its Retry.
+  const phoneRowByResourceId = useMemo(() => {
+    const map = new Map<string, GanttPhoneRow>();
+    if (!phone) return map;
+    for (const event of model.events) {
+      const data = event.data;
+      if (!data || event.resourceId === undefined) continue;
+      map.set(event.resourceId, data.kind === "project" ? { kind: "project", dto: data.dto, data, end: event.end } : { kind: "task", dto: data.dto, data, end: event.end });
+    }
+    for (const entry of model.attention) {
+      if (map.has(entry.resourceId)) continue;
+      map.set(entry.resourceId, entry.kind === "project" ? { kind: "project", dto: entry.dto } : { kind: "task", dto: entry.dto });
+    }
+    return map;
+  }, [phone, model]);
+  const renderPhoneResourceLabel = useCallback(
+    ({ resource }: { resource: GanttResource }) => {
+      const row = phoneRowByResourceId.get(resource.id);
+      if (!row) return <span className="truncate text-sm">{resource.title}</span>;
+      const attention = attentionByResourceId.get(resource.id);
+      const retryChildren = childLoadRetryByProjectResourceId.get(resource.id);
+      const projectId = row.kind === "project" ? row.dto.id : null;
+      const name = projectId && projectHrefFor ? (
+        <ProjectCalendarAnchor testId="gantt-project-link" className={GANTT_ROW_LINK} href={projectHrefFor(projectId)} onOpenProject={() => onOpenProject?.(projectId)}>{resource.title}</ProjectCalendarAnchor>
+      ) : resource.title;
+      const status = retryChildren ? <GanttChildLoadErrorBadge onRetry={retryChildren} /> : attention ? <GanttRowAttentionBadge reason={attention.reason} /> : undefined;
+      return <GanttPhoneRowLabel row={row} name={name} meta={phoneRowMeta(row, new Date(defaultNow), stageLabelFor)} status={status} />;
+    },
+    [phoneRowByResourceId, attentionByResourceId, childLoadRetryByProjectResourceId, projectHrefFor, onOpenProject, defaultNow, stageLabelFor],
+  );
+
   // #365: the People and Due columns. `displayProjects` (the accept-gate baseline, the same source
   // as the Deadline actions above) so a cell never reads a row the chart is not drawing. Triggers
   // are `disabled={!live}` like "Set deadline": a picker Deadline save that races a later bar drag
@@ -2055,6 +2102,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   }, [pins, displayProjects, dataFetchSeq, generationKey, isChildListAuthoritative, drawnProjectIds]);
 
   const interactions = useMemo(() => ({ drag: live, resize: live, selectSlot: false }), [live]);
+  // #921: a tap on a phone bar opens its Project; a press that travelled was a scroll.
+  const phoneTap = usePhoneTapGuard();
 
   // #255: ONE always-mounted root. The filters bar and the Stage key row (#919) sit above the loading / error /
   // chart slot and never unmount with it, so an edit keeps focus on the control the user just used
@@ -2090,7 +2139,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     const facetFiltersDefault = ganttFacetIsDefault(facetFilters);
     const showDeliveredRecovery = ganttShowDeliveredRecovery(facetFilters);
     body = (
-      <div className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)]" data-testid="production-gantt">
+      <div className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)]" data-testid="production-gantt" onPointerDownCapture={phone ? phoneTap.onPointerDownCapture : undefined}>
         {tooManyToDraw && (
           <Notice tone="caution" role="status" data-testid="production-gantt-too-many">
             Too many projects match these filters to draw at once — narrow the filters above to see the rest.
@@ -2127,18 +2176,25 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             timeZone={GANTT_TIME_ZONE}
             i18n={GANTT_I18N}
             // #256: the name column fills the tree panel (see GANTT_NAME_COLUMN_WIDTH).
-            treePanel={namesOnly ? GANTT_TREE_PANEL_NARROW : GANTT_TREE_PANEL}
-            metrics={phone || coarsePointer ? GANTT_METRICS_TOUCH : GANTT_METRICS}
+            // #921: a phone draws no tree column (frame 3c); below 1024px the tree is names only (#734).
+            treePanel={phone ? GANTT_TREE_PANEL_PHONE : namesOnly ? GANTT_TREE_PANEL_NARROW : GANTT_TREE_PANEL}
+            metrics={phone ? GANTT_METRICS_PHONE : coarsePointer ? GANTT_METRICS_TOUCH : GANTT_METRICS}
             // #734: the names-only layout hides the zoom buttons; Ctrl/Cmd-wheel and pinch (wheelZoom, on by default) still zoom.
             zoomControl={!namesOnly}
             columns={columns}
-            interactions={interactions}
+            interactions={phone ? GANTT_INTERACTIONS_PHONE : interactions}
             onEventUpdate={handleEventUpdate}
             onEventClick={(occurrence, e) => {
+              if (phone) {
+                // #921: view-only. A tap opens the Project (a Subtask's parent), never the item menu.
+                const data = occurrence.event.data;
+                if (data && phoneTap.isTap(e)) onOpenProject?.(phoneRowProjectId(data));
+                return;
+              }
               // The vendor still selects the bar (its ring); the click also opens the menu.
               itemMenu.openFromClick(e, String(occurrence.event.id));
             }}
-            onEventContextMenu={(occurrence, e) => itemMenu.openFromContextMenu(e, String(occurrence.event.id))}
+            onEventContextMenu={phone ? undefined : (occurrence, e) => itemMenu.openFromContextMenu(e, String(occurrence.event.id))}
             eventPopup={eventPopup}
             dropWarning={dropWarning}
             parentScheduling={false}
@@ -2147,22 +2203,23 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             dependencyLines={false}
             scheduleMode="single"
             rowCheckboxes={false}
-            collapsedGroups={collapsedGroups}
+            collapsedGroups={phone ? NO_COLLAPSED_GROUPS : collapsedGroups}
             onCollapsedGroupsChange={setCollapsedGroups}
             selectedRows={highlightedRowId ? [highlightedRowId] : NO_SELECTED_ROWS}
             barLabel="auto"
             displayScheduleHint
             displayCreateTaskHint={false}
-            canCreateTask={canCreateTask}
+            canCreateTask={phone ? GANTT_NEVER_CREATE : canCreateTask}
             onCreateGroupTask={handleCreateGroupTask}
             createTaskMaxLength={GANTT_CREATE_TITLE_MAX}
             createTaskDirty={createDraftIsDirty(createDraft)}
             createTaskResetKey={generationKey}
             onCreateTaskClose={resetCreateDraft}
             renderCreateStack={namesOnly ? renderCreateStack : undefined}
-            renderResourceLabel={renderResourceLabel}
+            renderResourceLabel={phone ? renderPhoneResourceLabel : renderResourceLabel}
             renderEvent={renderEvent}
-            renderEventTrailing={renderEventTrailing}
+            // #921: on a phone the row's meta line says how late (frame 3c), so the bar carries no chip.
+            renderEventTrailing={phone ? undefined : renderEventTrailing}
             className="min-h-0 flex-1"
           >
             <ProductionGanttNav onToday={armLanding} zoomTargetRef={setZoomTarget} />
@@ -2177,7 +2234,14 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   return (
     <div ref={containerRef} className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)]" data-testid="production-gantt-root" {...itemMenu.wrapperProps}>
       <div data-testid="production-gantt-key" className="border-y-[length:var(--border-width-hair)] border-border bg-background py-[var(--space-2)]">
-        <StageKeyRow entries={keyEntries} onToggle={toggleStage} trailing={<GanttKeySymbols />} />
+        {phone ? (
+          // #921 (D7): a phone's key is a 44px Key button and a Drawer. It lives in this always-mounted band (#255), so a
+          // chip's Filter write, which re-pends the chart below, never unmounts the open Drawer.
+          // TODO(#920 merge): pass the Colour by switch as `colourBySlot` once #920's `colourBy` / `onColourByChange` land here.
+          <GanttKeyDrawer entries={keyEntries} onToggle={toggleStage} symbols={<GanttKeySymbols />} colourBySlot={undefined} />
+        ) : (
+          <StageKeyRow entries={keyEntries} onToggle={toggleStage} trailing={<GanttKeySymbols />} />
+        )}
       </div>
       {commands.settle.recoveryReason && (
         <Notice role="alert" data-testid="production-gantt-recovery-notice" className="flex items-center justify-between gap-[var(--space-4)]">

@@ -336,6 +336,16 @@
  * beside a bar, after it and after its outside title when there is one, outside the bar's own clipped box. The Timeline's late
  * chip ("2 days late") sits there. Unset, nothing is drawn and the outside label keeps its own positioning
  * (`gantt-event-trailing.dom.test.tsx`).
+ *
+ * 2026-10-18, #921 (#916, frame 3c) - ADDED, additive (unset: nothing changes). `treePanel.placement: "inline"`, the
+ * phone Timeline. No tree column, splitter or tree overlay (the tree inset is 0, so every geometry read that subtracts it
+ * is unchanged); each timeline row draws `renderResourceLabel` (or its title) as a line above its lanes, sticky at the
+ * lane's start and capped at the visible lane (`--gantt-inline-label-width` on the body), inside the one scroller (the
+ * #727 contract holds: no second scroll position, no new scroll writes or wheel listeners). A row is row padding, the
+ * label (`metrics.inlineLabelHeight`, default 1.75rem), row padding, the stack, row padding; the view's and the node's
+ * floors still apply. `metrics.unitsPerLane` fits that many units to the measured lane (the phone's Week: 7 days); the
+ * body's width state moved up beside the metrics so the unit model can read it. Collapse toggles, row checkboxes,
+ * columns and create rows live in the tree, so the inline placement has none. `gantt-inline-labels.dom.test.tsx`.
  */
 
 import {
@@ -586,6 +596,8 @@ function laneBlockRem(
 }
 /** Bars narrower than this flip their title outside in barLabel "auto". */
 const AUTO_LABEL_MIN_REM = 7
+/** QUINCY ADDITION (#921): the inline placement's label line, when `metrics.inlineLabelHeight` is unset. */
+const INLINE_LABEL_REM = 1.75
 const DEFAULT_TREE_PANEL = {
   width: 288,
   minWidth: 180,
@@ -810,6 +822,16 @@ function GanttView({
   const ghostHeightRem = metrics?.ghostHeight ?? GHOST_HEIGHT_REM
   const minTimelineWidth = metrics?.minTimelineWidth ?? MIN_TIMELINE_WIDTH
   const infiniteEdgePx = metrics?.infiniteScrollEdge ?? INFINITE_EDGE_PX
+  // QUINCY ADDITION (#921): the inline placement draws no tree column; each row carries its own label line.
+  const inlinePlacement = viewConfig.treePanel?.placement === "inline"
+  const inlineLabelRem = inlinePlacement
+    ? (metrics?.inlineLabelHeight ?? INLINE_LABEL_REM)
+    : 0
+  // The body's measured width (the tree yields to it; with the inline placement it is the whole lane) and
+  // the root font size, which turns `unitsPerLane`'s pixels into the rem every track width is written in.
+  // Declared here, ahead of the unit model that reads them; measured by the body's layout effect below.
+  const [containerWidth, setContainerWidth] = useState(0)
+  const [rootFontPx, setRootFontPx] = useState(16)
   const timeZone = settings.timeZone
   const rangeStartMs = range.start.getTime()
   const rangeEndMs = range.end.getTime()
@@ -879,7 +901,7 @@ function GanttView({
   // Weights are proportional to REAL duration (a 23h/25h DST day differs from
   // its siblings), so weight-driven gridlines, ms-fraction bar geometry, and
   // the dnd pointer math all share one coordinate system.
-  const { units, groups, unitWidthRem } = useMemo(() => {
+  const { units, groups, unitWidthRem: configuredUnitWidthRem } = useMemo(() => {
     const units: TimelineUnit[] = []
     const groups: TimelineGroup[] = []
     // day-start ms for the today window checks; recomputed when the day key
@@ -1071,6 +1093,13 @@ function GanttView({
   }
   const canZoomIn = zoom < zoomRange.max - 1e-9
   const canZoomOut = zoom > zoomRange.min + 1e-9
+  // QUINCY ADDITION (#921): `unitsPerLane` fits that many units to the measured lane (the inline placement's lane is
+  // the body's whole width); before the first measure, and for the side tree, the configured width applies.
+  const unitsPerLane = inlinePlacement ? metrics?.unitsPerLane?.[scale] : undefined
+  const unitWidthRem =
+    unitsPerLane && unitsPerLane > 0 && containerWidth > 0
+      ? containerWidth / unitsPerLane / rootFontPx
+      : configuredUnitWidthRem
   const trackRemWidth = units.length * unitWidthRem * zoom
   const trackWidth = `${trackRemWidth}rem`
   // unequal weights (year months, DST-containing day/week ranges) draw
@@ -1477,13 +1506,16 @@ function GanttView({
       // is also what keeps a lone bar on the tree label's centerline when a
       // short row is held open by minRowHeight.
       const blockRem = laneBlockRem(laneCount, laneHeightRem, laneGapRem)
+      // QUINCY ADDITION (#921): the inline placement's label line sits above the stack, padded like it
+      // (row padding, the label, row padding, the stack, row padding); the stack centres in what is left.
+      const labelBandRem = inlineLabelRem > 0 ? inlineLabelRem + rowPaddingRem : 0
       // QUINCY ADDITION (#919): a node's own floor, beside the view's; the larger wins.
       const heightRem = Math.max(
         minRowRem,
         row.resource.minRowHeight ?? 0,
-        blockRem + 2 * rowPaddingRem
+        labelBandRem + blockRem + 2 * rowPaddingRem
       )
-      const laneOffsetRem = (heightRem - blockRem) / 2
+      const laneOffsetRem = labelBandRem + (heightRem - labelBandRem - blockRem) / 2
 
       map.set(row.resource.id, {
         segments,
@@ -1542,6 +1574,7 @@ function GanttView({
     rowPaddingRem,
     laneGapRem,
     minRowRem,
+    inlineLabelRem,
     scheduleMode,
   ])
 
@@ -1721,7 +1754,7 @@ function GanttView({
   // narrow containers the tree pane yields down toward its minWidth. Measured
   // (not media-queried) because the gantt can live in any column. The -1
   // reserves the splitter hairline so the timeline truly keeps MIN width.
-  const [containerWidth, setContainerWidth] = useState(0)
+  // `containerWidth` is declared with the metrics above (the unit model reads it too).
   const clampContainer = (width: number, container: number) => {
     if (container <= 0) return width
     const ceiling = container - minTimelineWidth - 1
@@ -1737,7 +1770,10 @@ function GanttView({
     const floor = Math.min(treeConfig.minWidth, Math.max(ceiling, 0))
     return Math.max(Math.min(width, ceiling), Math.min(floor, container - 1))
   }
-  const clampedTreeWidth = clampContainer(configuredTreeWidth, containerWidth)
+  // QUINCY ADDITION (#921): the inline placement has no tree column, so nothing is inset.
+  const clampedTreeWidth = inlinePlacement
+    ? 0
+    : clampContainer(configuredTreeWidth, containerWidth)
   /** Live width while the splitter is dragging; render reads it so a
       mid-drag re-render can't snap the pane back to stale state. */
   const liveTreeWidthRef = useRef<number | null>(null)
@@ -1798,6 +1834,10 @@ function GanttView({
     if (!body) return
     const update = () => setContainerWidth(body.clientWidth)
     update()
+    // QUINCY ADDITION (#921): the rem the track is written in, for `unitsPerLane` (read once: the root size is fixed).
+    setRootFontPx(
+      parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
+    )
     const observer = new ResizeObserver(update)
     observer.observe(body)
     return () => observer.disconnect()
@@ -3121,6 +3161,8 @@ function GanttView({
             minRowRem={minRowRem}
             ghostHeightRem={ghostHeightRem}
             dependencySourceIds={dependencySourceIds}
+            inlineLabelRem={inlineLabelRem}
+            rowPaddingRem={rowPaddingRem}
           />,
           ...(createSheet
             ? []
@@ -3159,6 +3201,8 @@ function GanttView({
   // ----- #727: the one scroller's content: tree column + timeline column -----
   const scrollerContent = (
     <div className="flex min-h-full w-max min-w-full grow">
+      {/* QUINCY ADDITION (#921): the inline placement has no tree column; each timeline row draws its label. */}
+      {!inlinePlacement && (
       <div
         data-slot="gantt-tree-pane"
         data-testid="gantt-tree-column"
@@ -3172,6 +3216,7 @@ function GanttView({
       >
         {treeContent}
       </div>
+      )}
       <div
         data-slot="gantt-timeline-pane"
         data-testid="gantt-timeline-column"
@@ -3224,6 +3269,11 @@ function GanttView({
         style={
           {
             "--gantt-tree-inset": `${liveTreeWidthRef.current ?? clampedTreeWidth}px`,
+            // QUINCY ADDITION (#921): the visible lane, which caps each inline label line. Unset until
+            // measured, so an unlaid view leaves the label uncapped rather than zero wide.
+            ...(inlinePlacement && containerWidth > 0
+              ? { "--gantt-inline-label-width": `${containerWidth}px` }
+              : {}),
           } as CSSProperties
         }
       >
@@ -3259,8 +3309,8 @@ function GanttView({
             {scrollerContent}
           </div>
         )}
-        {/* Splitter: an overlay, so it never scrolls with the content */}
-        {treeConfig.resizable ? (
+        {/* Splitter: an overlay, so it never scrolls with the content. None for the inline placement (#921). */}
+        {treeConfig.resizable && !inlinePlacement ? (
           <div
             role="separator"
             aria-orientation="vertical"
@@ -3317,6 +3367,7 @@ function GanttView({
         ) : null}
         {/* Tree overlay: the visible tree area, outside the scroller. Pane-rect reads (row reorder) and the
             reorder indicator live here, so they keep meaning "the visible tree". */}
+        {!inlinePlacement && (
         <div
           ref={treeOverlayRef}
           data-slot="gantt-tree-overlay"
@@ -3361,6 +3412,7 @@ function GanttView({
             </div>
           )}
         </div>
+        )}
         {/* Lane overlay: the visible timeline lane (everything right of the tree), outside the
             scroller. The zoom control and the offscreen chips ride it; every "visible pane rect"
             read (chips, zoom anchor, drag clamping) measures this box. */}
@@ -4476,6 +4528,8 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
   minRowRem,
   ghostHeightRem,
   dependencySourceIds,
+  inlineLabelRem,
+  rowPaddingRem,
 }: {
   row: TimelineRow
   rowIndex: number
@@ -4495,6 +4549,9 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
   minRowRem: number
   ghostHeightRem: number
   dependencySourceIds: ReadonlySet<string>
+  /** QUINCY ADDITION (#921): the inline placement's label line (0: none), and the row padding above it. */
+  inlineLabelRem: number
+  rowPaddingRem: number
 }) {
   const instance = useGantt()
   const settings = useGanttSettings()
@@ -4892,6 +4949,31 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
         setHintStop(null)
       }}
     >
+      {/* QUINCY ADDITION (#921): the inline placement's label line, above the lanes (laneOffsetRem
+          already leaves its band). In flow and sticky at the lane's start, so the name stays in view
+          while the track pans under it, and capped at the visible lane so it truncates on screen.
+          One scroller still: the label is inside it, nothing mirrors a second scroll position. */}
+      {inlineLabelRem > 0 && (
+        <div
+          data-slot="gantt-inline-label"
+          data-testid="gantt-inline-label"
+          className="flex w-full min-w-0 items-center gap-2 px-3"
+          style={{
+            position: "sticky",
+            insetInlineStart: 0,
+            height: `${inlineLabelRem}rem`,
+            marginTop: `${rowPaddingRem}rem`,
+            maxWidth: "var(--gantt-inline-label-width)",
+          }}
+        >
+          {viewConfig.renderResourceLabel?.({
+            resource: row.resource,
+            depth: row.depth,
+            isGroup: row.isGroup,
+            collapsed: row.collapsed,
+          }) ?? <span className="truncate">{row.resource.title}</span>}
+        </div>
+      )}
       {/* row CONTENT (bars, labels, ghosts). Pointer-transparent so
           empty-track presses still hit the row itself.
           content-visibility lets the browser skip rendering this layer for

@@ -135,6 +135,12 @@
  * `renderEventTrailing` view-config key (`GanttRenderEventTrailingProps`), LISTED in
  * `VIEW_CONFIG_KEYS`. Rendered by `gantt-view.tsx`; covered by `gantt-event-trailing.dom.test.tsx`.
  * `GanttResource.minRowHeight` (`gantt-types.tsx`) lands in the same change.
+ *
+ * 2026-10-18, #921 (#916, frame 3c) — ADDED, additive (unset: nothing changes): `GanttTreePanelConfig.placement`
+ * (`"side"`, the default, or `"inline"`: no tree column, each row's label drawn above its lanes), and two metrics,
+ * `inlineLabelHeight` (that label line) and `unitsPerLane` (that many units fill the visible lane at zoom 1,
+ * overriding `unitWidths` once the lane is measured), both read by the inline placement only. Rendered by `gantt-view.tsx`;
+ * covered by `gantt-inline-labels.dom.test.tsx`.
  */
 
 import {
@@ -2267,6 +2273,18 @@ interface GanttMetrics {
   autoLabelMin?: number
   /** Unit width at zoom 1, per scale. Day scale = width per interval unit. */
   unitWidths?: Partial<Record<GanttScale, number>>
+  /**
+   * Units that fill the visible lane at zoom 1, per scale (a phone's Week: 7 days across the track).
+   * Read by `treePanel.placement: "inline"` only, where the lane is the view's whole width. Overrides
+   * `unitWidths` for that scale once the lane has a measured width; until then `unitWidths` applies.
+   * Quincy, #921.
+   */
+  unitsPerLane?: Partial<Record<GanttScale, number>>
+  /**
+   * Height of the label line each row draws above its lanes under `treePanel.placement: "inline"`.
+   * The row adds it and one `rowPadding` below it. Ignored by the side tree. Default 1.75. Quincy, #921.
+   */
+  inlineLabelHeight?: number
   /** Minimum timeline pane width in px. Default 200. */
   minTimelineWidth?: number
   /** Scroll distance (px) from an edge that grows the range. Default 160. */
@@ -2328,6 +2346,14 @@ interface GanttRowBaselineProps {
 
 /** Left tree-panel sizing and splitter behavior. */
 interface GanttTreePanelConfig {
+  /**
+   * Where each row's label goes. `"side"` (default): the tree column beside the timeline. `"inline"`:
+   * no tree column, splitter or row chrome (toggles, checkboxes, columns, create rows); each row draws
+   * `renderResourceLabel` (or its title) as a sticky line above its lanes, as wide as the visible lane,
+   * so the track takes the full width. A bar no pointer gesture can start then leaves touches to the
+   * scroller. Quincy, #921 (frame 3c, the phone Timeline).
+   */
+  placement?: "side" | "inline"
   /** Initial panel width in px. Default 288. */
   width?: number
   /** Splitter lower bound in px. Default 180. */

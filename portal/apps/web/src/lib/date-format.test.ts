@@ -10,6 +10,7 @@ import {
   formatAbsoluteTimeWithSeconds,
   formatDistinctTimes,
   formatCivilSchedule,
+  formatWeekdayDay,
   formatDayGroupedTime,
   formatDayRangePortal,
   formatDueCivil,
@@ -192,5 +193,13 @@ describe("formatDayRangePortal (#643)", () => {
   it("reads Sydney days across the 4 Oct 2026 DST start, not the machine zone's", () => {
     // 3 Oct 00:00 AEST (+10) to 5 Oct 23:59 AEDT (+11).
     expect(formatDayRangePortal(syd("2026-10-02T14:00:00.000Z"), syd("2026-10-05T12:59:00.000Z"))).toBe("3\u20135 Oct 2026");
+  });
+});
+
+describe("formatWeekdayDay (#921, the phone row meta)", () => {
+  it("names the Sydney day, short, whatever the machine zone", () => {
+    // 2026-09-17T15:30Z is Fri 18 Sep 01:30 in Sydney, still Thu 17 in Los Angeles.
+    expect(formatWeekdayDay("2026-09-17T15:30:00.000Z")).toBe("Fri 18");
+    expect(formatWeekdayDay(new Date("2026-09-21T02:00:00.000Z"))).toBe("Mon 21");
   });
 });

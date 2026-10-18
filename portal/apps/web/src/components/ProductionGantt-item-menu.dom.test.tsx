@@ -340,8 +340,8 @@ describe("ProductionGantt item menu (#463)", () => {
       });
     });
 
-    it("stays open in the names-only layout, here 720px (a bar session is not cancelled by narrowing)", async () => {
-      const viewport = mockViewport({ width: 720 });
+    it("stays open in the names-only layout, here 721px (a bar session is not cancelled by narrowing; #921: a phone has no item menu)", async () => {
+      const viewport = mockViewport({ width: 721 });
       try {
         await openPicker();
         await flush(4);

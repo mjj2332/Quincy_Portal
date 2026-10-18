@@ -25,6 +25,7 @@ import { ProductionGantt } from "./ProductionGantt";
 import { DEFAULT_GANTT_FACET_FILTERS } from "../lib/production-gantt-filters";
 import { startMoment, endMoment, subtaskReminders } from "@/testing/subtask-schedule";
 import { showGanttScale } from "@/testing/gantt-scale";
+import { mockViewport, type MockViewport } from "@/testing/viewport";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 vi.mock("../lib/api", async (importOriginal) => ({
@@ -231,5 +232,106 @@ describe("ProductionGantt — read-only boundary", () => {
     await render(host, root);
     findBarButton(host);
     expect(host.querySelectorAll('[data-testid="gantt-milestone-marker"]').length).toBe(0);
+  });
+});
+
+/**
+ * #921 (frame 3c): the phone Timeline is view-only whatever the viewer may edit. With the Deadline and the
+ * Subtask both writable, a <= 720px render draws no grip, advertises no Space adjust, and a tap on any bar opens
+ * its Project (a Subtask opens its parent) instead of the item menu. A press that travelled is a scroll, never a tap.
+ */
+describe("ProductionGantt — phone view-only (#921)", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  let viewport: MockViewport;
+  const onOpenProject = vi.fn<(projectId: string) => void>();
+
+  function writableResponse() {
+    const response = ganttResponse();
+    const project = response.projects[0]!;
+    project.permissions = { ...project.permissions, canEditDeadline: true };
+    project.children.rows[0]!.permissions = { ...project.children.rows[0]!.permissions, canDrag: true, canResize: true };
+    return response;
+  }
+
+  async function renderPhone() {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <ProductionGantt identity={identity} q="" filters={DEFAULT_GANTT_FACET_FILTERS} onFiltersChange={() => {}} projectHrefFor={(id) => `/projects/${id}`} onOpenProject={onOpenProject} />
+        </QueryClientProvider>,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    for (let i = 0; i < 3; i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+  }
+
+  const barFor = (text: string) => {
+    const bar = [...host.querySelectorAll<HTMLButtonElement>("[data-gantt-resource] button")].find((b) => b.getAttribute("aria-label")?.includes(text));
+    if (!bar) throw new Error(`no bar for "${text}"`);
+    return bar;
+  };
+
+  async function tap(bar: HTMLElement, travel = 0) {
+    await act(async () => {
+      bar.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 10, clientY: 10, pointerType: "touch", isPrimary: true }));
+      bar.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1, clientX: 10, clientY: 10 + travel }));
+      await Promise.resolve();
+    });
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(TODAY);
+    viewport = mockViewport({ width: 390, height: 844, coarse: true });
+    onOpenProject.mockReset();
+    apiGetMock.mockReset();
+    apiGetMock.mockImplementation((path: string) => (path.startsWith("/api/production-gantt") ? Promise.resolve(writableResponse()) : Promise.reject(new Error(`unexpected fetch: ${path}`))));
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    await act(async () => { root.unmount(); await Promise.resolve(); });
+    host.remove();
+    document.body.replaceChildren();
+    viewport.restore();
+    vi.useRealTimers();
+  });
+
+  it("draws no resize grip and advertises no Space adjust on a writable Project or Subtask", async () => {
+    await renderPhone();
+    for (const text of [PROJECT_STREET, TASK_TITLE]) {
+      const bar = barFor(text);
+      expect(bar.getAttribute("aria-keyshortcuts")).toBeNull();
+      await act(async () => {
+        bar.focus();
+        bar.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: " " }));
+        await Promise.resolve();
+      });
+      expect(bar.getAttribute("data-adjusting")).toBeNull();
+    }
+    expect(host.querySelector('[data-testid="gantt-resize-handle-start"]')).toBeNull();
+    expect(host.querySelector('[data-testid="gantt-resize-handle-end"]')).toBeNull();
+  });
+
+  it("a tap on the Project bar or a Subtask bar opens the Project, and no item menu opens", async () => {
+    await renderPhone();
+    await tap(barFor(PROJECT_STREET));
+    expect(onOpenProject).toHaveBeenLastCalledWith(PROJECT_ID);
+    await tap(barFor(TASK_TITLE));
+    expect(onOpenProject).toHaveBeenCalledTimes(2);
+    expect(onOpenProject).toHaveBeenLastCalledWith(PROJECT_ID);
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("a press that travelled (a scroll) opens nothing", async () => {
+    await renderPhone();
+    await tap(barFor(TASK_TITLE), 40);
+    expect(onOpenProject).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 });

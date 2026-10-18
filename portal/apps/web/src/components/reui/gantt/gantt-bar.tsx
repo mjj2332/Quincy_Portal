@@ -295,6 +295,12 @@
  * covered by `gantt-item-popup.dom.test.tsx`.
  * QUINCY ADDITION (#463 fix round): a touch-origin contextmenu is `preventDefault`ed before the drag
  * and Adjust guard returns (a long-press starts the drag; its native menu must not open over it).
+ *
+ * 2026-10-18, #921 (#916, frame 3c) — CHANGED, scoped to `treePanel.placement: "inline"` (unset: nothing
+ * changes). Under the inline placement a bar that no pointer gesture can start (no move, no resize on
+ * either edge) carries `data-native-pan`, which turns its `touch-none` into `touch-manipulation`, so a swipe
+ * that begins on it scrolls the one scroller natively; a tap still clicks. A bar that can be dragged or resized keeps `touch-none`
+ * everywhere. Covered by `gantt-inline-labels.dom.test.tsx`.
  */
 
 import {
@@ -716,6 +722,9 @@ function GanttBar<TData = unknown>({
   const canResizeStart = segment.isStart && gestures.canResize(segment, "start")
   const canResizeEnd = segment.isEnd && gestures.canResize(segment, "end")
   const canAdjust = canMove || canResizeStart || canResizeEnd
+  // QUINCY ADDITION (#921): an inline-placement bar no gesture can start; see `data-native-pan`.
+  const nativePan =
+    viewConfig.treePanel?.placement === "inline" && !canAdjust
   const keyShortcuts = buildGanttBarKeyShortcuts(canAdjust, occurrence.isRecurring)
   const instructionsId = useId()
   const resizeHandles = (canResizeStart || canResizeEnd) && (
@@ -811,6 +820,8 @@ function GanttBar<TData = unknown>({
     // "scroll the page"); `aria-describedby` points at the visually-hidden instructions span below.
     role: adjusting ? "application" : undefined,
     "data-adjusting": adjusting || undefined,
+    // QUINCY ADDITION (#921): the inline placement's gesture-free bar; its touch-action variant keys on it.
+    "data-native-pan": nativePan || undefined,
     "aria-describedby": adjusting ? instructionsId : undefined,
     "aria-keyshortcuts": keyShortcuts,
     "aria-label": settings.i18n.functions.formatEventAriaLabel({
@@ -1001,6 +1012,10 @@ function GanttBar<TData = unknown>({
     },
     className: cn(
       "group/gantt-bar-group text-foreground @container relative flex w-full min-w-0 cursor-pointer touch-none items-center gap-1.5 overflow-hidden rounded-sm px-1.5 py-0.5 text-start leading-normal select-none",
+      // QUINCY ADDITION (#921): the inline placement (a phone) is mostly bars, so a bar no pointer gesture can start
+      // (`data-native-pan`) leaves the touch to the scroller (native pan; a tap still clicks). Everywhere else every
+      // bar claims the touch as before, so a long-press drag is never stolen by a scroll.
+      "data-native-pan:touch-manipulation",
       // #219 PR A fix (dr-219a LOW #7, part 1): a resize grip is absolutely positioned, so it
       // never participates in flex layout and never pushes the label - it simply overlays the
       // label's own `px-1.5` (6px) padding. The grip itself spans from `start-0.5`/`end-0.5` (2px

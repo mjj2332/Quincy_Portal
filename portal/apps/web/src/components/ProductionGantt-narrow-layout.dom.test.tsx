@@ -5,6 +5,10 @@
  * picks the 44px row metric; a coarse pointer picks it at every width (#695). happy-dom has no layout, so
  * this pins which branch renders; how it paints is the browser pass.
  *
+ * #921 (frame 3c): at <= 720px the Timeline is the phone view. The vendor's inline placement draws no tree column;
+ * each row's label (name + meta) sits above its bar, every row is the same height, there is no add-task affordance,
+ * and the Stage key collapses to a 44px "Key" button that opens a Drawer. 721 keeps the names-only side tree.
+ *
  * Guard F (`test-seam.guard.test.ts`): everything is found by `data-testid`, accessible name or text.
  */
 import { act } from "react";
@@ -111,7 +115,6 @@ const editorRow = () => host.querySelector('[data-testid="gantt-group-create-tas
 
 describe("ProductionGantt breakpoints (#734)", () => {
   describe.each([
-    { width: 720, narrow: true, rows: "2.75rem" },
     { width: 721, narrow: true, rows: "2.5rem" },
     { width: 1023, narrow: true, rows: "2.5rem" },
     { width: 1024, narrow: false, rows: "2.5rem" },
@@ -178,5 +181,83 @@ describe("ProductionGantt breakpoints (#734)", () => {
     expect(zoomShown()).toBe(true);
     expect(editorRow()).not.toBeNull();
     expect(title().value).toBe("Keep me");
+  });
+});
+
+describe("ProductionGantt phone view (#921, frame 3c)", () => {
+  const inlineLabels = () => Array.from(host.querySelectorAll<HTMLElement>('[data-testid="gantt-inline-label"]'));
+  const keyButton = () => host.querySelector<HTMLButtonElement>('[data-testid="production-gantt-key-button"]');
+  const keyDrawer = () => document.querySelector<HTMLElement>('[data-testid="production-gantt-key-drawer"]');
+  const inlineKeyRow = () => host.querySelector('[data-testid="production-gantt-key"] [data-testid="stage-key-row"]');
+
+  describe.each([{ coarse: false }, { coarse: true }])("at 720px (coarse pointer: $coarse)", ({ coarse }) => {
+    it("draws no tree column; each row's label sits above its bar, and every row is one height", async () => {
+      await mountAt(720, coarse);
+      expect(has("gantt-tree-column")).toBe(false);
+      const labels = inlineLabels();
+      expect(labels).toHaveLength(2);
+      expect(labels[0]!.textContent).toContain(STREET);
+      expect(labels[1]!.textContent).toContain("Row one");
+      // The task's meta line: its due day (frame 3c `.pm`).
+      expect(labels[1]!.querySelector('[data-testid="gantt-phone-meta"]')!.textContent).toMatch(/^Due (today|\w{3} \d{1,2})$/);
+      // The Project has no Deadline: its label still carries the reason (no Due cell on a phone).
+      expect(labels[0]!.querySelector('[data-testid="gantt-row-attention-missing_deadline"]')).not.toBeNull();
+      expect(labels[0]!.querySelector('[data-testid="gantt-project-link"]')).not.toBeNull();
+      const taskRow = labels[1]!.closest<HTMLElement>("[data-gantt-row-id]")!;
+      const bar = [...taskRow.querySelectorAll("button")].find((b) => b.getAttribute("aria-label")?.includes("Row one"));
+      expect(bar).toBeDefined();
+      expect(labels[1]!.compareDocumentPosition(bar!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      // 6px padding, a 26px label, 6px, a 28px bar, 6px: 72px, the frame's row.
+      expect([...rowHeights()]).toEqual(["4.5rem"]);
+      expect(columnsShown()).toBe(false);
+      expect(zoomShown()).toBe(false);
+    });
+
+    it("offers no add-task affordance (view-only)", async () => {
+      await mountAt(720, coarse);
+      expect(host.querySelector(`button[aria-label="Add task in ${STREET}"]`)).toBeNull();
+      expect(sheet()).toBeNull();
+      expect(editorRow()).toBeNull();
+    });
+
+    it("the Stage key is a 44px Key button that opens a Drawer holding the key row and the symbols", async () => {
+      await mountAt(720, coarse);
+      expect(inlineKeyRow()).toBeNull();
+      const button = keyButton()!;
+      expect(button).not.toBeNull();
+      expect(button.textContent).toContain("Key");
+      expect(button.className).toContain("h-11");
+      expect(button.getAttribute("aria-haspopup")).toBe("dialog");
+      expect(keyDrawer()).toBeNull();
+      await act(async () => { button.click(); await Promise.resolve(); });
+      await settle();
+      const drawer = keyDrawer()!;
+      expect(drawer).not.toBeNull();
+      expect(drawer.querySelector('[data-testid="stage-key-row"]')).not.toBeNull();
+      expect(drawer.querySelector('[data-testid="gantt-key-same-day"]')).not.toBeNull();
+    });
+  });
+
+  it("at 721px the side tree, the inline key row and the add-task affordance are back, and there is no Key button", async () => {
+    await mountAt(721);
+    expect(has("gantt-tree-column")).toBe(true);
+    expect(inlineLabels()).toHaveLength(0);
+    expect(inlineKeyRow()).not.toBeNull();
+    expect(keyButton()).toBeNull();
+    expect(plus()).not.toBeNull();
+  });
+
+  it("crossing 720 swaps between the phone view and the side tree in place", async () => {
+    await mountAt(1024);
+    expect(inlineLabels()).toHaveLength(0);
+    await viewport!.set({ width: 390 });
+    await settle();
+    expect(has("gantt-tree-column")).toBe(false);
+    expect(inlineLabels()).toHaveLength(2);
+    expect(keyButton()).not.toBeNull();
+    await viewport!.set({ width: 768 });
+    await settle();
+    expect(has("gantt-tree-column")).toBe(true);
+    expect(keyButton()).toBeNull();
   });
 });

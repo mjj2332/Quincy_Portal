@@ -273,9 +273,10 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
     expect(draftDue()!.getAttribute("aria-label")).toContain("→");
   });
 
-  describe("on a phone (<= 720px) the editor is a bottom sheet with 44px rows", () => {
+  // #921: a phone (<= 720px) is view-only and has no +; the names-only sheet with 44px rows is a coarse-pointer tablet's.
+  describe("below 1024px with a coarse pointer (here 768px) the editor is a bottom sheet with 44px rows", () => {
     let viewport: ReturnType<typeof mockViewport>;
-    beforeEach(() => { viewport = mockViewport({ width: 720 }); });
+    beforeEach(() => { viewport = mockViewport({ width: 768, coarse: true }); });
     afterEach(() => { viewport.restore(); });
     const sheet = () => document.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-sheet"]');
 

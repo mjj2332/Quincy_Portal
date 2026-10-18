@@ -236,6 +236,15 @@ export function formatCivilDay(civil: string): string {
 }
 
 /**
+ * #921: "Fri 18", the Sydney day an instant falls on, short. The phone Timeline's row meta ("due Fri 18", frame 3c),
+ * where the visible week already names the month. Weekday from the civil date itself (UTC), never the device zone.
+ */
+export function formatWeekdayDay(instant: Instant): string {
+  const { year, month, day } = parseKey(sydneyDayKey(instant));
+  return `${WEEKDAY_SHORT[new Date(Date.UTC(year, month - 1, day)).getUTCDay()]} ${day}`;
+}
+
+/**
  * #643: a day range as the Portal writes it, day-first, in Sydney days: "7 Oct 2026", "7–20 Oct 2026",
  * "28 Sep – 4 Oct 2026", "28 Dec 2026 – 3 Jan 2027". `endInclusive` is the LAST day shown (a caller holding an
  * exclusive end subtracts a millisecond first). The separator is an en dash, tight within a month and spaced
