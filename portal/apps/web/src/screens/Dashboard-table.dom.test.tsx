@@ -516,7 +516,86 @@ describe("column visibility (#431)", () => {
   });
 });
 
+describe("one line per row, frame 4b's grid (#923 pass round 1, rows 6–8)", () => {
+  const PAST = Date.parse("2020-01-01T00:00:00.000Z");
+  /** The table's inner width at a 1440 viewport: the bar's 1264px less the Frame's two hairlines. */
+  const TABLE_WIDTH_AT_1440 = 1262;
+  // The product default (4b): grouped by Stage, RAW received hidden.
+  beforeEach(() => { storage.set(tablePrefsKey("user-1"), JSON.stringify({ groupBy: "stage", hiddenColumns: ["raw"] })); });
+
+  it("fits the default grouped columns into a 1440 viewport, Priority keeping its 36px star cells (D4)", async () => {
+    await renderTable();
+    expect(headerNames()).toEqual(DEFAULT_HEADERS);
+    const widths = headers().map((cell) => Number.parseFloat(cell.style.width));
+    expect(widths.every((width) => width > 0), "every column has a fixed width").toBe(true);
+    expect(widths.reduce((sum, width) => sum + width, 0)).toBeLessThanOrEqual(TABLE_WIDTH_AT_1440);
+    // Five 36px stars, the column's own 8px start and the table's 16px end edge.
+    expect(Number.parseFloat(th("Priority").style.width)).toBeGreaterThanOrEqual(5 * 36 + 8 + 16);
+  });
+
+  it("truncates text with a title instead of wrapping, and keeps the late chip on the Deadline's line", async () => {
+    projects = [row("p1", { street: "1402/88 Very Long Harbourside Esplanade", deadlineAt: PAST, deadlineLocalCivil: "2020-01-01T11:00", shootDate: null })];
+    await renderTable();
+    const tr = rowFor("p1");
+    const link = tr.querySelector<HTMLElement>('[data-testid="project-table-row-link"]')!;
+    expect(link.className).toContain("truncate");
+    expect(link.getAttribute("title")).toBe("1402/88 Very Long Harbourside Esplanade");
+    const line = tr.querySelector<HTMLElement>('[data-testid="project-table-deadline-line"]')!;
+    expect(line.className).toContain("flex-nowrap");
+    expect(line.className).not.toMatch(/(^|\s)flex-wrap(\s|$)/);
+    expect(line.querySelector('[data-testid="late-chip"]')).not.toBeNull();
+    const trigger = line.querySelector<HTMLElement>('[data-testid="project-table-deadline-trigger"]')!;
+    expect(trigger.querySelector("[title]")!.getAttribute("title")).toBe("Wed 1 Jan · 11:00");
+    const shoot = [...tr.querySelectorAll<HTMLElement>("td span")].find((node) => node.textContent === "Shoot date pending")!;
+    expect(shoot.className).toContain("truncate");
+    expect(shoot.getAttribute("title")).toBe("Shoot date pending");
+  });
+
+  it("lets the Deadline trigger reach its text's width: its 4px pull to the start is added back to its cap", async () => {
+    projects = [row("p1", { deadlineAt: PAST, deadlineLocalCivil: "2020-01-01T11:00" })];
+    await renderTable();
+    const trigger = rowFor("p1").querySelector<HTMLElement>('[data-testid="project-table-deadline-trigger"]')!;
+    expect(trigger.className).toContain("max-w-[calc(100%+var(--space-1))]");
+    expect(trigger.className).not.toMatch(/(^|\s)max-w-full(\s|$)/);
+  });
+
+  it("keeps the Archived badge on the street's line", async () => {
+    projects = [row("p1", { archivedAt: "2026-01-01T00:00:00.000Z" })];
+    await renderTable();
+    const badge = rowFor("p1").querySelector<HTMLElement>('[data-testid="project-table-archived"]')!;
+    expect(badge.parentElement!.querySelector('[data-testid="project-table-row-link"]')).not.toBeNull();
+  });
+
+  it("draws the header cells and the group labels in sentence case (4b)", async () => {
+    await renderTable();
+    const sortButtons = headers().flatMap((cell) => [...cell.querySelectorAll<HTMLElement>("button")]);
+    expect(sortButtons.length).toBeGreaterThan(0);
+    for (const button of sortButtons) {
+      expect(button.className, button.textContent ?? "").toContain("normal-case");
+      expect(button.className).toContain("tracking-[var(--tracking-normal)]");
+    }
+    expect(groupTriggers().length).toBeGreaterThan(0);
+    for (const trigger of groupTriggers()) {
+      expect(trigger.className).toContain("normal-case");
+      expect(trigger.className).toContain("tracking-[var(--tracking-normal)]");
+    }
+  });
+});
+
 describe("narrow screens: the phone list (#923, frame 4g)", () => {
+  it("lets the Deadline wrap under its chip rather than truncate it (#923 pass round 1, row 15)", async () => {
+    narrow = true;
+    storage.set(tablePrefsKey("user-1"), JSON.stringify({ groupBy: "stage", hiddenColumns: [] }));
+    projects = [row("p1", { deadlineAt: Date.parse("2020-01-01T00:00:00.000Z"), deadlineLocalCivil: "2020-01-01T11:00" })];
+    await renderTable();
+    const item = table().querySelector<HTMLAnchorElement>('[data-testid="project-table-row-link"][href="/projects/p1"]')!.closest("li")!;
+    const line = item.querySelector<HTMLElement>('[data-testid="project-table-deadline-line"]')!;
+    expect(line.className).toMatch(/(^|\s)flex-wrap(\s|$)/);
+    expect(item.querySelector<HTMLElement>('[data-testid="project-table-deadline-trigger"]')!.className).toContain("max-w-[calc(100%+var(--space-1))]");
+    expect(groupTriggers().length).toBeGreaterThan(0);
+    for (const trigger of groupTriggers()) expect(trigger.className).toContain("normal-case");
+  });
+
   const PAST = Date.parse("2020-01-01T00:00:00.000Z");
   const list = () => table().querySelector<HTMLElement>('[data-testid="project-table-phone-list"]');
   const phoneRow = (id: string) => table().querySelector<HTMLAnchorElement>(`[data-testid="project-table-row-link"][href="/projects/${id}"]`)!.closest("li")!;

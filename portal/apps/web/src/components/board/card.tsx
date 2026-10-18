@@ -1,4 +1,5 @@
 import { useRef, useState, type CSSProperties } from "react";
+import { RotateCw } from "lucide-react";
 import { Badge } from "../reui/badge";
 import { Button } from "../reui/button";
 import { ContextMenu, ContextMenuTrigger } from "../reui/context-menu";
@@ -124,21 +125,32 @@ function metaLine(project: ProjectSummary): string | null {
 /**
  * A failed cover's retry (#923): the Table, the phone list and the Board card all keep the same `failed`/`token` pair
  * and draw the same button above their row link's overlay. `className` adds the caller's spacing.
+ * `iconOnly` draws it as a square icon button that keeps its name (accessible name and title), for the
+ * Table's one-line row (#923 pass, row 7), where the labelled button would stack under the suburb.
  */
-export function useCoverRetry(className?: string) {
+const RETRY_COVER = "Retry cover image";
+
+export function useCoverRetry(className?: string, { iconOnly = false }: { iconOnly?: boolean } = {}) {
   const [failed, setFailed] = useState(false);
   const [token, setToken] = useState(0);
+  const onRetry = (event: { preventDefault: () => void; stopPropagation: () => void }) => { event.preventDefault(); event.stopPropagation(); setFailed(false); setToken((current) => current + 1); };
   const retry = (
     failed ? (
-      <Button
-        type="button"
-        size="xs"
-        variant="secondary"
-        className={`relative z-[1] ${className ?? "mt-[var(--space-2)]"}`}
-        onClick={(event) => { event.preventDefault(); event.stopPropagation(); setFailed(false); setToken((current) => current + 1); }}
-      >
-        Retry cover image
-      </Button>
+      iconOnly ? (
+        <Button type="button" size="icon-xs" variant="secondary" aria-label={RETRY_COVER} title={RETRY_COVER} className={`relative z-[1] ${className ?? ""}`} onClick={onRetry}>
+          <RotateCw aria-hidden="true" />
+        </Button>
+      ) : (
+        <Button
+          type="button"
+          size="xs"
+          variant="secondary"
+          className={`relative z-[1] ${className ?? "mt-[var(--space-2)]"}`}
+          onClick={onRetry}
+        >
+          {RETRY_COVER}
+        </Button>
+      )
     ) : null
   );
   return { token, setFailed, retry };

@@ -54,7 +54,7 @@ export function ProjectDetailGate({ projectId, role, fallbackClassName, testIdPr
   );
 }
 
-export function ProjectDeadlineCell({ projectId, street, deadline, canEdit, disabled, role, emptyLabel = "No deadline", testIdPrefix, triggerClassName, textClassName, overdueInName = false, popupCollisionAvoidance, popupCollisionPadding }: {
+export function ProjectDeadlineCell({ projectId, street, deadline, canEdit, disabled, role, emptyLabel = "No deadline", testIdPrefix, triggerClassName, textClassName, overdueInName = false, titled = false, popupCollisionAvoidance, popupCollisionPadding }: {
   projectId: string;
   street: string;
   deadline: ProjectDeadlineView | null;
@@ -70,6 +70,8 @@ export function ProjectDeadlineCell({ projectId, street, deadline, canEdit, disa
   textClassName?: string;
   /** Adds "overdue" to the trigger's accessible name and a visually hidden word to the read-only text. */
   overdueInName?: boolean;
+  /** Gives the date text a `title`, for a caller that truncates it to one line (the Dashboard Table, #923). */
+  titled?: boolean;
   /** Replaces the popup's collision policy (#587); omitted keeps the default. */
   popupCollisionAvoidance?: PopupCollisionAvoidance;
   /** Replaces the popup's 16px viewport padding. A function is called each time the popup opens, never while it is closed (#587). */
@@ -92,7 +94,7 @@ export function ProjectDeadlineCell({ projectId, street, deadline, canEdit, disa
   const tone = deadline.overdue ? "text-signal-critical" : "text-foreground";
   const overdueWord = overdueInName && deadline.overdue;
   if (!canEdit) {
-    return <time data-testid={`${testIdPrefix}-deadline`} dateTime={deadline.at} className={cn("truncate", tone, textClassName)}>{text}{overdueWord && <span className="sr-only"> (overdue)</span>}</time>;
+    return <time data-testid={`${testIdPrefix}-deadline`} dateTime={deadline.at} className={cn("truncate", tone, textClassName)} title={titled ? text : undefined}>{text}{overdueWord && <span className="sr-only"> (overdue)</span>}</time>;
   }
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
@@ -103,7 +105,7 @@ export function ProjectDeadlineCell({ projectId, street, deadline, canEdit, disa
         disabled={disabled}
         onClick={(event: { stopPropagation: () => void }) => event.stopPropagation()}
       >
-        <span className="truncate">{text}</span>
+        <span className="truncate" title={titled ? text : undefined}>{text}</span>
       </PopoverTrigger>
       {/* #422: the date-time popup mounts once the detail has loaded, after the popover opened, so
           Base UI's `initialFocus` (evaluated at open) found nothing: `focusOnMount` moves focus in

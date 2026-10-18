@@ -88,7 +88,8 @@
 .app:has(.page--fill) .app__shell { min-height: 0; }
 .app:has(.page--fill) .shell-header { flex-shrink: 0; }
 .page--fill { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; }
-.page.page--fill { padding-bottom: 0; }
+/* #923 4a: the view bar is the page's first row, so the Dashboard drops the top padding as well as the bottom; the side gutter stays. */
+.page.page--fill { padding-top: 0; padding-bottom: 0; }
 /* #112. `data-rail-mode` (set by `RailedShell` from `lib/shell-rail.ts`'s `SHELL_NARROW_QUERY`,
    771px) is the only breakpoint signal CSS keys off, with no `@media` of its own
    (`styles/shell-breakpoint.guard.test.ts`). `--app-rail-inline-size` only feeds the toast surface
