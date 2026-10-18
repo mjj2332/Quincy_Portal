@@ -169,8 +169,9 @@ const ICON_TOGGLE_QUERY = "(max-width: 399px)";
 const CALENDAR_VIEWS = ["month", "week", "day", "days", "agenda"] as const;
 const TIME_GRID_SUBVIEWS = new Set(["week", "day", "days"]);
 const OVERLAP = "Overlaps another task";
-// A denser AvatarStack for the chip: 16px avatars (the size the single initials avatar had), 2xs initials and `+N`.
-const CHIP_AVATAR = "size-4 data-[size=sm]:size-4 group-has-data-[size=sm]/avatar-group:size-4 [&_[data-slot=avatar-fallback]]:text-[length:var(--text-2xs)] text-[length:var(--text-2xs)] ring-1 ring-[var(--bg-surface)]";
+// The chip's AvatarStack at frame 3d's size (#922, `design/prototypes/dashboard-views/`, `.ad .av`): 20px
+// avatars with 12px initials and `+N`, nothing under the Portal's 12px type floor.
+const CHIP_AVATAR = "size-5 data-[size=sm]:size-5 group-has-data-[size=sm]/avatar-group:size-5 [&_[data-slot=avatar-fallback]]:text-xs text-xs ring-1 ring-[var(--bg-surface)]";
 // Chip density: 2px overlap, 1px ring in the chip's surface colour (the group default is a 2px page-cream ring).
 const CHIP_STACK = "shrink-0 -space-x-0.5 *:data-[slot=avatar]:ring-1 *:data-[slot=avatar]:ring-[var(--bg-surface)]";
 
@@ -231,8 +232,21 @@ function findOverflowTrigger(chip: HTMLElement): HTMLElement | null {
 
 const MORE_SELECTOR = '[data-slot="event-calendar-more"]';
 
+/**
+ * "2 days late", from `data.appearance` (`lib/dashboard-appearance.ts`), so lateness never rests on colour
+ * alone (#922, frame 3d). On a range chip it prints in `--late` over the Stage wash; on a Deadline the
+ * fill is already `--late`, so it inherits the chip's paper text. Grid chips get it from `ChipContent`,
+ * agenda rows from the vendor's `renderAgendaEventTrailing`, which keeps the row's own time column.
+ */
+function LateLabel({ data }: { data: ProductionEventCalendarData | undefined }): JSX.Element | null {
+  const appearance = data?.appearance;
+  if (!appearance?.lateLabel) return null;
+  return <span className={cn("shrink-0 text-xs", appearance.kind === "range" && "text-(--late)")} data-testid="event-calendar-late">{appearance.lateLabel}</span>;
+}
+
 function ChipContent({ id, data, title }: { id: string; data: ProductionEventCalendarData | undefined; title: string }): JSX.Element {
   const dto = data?.dto;
+  const doneRange = data?.appearance.kind === "range" && data.appearance.done;
   const label = dto?.kind === "project_deadline" ? dto.project.street : title;
   const assignees = dto?.kind === "checklist" ? dto.assignees : [];
   const otherAssigneeCount = dto?.kind === "checklist" ? dto.otherAssigneeCount : 0;
@@ -240,7 +254,8 @@ function ChipContent({ id, data, title }: { id: string; data: ProductionEventCal
   return (
     // `data-event-id` is the controller's focus-return hook (it focuses the vendor chip button around it).
     <span className="flex w-full min-w-0 items-center gap-[var(--space-1)] pe-[var(--space-1)]" data-testid="event-calendar-chip" data-event-id={id}>
-      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span className={cn("min-w-0 flex-1 truncate", doneRange && "line-through")} data-testid="event-calendar-chip-title">{label}</span>
+      <LateLabel data={data} />
       {overlap && <span className="sr-only">{OVERLAP}</span>}
       {assignees.length + otherAssigneeCount > 0 && (
         <AvatarStack
@@ -405,10 +420,11 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   useEffect(() => { setPending(null); }, [resetKey]);
 
   const events = useMemo(() => {
-    const mapped = toProductionEventCalendarEvents(displayEvents);
+    // #922: lateness is judged at `defaultNow` (a minute tick), so a chip turns late without a refetch.
+    const mapped = toProductionEventCalendarEvents(displayEvents, defaultNow);
     if (!effectivePending) return mapped;
     return mapped.map((event) => event.id === effectivePending.eventId ? { ...event, start: effectivePending.start, end: effectivePending.end, allDay: effectivePending.allDay } : event);
-  }, [displayEvents, effectivePending]);
+  }, [displayEvents, effectivePending, defaultNow]);
 
   const handleEventUpdate = useCallback((update: EventCalendarUpdateLike & { event: { id: string | number; start: Date; end: Date } }) => {
     const dto = dtoById.get(String(update.event.id));
@@ -647,6 +663,9 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
           eventClassName={(occurrence) => productionEventCalendarEventClassName(occurrence.event.data, landedProjectId !== null && occurrence.event.data?.dto.project.id === landedProjectId)}
           renderMoreIndicator={({ day, count, segments }) => <span data-more-event-ids={segments.map((segment) => String(segment.occurrence.event.id)).join(" ")} data-more-day={sydneyCivilDate(day)}>{`+${count} more`}</span>}
           renderEvent={({ occurrence }) => <ChipContent id={String(occurrence.event.id)} data={occurrence.event.data} title={occurrence.event.title} />}
+          // #922, frame 3d: 14px titles and 12px times; agenda rows add the late label after their own content.
+          eventSize="readable"
+          renderAgendaEventTrailing={({ occurrence }) => (occurrence.event.data?.appearance.lateLabel ? <LateLabel data={occurrence.event.data} /> : undefined)}
         >
           {/* The body is a flexed item of a definite-height column (#363), so its `minmax(0,1fr)` row is
               bounded by the page, not a viewport offset. An `auto` row would grow to the rail's content

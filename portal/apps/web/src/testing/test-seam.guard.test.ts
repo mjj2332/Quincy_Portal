@@ -202,7 +202,8 @@ const UTILITY_EXACT = new Set([
   "flex", "grid", "block", "inline", "inline-block", "inline-flex", "hidden", "contents", "isolate",
   "absolute", "relative", "fixed", "sticky", "static", "border", "rounded", "shrink", "grow",
   "transition", "shadow", "ring", "outline", "truncate", "filter", "blur", "peer", "group",
-  "italic", "underline", "uppercase", "lowercase", "capitalize", "normal-case", "antialiased",
+  // `line-through` (#922): the done Subtask chip's struck title, a design contract like `underline`.
+  "italic", "underline", "line-through", "uppercase", "lowercase", "capitalize", "normal-case", "antialiased",
   "invisible", "visible", "sr-only", "not-sr-only",
 ]);
 

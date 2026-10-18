@@ -22,7 +22,7 @@ const DAY = 24 * HOUR;
 
 /** A vendor proposal against the adapter's own display of `dto`. */
 function update(dto: CalendarEventDto, change: Partial<Omit<EventCalendarUpdateLike, "event">>): EventCalendarUpdateLike {
-  const displayed = toProductionEventCalendarEvent(dto)!;
+  const displayed = toProductionEventCalendarEvent(dto, 0)!;
   return {
     event: { start: displayed.start, end: displayed.end },
     start: displayed.start,
@@ -84,7 +84,7 @@ describe("event-calendar scheduling: refusals and no-ops", () => {
 
   it("keyboard: an END-only change on a Deadline is a no-op (the end is synthetic)", () => {
     const deadline = deadlineEvent("2026-08-27T09:00");
-    const displayed = toProductionEventCalendarEvent(deadline)!;
+    const displayed = toProductionEventCalendarEvent(deadline, 0)!;
     expect(eventCalendarUpdateToProposal(deadline, update(deadline, { source: "keyboard", end: new Date(displayed.end.getTime() + HOUR) }))).toEqual({ kind: "noop" });
   });
 });
