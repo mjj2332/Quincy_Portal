@@ -43,13 +43,14 @@ import {
   type GanttProjectRowDto,
 } from "@quincy/shared";
 import { sydneyDayKey } from "./date-format";
-import { doneCount, projectLateness, stageTone, subtaskLateness, subtaskPeopleTone, subtaskShape, type StageTone } from "./dashboard-appearance";
+import { doneCount, projectLateness, stageTone, subtaskLateness, subtaskPeopleTone, subtaskShape, type PeopleTone, type StageTone } from "./dashboard-appearance";
 import {
   ganttProjectBarClass,
   ganttTaskBarClass,
   type GanttProjectAppearance,
   type GanttTaskAppearance,
 } from "./production-gantt-appearance-classes";
+import type { ColourBy } from "./timeline-colour-by";
 
 // ---------------------------------------------------------------------------
 // Local, structurally-`GanttResource`/`GanttEvent`-compatible shapes — see header.
@@ -96,11 +97,12 @@ export type ProductionGanttRowFacts =
 
 /**
  * `GanttEvent.data`'s shape for every event this adapter emits: the row's facts plus its frame 3a
- * appearance (#919). Attention entries carry facts only; they draw no bar.
+ * appearance (#919) and the Colour by it is drawn in (#920: the bar content reads it, so a bar's
+ * content and its class never disagree). Attention entries carry facts only; they draw no bar.
  */
 export type ProductionGanttRowData =
-  | (Extract<ProductionGanttRowFacts, { kind: "project" }> & { appearance: GanttProjectAppearance })
-  | (Extract<ProductionGanttRowFacts, { kind: "task" }> & { appearance: GanttTaskAppearance });
+  | (Extract<ProductionGanttRowFacts, { kind: "project" }> & { appearance: GanttProjectAppearance; colourBy: ColourBy })
+  | (Extract<ProductionGanttRowFacts, { kind: "task" }> & { appearance: GanttTaskAppearance; colourBy: ColourBy });
 
 /**
  * Why a row produced no event. Facts, not copy — the surface decides the displayed label
@@ -179,12 +181,35 @@ function taskAppearance(row: GanttChecklistRowDto, tone: StageTone, start: Date,
 const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 /**
+ * #920: `--gantt-event-color`, which the bar's edge (and its fill, where the class fills) is drawn in.
+ * Stage: the Project's Stage tone. People (frame 3b): a Project bar and a shared Subtask are neutral
+ * (`--text-muted`, 3.57:1 on the surface paper); one assignee's Subtask is their colour; an unassigned
+ * one Awaiting RAW's greige, drawn dashed.
+ */
+const NEUTRAL_COLOR = "var(--text-muted)";
+const UNASSIGNED_COLOR = "var(--stage-awaiting-raw)";
+
+function projectBarColor(tone: StageTone, colourBy: ColourBy): string {
+  return colourBy === "people" ? NEUTRAL_COLOR : tone.color;
+}
+
+function taskBarColor(tone: StageTone, people: PeopleTone, colourBy: ColourBy): string {
+  if (colourBy !== "people") return tone.color;
+  if (people.kind === "person") return people.color;
+  return people.kind === "shared" ? NEUTRAL_COLOR : UNASSIGNED_COLOR;
+}
+
+/**
  * Re-derives every event's appearance from its DRAWN range and `now`: the per-minute clock (`useNow`)
  * and the optimistic/pending ranges change lateness and shape without rebuilding the model, so query
  * generations, child pagination and pins never see the clock. An event whose appearance is unchanged
  * keeps its identity, so a tick that changes nothing re-renders nothing.
+ *
+ * #920: `colourBy` (default Stage) is applied here too, so switching Colour by recolours the drawn
+ * model without rebuilding it.
  */
-export function applyGanttAppearance(model: ProductionGanttModel, now: Date): ProductionGanttModel {
+export function applyGanttAppearance(model: ProductionGanttModel, now: Date, opts: { colourBy?: ColourBy } = {}): ProductionGanttModel {
+  const colourBy = opts.colourBy ?? "stage";
   let changed = false;
   const events = model.events.map((event) => {
     const data = event.data;
@@ -192,13 +217,23 @@ export function applyGanttAppearance(model: ProductionGanttModel, now: Date): Pr
     let next: ProductionGanttEvent<ProductionGanttRowData>;
     if (data.kind === "project") {
       const appearance = projectAppearance(data.dto, event.end, now);
-      if (sameJson(appearance, data.appearance)) return event;
+      if (data.colourBy === colourBy && sameJson(appearance, data.appearance)) return event;
       const milestone = event.start.getTime() === event.end.getTime();
-      next = { ...event, className: ganttProjectBarClass(appearance, { milestone }), data: { ...data, appearance } };
+      next = {
+        ...event,
+        color: projectBarColor(appearance.tone, colourBy),
+        className: ganttProjectBarClass(appearance, { milestone, colourBy }),
+        data: { ...data, appearance, colourBy },
+      };
     } else {
       const appearance = taskAppearance(data.dto, data.appearance.tone, event.start, event.end, now);
-      if (sameJson(appearance, data.appearance)) return event;
-      next = { ...event, className: ganttTaskBarClass(appearance), data: { ...data, appearance } };
+      if (data.colourBy === colourBy && sameJson(appearance, data.appearance)) return event;
+      next = {
+        ...event,
+        color: taskBarColor(appearance.tone, appearance.people, colourBy),
+        className: ganttTaskBarClass(appearance, { colourBy }),
+        data: { ...data, appearance, colourBy },
+      };
     }
     changed = true;
     return next;
@@ -239,7 +274,7 @@ function resolveTaskSpan(row: GanttChecklistRowDto): { ok: true; start: Date; en
   return { ok: true, start: startResolved.date, end: endResolved.date };
 }
 
-function buildTaskResult(row: GanttChecklistRowDto, tone: StageTone, now: Date, interactive: boolean): RowBuildResult {
+function buildTaskResult(row: GanttChecklistRowDto, tone: StageTone, now: Date, interactive: boolean, colourBy: ColourBy): RowBuildResult {
   const resourceId = `task:${row.id}`;
   const attentionFor = (reason: ProductionGanttAttentionReason): ProductionGanttAttention => ({
     kind: "task",
@@ -261,19 +296,19 @@ function buildTaskResult(row: GanttChecklistRowDto, tone: StageTone, now: Date, 
       start: span.start,
       end: span.end,
       allDay: false,
-      color: tone.color,
-      className: ganttTaskBarClass(appearance),
+      color: taskBarColor(tone, appearance.people, colourBy),
+      className: ganttTaskBarClass(appearance, { colourBy }),
       readOnly: true,
       resourceId,
       ...(row.done ? { progress: 100 } : {}),
-      data: { kind: "task", dto: row, hollowStart: false, missingDeadline: false, appearance },
+      data: { kind: "task", dto: row, hollowStart: false, missingDeadline: false, appearance, colourBy },
       ...(interactive ? taskInteraction(row) : {}),
     },
     attention: null,
   };
 }
 
-function buildProjectBar(project: GanttProjectRowDto, tone: StageTone, now: Date, interactive: boolean): RowBuildResult {
+function buildProjectBar(project: GanttProjectRowDto, tone: StageTone, now: Date, interactive: boolean, colourBy: ColourBy): RowBuildResult {
   const resourceId = `project:${project.id}`;
 
   if (!project.deadline) {
@@ -371,12 +406,12 @@ function buildProjectBar(project: GanttProjectRowDto, tone: StageTone, now: Date
     start: barStart,
     end: endDate,
     allDay: false,
-    color: tone.color,
-    className: ganttProjectBarClass(appearance, { milestone: barStart.getTime() === endDate.getTime() }),
+    color: projectBarColor(tone, colourBy),
+    className: ganttProjectBarClass(appearance, { milestone: barStart.getTime() === endDate.getTime(), colourBy }),
     readOnly: true,
     resourceId,
     ...(progress !== undefined ? { progress } : {}),
-    data: { kind: "project", dto: project, hollowStart, missingDeadline: false, appearance },
+    data: { kind: "project", dto: project, hollowStart, missingDeadline: false, appearance, colourBy },
     // #221: only the deadline (end edge) is editable from the Gantt; the start is derived.
     ...(interactive
       ? {
@@ -513,6 +548,8 @@ export function ganttLandingProject(
  * needs; when false the output is exactly what it was before the option existed.
  * `deadlineInteractive` (#221 PR B2, default false) additionally opens the project bar's deadline
  * grip; it has no effect without `interactive`. Off, project bars keep the read-only output.
+ * `colourBy` (#920, default Stage) is the Timeline's Colour by; `applyGanttAppearance` can switch it
+ * on a built model.
  */
 export function buildProductionGanttModel(
   projects: readonly GanttProjectRowDto[],
@@ -526,8 +563,10 @@ export function buildProductionGanttModel(
      * real rows alone, so a pin can never push its own project (and itself) out of the model.
      */
     budgetExemptRowIds?: ReadonlySet<string>;
+    colourBy?: ColourBy;
   },
 ): ProductionGanttModel {
+  const colourBy = opts.colourBy ?? "stage";
   const interactive = opts.interactive === true;
   const deadlineInteractive = interactive && opts.deadlineInteractive === true;
   const resources: ProductionGanttResource[] = [];
@@ -557,7 +596,7 @@ export function buildProductionGanttModel(
     for (const row of sortedChildren) {
       const taskResourceId = `task:${row.id}`;
       childResources.push({ id: taskResourceId, title: row.title, color, minRowHeight: SUBTASK_ROW_REM });
-      const result = buildTaskResult(row, tone, opts.now, interactive);
+      const result = buildTaskResult(row, tone, opts.now, interactive, colourBy);
       if (result.event) events.push(result.event);
       if (result.attention) attention.push(result.attention);
     }
@@ -567,7 +606,7 @@ export function buildProductionGanttModel(
     // #429: a Project listed only as the parent of a matching checklist row (`deadlineInScope === false`)
     // draws no shoot -> Deadline bar and raises no attention entry: the filter did not select its Deadline.
     if (project.deadlineInScope === false) continue;
-    const barResult = buildProjectBar(project, tone, opts.now, deadlineInteractive);
+    const barResult = buildProjectBar(project, tone, opts.now, deadlineInteractive, colourBy);
     if (barResult.event) events.push(barResult.event);
     if (barResult.attention) attention.push(barResult.attention);
   }

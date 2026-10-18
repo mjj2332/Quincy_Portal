@@ -104,3 +104,53 @@ describe("ganttTaskBarClass (frame 3a Subtask bars)", () => {
     expect(classes(ganttTaskBarClass(task())).some((cls) => cls.startsWith("not-in-data-[scale=day]:"))).toBe(false);
   });
 });
+
+// #916 / #920: frame 3b, Colour by People. The same ownership rule holds in every People branch.
+describe("Colour by People (frame 3b)", () => {
+  const SHARED: PeopleTone = { kind: "shared", people: [{ personId: "u1", initials: "AN", color: "var(--people-1)" }, { personId: "u2", initials: "RK", color: "var(--people-2)" }], hiddenCount: 0 };
+  const UNASSIGNED: PeopleTone = { kind: "unassigned" };
+
+  it.each(["awaiting_raw", "editing", "delivered"] as const)("a %s Project bar goes neutral: the sunken paper in every state, a hairline edge, ink text", (stage) => {
+    const value = ganttProjectBarClass({ tone: stageTone(stage), lateness: NOT_LATE, done: null }, { milestone: false, colourBy: "people" });
+    const bgs = backgroundsByVariant(value);
+    for (const state of VENDOR_BG_STATES) expect(bgs.get(state), `${stage}: ${state || "rest"}`).toBe("bg-surface-sunken");
+    expect(classes(value)).toContain("border-[length:var(--border-width-hair)]");
+    expect(classes(value)).toContain("text-foreground");
+    expect(classes(value)).not.toContain("border-dashed");
+    expect(classes(value)).toContain("[&>[data-slot=gantt-bar-progress]]:hidden");
+  });
+
+  it("a Subtask with one assignee fills with their colour in every state, under paper text", () => {
+    const value = ganttTaskBarClass(task(), { colourBy: "people" });
+    const bgs = backgroundsByVariant(value);
+    for (const state of VENDOR_BG_STATES) expect(bgs.get(state), state || "rest").toBe("bg-(--gantt-event-color)");
+    expect(classes(value)).toContain("text-[var(--paper-000)]");
+    expect(classes(value)).not.toContain("border-dashed");
+  });
+
+  it("a shared Subtask is neutral: the sunken paper in every state, ink text", () => {
+    const value = ganttTaskBarClass(task({ people: SHARED }), { colourBy: "people" });
+    const bgs = backgroundsByVariant(value);
+    for (const state of VENDOR_BG_STATES) expect(bgs.get(state), state || "rest").toBe("bg-surface-sunken");
+    expect(classes(value)).toContain("text-foreground");
+  });
+
+  it("an unassigned Subtask is the surface paper in a dashed edge", () => {
+    const value = ganttTaskBarClass(task({ people: UNASSIGNED }), { colourBy: "people" });
+    expect(backgroundsByVariant(value).get("")).toBe("bg-card");
+    expect(classes(value)).toContain("border-dashed");
+  });
+
+  it("done and late keep their Stage-mode look (D2 fill, the --late edge)", () => {
+    expect(ganttTaskBarClass(task({ complete: true }), { colourBy: "people" })).toBe(ganttTaskBarClass(task({ complete: true })));
+    const late = ganttTaskBarClass(task({ lateness: { late: true, daysLate: 1 } }), { colourBy: "people" });
+    expect(classes(late)).toContain("border-(--late)");
+    expect(backgroundsByVariant(late).get("")).toBe("bg-(--gantt-event-color)");
+  });
+
+  it("Stage is the default, so every existing caller renders as before", () => {
+    expect(ganttTaskBarClass(task(), { colourBy: "stage" })).toBe(ganttTaskBarClass(task()));
+    const project = { tone: stageTone("editing"), lateness: NOT_LATE, done: null };
+    expect(ganttProjectBarClass(project, { milestone: false, colourBy: "stage" })).toBe(ganttProjectBarClass(project, { milestone: false }));
+  });
+});

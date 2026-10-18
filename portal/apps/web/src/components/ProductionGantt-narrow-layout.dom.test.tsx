@@ -19,6 +19,7 @@ import { adminProductionGanttResponseSchema, PRODUCTION_GANTT_ZONE, type GanttPr
 import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { DEFAULT_GANTT_FACET_FILTERS } from "../lib/production-gantt-filters";
 import { clearToasts } from "../lib/toast-store";
+import { resetUiPrefMemory } from "../lib/ui-prefs";
 import { ProductionGantt } from "./ProductionGantt";
 import { startMoment, endMoment, subtaskReminders } from "@/testing/subtask-schedule";
 import { mockViewport, type MockViewport } from "@/testing/viewport";
@@ -89,6 +90,9 @@ beforeEach(() => {
     density: { matchedProjects: 1, matchedRows: 1, drawCap: 2000, tooManyToDraw: false },
   })));
   clearToasts();
+  // #920's Colour by choice is a remembered UI pref; every test starts at the default (Stage).
+  try { localStorage.clear(); } catch { /* storage blocked: memory only */ }
+  resetUiPrefMemory();
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -209,7 +213,8 @@ describe("ProductionGantt phone view (#921, frame 3c)", () => {
       expect(labels[1]!.compareDocumentPosition(bar!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       // 6px padding, a 26px label, 6px, a 28px bar, 6px: 72px, the frame's row.
       expect([...rowHeights()]).toEqual(["4.5rem"]);
-      expect(columnsShown()).toBe(false);
+      // No People/Due columns: they live in the tree column, which is gone (the meta's "Due" and #920's hidden nav
+      // switch's "People" make the text check meaningless here).
       expect(zoomShown()).toBe(false);
     });
 
@@ -235,6 +240,13 @@ describe("ProductionGantt phone view (#921, frame 3c)", () => {
       expect(drawer).not.toBeNull();
       expect(drawer.querySelector('[data-testid="stage-key-row"]')).not.toBeNull();
       expect(drawer.querySelector('[data-testid="gantt-key-same-day"]')).not.toBeNull();
+      // #920's Colour by switch lives in the drawer (D7); choosing People swaps the drawer's key row in place.
+      const people = drawer.querySelector<HTMLElement>('[data-testid="timeline-colour-by-people"]')!;
+      expect(people).not.toBeNull();
+      await act(async () => { people.click(); await Promise.resolve(); });
+      await settle();
+      expect(keyDrawer()!.querySelector('[data-testid="people-key-row"]')).not.toBeNull();
+      expect(keyDrawer()!.querySelector('[data-testid="stage-key-row"]')).toBeNull();
     });
   });
 

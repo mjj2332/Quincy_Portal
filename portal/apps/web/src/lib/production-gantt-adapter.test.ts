@@ -19,7 +19,7 @@ import type {
 } from "@quincy/shared";
 import { PRODUCTION_GANTT_DRAW_CAP } from "@quincy/shared";
 import { applyGanttAppearance, buildProductionGanttModel, ganttLandingProject, type ProductionGanttAttention, type ProductionGanttEvent, type ProductionGanttRowData } from "./production-gantt-adapter";
-import { doneCount, projectLateness, stageTone, subtaskLateness } from "./dashboard-appearance";
+import { doneCount, personColor, projectLateness, stageTone, subtaskLateness } from "./dashboard-appearance";
 import { ganttProjectBarClass, ganttTaskBarClass, type GanttProjectAppearance, type GanttTaskAppearance } from "./production-gantt-appearance-classes";
 import { STAGE_HATCH_CLASS } from "./stage-colors";
 import { endMoment, startMoment } from "@/testing/subtask-schedule";
@@ -761,6 +761,74 @@ describe("#919: appearance", () => {
     };
     const [taskEvent] = eventsFor(applyGanttAppearance(moved, LATE_NOW), `task:${task.id}`);
     expect(dataOf(taskEvent!).appearance).toMatchObject({ shape: "diamond" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #916 / #920: frame 3b, Colour by People
+// ---------------------------------------------------------------------------
+
+describe("#920: Colour by People", () => {
+  const NOW_920 = new Date("2026-03-03T00:00:00.000Z");
+  const anika = { id: "u-anika", name: "Anika Nair" } as GanttChecklistRowDto["assignees"][number];
+  const rob = { id: "u-rob", name: "Rob Keane" } as GanttChecklistRowDto["assignees"][number];
+  function peopleProject() {
+    projectSeq += 1;
+    const projectId = `11111111-1111-4111-8111-8${String(projectSeq).padStart(11, "0")}`;
+    const range = rangeSchedule(startMoment("2026-03-02"), endMoment("2026-03-05"));
+    const rows = {
+      person: makeTask({ projectId, schedule: range, assignees: [anika] }),
+      shared: makeTask({ projectId, schedule: range, assignees: [anika, rob] }),
+      hidden: makeTask({ projectId, schedule: range, assignees: [anika], otherAssigneeCount: 1 }),
+      unassigned: makeTask({ projectId, schedule: range }),
+    };
+    const children = Object.values(rows);
+    const project = makeProject({
+      id: projectId,
+      stageKey: "editing",
+      shootDateCivil: "2026-03-01",
+      checklist: { completed: 0, total: children.length },
+      children: { rows: children, total: children.length, returned: children.length, truncated: false, nextCursor: null },
+    });
+    return { project, rows };
+  }
+  const dataOf = (event: ProductionGanttEvent<ProductionGanttRowData>) => event.data!;
+
+  it("colours each Subtask by its People tone and every Project bar neutral", () => {
+    const { project, rows } = peopleProject();
+    const model = buildProductionGanttModel([project], { now: NOW_920, colourBy: "people" });
+    const color = (id: string) => eventsFor(model, `task:${id}`)[0]!.color;
+    expect(color(rows.person.id)).toBe(personColor("u-anika"));
+    expect(color(rows.shared.id)).toBe("var(--text-muted)");
+    // A hidden External assignee makes the Subtask shared, never Anika's alone.
+    expect(color(rows.hidden.id)).toBe("var(--text-muted)");
+    expect(color(rows.unassigned.id)).toBe("var(--stage-awaiting-raw)");
+    const bar = model.events.find((event) => event.id === `project-bar:${project.id}`)!;
+    expect(bar.color).toBe("var(--text-muted)");
+    expect(bar.className).toBe(ganttProjectBarClass(dataOf(bar).appearance as GanttProjectAppearance, { milestone: false, colourBy: "people" }));
+    const [person] = eventsFor(model, `task:${rows.person.id}`);
+    expect(person!.className).toBe(ganttTaskBarClass(dataOf(person!).appearance as GanttTaskAppearance, { colourBy: "people" }));
+    for (const event of model.events) expect(dataOf(event).colourBy, event.id).toBe("people");
+  });
+
+  it("the appearance stays the module's output in either mode; Stage is the default", () => {
+    const { project, rows } = peopleProject();
+    const stage = buildProductionGanttModel([project], { now: NOW_920 });
+    const people = buildProductionGanttModel([project], { now: NOW_920, colourBy: "people" });
+    expect(people.events.map((event) => dataOf(event).appearance)).toEqual(stage.events.map((event) => dataOf(event).appearance));
+    for (const event of stage.events) expect(dataOf(event).colourBy).toBe("stage");
+    expect(eventsFor(stage, `task:${rows.person.id}`)[0]!.color).toBe("var(--stage-editing)");
+  });
+
+  it("applyGanttAppearance switches the mode without a rebuild, and back, keeping identity when nothing changes", () => {
+    const { project, rows } = peopleProject();
+    const stage = buildProductionGanttModel([project], { now: NOW_920 });
+    const people = applyGanttAppearance(stage, NOW_920, { colourBy: "people" });
+    expect(people).not.toBe(stage);
+    expect(eventsFor(people, `task:${rows.person.id}`)[0]!.color).toBe(personColor("u-anika"));
+    expect(people.events).toEqual(buildProductionGanttModel([project], { now: NOW_920, colourBy: "people" }).events);
+    expect(applyGanttAppearance(people, NOW_920, { colourBy: "people" })).toBe(people);
+    expect(applyGanttAppearance(people, NOW_920).events).toEqual(stage.events);
   });
 });
 

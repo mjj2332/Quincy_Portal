@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { Avatar, AvatarFallback, AvatarGroup, AvatarGroupCount } from "../reui/avatar";
 import { initials } from "../../lib/initials";
 import { cn } from "../../lib/utils";
@@ -31,6 +32,12 @@ export type AvatarStackProps = {
    * and the chip within the same width. Off by default, so the Gantt People column and every other caller keep their width.
    */
   fullLimit?: boolean;
+  /**
+   * #920 (frame 3b `.av.pc`, Timeline Colour by People): a person's colour token (`var(--people-N)`), drawn as the avatar's
+   * fill under paper initials; `undefined` keeps the neutral avatar. The `+N` / "+N others" chip always stays neutral.
+   * Off by default, so every other caller renders as before.
+   */
+  colorFor?: (personId: string) => string | undefined;
 };
 
 /**
@@ -39,7 +46,7 @@ export type AvatarStackProps = {
  * avatar is load-bearing: `aria-label` on a roleless `<span>` is dropped by every major screen
  * reader. The avatars are static; the 44px touch-target contract belongs to whatever wraps them.
  */
-export function AvatarStack({ people, limit = 3, personNoun, emptyLabel, hiddenCount = 0, decorative = false, className, avatarClassName, singleInitial = false, fullLimit = false }: AvatarStackProps) {
+export function AvatarStack({ people, limit = 3, personNoun, emptyLabel, hiddenCount = 0, decorative = false, className, avatarClassName, singleInitial = false, fullLimit = false, colorFor }: AvatarStackProps) {
   const hidden = decorative ? { "aria-hidden": true as const } : {};
   if (people.length === 0 && hiddenCount <= 0) {
     return (
@@ -62,9 +69,10 @@ export function AvatarStack({ people, limit = 3, personNoun, emptyLabel, hiddenC
         const name = person.name.trim();
         const empty = name === "";
         const label = (empty ? `${personNoun} (name unavailable)` : name) + (person.inactive ? " (inactive)" : "");
+        const color = colorFor?.(person.id);
         return (
-          <Avatar key={person.id} size="sm" role="img" aria-label={label} className={cn(person.inactive && "opacity-60", avatarClassName)}>
-            <AvatarFallback aria-hidden="true">{empty ? "?" : singleInitial ? [...initials(person.name)].slice(0, 1).join("") : initials(person.name)}</AvatarFallback>
+          <Avatar key={person.id} size="sm" role="img" aria-label={label} className={cn(person.inactive && "opacity-60", avatarClassName)} style={color ? ({ "--person-color": color } as CSSProperties) : undefined}>
+            <AvatarFallback aria-hidden="true" className={cn(color && "bg-(--person-color) text-[var(--paper-000)]")}>{empty ? "?" : singleInitial ? [...initials(person.name)].slice(0, 1).join("") : initials(person.name)}</AvatarFallback>
           </Avatar>
         );
       })}

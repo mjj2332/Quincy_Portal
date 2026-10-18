@@ -10,7 +10,7 @@ import { TAP_SLOP } from "../lib/tap-slop";
 import { cn } from "../lib/utils";
 import { AvatarStack } from "./quincy/AvatarStack";
 import { Button as QuincyButton } from "./quincy/Button";
-import { StageKeyRow, StageToneSwatch, type StageKeyEntry } from "./quincy/StageKeyRow";
+import { StageToneSwatch } from "./quincy/StageKeyRow";
 
 /**
  * #921 (#916, frame 3c, `design/prototypes/dashboard-views`, "Dashboard views v3"): the phone Timeline's parts.
@@ -97,24 +97,13 @@ export function usePhoneTapGuard() {
 }
 
 /**
- * The phone's Stage key: a 44px "Key" button opening a bottom `Drawer` that holds the same `StageKeyRow` (its chips
- * still write the Filter), the bar symbols, and the Colour by switch.
+ * The phone's key: a 44px "Key" button opening a bottom `Drawer` that holds the same key row the wider layouts draw
+ * (`children`: the `StageKeyRow`, whose chips still write the Filter, or #920's `PeopleKeyRow`), and the Colour by switch.
  *
- * `colourBySlot` is the Colour by switch's place (D7). #920 owns that control and its state (`colourBy` /
- * `onColourByChange` on `ProductionGantt`); this drawer only gives it a home, and renders nothing there until it is
- * passed. Never a second Colour by state here.
+ * `colourBySlot` is the Colour by switch's place (D7). #920 owns that control and its state (`useTimelineColourBy`, held by
+ * `ProductionGantt`); this drawer only gives it a home. Never a second Colour by state here.
  */
-export function GanttKeyDrawer<K extends string = StagePresentationKey>({
-  entries,
-  onToggle,
-  symbols,
-  colourBySlot,
-}: {
-  entries: readonly StageKeyEntry<K>[];
-  onToggle: (key: K) => void;
-  symbols?: ReactNode;
-  colourBySlot?: ReactNode;
-}) {
+export function GanttKeyDrawer({ children, colourBySlot }: { children: ReactNode; colourBySlot?: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
     <Drawer open={open} onOpenChange={setOpen} swipeDirection="down" showSwipeHandle>
@@ -135,7 +124,7 @@ export function GanttKeyDrawer<K extends string = StagePresentationKey>({
           </DrawerClose>
         </div>
         <div className="flex min-h-0 flex-col gap-[var(--space-4)] overflow-y-auto px-[var(--space-4)] pt-[var(--space-2)] pb-[calc(var(--space-6)+env(safe-area-inset-bottom))]">
-          <StageKeyRow entries={entries} onToggle={onToggle} trailing={symbols} />
+          {children}
           {colourBySlot}
         </div>
       </DrawerContent>

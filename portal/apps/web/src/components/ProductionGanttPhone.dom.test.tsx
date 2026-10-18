@@ -71,9 +71,9 @@ describe("GanttKeyDrawer", () => {
     document.body.replaceChildren();
   });
 
-  it("holds the Colour by switch in its slot once the host passes one", async () => {
+  it("holds the key row and the Colour by switch", async () => {
     await act(async () => {
-      root.render(<GanttKeyDrawer entries={[]} onToggle={() => {}} colourBySlot={<span data-testid="colour-by-slot">Colour by</span>} />);
+      root.render(<GanttKeyDrawer colourBySlot={<span data-testid="colour-by-slot">Colour by</span>}><span data-testid="stage-key-row" /></GanttKeyDrawer>);
     });
     await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="production-gantt-key-button"]')!.click(); await Promise.resolve(); });
     const drawer = document.querySelector('[data-testid="production-gantt-key-drawer"]')!;
