@@ -130,6 +130,11 @@
  * visible can make `minWidth` a hard floor: the timeline lane takes what remains, capped only by the container.
  * Used by `gantt-view.tsx`'s `clampContainer`; covered by `gantt-single-scroller.dom.test.tsx`. See ADR 0009's
  * #722 addendum.
+ *
+ * 2026-10-18, #919 (#916, frame 3a) — ADDED, additive (unset: nothing changes): the
+ * `renderEventTrailing` view-config key (`GanttRenderEventTrailingProps`), LISTED in
+ * `VIEW_CONFIG_KEYS`. Rendered by `gantt-view.tsx`; covered by `gantt-event-trailing.dom.test.tsx`.
+ * `GanttResource.minRowHeight` (`gantt-types.tsx`) lands in the same change.
  */
 
 import {
@@ -2354,6 +2359,12 @@ interface GanttRenderEventProps<TData = unknown> {
   isSelected: boolean
 }
 
+/** QUINCY ADDITION (#919): what `renderEventTrailing` is handed for one drawn segment. */
+interface GanttRenderEventTrailingProps<TData = unknown> {
+  occurrence: GanttOccurrence<TData>
+  segment: GanttSegment<TData>
+}
+
 /**
  * View-layer configuration: display props and render overrides. These live on
  * <Gantt> (and per-view components), never in the headless options.
@@ -2540,6 +2551,12 @@ interface GanttViewConfig<TData = unknown> {
   classNames?: GanttClassNames
   renderEvent?: (props: GanttRenderEventProps<TData>) => ReactNode
   /**
+   * QUINCY ADDITION (#919): content drawn beside a bar, outside its own clipped box: after the bar,
+   * and after the bar's outside title when it has one (title first, then this, on one line). Return
+   * nothing for a bar that needs nothing there. Informational only: it takes no pointer events.
+   */
+  renderEventTrailing?: (props: GanttRenderEventTrailingProps<TData>) => ReactNode
+  /**
    * Right-click menu for a bar: return shadcn ContextMenu items (the primitive
    * wraps every bar in a ContextMenu and renders this as its content). Read
    * the occurrence for the subject and drive actions through the gantt api
@@ -2691,6 +2708,8 @@ const VIEW_CONFIG_KEYS: Array<keyof GanttViewConfig> = [
   "rowAlign",
   "classNames",
   "renderEvent",
+  // QUINCY ADDITION (#919): runtime allow-list, as the rest of this list.
+  "renderEventTrailing",
   "renderEventMenu",
   // QUINCY ADDITION (#463): runtime allow-list, as the rest of this list.
   "eventPopup",
@@ -3004,6 +3023,7 @@ export type {
   GanttNodeSchedules,
   GanttProps,
   GanttRenderEventProps,
+  GanttRenderEventTrailingProps,
   GanttResolvedLines,
   GanttRowBaselineProps,
   GanttScheduleHintProps,

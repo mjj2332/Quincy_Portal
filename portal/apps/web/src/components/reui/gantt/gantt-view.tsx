@@ -328,6 +328,14 @@
  * inset-offset guard requires; the same spelling as GANTT_ROW_LINK in ProductionGantt). On a 44px row the opener fills the row, so the outset ring reached
  * 4px above it and the sticky tree header (z-30) painted over that at scrollTop 0. Scroll padding cannot help at scrollTop 0 and a spacer would break
  * the flush landing. Fine-pointer desktop keeps the outset ring.
+ *
+ * 2026-10-18, #919 (#916, frame 3a) - ADDED, additive. (a) A row's height floor is the larger of its node's own
+ * `GanttResource.minRowHeight` and `metrics.minRowHeight`: the Dashboard Timeline draws 48px Project rows and 40px Subtask rows,
+ * and its coarse-pointer 44px view floor still lifts the shorter one. A node with no floor of its own renders as before
+ * (`gantt-row-min-height.dom.test.tsx`). (b) `renderEventTrailing` (view config, listed in `VIEW_CONFIG_KEYS`): content drawn
+ * beside a bar, after it and after its outside title when there is one, outside the bar's own clipped box. The Timeline's late
+ * chip ("2 days late") sits there. Unset, nothing is drawn and the outside label keeps its own positioning
+ * (`gantt-event-trailing.dom.test.tsx`).
  */
 
 import {
@@ -1469,7 +1477,12 @@ function GanttView({
       // is also what keeps a lone bar on the tree label's centerline when a
       // short row is held open by minRowHeight.
       const blockRem = laneBlockRem(laneCount, laneHeightRem, laneGapRem)
-      const heightRem = Math.max(minRowRem, blockRem + 2 * rowPaddingRem)
+      // QUINCY ADDITION (#919): a node's own floor, beside the view's; the larger wins.
+      const heightRem = Math.max(
+        minRowRem,
+        row.resource.minRowHeight ?? 0,
+        blockRem + 2 * rowPaddingRem
+      )
       const laneOffsetRem = (heightRem - blockRem) / 2
 
       map.set(row.resource.id, {
@@ -5118,42 +5131,95 @@ const GanttTimelineRow = memo(function GanttTimelineRow({
                 rowTitle={row.resource.title}
                 className="h-full"
               />
-              {placement !== "inside" && (
-                <span
-                  data-slot="gantt-bar-label"
-                  data-testid="gantt-bar-label"
-                  data-placement={placement}
-                  className={cn(
-                    "text-foreground pointer-events-none absolute top-1/2 z-10 max-w-60 -translate-y-1/2 truncate font-medium",
-                    // one label at a time: the resize ghost carries it while
-                    // this bar is the faded placeholder
-                    "group-data-[drag-kind^=resize]/gantt-seg:opacity-0",
-                    // #219 PR A fix (dr2-219a HIGH #1 audit): this label used to rely on the WRAPPER
-                    // above hiding itself (and everything inside it, this label included) for ANY
-                    // move - it never needed its own move-time rule because the ancestor's own
-                    // opacity-0 already took care of it. Now that the wrapper's hide is gated to a
-                    // pointer-sourced move only (see that element's own comment), a keyboard move
-                    // leaves the wrapper - and this label - fully visible with no rule of its own to
-                    // say otherwise, while `gantt-view.tsx`'s drag ghost ALSO renders the event's own
-                    // title for a keyboard move (dr-219a HIGH #4 part 3): two copies of the same
-                    // title on screen at once, breaking the "one label at a time" invariant this
-                    // block's own comment states. Same split as the wrapper and the bar: only a
-                    // KEYBOARD move hides this label now (the ghost carries the title instead); a
-                    // pointer move already hid it via the wrapper's own opacity-0 above.
-                    "group-data-[drag-kind=move]/gantt-seg:group-data-[drag-source=keyboard]/gantt-seg:opacity-0",
-                    /* a departing dependency arrow drops its corner just past
-                       the bar's end, so exactly those labels reserve extra
-                       room; everything else keeps the tight default */
-                    placement === "after"
-                      ? dependencySourceIds.has(segment.occurrence.eventId)
-                        ? "start-full ms-4"
-                        : "start-full ms-2"
-                      : "end-full me-2"
-                  )}
-                >
-                  {segment.occurrence.event.title}
-                </span>
-              )}
+              {(() => {
+                // QUINCY ADDITION (#919): the consumer's trailing content (a late chip), beside the bar.
+                const trailing = viewConfig.renderEventTrailing?.({
+                  occurrence: segment.occurrence,
+                  segment,
+                })
+                const hasTrailing =
+                  trailing !== undefined && trailing !== null && trailing !== false
+                // The trailing slot follows the outside title in ONE positioned line, so it can never
+                // overlap a title of any width; with no outside title it sits right after the bar.
+                const sharedAfter = hasTrailing && placement === "after"
+                const label = placement !== "inside" && (
+                  <span
+                    data-slot="gantt-bar-label"
+                    data-testid="gantt-bar-label"
+                    data-placement={placement}
+                    className={cn(
+                      "text-foreground pointer-events-none max-w-60 truncate font-medium",
+                      sharedAfter
+                        ? "min-w-0"
+                        : "absolute top-1/2 z-10 -translate-y-1/2",
+                      // one label at a time: the resize ghost carries it while
+                      // this bar is the faded placeholder
+                      "group-data-[drag-kind^=resize]/gantt-seg:opacity-0",
+                      // #219 PR A fix (dr2-219a HIGH #1 audit): this label used to rely on the WRAPPER
+                      // above hiding itself (and everything inside it, this label included) for ANY
+                      // move - it never needed its own move-time rule because the ancestor's own
+                      // opacity-0 already took care of it. Now that the wrapper's hide is gated to a
+                      // pointer-sourced move only (see that element's own comment), a keyboard move
+                      // leaves the wrapper - and this label - fully visible with no rule of its own to
+                      // say otherwise, while `gantt-view.tsx`'s drag ghost ALSO renders the event's own
+                      // title for a keyboard move (dr-219a HIGH #4 part 3): two copies of the same
+                      // title on screen at once, breaking the "one label at a time" invariant this
+                      // block's own comment states. Same split as the wrapper and the bar: only a
+                      // KEYBOARD move hides this label now (the ghost carries the title instead); a
+                      // pointer move already hid it via the wrapper's own opacity-0 above.
+                      "group-data-[drag-kind=move]/gantt-seg:group-data-[drag-source=keyboard]/gantt-seg:opacity-0",
+                      /* a departing dependency arrow drops its corner just past
+                         the bar's end, so exactly those labels reserve extra
+                         room; everything else keeps the tight default */
+                      sharedAfter
+                        ? null
+                        : placement === "after"
+                          ? dependencySourceIds.has(segment.occurrence.eventId)
+                            ? "start-full ms-4"
+                            : "start-full ms-2"
+                          : "end-full me-2"
+                    )}
+                  >
+                    {segment.occurrence.event.title}
+                  </span>
+                )
+                if (!hasTrailing) return label
+                const trailingSlot = (
+                  <span
+                    data-testid="gantt-bar-trailing"
+                    className={cn(
+                      "pointer-events-none flex shrink-0 items-center",
+                      // the same hides as the outside title: the ghost stands in while it moves
+                      "group-data-[drag-kind^=resize]/gantt-seg:opacity-0",
+                      "group-data-[drag-kind=move]/gantt-seg:group-data-[drag-source=keyboard]/gantt-seg:opacity-0",
+                      !sharedAfter &&
+                        "absolute start-full top-1/2 z-10 ms-2 -translate-y-1/2"
+                    )}
+                  >
+                    {trailing}
+                  </span>
+                )
+                if (!sharedAfter)
+                  return (
+                    <>
+                      {label}
+                      {trailingSlot}
+                    </>
+                  )
+                return (
+                  <span
+                    className={cn(
+                      "pointer-events-none absolute start-full top-1/2 z-10 flex -translate-y-1/2 items-center gap-2",
+                      dependencySourceIds.has(segment.occurrence.eventId)
+                        ? "ms-4"
+                        : "ms-2"
+                    )}
+                  >
+                    {label}
+                    {trailingSlot}
+                  </span>
+                )
+              })()}
             </div>
           )
         })}

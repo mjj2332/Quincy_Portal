@@ -10,6 +10,11 @@
 //    `reui/button.tsx` divergence 4) and the ring would be a second indicator beside that outline.
 // 5. `disabled:opacity-50` -> `disabled:text-muted-foreground`: a disabled control is colour, never an
 //    opacity multiplier on an already-quiet colour (`quincy/icon-button.tsx`, TB8-06/TB8-07 contrast).
+// 6. #916 (frame 3a `.kchip`): `variant="chip"` + `size="chip"`, the Dashboard Stage key chip
+//    (`quincy/StageKeyRow.tsx`): a 32px pill on the surface paper with a hairline edge, 14px regular
+//    label, 8px swatch gap; pressed keeps the surface (the frame draws every in-scope Stage that way),
+//    unpressed falls back to the canvas with the secondary text role. 44px at <=721px and on a coarse
+//    pointer. Scoped: no other caller passes these, so every existing Toggle renders as before.
 import { Toggle as TogglePrimitive } from "@base-ui/react/toggle"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
@@ -21,12 +26,14 @@ const toggleVariants = cva(
       variant: {
         default: "bg-transparent",
         outline: "border border-input bg-transparent hover:bg-muted",
+        chip: "gap-2 rounded-full border border-border bg-transparent font-normal text-foreground-secondary hover:bg-muted hover:text-foreground aria-pressed:bg-card aria-pressed:text-foreground data-[state=on]:bg-card",
       },
       size: {
         default:
           "h-8 min-w-8 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
         sm: "h-7 min-w-7 max-[721px]:h-11 max-[721px]:min-w-11 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
         lg: "h-9 min-w-9 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
+        chip: "h-8 ps-2 pe-3 max-[721px]:h-11 pointer-coarse:h-11",
       },
     },
     defaultVariants: {

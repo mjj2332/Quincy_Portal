@@ -39,6 +39,7 @@ import { ProjectQueryRuntime } from "../lib/project-query-sync";
 import { ToastViewport } from "./quincy/ToastViewport";
 import { ProductionGantt } from "./ProductionGantt";
 import { endMoment, startMoment, subtaskReminders } from "@/testing/subtask-schedule";
+import { showGanttScale } from "@/testing/gantt-scale";
 
 vi.mock("../lib/stages", () => ({
   presentationStages: (stages: unknown[]) => stages,
@@ -336,6 +337,8 @@ async function render() {
     await Promise.resolve();
   });
   await flush();
+  // #919: the Timeline opens at Week; these fixtures and the stubbed 1440px axis are Month's.
+  if (host.querySelector('button[aria-label="Select view"]')) await showGanttScale(host, "Month");
 }
 
 async function pointerEvent(target: EventTarget, type: string, init: PointerEventInit) {
@@ -1710,9 +1713,13 @@ describe("ProductionGantt — Add task row (#344)", () => {
     expect([badge, meta, outer, title].map((el) => el.className).join(" ")).not.toContain("max-[720px]");
   });
 
-  it("9b. a row with no badge renders no meta wrapper (#689)", async () => {
+  it("9b. a row with no badge carries only its done count in the meta wrapper (#689, #919)", async () => {
     resetFixture({ canEditDeadline: false });
     await render();
-    expect(host.querySelector(`[data-testid="gantt-row-label-meta"]`)).toBeNull();
+    const metas = [...host.querySelectorAll<HTMLElement>(`[data-testid="gantt-row-label-meta"]`)];
+    // Only the Project row has a meta line: "N of M done" (#919), and no badge beside it.
+    expect(metas).toHaveLength(1);
+    expect(metas[0]!.children).toHaveLength(1);
+    expect(metas[0]!.querySelector('[data-testid="gantt-row-done-count"]')?.textContent).toMatch(/^\d+ of \d+ done$/);
   });
 });

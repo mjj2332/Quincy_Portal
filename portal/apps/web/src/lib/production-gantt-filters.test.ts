@@ -8,13 +8,13 @@ import {
   ganttPairingNotice,
   ganttShowDeliveredRecovery,
   ganttFiltersFromRoute,
-  ganttLegendEntries,
+  ganttKeyEntries,
   ganttRouteFor,
   productionStageFilterOptions,
-  stageOptionsWithColor,
+  stageOptionsWithTone,
   type ProductionGanttFacetFilters,
 } from "./production-gantt-filters";
-import { stageColors } from "./stage-colors";
+import { stageTone } from "./dashboard-appearance";
 import type { PipelineStage } from "./stages";
 
 /** The stored stage list an admin and a non-admin both start from (`/api/stages`). */
@@ -50,52 +50,52 @@ describe("productionStageFilterOptions", () => {
   });
 });
 
-describe("ganttLegendEntries", () => {
+describe("ganttKeyEntries (#916 / #919, frame 3a key row)", () => {
   const adminOptions = productionStageFilterOptions(storedStages, true);
   const editorOptions = productionStageFilterOptions(storedStages, false);
+  const keys = (entries: ReturnType<typeof ganttKeyEntries>) => entries.map((entry) => entry.key);
+  const pressed = (entries: ReturnType<typeof ganttKeyEntries>) => entries.filter((entry) => entry.pressed).map((entry) => entry.key);
 
-  it("omits Delivered unless delivered projects are shown", () => {
-    expect(ganttLegendEntries({ stageOptions: adminOptions, filters: { stageKeys: [], delivered: false } }).map((entry) => entry.key)).toEqual(["awaiting_raw", "raw_review", "editing", "edited_review"]);
-    expect(ganttLegendEntries({ stageOptions: adminOptions, filters: { stageKeys: [], delivered: true } }).map((entry) => entry.key)).toEqual(["awaiting_raw", "raw_review", "editing", "edited_review", "delivered"]);
-  });
-
-  it("restricts to the selected stages, and still gates Delivered on the delivered flag", () => {
-    expect(ganttLegendEntries({ stageOptions: adminOptions, filters: { stageKeys: ["raw_review", "delivered"], delivered: false } }).map((entry) => entry.key)).toEqual(["raw_review"]);
-    expect(ganttLegendEntries({ stageOptions: adminOptions, filters: { stageKeys: ["raw_review", "delivered"], delivered: true } }).map((entry) => entry.key)).toEqual(["raw_review", "delivered"]);
-  });
-
-  it("colours each entry from the stage colour map", () => {
-    const entries = ganttLegendEntries({ stageOptions: editorOptions, filters: { stageKeys: [], delivered: true } });
-    for (const entry of entries) expect(entry.color).toBe(stageColors[entry.key]);
-  });
-
-  it("#257: marks only Edited review as hatched, beside its colour", () => {
-    const entries = ganttLegendEntries({ stageOptions: adminOptions, filters: { stageKeys: [], delivered: true } });
-    expect(entries.map((entry) => [entry.key, entry.pattern])).toEqual([
-      ["awaiting_raw", null],
-      ["raw_review", null],
-      ["editing", null],
-      ["edited_review", "hatch"],
-      ["delivered", null],
-    ]);
-    // the Stage filter options carry the same field, from the same function
-    expect(stageOptionsWithColor(adminOptions).find((option) => option.key === "edited_review")?.pattern).toBe("hatch");
-  });
-
-  it("never labels an entry with a raw stage key, for either role", () => {
-    const rawKeys = new Set<string>(Object.keys(stageColors));
-    for (const stageOptions of [adminOptions, editorOptions, productionStageFilterOptions([], true), productionStageFilterOptions([], false)]) {
-      for (const entries of [
-        ganttLegendEntries({ stageOptions, filters: { stageKeys: [], delivered: true } }),
-        ganttLegendEntries({ stageOptions, filters: { stageKeys: [...STAGE_PRESENTATION_KEYS], delivered: true } }),
-      ]) {
-        for (const entry of entries) expect(rawKeys.has(entry.label), entry.label).toBe(false);
-      }
+  it("lists every role-aware stage, whatever the filter narrows to (#254: a pressed-away chip never vanishes)", () => {
+    for (const filters of [{ stageKeys: [], delivered: false }, { stageKeys: ["raw_review" as const], delivered: false }, { stageKeys: ["raw_review" as const], delivered: true }]) {
+      expect(keys(ganttKeyEntries({ stageOptions: adminOptions, filters }))).toEqual(["awaiting_raw", "raw_review", "editing", "edited_review", "delivered"]);
     }
   });
 
+  it("presses the stages the filter can still match; Delivered only while delivered Projects are drawn", () => {
+    expect(pressed(ganttKeyEntries({ stageOptions: adminOptions, filters: { stageKeys: [], delivered: false } }))).toEqual(["awaiting_raw", "raw_review", "editing", "edited_review"]);
+    expect(pressed(ganttKeyEntries({ stageOptions: adminOptions, filters: { stageKeys: [], delivered: true } }))).toEqual(["awaiting_raw", "raw_review", "editing", "edited_review", "delivered"]);
+    expect(pressed(ganttKeyEntries({ stageOptions: adminOptions, filters: { stageKeys: ["raw_review", "delivered"], delivered: true } }))).toEqual(["raw_review", "delivered"]);
+  });
+
+  it("takes each tone from the appearance module, and labels from the role-aware stage list", () => {
+    const entries = ganttKeyEntries({ stageOptions: editorOptions, filters: { stageKeys: [], delivered: true } });
+    for (const entry of entries) expect(entry.tone).toEqual(stageTone(entry.key));
+    expect(entries.find((entry) => entry.key === "editing")?.label).toBe("Editing");
+    expect(ganttKeyEntries({ stageOptions: adminOptions, filters: { stageKeys: [], delivered: true } }).find((entry) => entry.key === "editing")?.label).toBe("AutoHDR editing");
+  });
+
+  it("disables every chip the Filter cannot toggle (an OR root), and none for a flat filter", () => {
+    const orTree = {
+      stageKeys: [],
+      delivered: false,
+      tree: { kind: "group" as const, op: "or" as const, children: [{ kind: "leaf" as const, field: "stages" as const, values: ["editing" as const] }, { kind: "leaf" as const, field: "overdue" as const }] },
+    };
+    expect(ganttKeyEntries({ stageOptions: adminOptions, filters: orTree as never }).every((entry) => entry.disabled)).toBe(true);
+    expect(ganttKeyEntries({ stageOptions: adminOptions, filters: { stageKeys: ["editing"], delivered: false } }).some((entry) => entry.disabled)).toBe(false);
+  });
+
   it("has no entry at all for a stage with no label", () => {
-    expect(ganttLegendEntries({ stageOptions: [], filters: { stageKeys: [], delivered: true } })).toEqual([]);
+    expect(ganttKeyEntries({ stageOptions: [], filters: { stageKeys: [], delivered: true } })).toEqual([]);
+  });
+});
+
+describe("stageOptionsWithTone (D3: the Filter's Stage swatches match the Timeline)", () => {
+  it("gives each option its appearance-module tone and no hatch", () => {
+    const options = stageOptionsWithTone(productionStageFilterOptions(storedStages, true));
+    for (const option of options) expect(option.tone).toEqual(stageTone(option.key));
+    expect(options.find((option) => option.key === "awaiting_raw")?.tone.treatment).toBe("hollow-dashed");
+    expect(Object.keys(options[0]!)).not.toContain("pattern");
   });
 });
 

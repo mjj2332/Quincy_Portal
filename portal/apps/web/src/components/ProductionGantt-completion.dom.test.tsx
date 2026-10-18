@@ -269,7 +269,7 @@ describe("ProductionGantt — completion reaches the DOM (fix-220-sol1 #4)", () 
     expect(bar.getAttribute("data-completed")).toBeNull();
   });
 
-  it("a fully-complete project bar carries data-completed and the reproduced done checkmark", async () => {
+  it("a fully-complete project bar carries data-completed; its row says how many are done, and only Delivered ticks the bar (#919, frame 3a)", async () => {
     const project = makeProject({
       id: COMPLETED_BAR_PROJECT_ID,
       street: COMPLETED_BAR_STREET,
@@ -279,7 +279,20 @@ describe("ProductionGantt — completion reaches the DOM (fix-220-sol1 #4)", () 
     const bar = findByAriaLabelIncluding(host, COMPLETED_BAR_STREET);
     expect(bar.getAttribute("data-completed")).toBe("true");
     expect(bar.getAttribute("aria-label")).toContain("100% complete");
-    expect(bar.querySelector('[data-testid="gantt-done-mark"]')).not.toBeNull();
+    expect(bar.querySelector('[data-testid="gantt-done-mark"]')).toBeNull();
+    const doneCounts = [...host.querySelectorAll('[data-testid="gantt-row-done-count"]')].map((el) => el.textContent);
+    expect(doneCounts).toEqual(["4 of 4 done"]);
+  });
+
+  it("a Delivered project bar carries the tick (#919, frame 3a)", async () => {
+    const project = makeProject({ id: COMPLETED_BAR_PROJECT_ID, street: COMPLETED_BAR_STREET, stageKey: "delivered", delivered: true });
+    await render(host, root, [project]);
+    expect(findByAriaLabelIncluding(host, COMPLETED_BAR_STREET).querySelector('[data-testid="gantt-done-mark"]')).not.toBeNull();
+  });
+
+  it("a partly-done project's row reads \"3 of 5 done\"", async () => {
+    await render(host, root, [makeProject({ id: PARTIAL_PROGRESS_PROJECT_ID, street: PARTIAL_PROGRESS_STREET, checklist: { completed: 3, total: 5 } })]);
+    expect(host.querySelector('[data-testid="gantt-row-done-count"]')?.textContent).toBe("3 of 5 done");
   });
 
   it("a WIDE hollow-start bar (no shoot date, long duration) places its title/time INSIDE — no data-label-outside on the bar", async () => {
@@ -295,7 +308,8 @@ describe("ProductionGantt — completion reaches the DOM (fix-220-sol1 #4)", () 
     const bar = findByAriaLabelIncluding(host, WIDE_HOLLOW_STREET);
     expect(bar.getAttribute("data-label-outside")).toBeNull();
     expect(bar.querySelector('[data-testid="gantt-hollow-start"]')).not.toBeNull();
-    const titleSpan = [...bar.querySelectorAll("span")].find((candidate) => candidate.textContent === WIDE_HOLLOW_STREET);
+    // The leaf span (the vendor wraps the content in its own `contents` span). No stage labels are mocked, so the label falls back to the street.
+    const titleSpan = [...bar.querySelectorAll("span")].find((candidate) => candidate.children.length === 0 && candidate.textContent === WIDE_HOLLOW_STREET);
     expect(titleSpan).toBeDefined();
     // Structural proof the hide-on-label-outside mechanism is wired to the SAME ancestor attribute
     // `gantt-bar.tsx` sets (`data-label-outside`, gantt-bar.tsx:732) — real visual hiding requires
@@ -334,7 +348,7 @@ describe("ProductionGantt — completion reaches the DOM (fix-220-sol1 #4)", () 
  * the Gantt's month view — seeded from `new Date()` — always shows these fixed fixture dates. Both
  * bars sit inside September 2026 and before Sydney's DST start (Sun 4 Oct), so every instant is +10.
  */
-describe("ProductionGantt — hollow/completed bars use the vendor's dated time label (#258)", () => {
+describe("ProductionGantt — hollow/completed bars keep the vendor's dated time in their accessible name (#258, #919)", () => {
   let host: HTMLDivElement;
   let root: Root;
 
@@ -366,13 +380,10 @@ describe("ProductionGantt — hollow/completed bars use the vendor's dated time 
     });
   }
 
-  function timeLabelOf(bar: HTMLElement): string {
-    const label = bar.querySelector<HTMLElement>('[data-testid="gantt-event-time"]');
-    if (!label) throw new Error("bar has no inline time label");
-    return label.textContent ?? "";
-  }
+  /** #919: frame 3a draws no time label inside a bar; the vendor's dated string stays the bar's accessible name. */
+  const timeLabelOf = (bar: HTMLElement) => bar.querySelector('[data-testid="gantt-event-time"]');
 
-  it("a WIDE hollow-start bar's time label is the vendor's dated string, and is part of its aria-label", async () => {
+  it("a WIDE hollow-start bar draws no inline time label; its aria-label carries the vendor's dated string", async () => {
     const project = fixedProject({
       id: WIDE_HOLLOW_PROJECT_ID,
       street: WIDE_HOLLOW_STREET,
@@ -386,12 +397,11 @@ describe("ProductionGantt — hollow/completed bars use the vendor's dated time 
     await render(host, root, [project]);
     const bar = findByAriaLabelIncluding(host, WIDE_HOLLOW_STREET);
     expect(bar.querySelector('[data-testid="gantt-hollow-start"]')).not.toBeNull();
-    const label = timeLabelOf(bar);
-    expect(label).toBe("Sep 11, 12:00 AM - Sep 25, 5:00 PM");
-    expect(bar.getAttribute("aria-label")).toContain(label);
+    expect(timeLabelOf(bar)).toBeNull();
+    expect(bar.getAttribute("aria-label")).toContain("Sep 11, 12:00 AM - Sep 25, 5:00 PM");
   });
 
-  it("a fully-complete bar's time label is the vendor's dated string, and is part of its aria-label", async () => {
+  it("a fully-complete bar draws no inline time label; its aria-label carries the vendor's dated string", async () => {
     const project = fixedProject({
       id: COMPLETED_BAR_PROJECT_ID,
       street: COMPLETED_BAR_STREET,
@@ -399,10 +409,8 @@ describe("ProductionGantt — hollow/completed bars use the vendor's dated time 
     });
     await render(host, root, [project]);
     const bar = findByAriaLabelIncluding(host, COMPLETED_BAR_STREET);
-    expect(bar.querySelector('[data-testid="gantt-done-mark"]')).not.toBeNull();
-    const label = timeLabelOf(bar);
-    expect(label).toBe("Sep 8, 12:00 AM - Sep 18, 5:00 PM");
-    expect(bar.getAttribute("aria-label")).toContain(label);
+    expect(timeLabelOf(bar)).toBeNull();
+    expect(bar.getAttribute("aria-label")).toContain("Sep 8, 12:00 AM - Sep 18, 5:00 PM");
   });
 });
 

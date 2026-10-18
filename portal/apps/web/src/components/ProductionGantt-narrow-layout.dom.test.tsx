@@ -120,7 +120,8 @@ describe("ProductionGantt breakpoints (#734)", () => {
       await mountAt(width);
       expect(columnsShown()).toBe(!narrow);
       expect(zoomShown()).toBe(!narrow);
-      expect([...rowHeights()]).toEqual([rows]);
+      // #919: a Project row is 48px (frame 3a); the Subtask rows take the pointer's floor.
+      expect([...rowHeights()]).toEqual(["3rem", rows]);
       // the Project link is how a names-only layout reaches People and Due
       expect(has("gantt-project-link")).toBe(true);
     });
@@ -149,7 +150,7 @@ describe("ProductionGantt breakpoints (#734)", () => {
 
   it("a coarse pointer gets 44px rows at 800px too, and still the sheet (the metric follows the pointer, not the width)", async () => {
     await mountAt(800, true);
-    expect([...rowHeights()]).toEqual(["2.75rem"]);
+    expect([...rowHeights()]).toEqual(["3rem", "2.75rem"]);
     expect(columnsShown()).toBe(false);
     expect(zoomShown()).toBe(false);
   });

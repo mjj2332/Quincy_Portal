@@ -1729,6 +1729,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
                 q={committedQuery}
                 filters={ganttFilters}
                 onFiltersChange={navigateGantt}
+                onFilterChange={writeFilter}
                 focusFilterTrigger={focusFilterTrigger}
                 focusDisplayTrigger={focusDisplayTrigger}
                 onAcceptGateChange={setCalendarInteractionBlocked}

@@ -132,48 +132,19 @@
  * refetch is pending, or access was lost. `selectSlot` is always off and `dragCreate` is not set
  * (#342): no row takes a click-to-place, so every empty slot pans.
  *
- * ## A real vendor contract this file had to work around (build spec S6 was wrong about ONE part)
- * `gantt-bar.tsx` computes its bar content as
- * `children ?? viewConfig.renderEvent?.(renderProps) ?? (labelOutside || milestone ? null :
- * defaultContent)` (`??`, not `||` — so `renderGanttEventContent` returning `undefined` for a bar it does
- * not want to customise correctly falls through to the vendor's own `defaultContent`, title, inline
- * time label, recurring icon and all). The build spec's "conditional renderEvent for the hollow
- * marker only, leaving stock bars intact" IS achievable for that part, and `renderGanttEventContent`
- * below does exactly that — it returns `undefined`, not a reproduction, for every bar it is not
- * customising.
- *
- * The one part of the spec's ask that genuinely is not achievable: the automatic milestone diamond
- * (`gantt-bar.tsx:1037`, `{milestone && !consumerOwnsContent && (<diamond/>)}`) is gated on
- * `consumerOwnsContent = children !== undefined || !!viewConfig.renderEvent` — TRUE the MOMENT a
- * `renderEvent` prop exists on `<Gantt>` AT ALL, evaluated from the prop's mere presence, never
- * from what a given call to it returns. There is no way to make `renderEvent` present for one bar
- * and absent for the next; the prop lives on the shared `<Gantt>` element. So the Project's
- * inverted-Deadline milestone in this Gantt loses the vendor's own diamond the moment ANY `renderEvent` is
- * supplied at all, including one that returns `undefined` for that exact bar — `renderGanttEventContent`
- * below reproduces that one look itself, because there is no other way to keep it. Flagged here
- * rather than silently routed around, per the build spec's own request.
- *
- * fix-220-sol1 #4 extends the same reasoning to a SECOND casualty of `consumerOwnsContent`:
- * `gantt-bar.tsx:1080`'s own 100%-done checkmark (`progress === 100 && !consumerOwnsContent &&
- * !milestone`) is suppressed for exactly the same reason — the prop's mere presence, not what a
- * given call returns — so `renderGanttEventContent` below now ALSO reproduces the done checkmark
- * (plus the title/time-label content it would otherwise have deferred to `defaultContent` for) for
- * any bar at `progress === 100`, and reproduces the selected-milestone ring the stock diamond gets
- * (`isSelected && "ring-ring/50 ring-2"`) that the plain reproduction above used to drop. A bar that
- * is neither `hollowStart` nor `progress === 100` still returns `undefined` unchanged, preserving
- * the stock-fallthrough guarantee above for the common case.
- *
- * #258: that reproduced time label used to be a Quincy `Intl` lookalike (`12:00 am – 5:00 pm`, no
- * dates, lower-case) because `GanttRenderEventProps` carries no `settings`. It is now the vendor's
- * own `formatEventTime` (`ganttFormatEventTime`, merged from the same `GANTT_I18N` `<Gantt>` gets),
- * so a hollow/done bar reads exactly like a stock bar and like its own aria-label.
+ * ## Bar content (#919, frame 3a)
+ * `renderEvent` is gated on its PRESENCE (`consumerOwnsContent`), so passing it at all suppresses the
+ * vendor's title, milestone diamond and done tick for every bar (lesson "A render-override prop gated
+ * on its own PRESENCE…"). Every bar's content therefore comes from `ProductionGanttBarContent.tsx`:
+ * the Project's Stage label, a Subtask's title, the done tick, the same-day diamond and the
+ * reproduced inverted-Deadline milestone; `renderEventTrailing` draws the late chip beside a late bar.
+ * The frame draws no time label in a bar (#258's inline label went with it); the bar's aria-label
+ * still carries the vendor's dated `formatEventTime` string.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { CheckIcon } from "lucide-react";
-import { roleHasCapability, subtaskIdFromCalendarEntityId, type ChecklistScheduleDto, type GanttChecklistRowDto, type GanttProjectRowDto, type ProjectDefaultRangeDto, type Role } from "@quincy/shared";
-import { Gantt, useGanttNavigation, useGanttSelector, type GanttColumn, type GanttMetrics, type GanttRenderEventProps, type GanttTreePanelConfig } from "@/components/reui/gantt/gantt";
-import { mergeGanttI18n, type GanttI18nOverrides } from "@/components/reui/gantt/gantt-i18n";
-import { toZoned } from "@/components/reui/gantt/gantt-lib";
+import { roleHasCapability, subtaskIdFromCalendarEntityId, type ChecklistScheduleDto, type DashboardFilter, type StagePresentationKey, type GanttChecklistRowDto, type GanttProjectRowDto, type ProjectDefaultRangeDto, type Role } from "@quincy/shared";
+import { Gantt, useGanttNavigation, useGanttSelector, type GanttColumn, type GanttMetrics, type GanttRenderEventProps, type GanttRenderEventTrailingProps, type GanttTreePanelConfig } from "@/components/reui/gantt/gantt";
+import type { GanttI18nOverrides } from "@/components/reui/gantt/gantt-i18n";
 import { GANTT_SCROLLER_SELECTOR } from "@/components/reui/gantt/gantt-track-geometry";
 import { GanttNav, GanttNavNext, GanttNavPrev, GanttNavToday, GanttScaleSwitcher, GanttTitle, GanttToolbar } from "@/components/reui/gantt/gantt-nav";
 import { TooltipProvider } from "@/components/reui/tooltip";
@@ -216,6 +187,7 @@ import {
   type ProductionGanttFilters,
 } from "../lib/production-gantt-query";
 import {
+  applyGanttAppearance,
   ganttLandingProject,
   resolveCivilDayStart,
   type ProductionGanttAttention,
@@ -227,11 +199,13 @@ import {
   DEFAULT_GANTT_FACET_FILTERS,
   ganttShowDeliveredRecovery,
   ganttFacetIsDefault,
-  ganttLegendEntries,
+  ganttKeyEntries,
   productionStageFilterOptions,
-  type GanttLegendEntry,
   type ProductionGanttFacetFilters,
 } from "../lib/production-gantt-filters";
+import { doneCount } from "../lib/dashboard-appearance";
+import { toggleStageInDashboardFilter } from "../lib/dashboard-filter-query";
+import { renderGanttBarContent, renderGanttBarTrailing } from "./ProductionGanttBarContent";
 import { deadlineFoldOf, projectDefaultFromFacts } from "../lib/date-time-range";
 import { useNow } from "../lib/use-now";
 import { useStages } from "../lib/stages";
@@ -248,7 +222,7 @@ import { Button as QuincyButton, buttonClasses } from "./quincy/Button";
 import { EmptyState } from "./quincy/EmptyState";
 import { AvatarStack } from "./quincy/AvatarStack";
 import { Notice } from "./quincy/Notice";
-import { StageSwatch } from "./quincy/StageSwatch";
+import { StageKeyRow } from "./quincy/StageKeyRow";
 import { SubtaskAssigneePicker, type AssigneePickerBaseline } from "./quincy/SubtaskAssigneePicker";
 import { type RetainedSchedule } from "./quincy/SubtaskScheduleControl";
 import { Skeleton } from "./reui/skeleton";
@@ -278,6 +252,12 @@ export type ProductionGanttProps = {
   filters: ProductionGanttFacetFilters;
   /** Writes a filter change back to the URL; the new filters arrive back through `filters`. */
   onFiltersChange: (next: ProductionGanttFacetFilters) => void;
+  /**
+   * #919: a Stage key chip's Filter write, the whole new shared Filter. The Dashboard passes its
+   * `writeFilter`, so the write goes through `writeGanttFacet` (the Delivered pair and its notice) and
+   * pushes a history entry like any Filter edit. Omitted, the chips read the filter but write nothing.
+   */
+  onFilterChange?: (next: DashboardFilter) => void;
   /**
    * #430: the Filter and Display triggers live in the Dashboard's view bar, outside this lazy view.
    * The empty state's buttons unmount with it, so each hands focus to the control the user would
@@ -314,13 +294,6 @@ const GANTT_TIME_ZONE = "Australia/Sydney";
  * rows are ("Projects", not the vendor's generic "Resources" — #256).
  */
 const GANTT_I18N: GanttI18nOverrides = { labels: { resources: "Projects" } };
-/**
- * #258: the SAME `formatEventTime` the vendor's own bars and aria-labels use, merged from the same
- * overrides `<Gantt>` gets. `GanttRenderEventProps` carries no `settings`, so `renderEvent` cannot
- * read the live one; this module-level copy is identical to it because `<Gantt>` is passed exactly
- * `GANTT_I18N`, `timeZone={GANTT_TIME_ZONE}` and no `locale`.
- */
-const ganttFormatEventTime = mergeGanttI18n(GANTT_I18N).functions.formatEventTime;
 /**
  * #256: module-level so `<Gantt>` sees one stable object, not a fresh literal every render. #365:
  * the wide panel is the name column at 180px (the vendor splitter's own default — a Project row's
@@ -443,8 +416,14 @@ const ATTENTION_SHORT_TEXT: Record<ProductionGanttAttentionReason, string> = {
   resolution_failed: "Error",
 };
 
-/** #693.2, #695: a phone or coarse-pointer row is 44px so each row's 44px + fills it and adjacent targets never intersect. Module-level so the prop is stable. */
-const GANTT_METRICS_TOUCH: GanttMetrics = { minRowHeight: 2.75 };
+/**
+ * #919, frame 3a: 28px bars (`laneHeight`) centred in 40px Subtask rows (`rowPadding` 6px a side; the
+ * adapter floors Project rows at 48px), and 52px days at Week zoom (the vendor's Week is 10rem a day).
+ * Module-level so the prop is stable.
+ */
+const GANTT_METRICS: GanttMetrics = { laneHeight: 1.75, rowPadding: 0.375, unitWidths: { week: 3.25 } };
+/** #693.2, #695: a phone or coarse-pointer row is 44px so each row's 44px + fills it and adjacent targets never intersect. */
+const GANTT_METRICS_TOUCH: GanttMetrics = { ...GANTT_METRICS, minRowHeight: 2.75 };
 
 export function GanttRowAttentionBadge({ reason }: { reason: ProductionGanttAttentionReason }) {
   const critical = CRITICAL_ATTENTION_REASONS.has(reason);
@@ -452,7 +431,7 @@ export function GanttRowAttentionBadge({ reason }: { reason: ProductionGanttAtte
     <span
       className={cn(
         // #689: on a phone the label is line 2 under the project name and truncates there; desktop keeps it whole beside the name.
-        "min-w-0 truncate text-[10px] uppercase tracking-[0.04em] max-[721px]:tracking-[var(--tracking-normal)] min-[1024px]:shrink-0",
+        "min-w-0 truncate text-xs uppercase tracking-[0.04em] max-[721px]:tracking-[var(--tracking-normal)] min-[1024px]:shrink-0",
         critical ? "text-signal-critical" : "text-muted-foreground",
       )}
       data-testid={`gantt-row-attention-${reason}`}
@@ -476,7 +455,7 @@ function GanttChildLoadErrorBadge({ onRetry }: { onRetry: () => void }) {
     <button
       type="button"
       data-testid="gantt-children-retry"
-      className="min-w-0 truncate text-[10px] uppercase tracking-[0.04em] text-signal-critical underline min-[1024px]:shrink-0 max-[721px]:min-w-0 max-[721px]:max-w-full max-[721px]:-outline-offset-2 max-[721px]:focus-visible:!-outline-offset-2"
+      className="min-w-0 truncate text-xs uppercase tracking-[0.04em] text-signal-critical underline min-[1024px]:shrink-0 max-[721px]:min-w-0 max-[721px]:max-w-full max-[721px]:-outline-offset-2 max-[721px]:focus-visible:!-outline-offset-2"
       onClick={(event) => {
         // The row label sits inside the tree panel's own row-select affordance — stop this click
         // from also being read as "select this row".
@@ -558,10 +537,13 @@ function GanttResourceLabel({
   attentionByResourceId,
   childLoadRetryByProjectResourceId,
   hideAttentionBadgeFor,
+  doneLabel,
   projectHrefFor,
   onOpenProject,
 }: {
   resource: GanttResource;
+  /** #919: a Project row's "3 of 5 done" (`doneCount`); absent for a Subtask or a Project with none. */
+  doneLabel?: string;
   attentionByResourceId: Map<string, ProductionGanttAttention>;
   childLoadRetryByProjectResourceId: Map<string, () => void>;
   /** Rows whose Due cell carries the reason on its Deadline action, so the name cell drops the badge. */
@@ -586,9 +568,10 @@ function GanttResourceLabel({
           >{resource.title}</ProjectCalendarAnchor>
         ) : resource.title}
       </span>
-      {(showAttention || retryChildren) && (
+      {(showAttention || retryChildren || doneLabel) && (
         // #689: a plain layout wrapper. Desktop: `contents` (children stay inline beside the name). Phone: line 2.
         <span data-testid="gantt-row-label-meta" className="min-w-0 min-[721px]:contents max-[721px]:flex max-[721px]:items-center max-[721px]:gap-1.5 max-[721px]:overflow-hidden">
+          {doneLabel && <span data-testid="gantt-row-done-count" className="min-w-0 shrink-0 truncate text-xs text-foreground-secondary">{doneLabel}</span>}
           {showAttention && <GanttRowAttentionBadge reason={attention.reason} />}
           {retryChildren && <GanttChildLoadErrorBadge onRetry={retryChildren} />}
         </span>
@@ -598,116 +581,16 @@ function GanttResourceLabel({
 }
 
 /**
- * See this file's own header for the vendor contract this works around. Returns `undefined` — not
- * a reproduction — for any bar it does not customise, so `gantt-bar.tsx`'s own `??` fallthrough
- * renders its stock `defaultContent` (title, inline time label, recurring icon) exactly as if no
- * `renderEvent` had been passed at all. Three cases get real content instead: the hollow-start
- * marker, a 100%-complete bar (fix-220-sol1 #4 — `consumerOwnsContent` suppresses the vendor's own
- * done checkmark the same way it suppresses the milestone diamond, see header), and (unavoidably —
- * see header) the milestone diamond.
- *
- * Deliberately lower-case, and CALLED directly below (`renderGanttEventContent(props)`), not
- * mounted via `<RenderGanttEventContent {...props} />`: this has no hooks of its own, so it is a
- * plain `ReactNode`-computing function, not a component instance. Wrapping it in JSX would silently
- * defeat the `undefined` fallthrough above — a JSX element (`<X/>`) is itself always a defined,
- * non-null value even when `X` internally returns `undefined`, since the `undefined` would become
- * that ELEMENT's child, not the return value `renderEvent`'s own `??` chain is checking.
+ * #919, frame 3a's key row: the symbol the bars draw beside the Stage chips. A same-day Subtask is a
+ * diamond at Week and coarser (a display rule, glossary "Subtask range"); the frame's "Due date
+ * only" is renamed, since every Subtask has a range (ADR 0011).
  */
-function renderGanttEventContent({ occurrence, segment, isSelected }: GanttRenderEventProps<ProductionGanttRowData>) {
-  const data = occurrence.event.data;
-  // A Subtask is always a range and never zero-length (ADR 0011), so only the inverted-Deadline
-  // Project bar (`production-gantt-adapter.ts`) is ever drawn as a milestone.
-  const milestone = data?.kind === "project" && occurrence.start.getTime() === occurrence.end.getTime();
-  const hollowStart = data?.kind === "project" && data.hollowStart;
-  const done = occurrence.event.progress === 100;
-
-  if (milestone) {
-    // Same look as gantt-bar.tsx's own stock milestone diamond (:1043, `data-slot="gantt-bar-
-    // milestone"`) — reproduced, not referenced, because `consumerOwnsContent` suppresses that
-    // automatic one the moment ANY `renderEvent` is supplied at all (see header). Deliberately a
-    // DIFFERENT test hook (`data-testid`, not that same `data-slot` name) — this is a Quincy-authored
-    // lookalike in a Quincy file, not the vendor's own element, and reusing its exact `data-slot`
-    // would let a future DOM test's `[data-slot="gantt-bar-milestone"]` selector pass guard F's
-    // "some Quincy file authors this" check while actually meaning two different things depending
-    // on which Gantt surface rendered it.
-    return (
-      <span
-        aria-hidden="true"
-        data-testid="gantt-milestone-marker"
-        className={cn(
-          "size-2.5 shrink-0 rotate-45 rounded-[2px] border border-(--gantt-event-color) bg-(--gantt-event-color)/80",
-          // fix-220-sol1 #4: the stock diamond's own selected ring (gantt-bar.tsx:1046), also
-          // suppressed by `consumerOwnsContent` and never reproduced before this fix.
-          isSelected && "ring-ring/50 ring-2",
-        )}
-      />
-    );
-  }
-
-  if (!hollowStart && !done) return undefined;
-
-  // fix-220-sol1 #4: only the FIRST segment of a (potentially view-boundary-split) bar carries the
-  // inline time label, matching gantt-bar.tsx's own `defaultContent` (`segment.isStart`) — an
-  // interior/trailing segment repeating it would read like a data bug. #258: the vendor's own
-  // string (dated on both ends for a multi-day timed bar), zoned the way `gantt-bar.tsx` zones it.
-  const timeLabel =
-    !occurrence.allDay && segment.isStart
-      ? ganttFormatEventTime(toZoned(occurrence.start, GANTT_TIME_ZONE), toZoned(occurrence.end, GANTT_TIME_ZONE), occurrence.allDay, undefined)
-      : undefined;
-
+function GanttKeySymbols() {
   return (
-    <span className="flex min-w-0 items-center gap-1 truncate" title={hollowStart ? "No shoot date" : undefined}>
-      {hollowStart && (
-        <span
-          aria-hidden="true"
-          data-testid="gantt-hollow-start"
-          className="size-2.5 shrink-0 rounded-[2px] border border-(--gantt-event-color) bg-transparent"
-        />
-      )}
-      {/*
-       * fix-220-sol1 #4: `gantt-view.tsx`'s own "label outside" sibling (`data-slot="gantt-bar-
-       * label"`) renders this SAME title text next to the bar whenever the bar is too narrow for an
-       * inside label — a decision made from real layout metrics this `renderEvent` callback has no
-       * access to (checked against `GanttRenderEventProps` and the layout code that computes
-       * `placement` in `gantt-view.tsx` before writing this). Rather than guess, the bar itself
-       * carries that same fact as `data-label-outside` (gantt-bar.tsx:732, on the `group/gantt-bar-
-       * group` root this span is a descendant of), so this title is hidden via that ancestor
-       * attribute instead of never being rendered at all — a WIDE hollow/done bar (no outside
-       * label) still shows its own title, a NARROW one defers to the outside sibling and never
-       * shows both.
-       */}
-      <span className="truncate font-medium group-data-[label-outside]/gantt-bar-group:hidden">{occurrence.event.title}</span>
-      {timeLabel && (
-        <span data-testid="gantt-event-time" className="text-foreground-secondary hidden truncate @[8rem]:inline group-data-[label-outside]/gantt-bar-group:hidden">
-          {timeLabel}
-        </span>
-      )}
-      {done && <CheckIcon data-testid="gantt-done-mark" className="relative size-2.5 shrink-0 opacity-80" aria-hidden="true" />}
+    <span className="inline-flex items-center gap-2 text-sm text-foreground-secondary" data-testid="gantt-key-same-day">
+      <span aria-hidden="true" className="size-3 rotate-45 rounded-[var(--radius-xs)] border-[length:var(--border-width-bold)] border-foreground-secondary bg-card" />
+      Same day
     </span>
-  );
-}
-
-/**
- * #254: built from `ganttLegendEntries` — the role-aware stage options, narrowed to the active
- * filters — never from the colour map, which carries both `editing` and `editing_autohdr` and
- * would show a raw key for whichever one this role never sees.
- */
-function GanttLegend({ entries }: { entries: readonly GanttLegendEntry[] }) {
-  return (
-    <div
-      role="group"
-      aria-label="Stage legend"
-      data-testid="production-gantt-legend"
-      // #257: the secondary text role — `text-muted-foreground` read too faint at 11px (11px reads too faint in `text-muted-foreground`).
-      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-foreground-secondary"
-    >
-      {entries.map((entry) => (
-        <span key={entry.key} className="inline-flex items-center gap-1.5" data-stage-key={entry.key}>
-          <StageSwatch color={entry.color} pattern={entry.pattern} />
-          {entry.label}
-        </span>
-      ))}
-    </div>
   );
 }
 
@@ -882,7 +765,7 @@ function GestureAwareCell({ live, children }: { live: boolean; children: (disabl
   return <>{children(!live || gestureActive)}</>;
 }
 
-export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersChange, focusFilterTrigger, focusDisplayTrigger, onAcceptGateChange, onSettleStateChange, onAccessLoss, onShownProjectsChange, projectHrefFor, onOpenProject, focus = null, onFocusSettled }: ProductionGanttProps) {
+export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersChange, onFilterChange, focusFilterTrigger, focusDisplayTrigger, onAcceptGateChange, onSettleStateChange, onAccessLoss, onShownProjectsChange, projectHrefFor, onOpenProject, focus = null, onFocusSettled }: ProductionGanttProps) {
   const { stages } = useStages();
   // Role-derived (the same `identity` the request is authorised as), not a second session read.
   const canAdminBackend = roleHasCapability(identity.role, "adminBackend");
@@ -907,7 +790,19 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // read at fetch time (the chain restarts on any filter change anyway).
   const childFilterRef = useRef(ganttChildFilterOf(filters));
   childFilterRef.current = ganttChildFilterOf(filters);
-  const legendEntries = useMemo(() => ganttLegendEntries({ stageOptions, filters }), [stageOptions, filters]);
+  // #919: frame 3a's key row doubles as a Stage filter. Every role-aware Stage is a chip (#254); a press is a
+  // Filter write through the Dashboard (`onFilterChange`), so `writeGanttFacet` keeps the Delivered pair and notice.
+  const keyEntries = useMemo(
+    () => ganttKeyEntries({ stageOptions, filters: facetFilters }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `facetKey` is the value key of `facetFilters`
+    [stageOptions, facetKey],
+  );
+  const toggleStage = useCallback((key: StagePresentationKey) => {
+    const next = toggleStageInDashboardFilter(facetFilters, key);
+    if (next) onFilterChange?.(next);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `facetKey` is the value key of `facetFilters`
+  }, [facetKey, onFilterChange]);
+  const stageLabelFor = useCallback((key: StagePresentationKey) => stageOptions.find((option) => option.key === key)?.label, [stageOptions]);
   // #255: the empty state's Clear filters button unmounts with the empty state, which would drop
   // focus to <body>. Focus moves to the Dashboard's always-mounted Filter trigger instead (#430; the
   // Display trigger for Show delivered Projects) — the controls the empty state pointed the user to. The browser's own focus scroll only brings the
@@ -1119,8 +1014,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     [liveChildState, generationKey, loadProjectChildChain],
   );
 
-  // Signature-stable per mount — `now` is unused inside the adapter today (see its own header);
-  // recomputing it every render would just churn the memo below for nothing.
+  // Signature-stable per mount: `baseModel` must not rebuild on a clock tick. The adapter's lateness from
+  // this mount-time `now` is refreshed against the live clock (`defaultNow`) by `applyGanttAppearance`.
   const now = useMemo(() => new Date(), []);
 
   const effectiveProjects = useMemo<GanttProjectRowDto[]>(
@@ -1436,8 +1331,10 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   const [pins, setPins] = useState<PinnedCreatedRow[]>([]);
   const baseModel = useMemo(() => buildPinnedGanttModel(displayProjects, pins, generationKey, { now, interactive: true, deadlineInteractive: true }), [displayProjects, pins, generationKey, now]);
   const model = useMemo(
-    () => withPendingRange(applyGanttOptimisticOverlay(baseModel, commands.optimisticOverlay, effectivePendingDeadline), effectivePending),
-    [baseModel, commands.optimisticOverlay, effectivePendingDeadline, effectivePending],
+    // #919: appearance last, over the DRAWN ranges and the per-minute clock, so a tick refreshes "late"
+    // without rebuilding `baseModel` (query generations, child chains and pins never see the clock).
+    () => applyGanttAppearance(withPendingRange(applyGanttOptimisticOverlay(baseModel, commands.optimisticOverlay, effectivePendingDeadline), effectivePending), new Date(defaultNow)),
+    [baseModel, commands.optimisticOverlay, effectivePendingDeadline, effectivePending, defaultNow],
   );
 
   // fix-220-sol1 #3: the server's own `density.tooManyToDraw`, read off the FIRST page, is
@@ -1595,6 +1492,15 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
 
   // Below 1024px the Due column is not rendered, so the row's reason stays on the name cell's badge.
   const hideAttentionBadgeFor = useMemo(() => (namesOnly ? new Set<string>() : new Set(deadlineActionByProjectResourceId.keys())), [namesOnly, deadlineActionByProjectResourceId]);
+  // #919: "3 of 5 done" beside each Project's name, from the drawn rows' own checklist counts.
+  const doneLabelByProjectResourceId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const project of displayProjects) {
+      const done = doneCount(project.checklist);
+      if (done) map.set(`project:${project.id}`, done.label);
+    }
+    return map;
+  }, [displayProjects]);
   const renderResourceLabel = useCallback(
     ({ resource }: { resource: GanttResource }) => (
       <GanttResourceLabel
@@ -1602,11 +1508,12 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         attentionByResourceId={attentionByResourceId}
         childLoadRetryByProjectResourceId={childLoadRetryByProjectResourceId}
         hideAttentionBadgeFor={hideAttentionBadgeFor}
+        doneLabel={doneLabelByProjectResourceId.get(resource.id)}
         projectHrefFor={projectHrefFor}
         onOpenProject={onOpenProject}
       />
     ),
-    [attentionByResourceId, childLoadRetryByProjectResourceId, hideAttentionBadgeFor, projectHrefFor, onOpenProject],
+    [attentionByResourceId, childLoadRetryByProjectResourceId, hideAttentionBadgeFor, doneLabelByProjectResourceId, projectHrefFor, onOpenProject],
   );
 
   // #365: the People and Due columns. `displayProjects` (the accept-gate baseline, the same source
@@ -1688,9 +1595,16 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
     return <GanttCreateDraftStack projectId={projectId} role={identity.role} draft={createDraft} projectDefault={projectDefaultById.get(projectId) ?? null} pending={pending} onChange={changeCreateDraft} />;
   }, [identity.role, createDraft, projectDefaultById, changeCreateDraft]);
 
-  // Called directly, not mounted as `<renderGanttEventContent {...props} />` — see that function's
-  // own header for why the distinction is load-bearing here.
-  const renderEvent = useCallback((props: GanttRenderEventProps<ProductionGanttRowData>) => renderGanttEventContent(props), []);
+  // #919: every bar's content (`ProductionGanttBarContent.tsx`), and the late chip beside a late bar.
+  const renderEvent = useCallback(
+    ({ occurrence, isSelected }: GanttRenderEventProps<ProductionGanttRowData>) =>
+      renderGanttBarContent({ data: occurrence.event.data, title: occurrence.event.title, start: occurrence.start, end: occurrence.end, isSelected }, stageLabelFor),
+    [stageLabelFor],
+  );
+  const renderEventTrailing = useCallback(
+    ({ occurrence, segment }: GanttRenderEventTrailingProps<ProductionGanttRowData>) => renderGanttBarTrailing(occurrence.event.data, !segment.continuesAfter),
+    [],
+  );
 
   // S7: project pages — fetch the next page as the panel nears its vertical end. A capturing
   // listener on the outer container (not the vendor's own internal scroll viewport, which this
@@ -1886,7 +1800,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   }, [displayProjects, loadedProjects, baseModel, hasNextPage, tooManyToDraw, fetchNextPage, landingTick, queryPending, queryErrored, collapsedGroups]);
 
   const [date, setDate] = useState<Date>(() => new Date());
-  const [scale, setScale] = useState<GanttScale>("month");
+  const [scale, setScale] = useState<GanttScale>("week");
 
   // ---------------------------------------------------------------------------------------------
   // The item menu (#463): a bar click, Enter or right-click opens Open project and Reschedule… (a
@@ -2142,7 +2056,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
 
   const interactions = useMemo(() => ({ drag: live, resize: live, selectSlot: false }), [live]);
 
-  // #255: ONE always-mounted root. The filters bar and the legend sit above the loading / error /
+  // #255: ONE always-mounted root. The filters bar and the Stage key row (#919) sit above the loading / error /
   // chart slot and never unmount with it, so an edit keeps focus on the control the user just used
   // while the new filter's first page is pending. The bar is never `disabled` while pending — a
   // disabled control drops focus, which is exactly what this structure exists to avoid.
@@ -2214,7 +2128,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             i18n={GANTT_I18N}
             // #256: the name column fills the tree panel (see GANTT_NAME_COLUMN_WIDTH).
             treePanel={namesOnly ? GANTT_TREE_PANEL_NARROW : GANTT_TREE_PANEL}
-            metrics={phone || coarsePointer ? GANTT_METRICS_TOUCH : undefined}
+            metrics={phone || coarsePointer ? GANTT_METRICS_TOUCH : GANTT_METRICS}
             // #734: the names-only layout hides the zoom buttons; Ctrl/Cmd-wheel and pinch (wheelZoom, on by default) still zoom.
             zoomControl={!namesOnly}
             columns={columns}
@@ -2248,6 +2162,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             renderCreateStack={namesOnly ? renderCreateStack : undefined}
             renderResourceLabel={renderResourceLabel}
             renderEvent={renderEvent}
+            renderEventTrailing={renderEventTrailing}
             className="min-h-0 flex-1"
           >
             <ProductionGanttNav onToday={armLanding} zoomTargetRef={setZoomTarget} />
@@ -2261,7 +2176,9 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
 
   return (
     <div ref={containerRef} className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)]" data-testid="production-gantt-root" {...itemMenu.wrapperProps}>
-      <GanttLegend entries={legendEntries} />
+      <div data-testid="production-gantt-key" className="border-y-[length:var(--border-width-hair)] border-border bg-background py-[var(--space-2)]">
+        <StageKeyRow entries={keyEntries} onToggle={toggleStage} trailing={<GanttKeySymbols />} />
+      </div>
       {commands.settle.recoveryReason && (
         <Notice role="alert" data-testid="production-gantt-recovery-notice" className="flex items-center justify-between gap-[var(--space-4)]">
           <span>{commands.settle.recoveryReason}</span>

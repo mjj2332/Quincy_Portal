@@ -4,7 +4,7 @@ import { dashboardFilterRuleCount, dashboardFilterTreeOf, type DashboardFilter a
 import { Filters, type FilterField, type FilterLabels } from "../components/reui/filters/filters";
 import { Badge } from "../components/reui/badge";
 import { Button } from "../components/quincy/Button";
-import { StageSwatch } from "../components/quincy/StageSwatch";
+import { StageToneSwatch } from "../components/quincy/StageKeyRow";
 import { InitialsAvatar } from "../components/quincy/InitialsAvatar";
 import { EmptyAssigneeGlyph } from "../components/quincy/EmptyAssigneeGlyph";
 import { DateRangeFilterEditor } from "../components/quincy/date-time-field/DateRangeFilterEditor";
@@ -30,7 +30,7 @@ import {
   type DashboardFilterQuery,
   type DashboardFilterValue,
 } from "../lib/dashboard-filter-query";
-import { stageOptionsWithColor, type StageFilterOption } from "../lib/production-gantt-filters";
+import { stageOptionsWithTone, type StageFilterOption } from "../lib/production-gantt-filters";
 import { useFilterQueryBinding } from "../lib/use-filter-query-binding";
 import { cn } from "../lib/utils";
 import { CONTROL_HEIGHT } from "./DashboardViewBar";
@@ -140,10 +140,11 @@ export function DashboardFilter({ filter, onFilterChange, stageOptions, canFilte
         type: "multiselect",
         operators: DASHBOARD_STAGE_OPERATORS,
         className: VALUE_MENU_CLASS,
-        options: stageOptionsWithColor(stageOptions).map((option) => ({
+        // D3 (#919): the same swatch as the Timeline's Stage key, so one Stage has one look on the Dashboard.
+        options: stageOptionsWithTone(stageOptions).map((option) => ({
           value: option.key,
           label: option.label,
-          icon: <StageSwatch color={option.color} pattern={option.pattern} />,
+          icon: <StageToneSwatch tone={option.tone} />,
         })),
       },
       ...(canFilterPriority

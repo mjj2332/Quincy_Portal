@@ -1,7 +1,9 @@
 /**
- * #255 / #254 / #430 -- the Gantt's request filters and legend in a real render: each Show change
- * (Display, #430) or shared-Filter change changes the `/api/production-gantt` request, and the
- * legend follows the filters, built from the role-aware stage options, not the colour map. The
+ * #255 / #254 / #430 / #919 -- the Gantt's request filters and Stage key in a real render: each Show
+ * change (Display, #430) or shared-Filter change changes the `/api/production-gantt` request, and the
+ * key row (frame 3a) lists every role-aware stage option, pressed for the stages the Filter shows. A
+ * chip press is a Filter write through `onFilterChange`, which the harness projects the way the
+ * Dashboard's `writeGanttFacet` does, so the Delivered pair (#270) holds. The
  * Filter and Display triggers live in the Dashboard's view bar, outside this lazy view; the
  * wrapper below stands in for them (same test ids) so the empty state's focus and scroll hand-off
  * is tested here, and `Dashboard-gantt.dom.test.tsx` covers the real controls and the URL round trip.
@@ -17,7 +19,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { adminProductionGanttResponseSchema, PRODUCTION_GANTT_ZONE } from "@quincy/shared";
 import { ApiError } from "../lib/api";
 import type { DashboardIdentity } from "../lib/dashboard-projects";
-import { DEFAULT_GANTT_FACET_FILTERS, type ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
+import { applyDashboardFilter } from "../lib/dashboard-filter-query";
+import { DEFAULT_GANTT_FACET_FILTERS, ganttFacetForWrite, ganttPairingNotice, type ProductionGanttFacetFilters } from "../lib/production-gantt-filters";
 import { ProductionGantt } from "./ProductionGantt";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
@@ -100,6 +103,9 @@ const identity: DashboardIdentity = { principalId: "user-1", role: "admin", auth
 /** Sets the URL facet, as the Dashboard would after a navigation, a shared-Filter edit or a Display toggle. */
 let setFacet: (next: SetStateAction<ProductionGanttFacetFilters>) => void = () => {};
 
+/** The Delivered-pair notices the harness's Filter write raised, as the Dashboard would announce them. */
+const pairingNotices: string[] = [];
+
 function ControlledGantt({ initial = DEFAULT_GANTT_FACET_FILTERS, q = "", onFiltersChange, onShownProjectsChange }: { initial?: ProductionGanttFacetFilters; q?: string; onFiltersChange?: (next: ProductionGanttFacetFilters) => void; onShownProjectsChange?: (count: number | null) => void }) {
   const [filters, setFilters] = useState(initial);
   setFacet = setFilters;
@@ -118,6 +124,15 @@ function ControlledGantt({ initial = DEFAULT_GANTT_FACET_FILTERS, q = "", onFilt
         onFiltersChange={(next) => {
           onFiltersChange?.(next);
           setFilters(next);
+        }}
+        onFilterChange={(next) => {
+          // The Dashboard's `writeGanttFacet({}, next)`: project the Filter onto the facet, then keep the Delivered pair.
+          const edit = applyDashboardFilter(filters, next);
+          const written = ganttFacetForWrite(filters, edit);
+          const notice = ganttPairingNotice(edit, written);
+          if (notice) pairingNotices.push(notice);
+          onFiltersChange?.(written);
+          setFilters(written);
         }}
       />
     </>
@@ -171,19 +186,34 @@ function lastListQuery(): URLSearchParams {
   return new URLSearchParams(path.slice(path.indexOf("?") + 1));
 }
 
-function legendKeys(host: HTMLElement): string[] {
-  return [...host.querySelectorAll('[data-testid="production-gantt-legend"] [data-stage-key]')].map((entry) => entry.getAttribute("data-stage-key")!);
+function keyChips(host: HTMLElement): HTMLButtonElement[] {
+  return [...host.querySelectorAll<HTMLButtonElement>('[data-testid="stage-key-row"] button[data-stage-key]')];
 }
 
-function legendLabels(host: HTMLElement): string[] {
-  return [...host.querySelectorAll('[data-testid="production-gantt-legend"] [data-stage-key]')].map((entry) => entry.textContent ?? "");
+function keyKeys(host: HTMLElement): string[] {
+  return keyChips(host).map((chip) => chip.getAttribute("data-stage-key")!);
 }
 
-describe("ProductionGantt — filters and legend (#255, #254)", () => {
+function pressedKeys(host: HTMLElement): string[] {
+  return keyChips(host).filter((chip) => chip.getAttribute("aria-pressed") === "true").map((chip) => chip.getAttribute("data-stage-key")!);
+}
+
+function keyChip(host: HTMLElement, key: string): HTMLButtonElement {
+  const chip = keyChips(host).find((candidate) => candidate.getAttribute("data-stage-key") === key);
+  if (!chip) throw new Error(`no key chip for ${key}`);
+  return chip;
+}
+
+function keyRowMounted(host: HTMLElement): boolean {
+  return host.querySelector('[data-testid="stage-key-row"]') !== null;
+}
+
+describe("ProductionGantt — filters and Stage key (#255, #254, #919)", () => {
   let host: HTMLDivElement;
   let root: Root;
 
   beforeEach(() => {
+    pairingNotices.length = 0;
     apiGetMock.mockReset();
     apiGetMock.mockImplementation((path: string) => (path.startsWith("/api/production-gantt") ? Promise.resolve(ganttResponse()) : Promise.reject(new Error(`unexpected fetch: ${path}`))));
     host = document.createElement("div");
@@ -265,8 +295,8 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     expect(host.querySelector('[data-testid="production-gantt-loading"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="production-gantt"]')).toBeNull();
     expect(document.activeElement).toBe(displayTrigger());
-    // The legend stays mounted through the pending page.
-    expect(host.querySelector('[data-testid="production-gantt-legend"]')).not.toBeNull();
+    // The key row stays mounted through the pending page.
+    expect(keyRowMounted(host)).toBe(true);
 
     await act(async () => {
       resolvePending?.(ganttResponse());
@@ -277,54 +307,85 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
     expect(document.activeElement).toBe(displayTrigger());
   });
 
-  it("keeps the legend mounted through an error state too", async () => {
+  it("keeps the key row mounted through an error state too", async () => {
     await render();
     // A 4xx is not retried (`projectQueryRetry`), so the error state lands without a retry delay.
     apiGetMock.mockImplementation((path: string) => (path.includes("completed=1") ? Promise.reject(new ApiError("boom", 400)) : Promise.resolve(ganttResponse())));
     displayTrigger().focus();
     await setShow({ completed: true });
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("The production schedule is unavailable.");
-    expect(host.querySelector('[data-testid="production-gantt-legend"]')).not.toBeNull();
+    expect(keyRowMounted(host)).toBe(true);
     expect(document.activeElement).toBe(displayTrigger());
   });
 
-  it("shows no Delivered legend entry until delivered projects are shown", async () => {
+  it("lists every role-aware stage as a chip, pressing Delivered only while delivered projects are shown (#254)", async () => {
     await render();
-    expect(legendKeys(host)).toEqual(["awaiting_raw", "raw_review", "editing", "edited_review"]);
-    expect(legendLabels(host)).not.toContain("Delivered");
+    const every = ["awaiting_raw", "raw_review", "editing", "edited_review", "delivered"];
+    expect(keyKeys(host)).toEqual(every);
+    expect(pressedKeys(host)).toEqual(["awaiting_raw", "raw_review", "editing", "edited_review"]);
 
     await setShow({ delivered: true });
-    expect(legendKeys(host)).toEqual(["awaiting_raw", "raw_review", "editing", "edited_review", "delivered"]);
-    expect(legendLabels(host)).toContain("Delivered");
+    expect(keyKeys(host)).toEqual(every);
+    expect(pressedKeys(host)).toEqual(every);
   });
 
-  it("restricts the legend to the selected stages", async () => {
+  it("keeps the stages a Filter narrows away as unpressed chips, never dropping them", async () => {
     await render({ ...DEFAULT_GANTT_FACET_FILTERS, stageKeys: ["raw_review"] });
-    expect(legendKeys(host)).toEqual(["raw_review"]);
+    expect(keyKeys(host)).toEqual(["awaiting_raw", "raw_review", "editing", "edited_review", "delivered"]);
+    expect(pressedKeys(host)).toEqual(["raw_review"]);
 
-    // The shared Filter's Stage = Delivered arrives with delivered projects on (#255), so its legend entry follows.
     await act(async () => { setFacet({ ...DEFAULT_GANTT_FACET_FILTERS, stageKeys: ["raw_review", "delivered"], delivered: true }); });
-    await waitFor(() => expect(legendKeys(host)).toEqual(["raw_review", "delivered"]));
+    await waitFor(() => expect(pressedKeys(host)).toEqual(["raw_review", "delivered"]));
   });
 
-  it("#257: draws legend labels in the secondary text role, and hatches only the Edited review swatch", async () => {
-    await render({ ...DEFAULT_GANTT_FACET_FILTERS, delivered: true });
-    const legend = host.querySelector<HTMLElement>('[data-testid="production-gantt-legend"]')!;
-    const tokens = (element: Element) => (element.getAttribute("class") ?? "").split(/\s+/);
-    // `text-muted-foreground` (greige-400) read too faint beside the swatches at 11px.
-    expect(tokens(legend)).toContain("text-foreground-secondary");
-    expect(tokens(legend)).not.toContain("text-muted-foreground");
-    const hatched = [...legend.querySelectorAll("[data-stage-key]")].filter((entry) => {
-      const swatch = entry.querySelector('[data-testid="stage-swatch"]');
-      expect(swatch, entry.getAttribute("data-stage-key")!).not.toBeNull();
-      return swatch!.getAttribute("data-pattern") === "hatch";
+  it("a chip press writes the Stage into the Filter and re-requests the list", async () => {
+    await render({ ...DEFAULT_GANTT_FACET_FILTERS, stageKeys: ["raw_review"] });
+    await act(async () => { keyChip(host, "editing").click(); });
+    await settle();
+    expect(lastListQuery().get("stages")).toBe("raw_review,editing");
+    expect(pressedKeys(host)).toEqual(["raw_review", "editing"]);
+
+    // Pressing the last pressed-away stage again removes it.
+    await act(async () => { keyChip(host, "raw_review").click(); });
+    await settle();
+    expect(lastListQuery().get("stages")).toBe("editing");
+    expect(pressedKeys(host)).toEqual(["editing"]);
+  });
+
+  it("the Delivered chip shows delivered projects too, with the pairing notice (#270)", async () => {
+    await render({ ...DEFAULT_GANTT_FACET_FILTERS, stageKeys: ["raw_review"] });
+    await act(async () => { keyChip(host, "delivered").click(); });
+    await settle();
+    expect(lastListQuery().get("stages")).toBe("raw_review,delivered");
+    expect(lastListQuery().get("delivered")).toBe("1");
+    expect(pairingNotices).toEqual(["Also showing delivered Projects."]);
+    expect(pressedKeys(host)).toEqual(["raw_review", "delivered"]);
+  });
+
+  it("disables every chip, titled \"Edit Stage in Filter\", while the Filter's Stage rule sits in an OR", async () => {
+    await render({
+      ...DEFAULT_GANTT_FACET_FILTERS,
+      tree: { kind: "group", op: "or", children: [{ kind: "leaf", field: "stages", values: ["raw_review"] }, { kind: "leaf", field: "mine" }] },
     });
-    expect(hatched.map((entry) => entry.getAttribute("data-stage-key"))).toEqual(["edited_review"]);
+    const chips = keyChips(host);
+    expect(chips.length).toBe(5);
+    for (const chip of chips) {
+      expect(chip.disabled, chip.getAttribute("data-stage-key")!).toBe(true);
+      expect(chip.getAttribute("title")).toBe("Edit Stage in Filter");
+    }
   });
 
-  it("labels every legend entry with a real stage label, never a raw key", async () => {
+  it("draws each chip's swatch from the Stage tone, with no hatch, in the readable label size (#919, D1/D3)", async () => {
     await render({ ...DEFAULT_GANTT_FACET_FILTERS, delivered: true });
-    const labels = legendLabels(host);
+    const swatches = keyChips(host).map((chip) => chip.querySelector('[data-testid="stage-key-swatch"]'));
+    expect(swatches.every(Boolean)).toBe(true);
+    expect(swatches.map((swatch) => swatch!.getAttribute("data-treatment"))).toEqual(["hollow-dashed", "solid", "solid", "solid", "wash"]);
+    expect(host.querySelector('[data-testid="stage-key-row"] [data-pattern="hatch"]')).toBeNull();
+  });
+
+  it("labels every key chip with a real stage label, never a raw key", async () => {
+    await render({ ...DEFAULT_GANTT_FACET_FILTERS, delivered: true });
+    const labels = keyChips(host).map((chip) => chip.textContent ?? "");
     expect(labels).toEqual(["Awaiting RAW", "RAW review", "Editing", "Edited review", "Delivered"]);
     for (const raw of ["awaiting_raw", "raw_review", "editing", "editing_autohdr", "edited_review", "delivered"]) expect(labels).not.toContain(raw);
   });
@@ -362,7 +423,7 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
 
     const deliveredStageOnly: ProductionGanttFacetFilters = { ...DEFAULT_GANTT_FACET_FILTERS, stageKeys: ["delivered"], delivered: false };
 
-    it("says no projects match the filters, keeps the legend mounted and draws no chart", async () => {
+    it("says no projects match the filters, keeps the key row mounted and draws no chart", async () => {
       apiGetMock.mockImplementation((path: string) => Promise.resolve(path.includes("stages=delivered") ? emptyGanttResponse() : ganttResponse()));
       await render(deliveredStageOnly);
       expect(lastListQuery().get("stages")).toBe("delivered");
@@ -376,8 +437,8 @@ describe("ProductionGantt — filters and legend (#255, #254)", () => {
       const chartSlot = host.querySelector('[data-testid="production-gantt"]');
       expect(chartSlot).not.toBeNull();
       expect([...chartSlot!.children]).toEqual([empty]);
-      // The legend stays mounted around it.
-      expect(host.querySelector('[data-testid="production-gantt-legend"]')).not.toBeNull();
+      // The key row stays mounted around it.
+      expect(keyRowMounted(host)).toBe(true);
     });
 
     function showDeliveredButton(scope: HTMLElement): HTMLButtonElement | undefined {

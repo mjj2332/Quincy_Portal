@@ -34,6 +34,9 @@ describe("GanttRowAttentionBadge short phone labels (#693)", () => {
       expect(el.className).toContain("tracking-[0.04em]");
       expect(el.className).toContain("max-[721px]:tracking-[var(--tracking-normal)]");
       expect(el.className.includes("text-signal-critical")).toBe(critical);
+      // #919: frame 3a's 12px meta floor; the label was 10px (`timeline-type-floor.guard.test.ts`).
+      expect(el.className.split(/\s+/)).toContain("text-xs");
+      expect(el.className).not.toContain("text-[10px]");
     });
   }
 

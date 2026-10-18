@@ -33,6 +33,7 @@ import type { ProjectMember } from "../lib/project-data";
 import { ConfirmModalHost } from "./ConfirmDialog";
 import { ProductionGantt, type ProductionGanttProps } from "./ProductionGantt";
 import { mockViewport } from "@/testing/viewport";
+import { showGanttScale } from "@/testing/gantt-scale";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const apiPutMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
@@ -354,6 +355,8 @@ describe("ProductionGantt — People and Due columns (#365)", () => {
 
   it("T1b both triggers are disabled while a bar drag is in progress (before release) and re-enable when the gesture ends", async () => {
     await render();
+    // #919: the Timeline opens at Week; this fixture's Deadline grip is drawn at Month.
+    await showGanttScale(host, "Month");
     expect(teamTrigger()!.disabled).toBe(false);
     expect(deadlineTrigger()!.disabled).toBe(false);
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(

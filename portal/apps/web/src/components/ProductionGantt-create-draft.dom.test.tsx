@@ -279,11 +279,11 @@ describe("ProductionGantt — the editor row keeps the row's columns (#678)", ()
     afterEach(() => { viewport.restore(); });
     const sheet = () => document.querySelector<HTMLElement>('[data-testid="gantt-group-create-task-sheet"]');
 
-    it("project rows are 2.75rem (44px) so each 44px + fits its own row, and both panes agree (#693)", async () => {
+    it("rows are 44px or taller so each 44px + fits its own row, and both panes agree (#693; #919: a Project row is 48px)", async () => {
       await mount();
       const heights = Array.from(host.querySelectorAll<HTMLElement>("[data-gantt-resource]")).map((el) => el.style.height).filter(Boolean);
       expect(heights.length).toBeGreaterThan(0);
-      expect(new Set(heights)).toEqual(new Set(["2.75rem"]));
+      expect(new Set(heights)).toEqual(new Set(["3rem", "2.75rem"]));
     });
 
     it("tapping + opens the sheet (no editor row, no spacer): heading names the Project; Title, Assignees, Due, Cancel and Add are in it", async () => {
@@ -642,11 +642,11 @@ describe("ProductionGantt — a coarse-pointer tablet (>= 1024px) gets 44px rows
     return byId;
   };
 
-  it("Project and Subtask rows are 2.75rem in both panes, paired by row id", async () => {
+  it("Project rows are 3rem and Subtask rows 2.75rem in both panes, paired by row id (#919: frame 3a's 48px Project row)", async () => {
     await mount();
     const byId = rowHeightsById();
     expect(byId.size).toBeGreaterThan(1);
-    for (const [id, set] of byId) expect([...set], id).toEqual(["2.75rem"]);
+    for (const [id, set] of byId) expect([...set], id).toEqual([id.startsWith("project:") ? "3rem" : "2.75rem"]);
     // both panes render each Project row
     const projectEls = Array.from(host.querySelectorAll<HTMLElement>("[data-gantt-row-id]")).filter((el) => el.getAttribute("data-gantt-row-id") === `project:${PROJECT_A}`);
     expect(projectEls.length).toBeGreaterThanOrEqual(2);
@@ -663,10 +663,10 @@ describe("ProductionGantt — a coarse-pointer tablet (>= 1024px) gets 44px rows
     expect(spacer!.style.height).toBe("2.75rem");
   });
 
-  it("a fine pointer at 1280px stays at 2.5rem", async () => {
+  it("a fine pointer at 1280px stays at 2.5rem Subtask rows (3rem Project rows, #919)", async () => {
     await viewport.set({ coarse: false });
     await mount();
-    expect(new Set(rowHeights())).toEqual(new Set(["2.5rem"]));
+    expect(new Set(rowHeights())).toEqual(new Set(["3rem", "2.5rem"]));
   });
 
   it("switching coarse -> fine -> coarse updates the heights and keeps an open draft", async () => {
@@ -674,10 +674,10 @@ describe("ProductionGantt — a coarse-pointer tablet (>= 1024px) gets 44px rows
     await click(plus(STREET_A)!);
     await type(input()!, "Keep me");
     await setCoarse(false);
-    expect(new Set(rowHeights())).toEqual(new Set(["2.5rem"]));
+    expect(new Set(rowHeights())).toEqual(new Set(["3rem", "2.5rem"]));
     expect(input()!.value).toBe("Keep me");
     await setCoarse(true);
-    expect(new Set(rowHeights())).toEqual(new Set(["2.75rem"]));
+    expect(new Set(rowHeights())).toEqual(new Set(["3rem", "2.75rem"]));
     expect(input()!.value).toBe("Keep me");
   });
 });

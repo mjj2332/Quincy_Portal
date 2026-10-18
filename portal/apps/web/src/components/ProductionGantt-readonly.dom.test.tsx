@@ -24,6 +24,7 @@ import type { DashboardIdentity } from "../lib/dashboard-projects";
 import { ProductionGantt } from "./ProductionGantt";
 import { DEFAULT_GANTT_FACET_FILTERS } from "../lib/production-gantt-filters";
 import { startMoment, endMoment, subtaskReminders } from "@/testing/subtask-schedule";
+import { showGanttScale } from "@/testing/gantt-scale";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 vi.mock("../lib/api", async (importOriginal) => ({
@@ -203,7 +204,7 @@ describe("ProductionGantt — read-only boundary", () => {
 
   it("renders the stage legend and no draw-cap notice for a small result", async () => {
     await render(host, root);
-    expect(host.querySelector('[data-testid="production-gantt-legend"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="production-gantt-key"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="production-gantt-too-many"]')).toBeNull();
   });
 
@@ -213,6 +214,8 @@ describe("ProductionGantt — read-only boundary", () => {
   it("paints exactly one milestone diamond, on the inverted-Deadline Project row, and none on the task row", async () => {
     apiGetMock.mockImplementation((path: string) => (path.startsWith("/api/production-gantt") ? Promise.resolve(ganttResponse(isoDate(-3))) : Promise.reject(new Error(`unexpected fetch: ${path}`))));
     await render(host, root);
+    // #919: the Timeline opens at Week; a Deadline three days back can fall in last week.
+    await showGanttScale(host, "Month");
 
     const markers = host.querySelectorAll('[data-testid="gantt-milestone-marker"]');
     expect(markers.length).toBe(1);

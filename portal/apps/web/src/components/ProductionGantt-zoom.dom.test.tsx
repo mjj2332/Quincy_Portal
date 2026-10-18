@@ -105,6 +105,15 @@ const zoomButton = (name: "Zoom in" | "Zoom out") => navZoom().querySelector<HTM
 const trackRem = () => parseFloat(host.querySelector<HTMLElement>('[data-testid="gantt-timeline-column"]')!.style.minWidth);
 const click = async (el: HTMLElement) => { await act(async () => { el.click(); await Promise.resolve(); }); await settle(); };
 
+describe("ProductionGantt opening scale (#919, frame 3a)", () => {
+  it("opens at Week, the scale frame 3a draws", async () => {
+    await mountAt(1280);
+    expect(host.querySelector("[data-scale]")?.getAttribute("data-scale")).toBe("week");
+    const trigger = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.getAttribute("aria-label") === "Select view");
+    expect(trigger?.textContent).toContain("Week");
+  });
+});
+
 describe("ProductionGantt zoom buttons (#738)", () => {
   it("render inside the nav row, with no floating box in the lane", async () => {
     await mountAt(1280);
