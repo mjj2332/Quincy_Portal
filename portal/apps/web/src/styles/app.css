@@ -254,7 +254,6 @@
 .kv { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: 14px; }
 .kv .k { color: var(--text-secondary); font: var(--type-eyebrow); text-transform: uppercase; letter-spacing: var(--tracking-wide); }
 .kv .vv { text-align: right; }
-.project-deadline__overdue { display: block; margin-top: 3px; font-size: 11px; color: var(--signal-critical); }
 .workmain { flex: 1 0 auto; min-width: 0; display: flex; flex-direction: column; }
 /* #914 (prototype project-header-revamp D1/T1): Row A, the labelled header section, holds the identity and the status cluster; the
    Workspace tab bar (Row B) follows it as a sibling under `main.work`, so a sticky tab bar is bounded by the whole work area rather

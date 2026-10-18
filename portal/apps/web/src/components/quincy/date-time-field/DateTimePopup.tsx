@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
-import { DEADLINE_PRESET_TIME, resolveSydneyCivilMinute, type ProjectDeadlineSchedule } from "@quincy/shared";
+import { DEADLINE_PRESET_TIME, SYDNEY_TIME_ZONE, resolveSydneyCivilMinute, type ProjectDeadlineSchedule } from "@quincy/shared";
+import { Button } from "@/components/reui/button";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/reui/field";
 import { Input } from "@/components/reui/input";
 import { buildShortcuts, civilToCell, joinCivilMinute, parseTypedTime, POPUP_SHORT_QUERY, POPUP_STACKED_QUERY, sameReminderOffsets, splitCivilMinute, sydneyToday, timeSlots, yearBounds, type DateShortcut } from "@/lib/date-time-field";
@@ -70,8 +71,12 @@ export type DateTimePopupProps = {
   focusOnMount?: boolean;
   /** A mutation the caller owns is in flight: Apply is disabled until it settles. */
   busy?: boolean;
-  /** #914: `stacked` draws the one-column arrangement at every width (the form inline in Project info's 440px sheet). */
-  layout?: "responsive" | "stacked";
+  /**
+   * #914: `stacked` draws the one-column arrangement at every width (the form inline in Project info's 440px sheet). `phone` (M5,
+   * settled decision) draws the date and the time as native fields instead of the shortcuts, calendar and time column, with Clear
+   * and Save deadline as a footer the caller pins; the draft and its rules are the same.
+   */
+  layout?: "responsive" | "stacked" | "phone";
   /** Apply submits even on an untouched draft (it re-saves the stored value). For a value the caller wants a person to confirm, e.g. an Automatic Deadline (#484). */
   applyUntouched?: boolean;
   onApply: (next: DateTimeApply) => void | Promise<void>;
@@ -219,6 +224,40 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
 
   const hint = draft.touched && !draft.clear && civil === null && !timeInvalid ? "Pick a date and a time." : null;
 
+  if (layout === "phone") {
+    const clearNow = async () => {
+      setApplying(true);
+      try {
+        await onApply({ localCivil: null });
+        if (mounted.current) onClose();
+      } catch {
+        if (mounted.current) setApplying(false);
+      }
+    };
+    return <PhoneDraft
+      bodyRef={bodyRef}
+      zoneId={zoneId}
+      day={draft.day}
+      time={draft.time}
+      onDay={(day) => day ? pickDay(day, "grid") : change({ day: null, clear: false })}
+      onTime={(value) => { const time = value.slice(0, 5); change({ time: time || null, timeText: time, clear: false }); }}
+      hint={hint}
+      gapMessage={gap && resolution && !resolution.ok ? resolution.message : null}
+      fold={choices && <FoldChoice choices={choices} selected={activeChoice} onSelect={(choice) => civil && change({ fold: { minute: civil, choice } })} />}
+      reminders={reminders && <>
+        <RemindersStrip offsets={draft.offsets} onChange={(offsets) => change({ offsets })} />
+        {reminders.next !== undefined && <NextReminder saved stale={savedLineStale} next={reminders.next} hasReminders={reminders.offsets.length > 0} />}
+      </>}
+      facts={facts}
+      feedback={feedback}
+      clearable={clearable}
+      applying={applying}
+      saveDisabled={blocked || busy || (draft.touched && !draft.clear && civil === null)}
+      onClear={() => { void clearNow(); }}
+      onSave={() => { void apply(); }}
+    />;
+  }
+
   return (
     <PopupFrame label={label} zoneId={zoneId} bodyRef={bodyRef} applying={applying} applyDisabled={blocked || busy} scrollTitle={short} revealFallback={short ? REVEAL_TODAY : undefined} onCancel={onClose} onApply={() => { void apply(); }}>
       <div className="flex flex-col gap-[var(--space-4)]">
@@ -258,6 +297,59 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
       </div>
     </PopupFrame>
   );
+}
+
+/** The native date picker's and the time picker's height: the prototype's 48px fields (`.m-field .box`). */
+const PHONE_FIELD = "h-[var(--space-7)] text-[length:var(--text-base)]";
+
+/**
+ * M5's body: Date, Time (native pickers, so iOS raises no keyboard), then the reminders, the facts and the feedback, scrolling;
+ * Clear and Save deadline below it, pinned above the home indicator. The caller gives it a bounded height.
+ */
+function PhoneDraft({ bodyRef, zoneId, day, time, onDay, onTime, hint, gapMessage, fold, reminders, facts, feedback, clearable, applying, saveDisabled, onClear, onSave }: {
+  bodyRef: Ref<HTMLDivElement>;
+  zoneId: string;
+  day: string | null;
+  time: string | null;
+  onDay: (day: string) => void;
+  onTime: (time: string) => void;
+  hint: string | null;
+  gapMessage: string | null;
+  fold: ReactNode;
+  reminders: ReactNode;
+  facts: ReactNode;
+  feedback: ReactNode;
+  clearable: boolean;
+  applying: boolean;
+  saveDisabled: boolean;
+  onClear: () => void;
+  onSave: () => void;
+}) {
+  const dateId = useId();
+  const timeId = useId();
+  return <div className="flex min-h-0 flex-1 flex-col" data-testid="deadline-phone-form">
+    <div ref={bodyRef} className="grid min-h-0 flex-1 content-start gap-[var(--space-4)] overflow-y-auto overscroll-contain px-[var(--space-4)] pt-[var(--space-1)] pb-[var(--space-5)]">
+      <Field>
+        <FieldLabel htmlFor={dateId}>Date</FieldLabel>
+        <Input id={dateId} type="date" className={PHONE_FIELD} value={day ?? ""} aria-describedby={zoneId} onChange={(event) => onDay(event.target.value)} />
+      </Field>
+      <Field data-invalid={gapMessage ? true : undefined}>
+        <FieldLabel htmlFor={timeId}>Time</FieldLabel>
+        <Input id={timeId} type="time" step={60} className={PHONE_FIELD} value={time ?? ""} aria-invalid={gapMessage ? true : undefined} aria-describedby={zoneId} onChange={(event) => onTime(event.target.value)} />
+        <FieldDescription id={zoneId} className="text-[length:var(--text-xs)]">{SYDNEY_TIME_ZONE}</FieldDescription>
+        {gapMessage && <FieldError>{gapMessage}</FieldError>}
+        {hint && <FieldDescription className="text-[length:var(--text-xs)]">{hint}</FieldDescription>}
+      </Field>
+      {fold}
+      {reminders}
+      {facts}
+      {feedback}
+    </div>
+    <div className="flex shrink-0 gap-[var(--space-2)] border-t border-border bg-background px-[var(--space-4)] pt-[var(--space-3)] pb-[max(var(--space-5),env(safe-area-inset-bottom))] *:min-h-[var(--space-7)] *:flex-1">
+      {clearable && <Button type="button" variant="ghost" disabled={applying} onClick={onClear}>Clear</Button>}
+      <Button type="button" disabled={applying || saveDisabled} onClick={onSave}>Save deadline</Button>
+    </div>
+  </div>;
 }
 
 export function DateTimePopup({ seedKey, ...props }: DateTimePopupProps) {

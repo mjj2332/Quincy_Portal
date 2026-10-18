@@ -9,12 +9,14 @@ import { useCapabilities } from "../lib/capabilities";
 import type { ProjectDetail } from "../lib/project-data";
 import type { CollectionKind } from "@quincy/shared";
 import type { WorkspaceTab } from "../lib/workspace-tab";
-import { ProjectInfoPanel, type InfoTarget } from "./project-header/ProjectInfoPanel";
+import { ProjectInfoPanel, type InfoTarget, type ProjectInfoPanelProps } from "./project-header/ProjectInfoPanel";
+import { ProjectInfoDrawer, type StageMoveOutcome } from "./project-header/ProjectInfoDrawer";
 import { HeaderPhone } from "./project-header/HeaderPhone";
 import { twinHandOff, useScrolledOut } from "./project-header/use-scrolled-out";
 import { useMediaQuery } from "../lib/use-media-query";
 
 export { WhiteboardButton } from "./project-header/WhiteboardButton";
+export type { StageMoveOutcome } from "./project-header/ProjectInfoDrawer";
 
 // #213 follow-up: prototype 2a's `.crumb` — "← Dashboard" as small secondary text above the title, outside the Project sheet only
 // (inside it, the sheet's Close returns to the Dashboard, so #914 D1 drops the crumb there). The 44px target is kept by the
@@ -76,8 +78,8 @@ export function ProjectHeader({
   collaborationUnread?: number;
   /** #337: each Workspace tab's trigger, keyed by tab, so an arrival can focus the tab it selected. */
   workspaceTabRefs?: React.RefObject<Map<WorkspaceTab, HTMLButtonElement>>;
-  /** Resolves "archived" when the server refused the move because the Project is archived (#455). */
-  onStageMove?: (stageKey: ProjectDetail["stageKey"]) => void | Promise<"archived" | void>;
+  /** Resolves the move's outcome: "archived" when the server refused it because the Project is archived (#455). */
+  onStageMove?: (stageKey: ProjectDetail["stageKey"]) => void | Promise<StageMoveOutcome | void>;
   stageMovePending?: boolean;
   stageMoveDisabledReason?: string | null;
 }) {
@@ -99,6 +101,8 @@ export function ProjectHeader({
   const dropboxGroupRef = useRef<HTMLDivElement>(null);
   const infoDeadlineRef = useRef<HTMLElement>(null);
   const infoOverlaysRef = useRef<HTMLElement>(null);
+  /** #914 M3: the phone Project info's Stage row (Stage is only there on the phone). */
+  const infoStageRef = useRef<HTMLElement>(null);
   // #914 D2: Project info, open at the top or at a section, and the control that opened it (focus goes back there).
   const [info, setInfo] = useState<{ open: boolean; target: InfoTarget }>({ open: false, target: null });
   const infoOpener = useRef<HTMLElement | null>(null);
@@ -132,7 +136,7 @@ export function ProjectHeader({
     focusAfterFlip.current = null;
     // While Project info is open (a modal over the header), focus stays inside it: on the section the refusal came from.
     const target = info.open
-      ? { stage: null, deadline: infoDeadlineRef, dropbox: dropboxGroupRef, team: null, "social-overlays": infoOverlaysRef }[flip.source]?.current
+      ? { stage: infoStageRef, deadline: infoDeadlineRef, dropbox: dropboxGroupRef, team: null, "social-overlays": infoOverlaysRef }[flip.source]?.current
       : { stage: stageGroupRef, deadline: deadlineGroupRef, dropbox: dropboxGroupRef, team: null, "social-overlays": stageGroupRef }[flip.source]?.current;
     if (!target) return;
     const active = document.activeElement;
@@ -143,9 +147,11 @@ export function ProjectHeader({
     const active = document.activeElement;
     // The Select's popup is portalled: its trigger names it through aria-controls while it is open.
     const popupId = stageCellRef.current?.querySelector("[aria-controls]")?.getAttribute("aria-controls");
-    const inside = Boolean(active && (stageCellRef.current?.contains(active) || (popupId && document.getElementById(popupId)?.contains(active))));
+    // On the phone the Stage is chosen in Project info's Stage view.
+    const inside = Boolean(active && (stageCellRef.current?.contains(active) || (popupId && document.getElementById(popupId)?.contains(active)) || active.closest('[data-testid="project-info-stage-options"]')));
     const result = await onStageMove?.(stageKey);
     if (result === "archived") latchArchived("stage", inside);
+    return result;
   }
 
   const tabs = <WorkspaceTabs project={project} activeTab={activeTab} availableTabs={availableTabs} deliveryOffered={deliveryOffered} onActiveTabChange={onActiveTabChange} collaborationUnread={collaborationUnread} workspaceTabRefs={workspaceTabRefs} whiteboardOpen={whiteboardOpen} />;
@@ -156,28 +162,31 @@ export function ProjectHeader({
     setInfo({ open: true, target });
   }
   const crumb = !inSheet && <InternalLink className={DASHBOARD_CRUMB} {...dashboardReturn}>← Dashboard</InternalLink>;
-  const infoPanel = <ProjectInfoPanel
-    open={info.open}
-    target={info.target}
-    onClose={() => setInfo((current) => ({ ...current, open: false }))}
+  const panel: Omit<ProjectInfoPanelProps, "target"> = {
+    open: info.open,
+    onClose: () => setInfo((current) => ({ ...current, open: false })),
     // The opener, or (it was swapped out while Project info was open) the live Project info control of the bar showing now.
-    returnFocus={() => (infoOpener.current?.isConnected && !infoOpener.current.closest("[inert]") ? infoOpener.current
-      : [...document.querySelectorAll<HTMLElement>('[data-twin="info"]')].find((element) => !element.closest("[inert]")) ?? null)}
-    project={project}
-    place={place}
-    archived={archived}
-    latch={latch}
-    canEdit={canEdit}
-    canAdminBackend={canAdminBackend}
-    latchArchived={latchArchived}
-    deadlineSectionRef={infoDeadlineRef}
-    overlaysSectionRef={infoOverlaysRef}
-    overlays={offersOverlays ? { role: role!, canEdit: can("chooseSocialOverlays") } : null}
-    dropbox={offersDropbox ? { isSyncing, autohdrBlocked, onSyncDropbox, readOnlyRef: dropboxGroupRef } : null}
-    onOpenWhiteboard={onOpenWhiteboard}
-  />;
+    returnFocus: () => (infoOpener.current?.isConnected && !infoOpener.current.closest("[inert]") ? infoOpener.current
+      : [...document.querySelectorAll<HTMLElement>('[data-twin="info"]')].find((element) => !element.closest("[inert]")) ?? null),
+    project,
+    place,
+    archived,
+    latch,
+    canEdit,
+    canAdminBackend,
+    latchArchived,
+    deadlineSectionRef: infoDeadlineRef,
+    overlaysSectionRef: infoOverlaysRef,
+    overlays: offersOverlays ? { role: role!, canEdit: can("chooseSocialOverlays") } : null,
+    dropbox: offersDropbox ? { isSyncing, autohdrBlocked, onSyncDropbox, readOnlyRef: dropboxGroupRef } : null,
+    onOpenWhiteboard,
+  };
   if (phone) {
-    return <HeaderPhone project={project} currentStageKey={currentStageKey} stages={stages} crumb={crumb} tabs={tabs} info={infoPanel}
+    const drawer = <ProjectInfoDrawer {...panel} activeTab={activeTab} stageRowRef={infoStageRef} stage={{
+      currentStageKey, stages, canMove: canMoveStage && project.contractEnabled, pending: stageMovePending, disabledReason: stageMoveDisabledReason,
+      onMove: moveStageAndLatch,
+    }} />;
+    return <HeaderPhone project={project} currentStageKey={currentStageKey} stages={stages} crumb={crumb} tabs={tabs} info={drawer}
       infoOpen={info.open} onOpenInfo={(opener) => openInfo(opener, null)} onOpenWhiteboard={onOpenWhiteboard} whiteboardOpen={whiteboardOpen} />;
   }
   return <HeaderDesktop
@@ -193,6 +202,6 @@ export function ProjectHeader({
       stageCellRef, stageGroupRef, deadlineGroupRef, latchArchived, onOpenWhiteboard,
       dropboxBlocked: offersDropbox && autohdrBlocked && !archived, onOpenInfo: openInfo, infoOpen: info.open,
     }}
-    info={infoPanel}
+    info={<ProjectInfoPanel {...panel} target={info.target} />}
   />;
 }

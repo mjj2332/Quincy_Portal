@@ -541,10 +541,10 @@ function teamPickerRootProps({ groups, value, onValueChange }: Pick<TeamPickerPr
 const TEAM_PICKER_FOOT = "The group you pick from sets the person’s role. Pick a checked person again to remove them.";
 
 /** D3 / M6's grouped list: Photographers, then Editors; each row an avatar, the name, the email and role, and its own state. */
-function TeamGroupedList({ chipProps, pending }: Pick<TeamPickerProps, "chipProps" | "pending">) {
+function TeamGroupedList({ chipProps, pending, listClassName }: Pick<TeamPickerProps, "chipProps" | "pending"> & { listClassName?: string }) {
   return <>
     <ComboboxEmpty>No eligible people match.</ComboboxEmpty>
-    <ComboboxList aria-label="Team candidates">
+    <ComboboxList aria-label="Team candidates" className={listClassName}>
       {(group: TeamGroup) => <ComboboxGroup key={group.value} items={group.items} className="border-t border-border pt-[var(--space-1)] first:border-t-0">
         <ComboboxLabel className={TEAM_POPOVER_LABEL}>{group.label}</ComboboxLabel>
         <ComboboxCollection>
@@ -602,28 +602,31 @@ function TeamPopoverView({ contentRef, triggerRef, ...props }: TeamPickerProps &
  * #914 D2 "Manage" / M6 — the same grouped picker drawn in place, with no popup: Base UI's `<Combobox.Root inline open>`, the search
  * field above the list. The section it sits in (Project info) is the surface.
  */
-function TeamInlineView(props: TeamPickerProps) {
+function TeamInlineView({ fill = false, ...props }: TeamPickerProps & { fill?: boolean }) {
   const { inputRef, inputDisabled, candidatesError, messages } = props;
   return <Combobox {...teamPickerRootProps(props)} inline open>
-    <div className="grid gap-[var(--space-2)]" data-testid="project-team-inline">
+    <div className={fill ? "flex min-h-0 flex-1 flex-col gap-[var(--space-2)]" : "grid gap-[var(--space-2)]"} data-testid="project-team-inline">
       {candidatesError}
-      <ComboboxInput ref={inputRef} showTrigger={false} placeholder="Search people…" aria-label="Search people" disabled={inputDisabled} aria-invalid={inputDisabled ? true : undefined} />
-      <div className="grid"><TeamGroupedList {...props} /></div>
+      {/* M6: 16px type in the search, or iOS zooms the page on focus. */}
+      <ComboboxInput ref={inputRef} showTrigger={false} placeholder="Search people…" aria-label="Search people" disabled={inputDisabled} aria-invalid={inputDisabled ? true : undefined} className={fill ? "mx-[var(--space-4)] shrink-0 min-h-[44px] *:text-[length:var(--text-base)]" : undefined} />
+      <div className={fill ? "grid min-h-0 flex-1 overflow-y-auto overscroll-contain px-[var(--space-2)]" : "grid"}><TeamGroupedList {...props} listClassName={fill ? "max-h-none overflow-visible" : undefined} /></div>
       {messages}
-      <p className={TEAM_POPOVER_META}>{TEAM_PICKER_FOOT}</p>
+      <p className={cn(TEAM_POPOVER_META, fill && "shrink-0 px-[var(--space-4)] pb-[max(var(--space-4),env(safe-area-inset-bottom))]")}>{TEAM_PICKER_FOOT}</p>
     </div>
   </Combobox>;
 }
 
 export type ProjectTeamPresentation = "chips" | "popover" | "inline";
 
-export function ProjectTeamCombobox({ projectId, members, canEdit, archived = false, rowClassName, inputRef, presentation = "chips", onArchivedRefusal, triggerRef }: { projectId: string; members: ProjectMember[]; canEdit: boolean; /** #452: an archived Project's Team is read-only. Also latched on from a 409 `membership_project_archived`, until this goes true to false (Restore). */ archived?: boolean; /** Sizes the Team row, read-only or editable (#458); the header passes its 44px control height. */ rowClassName?: string; /** #365: lets a hosting popover focus the input (the first chip × is a Tab stop and would otherwise take initial focus). */ inputRef?: Ref<HTMLInputElement>;
+export function ProjectTeamCombobox({ projectId, members, canEdit, archived = false, rowClassName, inputRef, presentation = "chips", onArchivedRefusal, triggerRef, fill = false }: { projectId: string; members: ProjectMember[]; canEdit: boolean; /** #452: an archived Project's Team is read-only. Also latched on from a 409 `membership_project_archived`, until this goes true to false (Restore). */ archived?: boolean; /** Sizes the Team row, read-only or editable (#458); the header passes its 44px control height. */ rowClassName?: string; /** #365: lets a hosting popover focus the input (the first chip × is a Tab stop and would otherwise take initial focus). */ inputRef?: Ref<HTMLInputElement>;
   /** #914: `"chips"` (the default: the Gantt People cell, New shoot's shape), `"popover"` (the Project header's avatar chip, D3) or `"inline"` (Project info's Manage, M6: the grouped list with no popup). */
   presentation?: ProjectTeamPresentation;
   /** #914: a write was refused as archived, so the host (the Project header's #455 latch) can turn the rest of its row read-only. This control moves its own focus. */
   onArchivedRefusal?: () => void;
   /** #914: the popover presentation's trigger. */
-  triggerRef?: Ref<HTMLButtonElement> }) {
+  triggerRef?: Ref<HTMLButtonElement>;
+  /** #914 M6: the inline presentation fills its host's height: the search stays put and the list below it scrolls (the phone Team view). */
+  fill?: boolean }) {
   const [latched, setLatched] = useState(false);
   const readOnly = archived || latched;
   const editable = canEdit && !readOnly;
@@ -765,8 +768,9 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
   const latchedNotice = latched && <p id={noticeId} role="status" className={ARCHIVED_HEADER_NOTICE_CLASS}>{ARCHIVED_TEAM_NOTICE}</p>;
 
   if (presentation === "inline") {
-    return <div ref={rootRef} className="grid gap-[var(--space-3)]" data-testid="project-team-control">
+    return <div ref={rootRef} className={fill ? "flex min-h-0 flex-1 flex-col gap-[var(--space-3)]" : "grid gap-[var(--space-3)]"} data-testid="project-team-control">
       {editable ? <TeamInlineView
+        fill={fill}
         groups={groups}
         value={value}
         onValueChange={onValueChange}

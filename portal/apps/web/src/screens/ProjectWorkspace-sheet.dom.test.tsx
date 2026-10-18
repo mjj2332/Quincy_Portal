@@ -573,4 +573,129 @@ describe("the phone header inside the Project sheet (#914 M1, M2)", () => {
     expect(slimBar()!.hasAttribute("inert")).toBe(true);
     expect(document.activeElement).toBe(projectBar()!.querySelector('button[aria-label="Project info, 12 Example St"]'));
   });
+
+  // #914 M3–M6: Project info on the phone is a bottom sheet (reui/drawer) with pushed views.
+  const openInfo = async () => {
+    const opener = projectBar()!.querySelector<HTMLElement>('button[aria-label="Project info, 12 Example St"]')!;
+    opener.focus();
+    await click(opener);
+    await flushUntil(() => info() !== null, "Project info to open");
+    return opener;
+  };
+  const back = () => document.querySelector<HTMLElement>('[data-testid="project-info-back"]');
+  const row = (name: string) => info()!.querySelector<HTMLElement>(`[data-testid="project-info-${name}-row"]`);
+  function withProject(patch: Record<string, unknown>) {
+    const fallback = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string, init?: unknown) => path === "/api/projects/p1" ? Promise.resolve({ ...projectFixture(), ...patch }) : fallback(path, init));
+  }
+
+  it("is a bottom sheet over the Project: Status first (Stage, Deadline, Team), then notes, Client and shoot and Files, then the actions", async () => {
+    authState.role = "admin";
+    withProject({ contractEnabled: true, boardRevision: 1, productionNotes: "Twilight shots", agencyName: "Ray White" });
+    await renderSheet();
+    await openInfo();
+    const sheet = info()!;
+    expect(sheet.getAttribute("data-view")).toBe("info");
+    // What the Project sheet's Esc gate relies on (project-sheet-layers.dom.test.tsx): an open dialog in the overlay slot, no aria-modal.
+    expect(sheet.getAttribute("role")).toBe("dialog");
+    expect(sheet.hasAttribute("aria-modal")).toBe(false);
+    expect(sheet.hasAttribute("data-open")).toBe(true);
+    expect(sheet.closest('[data-testid="project-sheet"]')).not.toBeNull();
+    expect([...sheet.querySelectorAll("h3")].map((heading) => heading.textContent)).toEqual(["Status", "Production notes", "Client and shoot", "Files"]);
+    expect(row("stage")!.getAttribute("aria-label")).toMatch(/^Stage: /);
+    expect(row("deadline")!.getAttribute("aria-label")).toBe("Deadline: set deadline");
+    expect(row("team")!.getAttribute("aria-label")).toBe("Team: nobody assigned");
+    expect(sheet.querySelector('[data-testid="project-info-notes-text"]')!.textContent).toBe("Twilight shots");
+    const actions = [...sheet.querySelectorAll<HTMLElement>('[data-testid="project-info-actions"] > *')].map((element) => element.textContent?.trim());
+    // (Open whiteboard heads the actions where the board is offered: ProjectWorkspace-whiteboard.dom.test.tsx.)
+    expect(actions[0]).toBe("Edit project details");
+    expect(actions).toContain("Copy link");
+  });
+
+  it("pushes the Stage view; Back pops it and focuses the Stage row; Esc in a pushed view closes Project info only", async () => {
+    authState.role = "admin";
+    withProject({ contractEnabled: true, boardRevision: 1 });
+    await renderSheet();
+    const opener = await openInfo();
+    await click(row("stage")!);
+    expect(info()!.getAttribute("data-view")).toBe("stage");
+    expect(document.activeElement).toBe(back());
+    expect(info()!.querySelector('[role="radiogroup"]')).not.toBeNull();
+    await click(back()!);
+    expect(info()!.getAttribute("data-view")).toBe("info");
+    expect(document.activeElement).toBe(row("stage"));
+    await click(row("deadline")!);
+    expect(info()!.getAttribute("data-view")).toBe("deadline");
+    expect(info()!.querySelector<HTMLInputElement>('input[type="date"]')).not.toBeNull();
+    expect([...info()!.querySelectorAll("button")].some((button) => button.textContent === "Save deadline")).toBe(true);
+    await escape(document.activeElement ?? document.body);
+    await flushUntil(() => info() === null, "Project info to close");
+    expect(onRequestClose).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("saves a Stage chosen in the Stage view and returns to Project info", async () => {
+    withProject({ contractEnabled: true, boardRevision: 1 });
+    await renderSheet();
+    await openInfo();
+    await click(row("stage")!);
+    const radios = [...info()!.querySelectorAll<HTMLElement>('[role="radio"]')];
+    const { apiPost: postBefore } = await import("../lib/api");
+    vi.mocked(postBefore).mockClear();
+    // The arrow keys move focus through the rows and choose nothing (a radio group would otherwise save on every arrow).
+    const checked = radios.find((radio) => radio.getAttribute("aria-checked") === "true")!;
+    checked.focus();
+    await act(async () => { checked.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })); await Promise.resolve(); });
+    await flush(3);
+    expect(document.activeElement).not.toBe(checked);
+    expect(info()!.getAttribute("data-view")).toBe("stage");
+    expect(vi.mocked(postBefore).mock.calls.some(([path]) => path === "/api/projects/p1/stage")).toBe(false);
+    const target = radios.find((radio) => radio.getAttribute("aria-checked") === "false" && radio.getAttribute("aria-disabled") !== "true")!;
+    await click(target);
+    await flushUntil(() => info()?.getAttribute("data-view") === "info", "the Stage view to return to Project info");
+    const { apiPost } = await import("../lib/api");
+    expect(vi.mocked(apiPost).mock.calls.some(([path]) => path === "/api/projects/p1/stage")).toBe(true);
+    expect(document.activeElement).toBe(row("stage"));
+  });
+
+  it("keeps the Stage view up when the move fails (only a saved move returns to Project info)", async () => {
+    withProject({ contractEnabled: true, boardRevision: 1 });
+    await renderSheet();
+    await openInfo();
+    await click(row("stage")!);
+    const { apiPost } = await import("../lib/api");
+    vi.mocked(apiPost).mockImplementationOnce(() => Promise.reject(new ApiError("Server error", 500, { error: "Server error" })));
+    const target = [...info()!.querySelectorAll<HTMLElement>('[role="radio"]')].find((radio) => radio.getAttribute("aria-checked") === "false" && radio.getAttribute("aria-disabled") !== "true")!;
+    await click(target);
+    await flushUntil(() => vi.mocked(apiPost).mock.calls.some(([path]) => path === "/api/projects/p1/stage"), "the Stage move to be sent");
+    await flush(5);
+    expect(info()!.getAttribute("data-view")).toBe("stage");
+  });
+
+  it("focuses the Team search inside the tap that pushes the Team view (iOS raises the keyboard only then)", async () => {
+    authState.role = "admin";
+    await renderSheet();
+    await openInfo();
+    const teamRow = row("team")!;
+    let focusedInHandler: Element | null = null;
+    // On the document, so it runs after React's root listener: what is focused when the tap's handler has returned.
+    const record = () => { focusedInHandler = document.activeElement; };
+    document.addEventListener("click", record);
+    await click(teamRow);
+    document.removeEventListener("click", record);
+    expect(info()!.getAttribute("data-view")).toBe("team");
+    expect(focusedInHandler).toBe(info()!.querySelector('input[aria-label="Search people"]'));
+  });
+
+  it("gives a Photographer plain Status rows and no Edit project details", async () => {
+    authState.role = "photographer";
+    withProject({ contractEnabled: true, boardRevision: 1 });
+    await renderSheet();
+    await openInfo();
+    expect(row("stage")).toBeNull();
+    expect(row("deadline")).toBeNull();
+    expect(row("team")).toBeNull();
+    expect(info()!.querySelector('[role="group"][aria-label^="Stage: "]')).not.toBeNull();
+    expect(info()!.querySelector('[data-testid="project-info-details"]')).toBeNull();
+  });
 });

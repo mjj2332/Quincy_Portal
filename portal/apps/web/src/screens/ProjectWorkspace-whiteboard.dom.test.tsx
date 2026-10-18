@@ -203,6 +203,23 @@ describe("the phone whiteboard entry (#914 M1)", () => {
     await flush(3);
     expect(document.activeElement).toBe(openButton());
   });
+
+  it("is Project info's first action: it closes Project info, opens the board, and closing the board focuses the project bar's button", async () => {
+    await renderSheet();
+    const opener = document.querySelector<HTMLElement>('[data-testid="project-header"] button[aria-label^="Project info, "]')!;
+    await click(opener);
+    await flushUntil(() => document.querySelector('[data-testid="project-info-sheet"]') !== null, "Project info");
+    const action = document.querySelector<HTMLElement>('[data-testid="project-info-actions"] > *')!;
+    expect(action.textContent?.trim()).toBe("Open whiteboard");
+    await click(action);
+    expect(onOpenWhiteboard).toHaveBeenCalledTimes(1);
+    await rerenderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null && document.querySelector('[data-testid="project-info-sheet"]') === null, "the board, with Project info closed");
+    await click(document.querySelector('[data-testid="project-whiteboard-close"]')!);
+    await rerenderSheet({ whiteboardOpen: false });
+    await flush(3);
+    expect(document.activeElement).toBe(openButton());
+  });
 });
 
 describe("whiteboard focus and layout (#498 design review)", () => {

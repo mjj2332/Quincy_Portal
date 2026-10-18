@@ -56,8 +56,8 @@ type ProjectDeadlineControlProps = {
   onClose?: () => void;
   /** Move focus into the popup when it mounts (the Timeline cell mounts it after the detail loads). */
   focusOnMount?: boolean;
-  /** #914: the form's arrangement; `stacked` for Project info's in-place Change (DateTimePopup `layout`). */
-  layout?: "responsive" | "stacked";
+  /** #914: the form's arrangement (DateTimePopup `layout`): `stacked` for Project info's in-place Change, `phone` for the M5 view. */
+  layout?: "responsive" | "stacked" | "phone";
   /** #455: a write is about to be sent (Apply, Clear or Resume). The header captures where focus is, so it can tell later whether the refusal's flip lost it. */
   onRequestStart?: () => void;
   /** #455: the server refused a write with 409 `deadline_project_archived`. Reported once per refusal; the header latches its read-only state on it. */
