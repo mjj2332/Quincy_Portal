@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { InternalLink } from "./InternalLink";
-import { useDashboardReturnLink, useInProjectSheet } from "./quincy/ProjectSheet";
+import { PROJECT_SHEET_PHONE_QUERY, useDashboardReturnLink, useInProjectSheet } from "./quincy/ProjectSheet";
 import { WorkspaceTabs } from "./project-header/WorkspaceTabs";
 import { HeaderDesktop } from "./project-header/HeaderDesktop";
 import type { ArchivedLatch } from "./project-header/StatusCluster";
@@ -10,7 +10,9 @@ import type { ProjectDetail } from "../lib/project-data";
 import type { CollectionKind } from "@quincy/shared";
 import type { WorkspaceTab } from "../lib/workspace-tab";
 import { ProjectInfoPanel, type InfoTarget } from "./project-header/ProjectInfoPanel";
-import { useCondensedHeader } from "./project-header/use-condensed-header";
+import { HeaderPhone } from "./project-header/HeaderPhone";
+import { twinHandOff, useScrolledOut } from "./project-header/use-scrolled-out";
+import { useMediaQuery } from "../lib/use-media-query";
 
 export { WhiteboardButton } from "./project-header/WhiteboardButton";
 
@@ -27,8 +29,9 @@ const DASHBOARD_CRUMB =
 
 /**
  * #914 — the Project header (prototype project-header-revamp). A thin owner: it keeps the #455 archived latch (so every surface
- * flips read-only at once) and picks the tree to mount. The desktop tree is `HeaderDesktop`: Row A (identity and the status
- * cluster) and Row B (the Workspace tabs, rendered once).
+ * flips read-only at once) and picks the ONE tree to mount, by the Project sheet's own phone query (a JS switch, so the trees never
+ * both exist: one tablist, one whiteboard button). The desktop tree is `HeaderDesktop`: Row A (identity and the status cluster) and
+ * Row B (the Workspace tabs, rendered once, condensing once Row A has scrolled out). The phone tree is `HeaderPhone` (M1/M2).
  */
 export function ProjectHeader({
   project,
@@ -102,7 +105,11 @@ export function ProjectHeader({
   // #914 D5: Row A scrolled out of the sheet body condenses Row B.
   const rowARef = useRef<HTMLElement>(null);
   const rowBRef = useRef<HTMLDivElement>(null);
-  const condensed = useCondensedHeader(rowARef, rowBRef, project.id, !whiteboardOpen);
+  const phone = useMediaQuery(PROJECT_SHEET_PHONE_QUERY);
+  const condensed = useScrolledOut(rowARef, project.id, !whiteboardOpen && !phone, {
+    // Un-condensing unmounts the bar's copies of Whiteboard and Project info: focus on one moves to its Row A twin.
+    handOff: (next) => next ? undefined : twinHandOff(rowBRef.current, () => rowARef.current),
+  });
   const priorArchivedAt = useRef(Boolean(project.archivedAt));
   const priorProjectId = useRef(project.id);
   const focusAfterFlip = useRef<{ source: NonNullable<ArchivedLatch> } | null>(null);
@@ -148,12 +155,37 @@ export function ProjectHeader({
     infoOpener.current = opener;
     setInfo({ open: true, target });
   }
+  const crumb = !inSheet && <InternalLink className={DASHBOARD_CRUMB} {...dashboardReturn}>← Dashboard</InternalLink>;
+  const infoPanel = <ProjectInfoPanel
+    open={info.open}
+    target={info.target}
+    onClose={() => setInfo((current) => ({ ...current, open: false }))}
+    // The opener, or (it was swapped out while Project info was open) the live Project info control of the bar showing now.
+    returnFocus={() => (infoOpener.current?.isConnected && !infoOpener.current.closest("[inert]") ? infoOpener.current
+      : [...document.querySelectorAll<HTMLElement>('[data-twin="info"]')].find((element) => !element.closest("[inert]")) ?? null)}
+    project={project}
+    place={place}
+    archived={archived}
+    latch={latch}
+    canEdit={canEdit}
+    canAdminBackend={canAdminBackend}
+    latchArchived={latchArchived}
+    deadlineSectionRef={infoDeadlineRef}
+    overlaysSectionRef={infoOverlaysRef}
+    overlays={offersOverlays ? { role: role!, canEdit: can("chooseSocialOverlays") } : null}
+    dropbox={offersDropbox ? { isSyncing, autohdrBlocked, onSyncDropbox, readOnlyRef: dropboxGroupRef } : null}
+    onOpenWhiteboard={onOpenWhiteboard}
+  />;
+  if (phone) {
+    return <HeaderPhone project={project} currentStageKey={currentStageKey} stages={stages} crumb={crumb} tabs={tabs} info={infoPanel}
+      infoOpen={info.open} onOpenInfo={(opener) => openInfo(opener, null)} onOpenWhiteboard={onOpenWhiteboard} whiteboardOpen={whiteboardOpen} />;
+  }
   return <HeaderDesktop
     project={project}
     condensed={condensed}
     rowARef={rowARef}
     rowBRef={rowBRef}
-    crumb={!inSheet && <InternalLink className={DASHBOARD_CRUMB} {...dashboardReturn}>← Dashboard</InternalLink>}
+    crumb={crumb}
     tabs={tabs}
     cluster={{
       project, activeTab, archived, latch, canEdit, canAdminBackend, canMoveStage, currentStageKey, stages,
@@ -161,23 +193,6 @@ export function ProjectHeader({
       stageCellRef, stageGroupRef, deadlineGroupRef, latchArchived, onOpenWhiteboard,
       dropboxBlocked: offersDropbox && autohdrBlocked && !archived, onOpenInfo: openInfo, infoOpen: info.open,
     }}
-    info={<ProjectInfoPanel
-      open={info.open}
-      target={info.target}
-      onClose={() => setInfo((current) => ({ ...current, open: false }))}
-      returnFocus={() => (infoOpener.current?.isConnected ? infoOpener.current : document.querySelector<HTMLElement>('[data-testid="project-info-open"]'))}
-      project={project}
-      place={place}
-      archived={archived}
-      latch={latch}
-      canEdit={canEdit}
-      canAdminBackend={canAdminBackend}
-      latchArchived={latchArchived}
-      deadlineSectionRef={infoDeadlineRef}
-      overlaysSectionRef={infoOverlaysRef}
-      overlays={offersOverlays ? { role: role!, canEdit: can("chooseSocialOverlays") } : null}
-      dropbox={offersDropbox ? { isSyncing, autohdrBlocked, onSyncDropbox, readOnlyRef: dropboxGroupRef } : null}
-      onOpenWhiteboard={onOpenWhiteboard}
-    />}
+    info={infoPanel}
   />;
 }

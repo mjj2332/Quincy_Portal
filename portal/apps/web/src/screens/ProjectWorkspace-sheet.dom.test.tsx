@@ -13,6 +13,7 @@ import type { WorkspaceAsset } from "../components/PhotoGrid";
 import type { Role } from "@quincy/shared";
 import { ApiError } from "../lib/api";
 import { stubRailMedia } from "../testing/rail-media";
+import { mockViewport, type MockViewport } from "../testing/viewport";
 
 // jsdom has no matchMedia: without it the checklist reads as stacked (collapsed) (#377).
 stubRailMedia(true);
@@ -461,5 +462,115 @@ describe("the Social overlays picker in the Project header (#870)", () => {
     await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.includes("TikTok"))!);
     await escape(document.activeElement ?? document.body);
     await flushUntil(() => document.querySelector('[role="group"][aria-label="Stage"]') !== null, "the Stage control to turn read-only");
+  });
+});
+
+// #914 M1/M2 — the phone header (the sheet's `max-[721px]` width, PROJECT_SHEET_PHONE_QUERY). It draws Close in whichever bar is
+// showing and claims the sheet's own; the slim bar is inert until the project bar has scrolled under it.
+describe("the phone header inside the Project sheet (#914 M1, M2)", () => {
+  class FakeIO {
+    static instances: FakeIO[] = [];
+    targets: Element[] = [];
+    disconnected = false;
+    constructor(public callback: IntersectionObserverCallback, public options?: IntersectionObserverInit) { FakeIO.instances.push(this); }
+    observe(target: Element) { this.targets.push(target); }
+    unobserve() {}
+    disconnect() { this.disconnected = true; }
+    takeRecords() { return []; }
+  }
+  let viewport: MockViewport;
+  const liveClose = () => [...document.querySelectorAll<HTMLElement>('button[aria-label="Close project"]')].filter((button) => !button.closest("[inert]"));
+  const projectBar = () => document.querySelector<HTMLElement>('[data-testid="project-header"]');
+  const slimBar = () => document.querySelector<HTMLElement>('[data-testid="project-header-slim"]');
+  const info = () => document.querySelector<HTMLElement>('[data-testid="project-info-sheet"]');
+  const barObserver = () => FakeIO.instances.find((io) => !io.disconnected && io.targets[0] === projectBar());
+  async function scrollBarUnder(out: boolean) {
+    const io = barObserver()!;
+    await act(async () => {
+      io.callback([{ target: io.targets[0]!, isIntersecting: !out, boundingClientRect: { top: out ? -40 : 0, bottom: out ? 20 : 62 } as DOMRectReadOnly, rootBounds: { top: 48 } as DOMRectReadOnly } as IntersectionObserverEntry], io as unknown as IntersectionObserver);
+      await Promise.resolve();
+    });
+  }
+  beforeEach(async () => {
+    FakeIO.instances = [];
+    vi.stubGlobal("IntersectionObserver", FakeIO);
+    viewport = mockViewport({ width: 390, height: 844, coarse: true });
+  });
+  afterEach(() => { viewport.restore(); stubRailMedia(true); vi.unstubAllGlobals(); });
+
+  it("has exactly one live Close project, inside the header landmark, in place of the sheet's own; it asks the sheet to close", async () => {
+    await renderSheet();
+    expect(document.querySelector('[data-testid="project-sheet-close"]')).toBeNull();
+    expect(liveClose()).toHaveLength(1);
+    expect(projectBar()!.matches('section[aria-label="Project Overview"]')).toBe(true);
+    expect(projectBar()!.contains(liveClose()[0]!)).toBe(true);
+    await click(liveClose()[0]!);
+    expect(onRequestClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps one Workspace tablist", async () => {
+    // (The whiteboard's phone button is covered with the board's own gate in ProjectWorkspace-whiteboard.dom.test.tsx.)
+    await renderSheet();
+    expect(document.querySelectorAll('[role="tablist"][aria-label="Workspace"]')).toHaveLength(1);
+    expect(document.querySelector('[data-testid="project-header-tabbar"]')!.contains(document.querySelector('[role="tablist"][aria-label="Workspace"]'))).toBe(true);
+  });
+
+  it("gives the sheet its own Close back at 1440, and keeps it while the Project is loading at 390", async () => {
+    await viewport.set({ width: 1440, height: 900, coarse: false });
+    await renderSheet();
+    expect(document.querySelector('[data-testid="project-sheet-close"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="project-header-close"]')).toBeNull();
+    await act(async () => { root!.unmount(); await Promise.resolve(); });
+    root = null;
+    document.body.replaceChildren();
+    await viewport.set({ width: 390, height: 844, coarse: true });
+    apiGetMock.mockImplementation(() => new Promise(() => undefined));
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(<QuincyQueryProvider key="test" principalId="test-user" role={authState.role as Role}>
+        <ProjectSheet open kind="project" sheetKey="project:p1" backdropHref="/" onRequestClose={onRequestClose}>
+          <ProjectWorkspace projectId="p1" onArrivalConsumed={() => undefined} />
+        </ProjectSheet>
+      </QuincyQueryProvider>);
+      await Promise.resolve();
+    });
+    await flush();
+    expect(document.querySelector('[data-testid="project-sheet-close"]')).not.toBeNull();
+  });
+
+  it("opens Project info from the project bar, and focus returns to it", async () => {
+    await renderSheet();
+    const opener = projectBar()!.querySelector<HTMLElement>('button[aria-label="Project info, 12 Example St"]')!;
+    opener.focus();
+    await click(opener);
+    await flushUntil(() => info() !== null, "Project info to open");
+    await escape(document.activeElement ?? document.body);
+    await flushUntil(() => info() === null, "Project info to close");
+    expect(document.activeElement).toBe(opener);
+    expect(onRequestClose).not.toHaveBeenCalled();
+  });
+
+  it("swaps in the slim bar once the project bar has scrolled under it: its name opens Project info and its Close is the live one", async () => {
+    await renderSheet();
+    expect(barObserver()!.options?.rootMargin).toBe("-48px 0px 0px 0px");
+    expect(slimBar()!.hasAttribute("inert")).toBe(true);
+    await scrollBarUnder(true);
+    expect(slimBar()!.hasAttribute("inert")).toBe(false);
+    expect(projectBar()!.hasAttribute("inert")).toBe(true);
+    expect(liveClose()).toHaveLength(1);
+    expect(slimBar()!.contains(liveClose()[0]!)).toBe(true);
+    const name = slimBar()!.querySelector<HTMLElement>('button[aria-label="Project info, 12 Example St"]')!;
+    name.focus();
+    await click(name);
+    await flushUntil(() => info() !== null, "Project info to open");
+    await escape(document.activeElement ?? document.body);
+    await flushUntil(() => info() === null, "Project info to close");
+    expect(document.activeElement).toBe(name);
+    // Back up: focus on the slim bar moves to its twin in the project bar instead of falling to the body.
+    await scrollBarUnder(false);
+    expect(slimBar()!.hasAttribute("inert")).toBe(true);
+    expect(document.activeElement).toBe(projectBar()!.querySelector('button[aria-label="Project info, 12 Example St"]'));
   });
 });

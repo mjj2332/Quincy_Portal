@@ -11,16 +11,17 @@ import { HEADER_ICON_CHIP } from "./header-styles";
  */
 export function WhiteboardButton({ onOpen, variant = "ghost", condensedCopy = false }: {
   onOpen: () => void;
-  variant?: "ghost" | "header";
-  /** #914 D5: the condensed bar's copy. Its own test id, so the board's fallback return target stays Row A's button, and it names that button as its twin. */
+  /** `header`: the cluster's outline chip; `bar`: the phone project bar's 44px ghost button with the larger icon (M1). */
+  variant?: "ghost" | "header" | "bar";
+  /** #914 D5: the condensed bar's copy. Its own test id, so the board's fallback return target stays Row A's button. */
   condensedCopy?: boolean;
 }) {
   return <Tooltip>
     <TooltipTrigger render={<Button type="button" variant={variant === "header" ? "outline" : "ghost"} size={variant === "header" ? "icon-header" : "icon"} aria-label="Open whiteboard"
-      data-testid={condensedCopy ? `${WHITEBOARD_OPEN_TESTID}-condensed` : WHITEBOARD_OPEN_TESTID} data-condensed-twin={condensedCopy ? WHITEBOARD_OPEN_TESTID : undefined}
-      className={variant === "header" ? HEADER_ICON_CHIP : "min-h-[44px] min-w-[44px]"}
+      data-testid={condensedCopy ? `${WHITEBOARD_OPEN_TESTID}-condensed` : WHITEBOARD_OPEN_TESTID} data-twin="whiteboard"
+      className={variant === "header" ? HEADER_ICON_CHIP : "min-h-[44px] min-w-[44px]" /* WCAG 2.5.5 Enhanced target */}
       onClick={(event) => { noteWhiteboardOpener(event.currentTarget); onOpen(); }} />}>
-      <PresentationIcon className={variant === "header" ? "size-[18px]" : "size-4"} aria-hidden="true" />
+      <PresentationIcon className={variant === "header" ? "size-[18px]" : variant === "bar" ? "size-5" : "size-4"} aria-hidden="true" />
     </TooltipTrigger>
     <TooltipContent side="bottom">Open whiteboard</TooltipContent>
   </Tooltip>;

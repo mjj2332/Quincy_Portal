@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CollectionKind, WorkspaceTab } from "@quincy/shared";
 import { ProjectHeader } from "./ProjectHeader";
 import type { ProjectDetail } from "../lib/project-data";
+import { mockViewport } from "../testing/viewport";
 
 const roleState = vi.hoisted(() => ({ role: "editor" as "admin" | "editor" | "photographer", inactive: false }));
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { role: roleState.role } } }) }));
@@ -540,6 +541,48 @@ describe("Project header Stage control", () => {
     render(<ProjectHeader {...baseProps(project({ archivedAt: Date.now() }))} canEdit />);
     info = await openInfo();
     expect(info.querySelector('[data-testid="project-info-deadline-change"]')).toBeNull();
+  });
+
+  describe("M1 phone project bar", () => {
+    let viewport: ReturnType<typeof mockViewport>;
+    beforeEach(() => { viewport = mockViewport({ width: 390, height: 844, coarse: true }); });
+    afterEach(() => { viewport.restore(); vi.useRealTimers(); });
+    const bar = () => host.querySelector<HTMLElement>('[data-testid="project-header"]')!;
+    const sub = () => bar().querySelector<HTMLElement>('[data-testid="project-header-phone-sub"]')!;
+    const schedule = (instant: string, localCivil: string) => ({ version: 1, source: "manual", deadline: { localCivil, instant, utcOffsetMinutes: 600, fold: 0 }, reminderOffsetsMinutes: [], state: "scheduled", nextOccurrence: null, canResume: false }) as unknown as ProjectDetail["deadlineSchedule"];
+
+    it("is one button naming Project info: the title, then the Stage, the due date and a Notes marker; the Stage combobox is the drawer's", () => {
+      vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-09-16T07:00:00.000Z") });
+      render(<ProjectHeader {...baseProps(project({ productionNotes: "Twilight", deadlineSchedule: schedule("2026-09-18T07:00:00.000Z", "2026-09-18T17:00") }))} />);
+      // One target: the button is stretched over the title, its chevron and the subline (a heading cannot sit inside a button).
+      const main = bar().querySelector<HTMLButtonElement>('button[aria-label="Project info, 12 Example St"]')!;
+      const target = main.parentElement!;
+      expect(target.contains(sub())).toBe(true);
+      expect(target.querySelector("h2")?.textContent).toBe("12 Example St");
+      expect(sub().textContent).toBe("Editing·Due in 2d·Notes");
+      expect(sub().querySelector('[data-tone="caution"]')?.textContent).toBe("Due in 2d");
+      expect(stageTrigger()).toBeNull();
+      expect(host.querySelector('[data-testid="project-info-open"]')).toBeNull();
+    });
+
+    it("drops the due date with no deadline and the Notes marker with no notes, and reads Overdue as critical", () => {
+      vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-09-20T07:00:00.000Z") });
+      render(<ProjectHeader {...baseProps(project())} />);
+      expect(sub().textContent).toBe("Editing");
+      act(() => { root.render(<ProjectHeader {...baseProps(project({ deadlineSchedule: schedule("2026-09-18T07:00:00.000Z", "2026-09-18T17:00") }))} />); });
+      expect(sub().querySelector('[data-tone="critical"]')?.textContent).toBe("Overdue");
+    });
+
+    it("mounts one tree: no desktop rows at 390, and no phone bars at 1440", async () => {
+      render(<ProjectHeader {...baseProps(project())} />);
+      expect(host.querySelector('[data-testid="project-header-slim"]')).not.toBeNull();
+      expect(host.querySelector('[data-testid="project-header-meta"]')).toBeNull();
+      await viewport.set({ width: 1440, height: 900, coarse: false });
+      expect(host.querySelector('[data-testid="project-header-slim"]')).toBeNull();
+      expect(host.querySelector('[data-testid="project-header-meta"]')).not.toBeNull();
+      expect(stageTrigger()).not.toBeNull();
+      expect(host.querySelectorAll('[role="tablist"]')).toHaveLength(1);
+    });
   });
 
   describe("D5 condensed bar", () => {

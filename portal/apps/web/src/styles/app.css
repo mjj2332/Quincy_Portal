@@ -284,6 +284,16 @@
   .project-header { padding: var(--space-4) var(--space-4) var(--space-3); }
   .project-header__tabbar { padding-inline: var(--space-4); }
 }
+/* #914 M1/M2 — the phone header (HeaderPhone): three siblings under `main.work`. The slim bar (48px, --space-7) sticks at the top and
+   gives its height back with a negative margin, so it covers the project bar's top until that has scrolled under it; it is inert
+   and transparent until then (a reveal: opacity only). The tabs stick under it, so stuck chrome is 48 + the tab row: 93px. */
+.project-phone__slim { position: sticky; top: var(--shell-header-height); z-index: 22; display: flex; align-items: center; gap: var(--space-1); height: var(--space-7); margin-block-end: calc(var(--space-7) * -1); padding-inline: var(--space-4) var(--space-1); background: var(--paper-000); opacity: 0; transition: opacity var(--dur-base) var(--ease-standard); }
+.project-phone__slim[data-on] { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .project-phone__slim { transition: none; } }
+/* M1: 62px at rest (the 44px targets plus the bar's block padding), the title block first and the bar's buttons at the end. */
+.project-phone__bar { display: grid; min-height: 62px; padding-block: var(--space-2); padding-inline: var(--space-4) var(--space-1); background: var(--paper-000); }
+.project-header__tabbar--phone { top: calc(var(--shell-header-height) + var(--space-7)); }
+.project-header__tabbar--phone[data-stuck] { box-shadow: var(--shadow-sm); }
 .worktools { position: sticky; top: var(--shell-header-height); z-index: 20; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-6); background: color-mix(in srgb, var(--paper-050) 90%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border-hairline); flex-wrap: wrap; }
 /* #594: the Notice board composer's toolbar (the InputGroupAddon, whose containing block is the whole field) sticks under the
    shell header while a long document scrolls. z-index 2 sits above .tableWrapper and the outline rail (1), below the header and popovers. */
@@ -306,6 +316,10 @@
    wins over the body's `scroll-py` utility (its bottom stays). */
 .project-sheet__body:has(.project-header__tabbar) { --project-chrome-stuck: 60px; --collab-rail-top: calc(var(--project-chrome-stuck) + var(--space-2)); scroll-padding-top: calc(var(--project-chrome-stuck) + var(--space-2)); }
 .project-sheet__body .rich-text-toolbar-sticky { top: var(--project-chrome-stuck); }
+/* M2: on the phone the stuck chrome is the slim bar and the tab row. */
+@media (max-width: 720px) {
+  .project-sheet__body:has(.project-header__tabbar) { --project-chrome-stuck: calc(var(--space-7) + 44px + var(--border-width-hair)); }
+}
 [data-testid="project-sheet"][data-impersonating] .viewer { inset: var(--impersonation-banner-height) 0 0; }
 /* #914: the pinned bar sticks below the condensed bar, which now holds the sheet's Close, so it no longer reserves the Close. */
 .project-sheet__body .worktools { top: var(--project-chrome-stuck); }

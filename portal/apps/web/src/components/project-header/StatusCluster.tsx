@@ -69,7 +69,7 @@ export function StatusCluster(props: StatusClusterProps) {
     {archived && <Badge variant="secondary" size="xl" data-testid="project-archived-badge" className="normal-case tracking-normal gap-[var(--space-1)] [&_svg]:size-3.5"><ArchiveIcon aria-hidden="true" />Archived</Badge>}
     <span aria-hidden="true" className={cn(HEADER_RULE, "project-header__push mx-[var(--space-1)]")} />
     {props.onOpenWhiteboard && <WhiteboardButton variant="header" onOpen={props.onOpenWhiteboard} />}
-    <Button type="button" variant="outline" size="header" data-testid="project-info-open" className={HEADER_CHIP} aria-haspopup="dialog" aria-expanded={props.infoOpen}
+    <Button type="button" variant="outline" size="header" data-testid="project-info-open" data-twin="info" className={HEADER_CHIP} aria-haspopup="dialog" aria-expanded={props.infoOpen}
       onClick={(event) => props.onOpenInfo(event.currentTarget, null)}><PanelRightIcon aria-hidden="true" />Project info</Button>
     <ProjectMoreMenu project={project} activeTab={props.activeTab} canEdit={canEdit} archived={archived} canAdminBackend={props.canAdminBackend} />
   </div>;

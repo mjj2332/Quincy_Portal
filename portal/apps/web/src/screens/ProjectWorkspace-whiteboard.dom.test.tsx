@@ -6,6 +6,7 @@ import { focusManager } from "@tanstack/react-query";
 import { nearestScrollContainer } from "../lib/scroll-container";
 import { ProjectWorkspace } from "./ProjectWorkspace";
 import { ProjectSheet } from "../components/quincy/ProjectSheet";
+import { mockViewport } from "../testing/viewport";
 import { ConfirmModalHost } from "../components/ConfirmDialog";
 import { confirm, confirmStore } from "../lib/confirm";
 import { QuincyQueryProvider } from "../lib/query-client";
@@ -176,6 +177,31 @@ describe("the whiteboard entry button (#498)", () => {
     expect(button.compareDocumentPosition(cluster.querySelector('[data-testid="project-more-actions"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await click(button);
     expect(onOpenWhiteboard).toHaveBeenCalledTimes(1);
+  });
+});
+
+// #914 M1: on the phone the entry is the project bar's, beside Close, still outside every tablist; closing the board refocuses it.
+describe("the phone whiteboard entry (#914 M1)", () => {
+  let viewport: ReturnType<typeof mockViewport>;
+  beforeEach(() => { viewport = mockViewport({ width: 390, height: 844, coarse: true }); });
+  afterEach(() => { viewport.restore(); });
+
+  it("sits in the project bar beside Close, opens the board, and closing the board returns focus to it", async () => {
+    await renderSheet();
+    const button = openButton()!;
+    expect(document.querySelectorAll('[data-testid="project-whiteboard-open"]')).toHaveLength(1);
+    expect(button.closest('[role="tablist"]')).toBeNull();
+    const bar = document.querySelector('[data-testid="project-header"]')!;
+    expect(bar.contains(button)).toBe(true);
+    expect(button.nextElementSibling?.getAttribute("aria-label")).toBe("Close project");
+    await click(button);
+    expect(onOpenWhiteboard).toHaveBeenCalledTimes(1);
+    await rerenderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    await click(document.querySelector('[data-testid="project-whiteboard-close"]')!);
+    await rerenderSheet({ whiteboardOpen: false });
+    await flush(3);
+    expect(document.activeElement).toBe(openButton());
   });
 });
 

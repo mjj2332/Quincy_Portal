@@ -73,7 +73,7 @@ export function HeaderDesktop({ project, crumb, cluster, tabs, info, condensed =
       {tabs}
       {condensed && <div className="flex shrink-0 items-center gap-[var(--space-2)]">
         {cluster.onOpenWhiteboard && <WhiteboardButton variant="header" condensedCopy onOpen={cluster.onOpenWhiteboard} />}
-        <Button type="button" variant="outline" size="header" data-testid="project-header-condensed-info" data-condensed-twin="project-info-open" className={HEADER_CHIP} aria-haspopup="dialog" aria-expanded={cluster.infoOpen}
+        <Button type="button" variant="outline" size="header" data-testid="project-header-condensed-info" data-twin="info" className={HEADER_CHIP} aria-haspopup="dialog" aria-expanded={cluster.infoOpen}
           onClick={(event) => cluster.onOpenInfo(event.currentTarget, null)}><PanelRightIcon aria-hidden="true" />Project info</Button>
       </div>}
     </div>
