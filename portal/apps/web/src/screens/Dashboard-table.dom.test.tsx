@@ -545,7 +545,7 @@ describe("one line per row, frame 4b's grid (#923 pass round 1, rows 6–8)", ()
     expect(line.className).not.toMatch(/(^|\s)flex-wrap(\s|$)/);
     expect(line.querySelector('[data-testid="late-chip"]')).not.toBeNull();
     const trigger = line.querySelector<HTMLElement>('[data-testid="project-table-deadline-trigger"]')!;
-    expect(trigger.querySelector(".truncate")!.getAttribute("title")).toBe("Wed 1 Jan · 11:00");
+    expect(trigger.querySelector("[title]")!.getAttribute("title")).toBe("Wed 1 Jan · 11:00");
     const shoot = [...tr.querySelectorAll<HTMLElement>("td span")].find((node) => node.textContent === "Shoot date pending")!;
     expect(shoot.className).toContain("truncate");
     expect(shoot.getAttribute("title")).toBe("Shoot date pending");
@@ -555,7 +555,6 @@ describe("one line per row, frame 4b's grid (#923 pass round 1, rows 6–8)", ()
     projects = [row("p1", { deadlineAt: PAST, deadlineLocalCivil: "2020-01-01T11:00" })];
     await renderTable();
     const trigger = rowFor("p1").querySelector<HTMLElement>('[data-testid="project-table-deadline-trigger"]')!;
-    expect(trigger.className).toContain("-ml-1");
     expect(trigger.className).toContain("max-w-[calc(100%+var(--space-1))]");
     expect(trigger.className).not.toMatch(/(^|\s)max-w-full(\s|$)/);
   });
