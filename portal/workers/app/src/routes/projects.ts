@@ -459,6 +459,21 @@ async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof 
   return { created: true as const, response: { ...createProjectResponse(data, projectId, observedMemberships), collections: collectionsForResponse } };
 }
 
+/** #923 D1: one batched GROUP BY over `project_subtasks` for the matched ids (the `editorsByProject` pattern). A Project with no Subtasks is absent from the map; the caller fills `{0,0}`. */
+async function checklistCountsByProject(db: ReturnType<typeof createDb>, projectIds: string[]): Promise<Map<string, { completed: number; total: number }>> {
+  const counts = new Map<string, { completed: number; total: number }>();
+  for (const ids of chunked(projectIds, 80)) {
+    if (!ids.length) continue;
+    const rows = await db.select({
+      projectId: schema.projectSubtasks.projectId,
+      total: sql<number>`count(*)`,
+      completed: sql<number>`coalesce(sum(case when ${schema.projectSubtasks.done} then 1 else 0 end), 0)`,
+    }).from(schema.projectSubtasks).where(inArray(schema.projectSubtasks.projectId, ids)).groupBy(schema.projectSubtasks.projectId).all();
+    for (const row of rows) counts.set(row.projectId, { completed: Number(row.completed), total: Number(row.total) });
+  }
+  return counts;
+}
+
 function rowsFromD1<T>(result: unknown): T[] {
   return ((result as { results?: T[] } | undefined)?.results ?? []);
 }
@@ -531,6 +546,7 @@ projectsRoutes.get("/projects", terminalRoute("/projects", async (c) => {
   const projectIds = matchedRows.map(({ project }) => project.id);
   const { storedByProject, automaticByProject } = await coverMaps(db, projectIds, user.role === "photographer");
   const editorsByProject = await activeEditorRefsByProject(db, projectIds);
+  const checklistByProject = await checklistCountsByProject(db, projectIds);
   const enabled = await boardContractEnabled(c.env.DB, variant);
   return c.json({
     projects: matchedRows.map((r) => projectStageForRole({
@@ -543,6 +559,7 @@ projectsRoutes.get("/projects", terminalRoute("/projects", async (c) => {
       deadlineLocalCivil: r.project.deadlineLocalCivil,
       deadlineZone: r.project.deadlineZone,
       editors: editorsByProject.get(r.project.id) ?? [],
+      checklist: checklistByProject.get(r.project.id) ?? { completed: 0, total: 0 },
     }, user.role)),
     board: {
       contractEnabled: enabled,
