@@ -85,6 +85,14 @@
  *    the repeat icon stays beside it (`flex-1` would push it to the row's far edge). Desktop unchanged.
  *    Pinned by
  *    `components/event-calendar-agenda-phone.guard.test.ts`.
+ * 8. 2026-10-18, #922 — ADDED, additive (both unset: nothing changes). `viewConfig.eventSize ===
+ *    "readable"` (frame 3d, `design/prototypes/dashboard-views/`): a grid chip gains `text-sm`, placed
+ *    before `leading-normal` so tailwind-merge keeps the leading; the default content's time span and
+ *    the agenda time column gain `text-xs`. And `viewConfig.renderAgendaEventTrailing`, rendered after
+ *    the agenda row's own content, so a consumer can add a label without replacing the row (and its
+ *    From / Until / All day time text). The slot-draft label (`EVENT_CALENDAR_SLOT_DRAFT.label`, 11px)
+ *    is untouched: the Production calendar turns `selectSlot` off, so it never draws one. See
+ *    `event-calendar.tsx` entry 6; pinned by `event-calendar-readable.dom.test.tsx`.
  */
 import {
   createContext,
@@ -300,6 +308,8 @@ function EventCalendarEvent<TData = unknown>({
     (gestures.canDrag(segment) ||
       gestures.canResizeEdge(segment, "start") ||
       gestures.canResizeEdge(segment, "end"))
+  // QUINCY (#922): frame 3d's type scale; see `eventSize` on the view config
+  const readable = viewConfig.eventSize === "readable"
   const timedBlock = inTimeGrid && !isBar
   const horizontalBar = isBar && !inTimeGrid
   // >= compactEventMinutes renders the stacked (title over time) layout, where
@@ -338,7 +348,7 @@ function EventCalendarEvent<TData = unknown>({
       {!occurrence.allDay &&
         segment.isStart &&
         (view === "month" ? (
-          <span className="text-muted-foreground shrink-0">
+          <span className={cn("text-muted-foreground shrink-0", readable && "text-xs")}>
             {format(
               toZoned(occurrence.start, settings.timeZone),
               settings.i18n.formats.eventTime,
@@ -349,7 +359,8 @@ function EventCalendarEvent<TData = unknown>({
           <span
             className={cn(
               "text-muted-foreground hidden @[8rem]:inline",
-              stackedBlock ? EVENT_CALENDAR_FADE_TRUNCATE : "truncate"
+              stackedBlock ? EVENT_CALENDAR_FADE_TRUNCATE : "truncate",
+              readable && "text-xs"
             )}
           >
             {settings.i18n.functions.formatEventTime(
@@ -403,7 +414,7 @@ function EventCalendarEvent<TData = unknown>({
   // Agenda default row: time column, color-dot badge, plain title
   const agendaDefaultContent = (
     <>
-      <span className="text-muted-foreground w-40 shrink-0 truncate tabular-nums max-[721px]:w-auto max-[721px]:basis-full max-[721px]:text-xs">
+      <span className={cn("text-muted-foreground w-40 shrink-0 truncate tabular-nums max-[721px]:w-auto max-[721px]:basis-full max-[721px]:text-xs", readable && "text-xs")}>
         {agendaTimeText}
       </span>
       <span
@@ -415,6 +426,8 @@ function EventCalendarEvent<TData = unknown>({
       {occurrence.isRecurring && (
         <RepeatIcon className="text-muted-foreground size-2.5 shrink-0" aria-hidden="true" />
       )}
+      {/* QUINCY (#922): the consumer's trailing label, e.g. "2 days late" */}
+      {viewConfig.renderAgendaEventTrailing?.({ occurrence, segment, view, isDragging, isSelected })}
     </>
   )
 
@@ -640,6 +653,10 @@ function EventCalendarEvent<TData = unknown>({
         : cn(
             // @container removes intrinsic sizing; only grid chips are containers
             // py-1: room above/below inline badges (attendee pill etc.)
+            // QUINCY (#922): `readable` sets text-sm BEFORE leading-normal, so tailwind-merge keeps the
+            // leading (a later font-size utility would drop it) and the time grid's own `leading-4`
+            // on compact chips still wins.
+            readable && "text-sm",
             "@container gap-1.5 rounded-sm px-1.5 py-1 leading-normal",
             // soft tint + inset ring, not an accent border
             // QUINCY: the `dark:` lift that sat here is gone. Quincy has no `dark:` variant —

@@ -67,6 +67,11 @@
  *    (`OPTION_KEYS`, `VIEW_CONFIG_KEYS`) — a key declared on the interface and missing there is
  *    silently dropped. The chip side is `event-calendar-event.tsx` entry 6. Pinned by
  *    `event-calendar-item-popup.dom.test.tsx`.
+ * 6. 2026-10-18, #922 — ADDED, additive (both unset: nothing changes): the `eventSize` and
+ *    `renderAgendaEventTrailing` view-config keys, LISTED in `VIEW_CONFIG_KEYS` beside their
+ *    declarations; `readable` also raises the root's `--ec-month-bar-h` to `--space-6` so the taller
+ *    chip fits a bar lane. The chip side is `event-calendar-event.tsx` entry 8. Pinned by
+ *    `event-calendar-readable.dom.test.tsx`.
  */
 import {
   createContext,
@@ -1567,6 +1572,21 @@ interface EventCalendarViewConfig<TData = unknown> {
    */
   eventPopup?: { isOpen: (occurrence: EventCalendarOccurrence<TData>) => boolean }
   /**
+   * QUINCY ADDITION (#922): the chip type scale. `"compact"` (the default, the vendor's look) leaves
+   * every chip on the calendar's `text-xs`. `"readable"` is frame 3d of the dashboard-views prototype:
+   * a grid chip's title is `text-sm` (14px) and its time `text-xs` (12px), and an agenda row's time
+   * column drops to `text-xs` under its `text-sm` title. Read in `event-calendar-event.tsx`.
+   */
+  eventSize?: "compact" | "readable"
+  /**
+   * QUINCY ADDITION (#922): a node appended to an agenda row after the vendor's own content (time,
+   * dot, title). An agenda row renders `renderAgendaEvent` or the vendor default, never `renderEvent`,
+   * so this is how a consumer adds a short label (the Production calendar's "2 days late") without
+   * replacing, and so re-implementing, the row's multi-day time text. Agenda only; return
+   * `undefined` to add nothing.
+   */
+  renderAgendaEventTrailing?: (props: EventCalendarRenderEventProps<TData>) => ReactNode
+  /**
    * Extra classes for the CURRENT day, appended after the built-in highlight
    * (primary-tinted background + accent top border) on month cells, time-grid
    * day columns, and day headers.
@@ -1793,6 +1813,9 @@ const VIEW_CONFIG_KEYS: Array<keyof EventCalendarViewConfig> = [
   "eventClassName",
   // QUINCY ADDITION (#463): runtime allow-list, as `eventClassName` above.
   "eventPopup",
+  // QUINCY ADDITION (#922): runtime allow-list, as `eventClassName` above.
+  "eventSize",
+  "renderAgendaEventTrailing",
   "todayClassName",
   "showDayAddButton",
   "scrollbars",
@@ -1972,7 +1995,14 @@ function EventCalendar<TData = unknown>({
     // Inner elements omit their own text-size so they cascade from here (the
     // few portaled surfaces - "+N more" popover, drag carry clone - pin the
     // size explicitly since DOM inheritance does not cross a portal).
-    className: cn("flex min-h-0 min-w-0 flex-col text-xs", className),
+    className: cn(
+      "flex min-h-0 min-w-0 flex-col text-xs",
+      // QUINCY (#922): a `readable` chip is 14px type over a 20px avatar (~29px with py-1), taller than
+      // the default 1.75rem / 1.625rem bar lane, so the lane rises to 32px (a 30px bar, frame 3d's
+      // all-day row). Month "auto" capacity measures this same variable, so it stays exact.
+      viewConfig.eventSize === "readable" && "[--ec-month-bar-h:var(--space-6)]",
+      className
+    ),
     children: (
       <>
         {children}
