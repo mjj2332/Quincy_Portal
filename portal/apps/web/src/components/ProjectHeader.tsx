@@ -1,174 +1,29 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CollectionKind, Role } from "@quincy/shared";
-import type { WorkspaceTab } from "../lib/workspace-tab";
-import { StageDot } from "./atoms";
-import { InternalLink } from "./InternalLink";
-import { useDashboardReturnLink, useInProjectSheet } from "./quincy/ProjectSheet";
-import { CopyProjectLinkButton } from "./quincy/CopyProjectLinkButton";
-import { ProjectShowIn } from "./quincy/ProjectShowIn";
-import { ProjectTeamCombobox } from "./ProjectTeamCombobox";
-import { ProjectHeaderDeadline } from "./ProjectHeaderDeadline";
-import { ProjectHeaderDropbox } from "./ProjectHeaderDropbox";
-import { Tabs, TabsList, TabsTrigger } from "@/components/reui/tabs";
-import { Badge } from "@/components/reui/badge";
-import { Button } from "@/components/reui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/reui/tooltip";
-import { PresentationIcon } from "lucide-react";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/reui/select";
-import { cn, formatUnreadCount } from "../lib/utils";
-import { SCROLL_FADE_EDGE_FRACTION, SCROLL_FADE_MASK_CLASSES, useScrollFade } from "../lib/use-scroll-fade";
-import { HEADER_READONLY_VALUE, HEADER_TEXT_LINK, READONLY_GROUP_FOCUS } from "./project-header-popover";
+import { useLayoutEffect, useRef, useState } from "react";
+import { PROJECT_SHEET_PHONE_QUERY } from "./quincy/ProjectSheet";
+import { WorkspaceTabs } from "./project-header/WorkspaceTabs";
+import { HeaderDesktop } from "./project-header/HeaderDesktop";
+import type { ArchivedLatch } from "./project-header/StatusCluster";
+import { latchFocusTarget } from "./project-header/latch-focus";
 import { useStages } from "../lib/stages";
 import { useCapabilities } from "../lib/capabilities";
-import { useVideoReviewQuery, type ProjectDetail } from "../lib/project-data";
-import { ProjectSocialOverlayPicker } from "./quincy/ProjectSocialOverlayPicker";
+import type { ProjectDetail } from "../lib/project-data";
+import type { CollectionKind } from "@quincy/shared";
+import type { WorkspaceTab } from "../lib/workspace-tab";
+import { ProjectInfoPanel, type InfoTarget, type ProjectInfoPanelProps } from "./project-header/ProjectInfoPanel";
+import { ProjectInfoDrawer, type StageMoveOutcome } from "./project-header/ProjectInfoDrawer";
+import { HeaderPhone } from "./project-header/HeaderPhone";
+import { isLiveTwin, twinHandOff, useScrolledOut } from "./project-header/use-scrolled-out";
+import { useMediaQuery } from "../lib/use-media-query";
 
-function date(value: string | null) {
-  return value
-    ? new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short", year: "numeric" }).format(new Date(value))
-    : "Shoot date pending";
-}
+export { WhiteboardButton } from "./project-header/WhiteboardButton";
+export type { StageMoveOutcome } from "./project-header/ProjectInfoDrawer";
 
-/** #498: the whiteboard's entry, beside the Collaboration tab (outside the tablist: it is a button, not a tab). */
-export function WhiteboardButton({ onOpen }: { onOpen: () => void }) {
-  return <Tooltip>
-    <TooltipTrigger render={<Button type="button" variant="ghost" size="icon" aria-label="Open whiteboard" data-testid="project-whiteboard-open" className="min-h-[44px] min-w-[44px]" onClick={onOpen} />}>
-      <PresentationIcon className="size-4" aria-hidden="true" />
-    </TooltipTrigger>
-    <TooltipContent side="bottom">Open whiteboard</TooltipContent>
-  </Tooltip>;
-}
-
-/** #870: below the control grid, only while the Video review gate is open (the picker's routes answer 404 when it is closed). Its own component, so the query exists only for roles that can see it. */
-function SocialOverlaysRow({ projectId, role, canEdit, archived, onArchivedRefusal }: { projectId: string; role: Role; canEdit: boolean; archived: boolean; onArchivedRefusal: () => void }) {
-  const open = useVideoReviewQuery(projectId, true, role).data?.open === true;
-  if (!open) return null;
-  return <div data-testid="project-header-social-overlays"><ProjectSocialOverlayPicker key={projectId} projectId={projectId} role={role} canEdit={canEdit} archived={archived} onArchivedRefusal={onArchivedRefusal} /></div>;
-}
-
-function collectionLabel(value: string) {
-  return value === "raw" ? "RAW" : value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-// #213: prototype 2a's "Edit details" is an underlined text link in the identity row, not a
-// button. `buttonClasses` deliberately carries `no-underline`, so this is its own small idiom;
-// inline-flex + min-height keeps the 44px target the rest of the header holds.
-const EDIT_DETAILS_LINK = HEADER_TEXT_LINK;
-
-// #367: beside the sentence-case "Edit details" link the ghost Copy link must not read as a field key
-// (the button base is uppercase + wide tracking); -ms-2 offsets the ghost padding so the label sits on
-// the row rhythm while the hover fill still bleeds.
-const COPY_LINK_IN_HEADER = "normal-case tracking-[var(--tracking-normal)] -ms-2";
-
-// #213 follow-up: prototype 2a's `.crumb` — "← Dashboard" as small secondary text above the title,
-// moved here from the work area's `.wsbar` chip. The 44px target is kept by the min-height; the
-// negative block margin gives that height back so the identity row keeps the prototype's 8px rhythm.
-const DASHBOARD_CRUMB =
-  "inline-flex items-center w-fit min-h-[44px] " /* WCAG 2.5.5 Enhanced target, not a spacing token */ +
-  "[margin-block:-12px] no-underline " +
-  "[font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] text-foreground-secondary hover:text-foreground " +
-  "transition-[color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] " +
-  "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
-  "focus-visible:outline-ring focus-visible:outline-offset-2";
-
-const HEADER_KV_KEY =
-  "k [font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)] " +
-  "uppercase tracking-[var(--tracking-wide)] text-foreground-secondary";
-
-const HEADER_KV_VALUE =
-  "vv [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] " +
-  "text-foreground [overflow-wrap:anywhere]";
-
-// Stage select styling — carried over from ProjectOverviewRail.tsx (#202), restyled from a
-// native <select> onto the ReUI select's SelectTrigger <button> (#203). `disabled:opacity-100`
-// keeps the rail's sunken disabled treatment instead of also fading it. #213 follow-up: `w-fit`,
-// not the rail's `w-full` — in the stacked and two-per-line layouts the other three triggers are
-// content-sized, and a lone full-width select read as a different kind of control.
-const STAGE_SELECT =
-  "w-fit max-w-full cursor-pointer text-left justify-between disabled:opacity-100 " +
-  "min-h-[44px] " /* WCAG 2.5.5 Enhanced target, not a spacing token */ +
-  "pl-[14px] pr-[14px] py-[9px] " +
-  "rounded-[var(--radius-sm)] border-solid border-[length:var(--border-width-hair)] " +
-  "bg-card border-border text-foreground " +
-  "[font:var(--weight-regular)_var(--text-sm)/1.2_var(--font-sans)] " +
-  "transition-[background-color,color,border-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] " +
-  "hover:not-disabled:bg-secondary hover:not-disabled:border-border-hover " +
-  "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
-  "focus-visible:outline-ring focus-visible:outline-offset-2 " +
-  "disabled:text-foreground-secondary disabled:bg-surface-sunken disabled:border-border disabled:cursor-not-allowed";
-
-function StageOption({ stageKey, label }: { stageKey: ProjectDetail["stageKey"]; label: string }) {
-  return <span className="inline-flex items-center gap-[var(--space-2)]">
-    <StageDot stageKey={stageKey} />
-    <span>{label}</span>
-  </span>;
-}
-
-function StageControl({ project, currentStageKey, stages, contractEnabled, pending, disabledReason, onMove }: {
-  project: ProjectDetail;
-  currentStageKey: ProjectDetail["stageKey"];
-  stages: ReturnType<typeof useStages>["stages"];
-  contractEnabled: boolean;
-  pending: boolean;
-  disabledReason?: string | null;
-  onMove?: (stageKey: ProjectDetail["stageKey"]) => void;
-}) {
-  const current = stages.find((item) => item.key === currentStageKey);
-  const unavailable = disabledReason ?? (!contractEnabled ? "Stage movement is temporarily unavailable." : null);
-  // Keep an already-focused select focusable after a command-level 503 so the
-  // workspace can return focus to the same control while exposing the reason.
-  // The contract-off state remains a genuinely disabled control.
-  const disabled = pending || (!contractEnabled && !disabledReason);
-  const labelFor = (key: ProjectDetail["stageKey"]) => stages.find((item) => item.key === key)?.label ?? key;
-  const reasonId = `project-stage-reason-${project.id}`;
-  return <div className="grid gap-[var(--space-1)]">
-    <Select
-      value={currentStageKey}
-      disabled={disabled}
-      readOnly={Boolean(unavailable) && !disabled}
-      onValueChange={(next) => {
-        if (next == null || unavailable || next === currentStageKey) return;
-        const stage = stages.find((item) => item.key === next);
-        if (!stage?.active) return;
-        onMove?.(next as ProjectDetail["stageKey"]);
-      }}
-    >
-      <SelectTrigger
-        id={`project-stage-${project.id}`}
-        data-focus-key={`rail-stage:${project.id}`}
-        aria-label="Move project Stage"
-        aria-busy={pending || undefined}
-        aria-disabled={unavailable ? "true" : undefined}
-        // #206: the reason must be described, not just visually adjacent — only wired when a
-        // reason is actually shown below, since an absent target id would be worse than none.
-        aria-describedby={unavailable ? reasonId : undefined}
-        className={STAGE_SELECT}
-      >
-        <SelectValue>{() => <StageOption stageKey={currentStageKey} label={labelFor(currentStageKey)} />}</SelectValue>
-      </SelectTrigger>
-      {/* #325: options are nowrap, so the registry's `w-(--anchor-width)` clipped a long Stage
-          ("Awaiting RAW · Smoke"). Never narrower than the trigger, never wider than the viewport. */}
-      <SelectContent data-testid="project-stage-options" className="w-auto min-w-(--anchor-width) max-w-(--available-width)">
-        {stages.filter((stage) => stage.active || stage.key === currentStageKey).map((stage) => (
-          <SelectItem className="max-[721px]:min-h-[44px]" value={stage.key} key={stage.key} disabled={!stage.active && stage.key === currentStageKey}>
-            <StageOption stageKey={stage.key} label={stage.label} />
-          </SelectItem>
-        ))}
-        {!current && <SelectItem className="max-[721px]:min-h-[44px]" value={currentStageKey}><StageOption stageKey={currentStageKey} label={labelFor(currentStageKey)} /></SelectItem>}
-      </SelectContent>
-    </Select>
-    {/* #213 (Sol): the Stage column is `max-content`, so an unconstrained reason (75–89 characters)
-        would size the column to the sentence and push the row past 1280. `width: 0` removes it from
-        the column's intrinsic size; `min-width: 100%` then lets it wrap at the select's width. */}
-    {unavailable && <span id={reasonId} className="block mt-[var(--space-1)] [width:0] [min-width:100%]
-                     [font:var(--weight-regular)_var(--text-2xs)/var(--leading-normal)_var(--font-sans)]
-                     text-foreground-secondary">{unavailable}</span>}
-  </div>;
-}
-
-/** #455: which write was refused as archived, if any (the latch's source; it also says which read-only group focus returns to). */
-type ArchivedLatch = null | "stage" | "deadline" | "dropbox" | "social-overlays";
-
+/**
+ * #914 — the Project header (prototype project-header-revamp). A thin owner: it keeps the #455 archived latch (so every surface
+ * flips read-only at once) and picks the ONE tree to mount, by the Project sheet's own phone query (a JS switch, so the trees never
+ * both exist: one tablist, one whiteboard button). The desktop tree is `HeaderDesktop`: Row A (identity and the status cluster) and
+ * Row B (the Workspace tabs, rendered once, condensing once Row A has scrolled out). The phone tree is `HeaderPhone` (M1/M2).
+ */
 export function ProjectHeader({
   project,
   activeTab,
@@ -212,20 +67,18 @@ export function ProjectHeader({
   collaborationUnread?: number;
   /** #337: each Workspace tab's trigger, keyed by tab, so an arrival can focus the tab it selected. */
   workspaceTabRefs?: React.RefObject<Map<WorkspaceTab, HTMLButtonElement>>;
-  /** Resolves "archived" when the server refused the move because the Project is archived (#455). */
-  onStageMove?: (stageKey: ProjectDetail["stageKey"]) => void | Promise<"archived" | void>;
+  /** Resolves the move's outcome: "archived" when the server refused it because the Project is archived (#455). */
+  onStageMove?: (stageKey: ProjectDetail["stageKey"]) => void | Promise<StageMoveOutcome | void>;
   stageMovePending?: boolean;
   stageMoveDisabledReason?: string | null;
 }) {
-  const dashboardReturn = useDashboardReturnLink();
-  const inSheet = useInProjectSheet();
   const { presentationStageKey, stages } = useStages();
   const { can, role } = useCapabilities();
   // #870: the Social overlays picker needs `viewVideo` (an External editor sees it read-only) and the Video review gate open: see `SocialOverlaysRow`.
   const offersOverlays = can("viewVideo") && role !== undefined;
   const currentStageKey = presentationStageKey(project.stageKey);
   // #455: the header is read-only on an archived Project, from the loaded detail or latched by the first refusal of a write (Stage, Deadline,
-  // Dropbox) until the detail goes un-archived. The latch makes the whole row flip at once instead of one control per refusal.
+  // Dropbox, Team) until the detail goes un-archived. The latch makes every control flip at once instead of one control per refusal.
   const [latch, setLatch] = useState<ArchivedLatch>(null);
   const archived = Boolean(project.archivedAt) || latch !== null;
   const canMoveStage = can("moveProjectStage") && !archived;
@@ -233,6 +86,21 @@ export function ProjectHeader({
   const stageGroupRef = useRef<HTMLSpanElement>(null);
   const deadlineGroupRef = useRef<HTMLDivElement>(null);
   const dropboxGroupRef = useRef<HTMLDivElement>(null);
+  const infoDeadlineRef = useRef<HTMLElement>(null);
+  const infoOverlaysRef = useRef<HTMLElement>(null);
+  /** #914 M3: the phone Project info's Stage row (Stage is only there on the phone). */
+  const infoStageRef = useRef<HTMLElement>(null);
+  // #914 D2: Project info, open at the top or at a section, and the control that opened it (focus goes back there).
+  const [info, setInfo] = useState<{ open: boolean; target: InfoTarget }>({ open: false, target: null });
+  const infoOpener = useRef<HTMLElement | null>(null);
+  // #914 D5: Row A scrolled out of the sheet body condenses Row B.
+  const rowARef = useRef<HTMLElement>(null);
+  const rowBRef = useRef<HTMLDivElement>(null);
+  const phone = useMediaQuery(PROJECT_SHEET_PHONE_QUERY);
+  const condensed = useScrolledOut(rowARef, project.id, !whiteboardOpen && !phone, {
+    // Un-condensing unmounts the bar's copies of Whiteboard and Project info: focus on one moves to its Row A twin.
+    handOff: (next) => next ? undefined : twinHandOff(rowBRef.current, () => rowARef.current),
+  });
   const priorArchivedAt = useRef(Boolean(project.archivedAt));
   const priorProjectId = useRef(project.id);
   const focusAfterFlip = useRef<{ source: NonNullable<ArchivedLatch> } | null>(null);
@@ -248,12 +116,18 @@ export function ProjectHeader({
   }
   // Lost focus is decided from the capture taken when the write started, only on a refusal-driven flip, never on load: the control unmounts in the
   // flip commit, leaving focus on <body> (or a disabled control) unless it is moved to the source's always-mounted read-only group. Focus the user
-  // moved to another connected, enabled control while the request was pending is theirs: leave it.
+  // moved to another connected, enabled control while the request was pending is theirs: leave it. (The Team moves its own focus.)
   useLayoutEffect(() => {
     const flip = focusAfterFlip.current;
     if (!latch || !flip) return;
     focusAfterFlip.current = null;
-    const target = { stage: stageGroupRef, deadline: deadlineGroupRef, dropbox: dropboxGroupRef, "social-overlays": stageGroupRef }[flip.source].current;
+    const target = latchFocusTarget({
+      stage: { info: infoStageRef, header: stageGroupRef },
+      deadline: { info: infoDeadlineRef, header: deadlineGroupRef },
+      dropbox: { info: dropboxGroupRef, header: dropboxGroupRef },
+      team: { info: null, header: null },
+      "social-overlays": { info: infoOverlaysRef, header: null },
+    }, flip.source, info.open);
     if (!target) return;
     const active = document.activeElement;
     const reclaimed = !!active && active !== document.body && active !== target && active.contains(target);
@@ -263,149 +137,59 @@ export function ProjectHeader({
     const active = document.activeElement;
     // The Select's popup is portalled: its trigger names it through aria-controls while it is open.
     const popupId = stageCellRef.current?.querySelector("[aria-controls]")?.getAttribute("aria-controls");
-    const inside = Boolean(active && (stageCellRef.current?.contains(active) || (popupId && document.getElementById(popupId)?.contains(active))));
+    // On the phone the Stage is chosen in Project info's Stage view.
+    const inside = Boolean(active && (stageCellRef.current?.contains(active) || (popupId && document.getElementById(popupId)?.contains(active)) || active.closest('[data-testid="project-info-stage-options"]')));
     const result = await onStageMove?.(stageKey);
     if (result === "archived") latchArchived("stage", inside);
+    return result;
   }
-  // The strip scrolls horizontally on phones and opens at scrollLeft 0, so a selected tab past the
-  // fold (Collaboration is last and the default) would be out of view. `nearest` on both axes keeps
-  // the page itself from scrolling vertically.
-  const tabsRef = useRef<HTMLDivElement>(null);
-  const { fade: tabsFade, onScroll: onTabsScroll } = useScrollFade(tabsRef);
-  // One stable callback per tab for the component's lifetime: a fresh ref callback every render makes
-  // Base UI's trigger re-run its own ref registration (a state update), which loops. A `useRef` Map,
-  // not `useMemo`, because React may discard a memo; the registry prop is read through a ref.
-  const tabRefCallbacks = useRef(new Map<WorkspaceTab, (element: HTMLButtonElement | null) => void>());
-  const workspaceTabRefsRef = useRef(workspaceTabRefs);
-  workspaceTabRefsRef.current = workspaceTabRefs;
-  const tabRef = (tab: WorkspaceTab) => {
-    let callback = tabRefCallbacks.current.get(tab);
-    if (!callback) {
-      callback = (element) => {
-        const refs = workspaceTabRefsRef.current?.current;
-        if (!refs) return;
-        if (element) refs.set(tab, element);
-        else refs.delete(tab);
-      };
-      tabRefCallbacks.current.set(tab, callback);
-    }
-    return callback;
+
+  const tabs = <WorkspaceTabs project={project} activeTab={activeTab} availableTabs={availableTabs} deliveryOffered={deliveryOffered} onActiveTabChange={onActiveTabChange} collaborationUnread={collaborationUnread} workspaceTabRefs={workspaceTabRefs} whiteboardOpen={whiteboardOpen} />;
+  const place = [project.suburb, project.postcode].filter(Boolean).join(" ");
+  const offersDropbox = canUpload && (hasRawFolder || canAdminBackend || Boolean(project.monitoredRawFolder));
+  function openInfo(opener: HTMLElement, target: InfoTarget) {
+    infoOpener.current = opener;
+    setInfo({ open: true, target });
+  }
+  const panel: Omit<ProjectInfoPanelProps, "target"> = {
+    open: info.open,
+    onClose: () => setInfo((current) => ({ ...current, open: false })),
+    // The opener, or (it was swapped out while Project info was open) the live Project info control of the bar showing now.
+    returnFocus: () => (isLiveTwin(infoOpener.current) ? infoOpener.current
+      : [...document.querySelectorAll<HTMLElement>('[data-twin="info"]')].find(isLiveTwin) ?? null),
+    project,
+    place,
+    archived,
+    latch,
+    canEdit,
+    canAdminBackend,
+    latchArchived,
+    deadlineSectionRef: infoDeadlineRef,
+    overlaysSectionRef: infoOverlaysRef,
+    overlays: offersOverlays ? { role: role!, canEdit: can("chooseSocialOverlays") } : null,
+    dropbox: offersDropbox ? { isSyncing, autohdrBlocked, onSyncDropbox, readOnlyRef: dropboxGroupRef } : null,
+    onOpenWhiteboard,
   };
-  // While the whiteboard is open the Workspace is `display:none`: a hidden scroller has no layout, so
-  // `scrollIntoView` does nothing (a deep link mounts the header that way) and a scroller that was laid out
-  // loses its scrollLeft. The effect therefore re-runs when the board closes and the header is shown again (#498).
-  useEffect(() => {
-    if (whiteboardOpen) return;
-    const strip = tabsRef.current;
-    const selected = strip?.querySelector<HTMLElement>('[data-testid="project-overview-tab"][aria-selected="true"]');
-    if (!strip || !selected) return;
-    // Scroll the strip alone. `scrollIntoView` also scrolls every scrollable ancestor, so it moved the sheet body
-    // until the tab sat flush with the body's top edge and clipped the tab's 4px-outset focus ring (#613).
-    const stripBox = strip.getBoundingClientRect();
-    const tab = selected.getBoundingClientRect();
-    // A revealed tab must clear the edge fade (a fraction of the strip's width), not just the scroll-padding: at 8px it
-    // sat under the ~38px mask. Where the tab would land within a fade-width of either end, go to the end itself, so
-    // the strip does not rest 4px short of it and keep a fade over the selected tab.
-    const inset = strip.clientWidth * SCROLL_FADE_EDGE_FRACTION;
-    const max = Math.max(0, strip.scrollWidth - strip.clientWidth);
-    const before = tab.left - (stripBox.left + inset);
-    const after = tab.right - (stripBox.right - inset);
-    if (before >= 0 && after <= 0) return;
-    const tabs = strip.querySelectorAll('[data-testid="project-overview-tab"]');
-    const edge = selected === tabs[0] ? "start" : selected === tabs[tabs.length - 1] ? "end" : null;
-    let target = Math.min(max, Math.max(0, strip.scrollLeft + (before < 0 ? before : Math.min(after, before))));
-    if (edge) target = edge === "start" ? 0 : max;
-    else {
-      // A proximity snap is taken only if the tab still clears the fade left on the other side once the strip rests
-      // there (an end has no fade); otherwise the snap would undo the reveal.
-      const left = tab.left - stripBox.left + strip.scrollLeft;
-      const right = tab.right - stripBox.left + strip.scrollLeft;
-      const clears = (at: number) => left >= at + (at > 0 ? inset : 0) && right <= at + strip.clientWidth - (at < max ? inset : 0);
-      const snap = target <= inset ? 0 : max - target <= inset ? max : null;
-      if (snap !== null && clears(snap)) target = snap;
-    }
-    strip.scrollLeft = target;
-  }, [activeTab, whiteboardOpen]);
-
-  return <section className="project-header" aria-label="Project Overview" data-testid="project-header">
-    <div className="project-header__identity">
-      {!inSheet && <InternalLink className={DASHBOARD_CRUMB} {...dashboardReturn}>← Dashboard</InternalLink>}
-      <h2 id="project-overview-property"
-          className="[font:var(--type-h3)] tracking-[var(--tracking-tight)] text-foreground [text-wrap:pretty]">
-        {project.street}
-      </h2>
-      <div className="project-header__meta">
-        <span className="[font:var(--weight-regular)_var(--text-2xs)/1.2_var(--font-sans)]
-                        uppercase tracking-[var(--tracking-wide)] text-foreground-secondary">
-          {[project.suburb, project.postcode].filter(Boolean).join(" · ")}
-        </span>
-        <span><span className={HEADER_KV_KEY}>Shoot</span> <span className={HEADER_KV_VALUE}>{date(project.shootDate)}</span></span>
-        <span><span className={HEADER_KV_KEY}>Client</span> <span className={HEADER_KV_VALUE}>{project.agencyName || project.agentName ? `${project.agencyName ?? "—"} · ${project.agentName ?? "—"}` : "—"}</span></span>
-        {/* #455: an archived Project's details are read-only, so the link leads to Restore / Delete (Admin) and is not offered to anyone else. */}
-        {canEdit && (!archived || canAdminBackend) && <InternalLink className={EDIT_DETAILS_LINK} to={`/projects/${encodeURIComponent(project.id)}/edit`}>{archived ? "Restore or delete" : "Edit details"}</InternalLink>}
-        <CopyProjectLinkButton projectId={project.id} tab={activeTab} className={COPY_LINK_IN_HEADER} />
-        <ProjectShowIn project={project} />
-      </div>
-      {project.productionNotes && <p className={cn("project-header__notes", "m-0 [white-space:pre-wrap]",
-                    "[font:var(--weight-regular)_var(--text-sm)/var(--leading-relaxed)_var(--font-body-serif)]",
-                    "text-foreground-secondary")}>{project.productionNotes}</p>}
-    </div>
-
-    {/* #213: prototype 2a's flat control row — four cells, one small label each, no section
-        headings. The cells are plain layout divs (a generic div cannot carry a name, #206 lesson);
-        every control inside already has its own accessible name. */}
-    <div className="project-header__controls">
-      <div className="project-header__control" ref={stageCellRef}>
-        <span className={HEADER_KV_KEY}>Stage</span>
-        {canMoveStage ? <StageControl project={project} currentStageKey={currentStageKey} stages={stages} contractEnabled={project.contractEnabled} pending={stageMovePending} disabledReason={stageMoveDisabledReason} onMove={(stageKey) => { void moveStageAndLatch(stageKey); }} /> : <span
-          ref={stageGroupRef}
-          {...(archived ? { role: "group", "aria-label": "Stage", tabIndex: -1 } : {})}
-          className={cn(HEADER_READONLY_VALUE, archived && READONLY_GROUP_FOCUS)}
-        ><StageOption stageKey={currentStageKey} label={stages.find((stage) => stage.key === currentStageKey)?.label ?? currentStageKey} /></span>}
-      </div>
-
-      <div className="project-header__control">
-        <span className={HEADER_KV_KEY}>Team</span>
-        <ProjectTeamCombobox projectId={project.id} members={project.members} canEdit={canEdit} archived={archived} rowClassName="min-h-[44px]" />
-      </div>
-
-      <div className="project-header__control">
-        <span className={HEADER_KV_KEY}>Deadline</span>
-        <ProjectHeaderDeadline projectId={project.id} schedule={project.deadlineSchedule} canEdit={canEdit} archived={archived} archivedNotice={latch === "deadline"} readOnlyRef={deadlineGroupRef} onArchivedRefusal={(inside) => latchArchived("deadline", inside)} />
-      </div>
-
-      {canUpload && (hasRawFolder || canAdminBackend || Boolean(project.monitoredRawFolder)) && <div className="project-header__control">
-        <span className={HEADER_KV_KEY}>Dropbox</span>
-        <ProjectHeaderDropbox project={project} isSyncing={isSyncing} autohdrBlocked={autohdrBlocked} onSyncDropbox={onSyncDropbox} archived={archived} archivedNotice={latch === "dropbox"} readOnlyRef={dropboxGroupRef} onArchivedRefusal={(inside) => latchArchived("dropbox", inside)} />
-      </div>}
-    </div>
-
-    {offersOverlays && <SocialOverlaysRow projectId={project.id} role={role!} canEdit={can("chooseSocialOverlays")} archived={archived} onArchivedRefusal={() => latchArchived("social-overlays", false)} />}
-
-    {/* The entry button sits beside the scroller, not inside it: at phone width the tabs scroll sideways and it must stay in view. */}
-    <div className="project-header__tabrow flex min-w-0 items-center gap-[var(--space-2)]">
-    {/* The scroller clips its overflow on both axes: the padding (cancelled by the negative margin) keeps the focus ring and the count chip inside it. */}
-    <div className={cn("project-header__tabs -my-[var(--space-1)] flex min-w-0 flex-1 items-center gap-[var(--space-2)] p-[var(--space-1)]", SCROLL_FADE_MASK_CLASSES)} ref={tabsRef} data-fade={tabsFade} onScroll={onTabsScroll}>
-      <Tabs value={activeTab} onValueChange={(next) => { if (typeof next === "string" && next !== activeTab) onActiveTabChange(next as WorkspaceTab); }}>
-        <TabsList variant="line" aria-label="Workspace">
-          {availableTabs.map((tab) => { const collection = project.collections.find((item) => item.kind === tab); return (
-            <TabsTrigger key={tab} value={tab} ref={tabRef(tab)} data-testid="project-overview-tab" className="gap-[var(--space-2)]">
-              {collectionLabel(tab)}
-              {/* #213: the active tab's count is the filled ink badge, the rest stay muted (prototype 2a). */}
-              <Badge variant={tab === activeTab ? "default" : "primary-light"} size="sm" className="[font-family:var(--font-mono)] [font-variant-numeric:tabular-nums]">{collection ? collection.receivedCount : "—"}</Badge>
-            </TabsTrigger>); })}
-          <TabsTrigger value="collaboration" id="project-workspace-tab-collaboration" aria-controls="project-workspace-panel-collaboration" ref={tabRef("collaboration")} data-testid="project-overview-tab" className="gap-[var(--space-2)]">
-            Collaboration
-            {collaborationUnread > 0 && <>
-              <Badge variant="destructive" size="sm" aria-hidden="true" data-testid="project-collaboration-tab-unread">{formatUnreadCount(collaborationUnread)}</Badge>
-              <span className="sr-only">, {collaborationUnread} unread comment{collaborationUnread === 1 ? "" : "s"}</span>
-            </>}
-          </TabsTrigger>
-          {deliveryOffered && <TabsTrigger value="delivery" id="project-workspace-tab-delivery" aria-controls="project-workspace-panel-delivery" ref={tabRef("delivery")} data-testid="project-overview-tab" className="gap-[var(--space-2)]">Delivery</TabsTrigger>}
-        </TabsList>
-      </Tabs>
-    </div>
-    {onOpenWhiteboard && <div className="shrink-0"><WhiteboardButton onOpen={onOpenWhiteboard} /></div>}
-    </div>
-  </section>;
+  if (phone) {
+    const drawer = <ProjectInfoDrawer {...panel} activeTab={activeTab} stageRowRef={infoStageRef} stage={{
+      currentStageKey, stages, canMove: canMoveStage && project.contractEnabled, pending: stageMovePending, disabledReason: stageMoveDisabledReason,
+      onMove: moveStageAndLatch,
+    }} />;
+    return <HeaderPhone project={project} currentStageKey={currentStageKey} stages={stages} tabs={tabs} info={drawer}
+      infoOpen={info.open} onOpenInfo={(opener) => openInfo(opener, null)} onOpenWhiteboard={onOpenWhiteboard} whiteboardOpen={whiteboardOpen} archived={archived} />;
+  }
+  return <HeaderDesktop
+    project={project}
+    condensed={condensed}
+    rowARef={rowARef}
+    rowBRef={rowBRef}
+    tabs={tabs}
+    cluster={{
+      project, activeTab, archived, latch, canEdit, canAdminBackend, canMoveStage, currentStageKey, stages,
+      stageMovePending, stageMoveDisabledReason, onStageMove: (stageKey) => { void moveStageAndLatch(stageKey); },
+      stageCellRef, stageGroupRef, deadlineGroupRef, latchArchived, onOpenWhiteboard,
+      dropboxBlocked: offersDropbox && autohdrBlocked && !archived, onOpenInfo: openInfo, infoOpen: info.open,
+    }}
+    info={<ProjectInfoPanel {...panel} target={info.target} />}
+  />;
 }

@@ -62,6 +62,10 @@ import { cn } from "@/lib/utils"
 //    takes a thumb (it sits in a row with `--space-2` above and below, which the hit area fills).
 //    Used by `quincy/NotesFilterHead.tsx` only; every other size renders as before.
 
+// 9. `size.header` and `size["icon-header"]` (#914, prototype project-header-revamp `.qb` / `.qb.icon`): the Project header's
+//    status cluster. The prototype draws 40px controls on a 4px radius in the label type, sentence case; Quincy keeps the 44px
+//    target, so both are 44px on `--radius-sm`. Used by `components/project-header/` only; every other size renders as before.
+
 /** Quincy's control height contract: 38px, 44px at <=721px (correction 3). */
 export const BUTTON_HEIGHT_CLASS = "min-h-[38px] max-[721px]:min-h-[44px]"
 
@@ -94,6 +98,8 @@ const buttonVariants = cva(
           "size-7 rounded-[min(var(--radius-md),12px)] in-data-[slot=button-group]:rounded-lg",
         "icon-lg": "size-9",
         chip: "relative h-7 gap-[var(--space-1)] rounded-[var(--radius-pill)] px-[var(--space-3)] normal-case tracking-normal [font:var(--type-label)] after:absolute after:inset-x-0 after:-inset-y-[var(--space-2)] [&_svg:not([class*='size-'])]:size-3",
+        header: "min-h-[44px] gap-[var(--space-2)] px-[var(--space-3)] rounded-[var(--radius-sm)] normal-case tracking-normal [font:var(--type-label)] [&_svg:not([class*='size-'])]:size-4",
+        "icon-header": "size-11 rounded-[var(--radius-sm)]",
         "icon-round": "size-11 rounded-[var(--radius-pill)] disabled:opacity-100 [&:disabled_svg]:opacity-50 in-data-[surface=inverse]:disabled:border-transparent in-data-[surface=inverse]:disabled:bg-primary in-data-[surface=inverse]:disabled:!text-primary-foreground",
       },
     },

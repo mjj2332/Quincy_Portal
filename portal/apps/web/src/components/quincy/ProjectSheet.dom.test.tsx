@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { ProjectSheet } from "./ProjectSheet";
+import { PROJECT_SHEET_PHONE_QUERY, ProjectSheet, useClaimSheetClose, useProjectSheet } from "./ProjectSheet";
 
 let root: Root | null = null;
 let host: HTMLElement;
@@ -68,5 +68,41 @@ describe("ProjectSheet focus (#607)", () => {
     expect(document.getElementById(dialog!.getAttribute("aria-labelledby")!)?.textContent).toBe("Project workspace");
     for (let i = 0; i < 20 && document.activeElement !== dialog; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
     expect(document.activeElement).toBe(dialog);
+  });
+});
+
+// #914: the phone header renders its own Close, so it claims the sheet's while it is mounted.
+function Claimer() { useClaimSheetClose(); return <span data-testid="claimer" />; }
+function ContextReader({ onRead }: { onRead: (value: ReturnType<typeof useProjectSheet>) => void }) { onRead(useProjectSheet()); return null; }
+
+describe("ProjectSheet Close claim (#914)", () => {
+  async function renderWith(children: React.ReactNode) {
+    await act(async () => {
+      root!.render(<ProjectSheet open kind="project" sheetKey="p:1" backdropHref="/" onRequestClose={() => {}}>{children}</ProjectSheet>);
+      await Promise.resolve(); await Promise.resolve();
+    });
+  }
+  const close = () => document.querySelector('[data-testid="project-sheet-close"]');
+
+  it("drops its own Close while a child claims it, and restores it when every claim is released", async () => {
+    await renderWith(<><Claimer /><Claimer /></>);
+    expect(close()).toBeNull();
+    await renderWith(<Claimer />);
+    expect(close()).toBeNull();
+    await renderWith(<div>body</div>);
+    expect(close()).not.toBeNull();
+  });
+
+  it("exposes close() and its scroll body to the content", async () => {
+    let read: ReturnType<typeof useProjectSheet> = null;
+    await renderWith(<ContextReader onRead={(value) => { read = value; }} />);
+    await act(async () => { await Promise.resolve(); });
+    expect(read).not.toBeNull();
+    expect(typeof read!.close).toBe("function");
+    expect(read!.body).toBe(document.querySelector('[data-testid="project-sheet-body"]'));
+  });
+
+  it("names the phone query its own max-[721px]: variant compiles to", () => {
+    expect(PROJECT_SHEET_PHONE_QUERY).toBe("(width < 721px)");
   });
 });

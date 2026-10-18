@@ -2,10 +2,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CollectionKind } from "@quincy/shared";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "../lib/api";
-import { ProjectHeader } from "./ProjectHeader";
 import { ProjectTeamCombobox, ProjectTeamCollectCombobox, teamChipLabels, chipsBoxWraps } from "./ProjectTeamCombobox";
 import { useState } from "react";
 import { createRef } from "react";
@@ -14,8 +12,9 @@ import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project
 import "../styles/index.css";
 
 /**
- * Ports every `ProjectTeamControl.dom.test.tsx` / `.confirm.dom.test.tsx` assertion against the
- * real `ProjectHeader`, mounting the real `ProjectTeamCombobox` (no team-module mock) — #204.
+ * Ports every `ProjectTeamControl.dom.test.tsx` / `.confirm.dom.test.tsx` assertion against the real `ProjectTeamCombobox`
+ * (no team-module mock) — #204. #914: the header now uses the `"popover"` presentation (`ProjectTeamCombobox.popover.dom.test.tsx`);
+ * these cases mount the default `"chips"` presentation directly, as the Gantt People cell does, with the header's old row height.
  *
  * The "step 0 spike" describe block below proves Base UI's Combobox opens by typing, selects an
  * option, and removes a chip under happy-dom.
@@ -72,20 +71,6 @@ async function waitFor(assertion: () => void, timeoutMs = 1000) {
   }
 }
 
-function project(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
-  return {
-    id: projectId, street: "12 Example St", suburb: "Suburbia", postcode: "2000", agencyName: null, agentName: null,
-    shootDate: null, stageKey: "editing", rawFolderPath: null, rawFolderLink: null, boardRevision: 5, contractEnabled: true,
-    coverAssetId: null, effectiveCoverAssetId: null, collections: [], members, deadlineSchedule: { version: 0, source: null, deadline: null, reminderOffsetsMinutes: [], state: "unset", nextOccurrence: null, canResume: false },
-    ...overrides,
-  };
-}
-
-const baseProps = (p: ProjectDetail) => ({
-  project: p, activeTab: "raw" as CollectionKind, availableTabs: ["raw"] as CollectionKind[], canUpload: false, canAdminBackend: false,
-  canEdit: true, hasRawFolder: false, autohdrBlocked: false, isSyncing: false, onSyncDropbox: vi.fn(), onActiveTabChange: vi.fn(), onStageMove: vi.fn(),
-});
-
 async function mount(currentMembers: ProjectMember[] = members, canEdit = true) {
   host = document.createElement("div"); document.body.appendChild(host);
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -93,7 +78,7 @@ async function mount(currentMembers: ProjectMember[] = members, canEdit = true) 
   root = createRoot(host);
   await act(async () => {
     root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}>
-      <ProjectHeader {...baseProps(project({ members: currentMembers }))} canEdit={canEdit} />
+      <ProjectTeamCombobox projectId={projectId} members={currentMembers} canEdit={canEdit} rowClassName="min-h-[44px]" />
     </QueryClientProvider></ProjectQueryRuntimeProvider>);
     await Promise.resolve();
   });
@@ -458,33 +443,6 @@ describe("ProjectTeamCombobox", () => {
     await waitFor(() => expect(apiDeleteMock).toHaveBeenCalledTimes(1));
   });
 
-  it("14. tabbable controls sit in DOM order row 2 then tabs, with no positive tabindex (#206)", async () => {
-    const host = await mount();
-    const elements = [...host.querySelectorAll<HTMLElement>('button, a[href], input, [tabindex]')]
-      .filter((el) => !el.hasAttribute("disabled") && el.tabIndex >= 0);
-    for (const el of elements) expect(el.tabIndex).not.toBeGreaterThan(0);
-    const labels = elements.map((el) => el.getAttribute("aria-label") ?? el.textContent?.trim());
-
-    // `canEdit` here also gates row 1's "Edit details" link, which sits before the controls
-    // section in DOM order — real, but outside this test's scope (row 2 then tabs) — so the
-    // relative order below is checked with indexOf rather than a full-list equality (brief's
-    // documented fallback), rather than asserting "Move project Stage" is first overall.
-    const stageIndex = labels.indexOf("Move project Stage");
-    const deadlineIndex = labels.findIndex((label) => label?.startsWith("Deadline:"));
-    const removeIndex = labels.indexOf("Remove Inactive Editor (Editor)");
-    const addIndex = labels.indexOf("Add team member");
-    const rawIndex = labels.findIndex((label) => label?.includes("RAW"));
-
-    // #213: row 2 reads Stage · Team · Deadline · Dropbox (prototype 2a), so the Team chips and
-    // input now come before the Deadline trigger.
-    expect(stageIndex).toBeGreaterThanOrEqual(0);
-    expect(removeIndex).toBeGreaterThan(stageIndex);
-    expect(addIndex).toBeGreaterThan(removeIndex);
-    expect(deadlineIndex).toBeGreaterThan(addIndex);
-    expect(rawIndex).toBeGreaterThan(deadlineIndex);
-    expect(rawIndex).toBe(labels.length - 1);
-  });
-
   it("shows a dual-role person as a selectable option in both groups", async () => {
     const dual = { id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", name: "Dana Dual", email: "dana@example.test", globalRole: "admin" as const, active: true as const };
     apiGetMock.mockResolvedValue({ photographers: [photographer, dual], editors: [editor, dual] });
@@ -626,7 +584,7 @@ describe("ProjectTeamCombobox", () => {
     // `members` prop is otherwise static, unlike the real `useProjectDetailQuery`-backed one).
     await act(async () => {
       root!.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}>
-        <ProjectHeader {...baseProps(project({ members: [] }))} />
+        <ProjectTeamCombobox projectId={projectId} members={[]} canEdit rowClassName="min-h-[44px]" />
       </QueryClientProvider></ProjectQueryRuntimeProvider>);
       await Promise.resolve();
     });

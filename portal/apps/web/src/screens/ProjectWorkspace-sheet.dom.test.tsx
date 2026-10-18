@@ -13,6 +13,7 @@ import type { WorkspaceAsset } from "../components/PhotoGrid";
 import type { Role } from "@quincy/shared";
 import { ApiError } from "../lib/api";
 import { stubRailMedia } from "../testing/rail-media";
+import { mockViewport, type MockViewport } from "../testing/viewport";
 
 // jsdom has no matchMedia: without it the checklist reads as stacked (collapsed) (#377).
 stubRailMedia(true);
@@ -151,6 +152,28 @@ describe("the real Workspace inside the Project sheet (#366)", () => {
     expect(document.activeElement).toBe(tab("RAW"));
   });
 
+  // #914 seam 1 (#787): the rebuilt header keeps Delivery as the Workspace's last tab, after Collaboration, in either tree.
+  it("keeps Delivery the last Workspace tab, right after Collaboration, at 1440 and at 390", async () => {
+    const fallback = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string, init?: unknown) => path === "/api/projects/p1/delivery" ? Promise.resolve({ page: null, set: null, dto: null }) : fallback(path, init));
+    for (const width of [1440, 390]) {
+      const viewport = mockViewport({ width, height: width > 400 ? 900 : 844, coarse: width < 400 });
+      try {
+        await renderSheet();
+        await flushUntil(() => tab("Delivery") !== undefined, `the Delivery tab at ${width}`);
+        const tabs = [...document.querySelectorAll<HTMLElement>('[role="tablist"][aria-label="Workspace"] [role="tab"]')].map((element) => element.textContent?.replace(/\d+\+?$/, "").trim());
+        expect(document.querySelectorAll('[role="tablist"][aria-label="Workspace"]'), String(width)).toHaveLength(1);
+        expect(tabs.at(-1), String(width)).toBe("Delivery");
+        expect(tabs.at(-2), String(width)).toBe("Collaboration");
+      } finally {
+        await act(async () => { root!.unmount(); await Promise.resolve(); });
+        root = null;
+        document.body.replaceChildren();
+        viewport.restore();
+      }
+    }
+  });
+
   it("the header carries no second 'Dashboard' leave control: the sheet's close button is the way out", async () => {
     await renderSheet();
     const header = document.querySelector('[data-testid="project-header"]')!;
@@ -181,7 +204,8 @@ describe("the real Workspace inside the Project sheet (#366)", () => {
 
   it("a confirm raised from inside the sheet traps focus in the confirm; Escape closes it alone", async () => {
     await renderSheet();
-    const inner = document.querySelector<HTMLElement>('[data-testid="project-sheet-body"] button')!;
+    // #914: the header's ⋯ trigger, a control a confirm could be raised from (the first body button is now the Stage chip).
+    const inner = document.querySelector<HTMLElement>('[data-testid="project-sheet-body"] [data-testid="project-more-actions"]')!;
     inner.focus();
     let answer: boolean | undefined;
     await act(async () => { void confirm({ title: "Delete comment?", message: "This cannot be undone.", danger: true }).then((value) => { answer = value; }); await Promise.resolve(); });
@@ -301,7 +325,87 @@ describe("the real Workspace inside the Project sheet (#366)", () => {
   });
 });
 
-// #870 — the Social overlays picker in the real header, below the four-cell control grid.
+// #914 D2 — Project info: a 440px sheet docked inside the Project sheet. It is modal: Esc closes it first, and focus returns to
+// whatever opened it.
+describe("Project info inside the Project sheet (#914 D2)", () => {
+  const info = () => document.querySelector<HTMLElement>('[data-testid="project-info-sheet"]');
+  const infoButton = () => document.querySelector<HTMLElement>('[data-testid="project-info-open"]');
+
+  it("opens from its button, docked in the sheet's overlay slot; Esc closes it alone and focus returns to the button", async () => {
+    await renderSheet();
+    expect(info()).toBeNull();
+    infoButton()!.focus();
+    await click(infoButton()!);
+    await flushUntil(() => info() !== null, "Project info to open");
+    expect(document.querySelector('[data-testid="project-sheet-overlay-slot"]')!.contains(info())).toBe(true);
+    expect(info()!.getAttribute("role")).toBe("dialog");
+    expect(info()!.querySelector("h2")?.textContent).toBe("12 Example St");
+    expect(info()!.contains(document.activeElement)).toBe(true);
+
+    await escape(document.activeElement ?? document.body);
+    await flushUntil(() => info() === null, "Project info to close");
+    expect(onRequestClose).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(infoButton());
+
+    await escape(document.activeElement ?? document.body);
+    await flush();
+    expect(onRequestClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("covers the sheet's own Close with its scrim, and a scrim press closes Project info alone", async () => {
+    await renderSheet();
+    await click(infoButton()!);
+    await flushUntil(() => info() !== null, "Project info to open");
+    const scrim = document.querySelector<HTMLElement>('[data-testid="project-info-scrim"]')!;
+    expect(document.querySelector('[data-testid="project-sheet-overlay-slot"]')!.contains(scrim)).toBe(true);
+    await act(async () => {
+      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) scrim.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
+      await Promise.resolve();
+    });
+    await flushUntil(() => info() === null, "Project info to close");
+    expect(onRequestClose).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(infoButton());
+  });
+
+  it("Change draws the deadline form in place with focus inside it; Cancel puts the facts back and focus on Change", async () => {
+    authState.role = "admin";
+    await renderSheet();
+    await click(infoButton()!);
+    await flushUntil(() => info() !== null, "Project info to open");
+    const section = () => info()!.querySelector<HTMLElement>('[data-testid="project-info-deadline"]')!;
+    await click(section().querySelector<HTMLElement>('[data-testid="project-info-deadline-change"]')!);
+    await flushUntil(() => section().querySelector('[aria-label="Time slots"]') !== null, "the inline deadline form");
+    expect(section().contains(document.activeElement)).toBe(true);
+    // In place: no Deadline popover over Project info.
+    expect(document.querySelector('[role="dialog"][aria-label="Deadline"]')).toBeNull();
+    const cancel = [...section().querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Cancel")!;
+    await click(cancel);
+    await flush();
+    expect(section().querySelector('[aria-label="Time slots"]')).toBeNull();
+    expect(document.activeElement).toBe(section().querySelector('[data-testid="project-info-deadline-change"]'));
+    expect(info()).not.toBeNull();
+  });
+
+  it("Manage draws the Team picker in place with the search focused; Done puts the facts back and focus on Manage", async () => {
+    // Team management is `editProject` (Admin); an Editor sees the Team as facts.
+    authState.role = "admin";
+    await renderSheet();
+    await click(infoButton()!);
+    await flushUntil(() => info() !== null, "Project info to open");
+    const manage = info()!.querySelector<HTMLElement>('[data-testid="project-info-team-manage"]')!;
+    await click(manage);
+    await flushUntil(() => info()!.querySelector('[data-testid="project-info-team"] [data-testid="project-team-control"]') !== null, "the inline Team picker");
+    expect(document.activeElement).toBe(info()!.querySelector('[aria-label="Search people"]'));
+    // In place, not a popup: no second layer opened over Project info.
+    expect(info()!.contains(document.querySelector('[role="listbox"][aria-label="Team candidates"]'))).toBe(true);
+    await click(info()!.querySelector<HTMLElement>('[data-testid="project-info-team-done"]')!);
+    await flush();
+    expect(info()!.querySelector('[data-testid="project-info-team"] [data-testid="project-team-control"]')).toBeNull();
+    expect(document.activeElement).toBe(info()!.querySelector('[data-testid="project-info-team-manage"]'));
+  });
+});
+
+// #870 — the Social overlays picker. #914 (settled decision): a section of Project info, after Team.
 describe("the Social overlays picker in the Project header (#870)", () => {
   const overlayId = "22222222-2222-4222-8222-222222222222", tiktokId = "33333333-3333-4333-8333-333333333333";
   const overlayState = (selected: Array<{ id: string; name: string }>) => ({
@@ -316,21 +420,27 @@ describe("the Social overlays picker in the Project header (#870)", () => {
   }
   const picker = () => document.querySelector<HTMLElement>('[data-testid="project-social-overlays"]');
   const pickerTrigger = () => document.querySelector<HTMLButtonElement>('button[aria-label="Social overlays"]');
+  const openInfo = async () => {
+    await click(document.querySelector<HTMLElement>('[data-testid="project-info-open"]')!);
+    await flushUntil(() => document.querySelector('[data-testid="project-info-sheet"]') !== null, "Project info to open");
+  };
 
-  it("sits after the control grid and before the tabs when video review is open", async () => {
+  it("is a Project info section after Team when video review is open, and not in the header rows", async () => {
     openGate(true);
     await renderSheet();
+    expect(picker()).toBeNull();
+    await openInfo();
     await flushUntil(() => picker() !== null, "the Social overlays picker");
-    const header = document.querySelector('[data-testid="project-header"]')!;
-    const deadline = header.querySelector('[data-testid="project-deadline-trigger"]')!;
-    expect(header.contains(picker())).toBe(true);
-    expect(deadline.compareDocumentPosition(picker()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(picker()!.compareDocumentPosition(header.querySelector('[data-testid="project-overview-tab"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const info = document.querySelector('[data-testid="project-info-sheet"]')!;
+    expect(info.contains(picker())).toBe(true);
+    expect(document.querySelector('[data-testid="project-header"]')!.contains(picker())).toBe(false);
+    expect(info.querySelector('[data-testid="project-info-team"]')!.compareDocumentPosition(picker()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("is absent while video review is closed, and asks for nothing", async () => {
     openGate(false);
     await renderSheet();
+    await openInfo();
     await flush(20);
     expect(picker()).toBeNull();
     expect(apiGetMock.mock.calls.some(([path]) => String(path).endsWith("/social-overlays"))).toBe(false);
@@ -339,14 +449,16 @@ describe("the Social overlays picker in the Project header (#870)", () => {
   it("is absent for a Photographer even with video review open", async () => {
     authState.role = "photographer"; openGate(true);
     await renderSheet();
+    await openInfo();
     await flush(20);
     expect(picker()).toBeNull();
   });
 
-  it("picks by keyboard, saves once on Escape, closes only the picker, and returns focus to its trigger", async () => {
+  it("picks by keyboard, saves once on Escape, closes only the picker (Project info stays), and returns focus to its trigger", async () => {
     openGate(true);
     apiPutMock.mockResolvedValue({ ...overlayState([{ id: tiktokId, name: "TikTok" }]) });
     await renderSheet();
+    await openInfo();
     await flushUntil(() => pickerTrigger() !== null, "the picker trigger");
     await click(pickerTrigger()!);
     await flushUntil(() => document.querySelector('[role="listbox"]') !== null, "the overlay list");
@@ -356,6 +468,7 @@ describe("the Social overlays picker in the Project header (#870)", () => {
     expect(onRequestClose).not.toHaveBeenCalled();
     expect(apiPutMock).toHaveBeenCalledTimes(1);
     expect(apiPutMock).toHaveBeenCalledWith("/api/projects/p1/social-overlays", { overlayIds: [tiktokId], expectedRevision: "0".repeat(64) });
+    expect(document.querySelector('[data-testid="project-info-sheet"]')).not.toBeNull();
     expect(document.activeElement).toBe(pickerTrigger());
   });
 
@@ -363,6 +476,7 @@ describe("the Social overlays picker in the Project header (#870)", () => {
     openGate(true);
     apiPutMock.mockRejectedValue(new ApiError("Archived", 409, { error: "Archived", code: "project_archived" }));
     await renderSheet();
+    await openInfo();
     await flushUntil(() => pickerTrigger() !== null, "the picker trigger");
     expect(document.querySelector('[role="group"][aria-label="Stage"]')).toBeNull();
     await click(pickerTrigger()!);
@@ -370,5 +484,281 @@ describe("the Social overlays picker in the Project header (#870)", () => {
     await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.includes("TikTok"))!);
     await escape(document.activeElement ?? document.body);
     await flushUntil(() => document.querySelector('[role="group"][aria-label="Stage"]') !== null, "the Stage control to turn read-only");
+  });
+});
+
+// #914 M1/M2 — the phone header (the sheet's `max-[721px]` width, PROJECT_SHEET_PHONE_QUERY). It draws Close in whichever bar is
+// showing and claims the sheet's own; the slim bar is inert until the project bar has scrolled under it.
+describe("the phone header inside the Project sheet (#914 M1, M2)", () => {
+  class FakeIO {
+    static instances: FakeIO[] = [];
+    targets: Element[] = [];
+    disconnected = false;
+    constructor(public callback: IntersectionObserverCallback, public options?: IntersectionObserverInit) { FakeIO.instances.push(this); }
+    observe(target: Element) { this.targets.push(target); }
+    unobserve() {}
+    disconnect() { this.disconnected = true; }
+    takeRecords() { return []; }
+  }
+  let viewport: MockViewport;
+  const liveClose = () => [...document.querySelectorAll<HTMLElement>('button[aria-label="Close project"]')].filter((button) => !button.closest("[inert]"));
+  const projectBar = () => document.querySelector<HTMLElement>('[data-testid="project-header"]');
+  const slimBar = () => document.querySelector<HTMLElement>('[data-testid="project-header-slim"]');
+  const info = () => document.querySelector<HTMLElement>('[data-testid="project-info-sheet"]');
+  const barObserver = () => FakeIO.instances.find((io) => !io.disconnected && io.targets[0] === projectBar());
+  async function scrollBarUnder(out: boolean) {
+    const io = barObserver()!;
+    await act(async () => {
+      io.callback([{ target: io.targets[0]!, isIntersecting: !out, boundingClientRect: { top: out ? -40 : 0, bottom: out ? 20 : 62 } as DOMRectReadOnly, rootBounds: { top: 48 } as DOMRectReadOnly } as IntersectionObserverEntry], io as unknown as IntersectionObserver);
+      await Promise.resolve();
+    });
+  }
+  beforeEach(async () => {
+    FakeIO.instances = [];
+    vi.stubGlobal("IntersectionObserver", FakeIO);
+    viewport = mockViewport({ width: 390, height: 844, coarse: true });
+  });
+  afterEach(() => { viewport.restore(); stubRailMedia(true); vi.unstubAllGlobals(); });
+
+  it("observes the project bar against the Project sheet's scroll body (the sheet context's `body`)", async () => {
+    await renderSheet();
+    expect(barObserver()!.options?.root).toBe(document.querySelector('[data-testid="project-sheet-body"]'));
+    expect(barObserver()!.options?.root).not.toBeNull();
+  });
+
+  it("has exactly one live Close project, inside the header landmark, in place of the sheet's own; it asks the sheet to close", async () => {
+    await renderSheet();
+    expect(document.querySelector('[data-testid="project-sheet-close"]')).toBeNull();
+    expect(liveClose()).toHaveLength(1);
+    expect(projectBar()!.matches('section[aria-label="Project Overview"]')).toBe(true);
+    expect(projectBar()!.contains(liveClose()[0]!)).toBe(true);
+    await click(liveClose()[0]!);
+    expect(onRequestClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps one Workspace tablist", async () => {
+    // (The whiteboard's phone button is covered with the board's own gate in ProjectWorkspace-whiteboard.dom.test.tsx.)
+    await renderSheet();
+    expect(document.querySelectorAll('[role="tablist"][aria-label="Workspace"]')).toHaveLength(1);
+    expect(document.querySelector('[data-testid="project-header-tabbar"]')!.contains(document.querySelector('[role="tablist"][aria-label="Workspace"]'))).toBe(true);
+  });
+
+  it("gives the sheet its own Close back at 1440, and keeps it while the Project is loading at 390", async () => {
+    await viewport.set({ width: 1440, height: 900, coarse: false });
+    await renderSheet();
+    expect(document.querySelector('[data-testid="project-sheet-close"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="project-header-close"]')).toBeNull();
+    await act(async () => { root!.unmount(); await Promise.resolve(); });
+    root = null;
+    document.body.replaceChildren();
+    await viewport.set({ width: 390, height: 844, coarse: true });
+    apiGetMock.mockImplementation(() => new Promise(() => undefined));
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(<QuincyQueryProvider key="test" principalId="test-user" role={authState.role as Role}>
+        <ProjectSheet open kind="project" sheetKey="project:p1" backdropHref="/" onRequestClose={onRequestClose}>
+          <ProjectWorkspace projectId="p1" onArrivalConsumed={() => undefined} />
+        </ProjectSheet>
+      </QuincyQueryProvider>);
+      await Promise.resolve();
+    });
+    await flush();
+    expect(document.querySelector('[data-testid="project-sheet-close"]')).not.toBeNull();
+  });
+
+  it("opens Project info from the project bar, and focus returns to it", async () => {
+    await renderSheet();
+    const opener = projectBar()!.querySelector<HTMLElement>('button[aria-label="Project info, 12 Example St"]')!;
+    opener.focus();
+    await click(opener);
+    await flushUntil(() => info() !== null, "Project info to open");
+    await escape(document.activeElement ?? document.body);
+    await flushUntil(() => info() === null, "Project info to close");
+    expect(document.activeElement).toBe(opener);
+    expect(onRequestClose).not.toHaveBeenCalled();
+  });
+
+  it("swaps in the slim bar once the project bar has scrolled under it: its name opens Project info and its Close is the live one", async () => {
+    await renderSheet();
+    expect(barObserver()!.options?.rootMargin).toBe("-48px 0px 0px 0px");
+    expect(slimBar()!.hasAttribute("inert")).toBe(true);
+    await scrollBarUnder(true);
+    expect(slimBar()!.hasAttribute("inert")).toBe(false);
+    expect(projectBar()!.hasAttribute("inert")).toBe(true);
+    expect(liveClose()).toHaveLength(1);
+    expect(slimBar()!.contains(liveClose()[0]!)).toBe(true);
+    const name = slimBar()!.querySelector<HTMLElement>('button[aria-label="Project info, 12 Example St"]')!;
+    name.focus();
+    await click(name);
+    await flushUntil(() => info() !== null, "Project info to open");
+    await escape(document.activeElement ?? document.body);
+    await flushUntil(() => info() === null, "Project info to close");
+    expect(document.activeElement).toBe(name);
+    // Back up: focus on the slim bar moves to its twin in the project bar instead of falling to the body.
+    await scrollBarUnder(false);
+    expect(slimBar()!.hasAttribute("inert")).toBe(true);
+    expect(document.activeElement).toBe(projectBar()!.querySelector('button[aria-label="Project info, 12 Example St"]'));
+  });
+
+  // #914 M3–M6: Project info on the phone is a bottom sheet (reui/drawer) with pushed views.
+  const openInfo = async () => {
+    const opener = projectBar()!.querySelector<HTMLElement>('button[aria-label="Project info, 12 Example St"]')!;
+    opener.focus();
+    await click(opener);
+    await flushUntil(() => info() !== null, "Project info to open");
+    return opener;
+  };
+  const back = () => document.querySelector<HTMLElement>('[data-testid="project-info-back"]');
+  const row = (name: string) => info()!.querySelector<HTMLElement>(`[data-testid="project-info-${name}-row"]`);
+  function withProject(patch: Record<string, unknown>) {
+    const fallback = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string, init?: unknown) => path === "/api/projects/p1" ? Promise.resolve({ ...projectFixture(), ...patch }) : fallback(path, init));
+  }
+
+  it("is a bottom sheet over the Project: Status first (Stage, Deadline, Team), then notes, Client and shoot and Files, then the actions", async () => {
+    authState.role = "admin";
+    withProject({ contractEnabled: true, boardRevision: 1, productionNotes: "Twilight shots", agencyName: "Ray White" });
+    await renderSheet();
+    await openInfo();
+    const sheet = info()!;
+    expect(sheet.getAttribute("data-view")).toBe("info");
+    // What the Project sheet's Esc gate relies on (project-sheet-layers.dom.test.tsx): an open dialog in the overlay slot, no aria-modal.
+    expect(sheet.getAttribute("role")).toBe("dialog");
+    expect(sheet.hasAttribute("aria-modal")).toBe(false);
+    expect(sheet.hasAttribute("data-open")).toBe(true);
+    expect(sheet.closest('[data-testid="project-sheet"]')).not.toBeNull();
+    expect([...sheet.querySelectorAll("h3")].map((heading) => heading.textContent)).toEqual(["Status", "Production notes", "Client and shoot", "Files"]);
+    expect(row("stage")!.getAttribute("aria-label")).toMatch(/^Stage: /);
+    expect(row("deadline")!.getAttribute("aria-label")).toBe("Deadline: set deadline");
+    expect(row("team")!.getAttribute("aria-label")).toBe("Team: nobody assigned");
+    expect(sheet.querySelector('[data-testid="project-info-notes-text"]')!.textContent).toBe("Twilight shots");
+    const actions = [...sheet.querySelectorAll<HTMLElement>('[data-testid="project-info-actions"] > *')].map((element) => element.textContent?.trim());
+    // (Open whiteboard heads the actions where the board is offered: ProjectWorkspace-whiteboard.dom.test.tsx.)
+    expect(actions[0]).toBe("Edit project details");
+    expect(actions).toContain("Copy link");
+  });
+
+  it("pushes the Stage view; Back pops it and focuses the Stage row; Esc in a pushed view closes Project info only", async () => {
+    authState.role = "admin";
+    withProject({ contractEnabled: true, boardRevision: 1 });
+    await renderSheet();
+    const opener = await openInfo();
+    await click(row("stage")!);
+    expect(info()!.getAttribute("data-view")).toBe("stage");
+    expect(document.activeElement).toBe(back());
+    expect(info()!.querySelector('[role="radiogroup"]')).not.toBeNull();
+    await click(back()!);
+    expect(info()!.getAttribute("data-view")).toBe("info");
+    expect(document.activeElement).toBe(row("stage"));
+    await click(row("deadline")!);
+    expect(info()!.getAttribute("data-view")).toBe("deadline");
+    expect(info()!.querySelector<HTMLInputElement>('input[type="date"]')).not.toBeNull();
+    expect([...info()!.querySelectorAll("button")].some((button) => button.textContent === "Save deadline")).toBe(true);
+    await escape(document.activeElement ?? document.body);
+    await flushUntil(() => info() === null, "Project info to close");
+    expect(onRequestClose).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("saves a Stage chosen in the Stage view and returns to Project info", async () => {
+    withProject({ contractEnabled: true, boardRevision: 1 });
+    await renderSheet();
+    await openInfo();
+    await click(row("stage")!);
+    const radios = [...info()!.querySelectorAll<HTMLElement>('[role="radio"]')];
+    const { apiPost: postBefore } = await import("../lib/api");
+    vi.mocked(postBefore).mockClear();
+    // The arrow keys move focus through the rows and choose nothing (a radio group would otherwise save on every arrow).
+    const checked = radios.find((radio) => radio.getAttribute("aria-checked") === "true")!;
+    checked.focus();
+    await act(async () => { checked.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })); await Promise.resolve(); });
+    await flush(3);
+    expect(document.activeElement).not.toBe(checked);
+    expect(info()!.getAttribute("data-view")).toBe("stage");
+    expect(vi.mocked(postBefore).mock.calls.some(([path]) => path === "/api/projects/p1/stage")).toBe(false);
+    const target = radios.find((radio) => radio.getAttribute("aria-checked") === "false" && radio.getAttribute("aria-disabled") !== "true")!;
+    await click(target);
+    await flushUntil(() => info()?.getAttribute("data-view") === "info", "the Stage view to return to Project info");
+    const { apiPost } = await import("../lib/api");
+    expect(vi.mocked(apiPost).mock.calls.some(([path]) => path === "/api/projects/p1/stage")).toBe(true);
+    expect(document.activeElement).toBe(row("stage"));
+  });
+
+  it("keeps the Stage view up when the move fails (only a saved move returns to Project info)", async () => {
+    withProject({ contractEnabled: true, boardRevision: 1 });
+    await renderSheet();
+    await openInfo();
+    await click(row("stage")!);
+    const { apiPost } = await import("../lib/api");
+    vi.mocked(apiPost).mockImplementationOnce(() => Promise.reject(new ApiError("Server error", 500, { error: "Server error" })));
+    const target = [...info()!.querySelectorAll<HTMLElement>('[role="radio"]')].find((radio) => radio.getAttribute("aria-checked") === "false" && radio.getAttribute("aria-disabled") !== "true")!;
+    await click(target);
+    await flushUntil(() => vi.mocked(apiPost).mock.calls.some(([path]) => path === "/api/projects/p1/stage"), "the Stage move to be sent");
+    await flush(5);
+    expect(info()!.getAttribute("data-view")).toBe("stage");
+  });
+
+  it("focuses the Team search inside the tap that pushes the Team view (iOS raises the keyboard only then)", async () => {
+    authState.role = "admin";
+    await renderSheet();
+    await openInfo();
+    const teamRow = row("team")!;
+    let focusedInHandler: Element | null = null;
+    // On the document, so it runs after React's root listener: what is focused when the tap's handler has returned.
+    const record = () => { focusedInHandler = document.activeElement; };
+    document.addEventListener("click", record);
+    await click(teamRow);
+    document.removeEventListener("click", record);
+    expect(info()!.getAttribute("data-view")).toBe("team");
+    expect(focusedInHandler).toBe(info()!.querySelector('input[aria-label="Search people"]'));
+  });
+
+  it("gives a Photographer plain Status rows and no Edit project details", async () => {
+    authState.role = "photographer";
+    withProject({ contractEnabled: true, boardRevision: 1 });
+    await renderSheet();
+    await openInfo();
+    expect(row("stage")).toBeNull();
+    expect(row("deadline")).toBeNull();
+    expect(row("team")).toBeNull();
+    expect(info()!.querySelector('[role="group"][aria-label^="Stage: "]')).not.toBeNull();
+    expect(info()!.querySelector('[data-testid="project-info-details"]')).toBeNull();
+  });
+
+  // #870 / owner decision (browser pass): on the phone Social overlays is the Status group's last row, pushing a view with the picker.
+  it("makes Social overlays the last Status row, naming the overlays, and pushes a view holding the picker", async () => {
+    authState.role = "admin";
+    const reel = { id: "22222222-2222-4222-8222-222222222222", name: "Instagram Reel", platformLabel: "Instagram", isDefault: true, archivedAt: null };
+    const fallback = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string, init?: unknown) => path.endsWith("/video-review") ? Promise.resolve({ open: true, parts: [] })
+      : path.endsWith("/social-overlays") ? Promise.resolve({ available: [reel], selected: [reel], resolved: [], revision: "0".repeat(64) })
+      : fallback(path, init));
+    await renderSheet();
+    await openInfo();
+    await flushUntil(() => row("overlays") !== null, "the Social overlays row");
+    const status = info()!.querySelector<HTMLElement>('[data-testid="project-info-status"]')!;
+    expect(status.lastElementChild).toBe(row("overlays"));
+    await flushUntil(() => row("overlays")!.getAttribute("aria-label") === "Social overlays: Instagram Reel", "the row to name the overlays");
+    expect(info()!.querySelector('[data-testid="project-social-overlays"]'), "no picker in the info view").toBeNull();
+    expect([...info()!.querySelectorAll("h3")].map((heading) => heading.textContent)).not.toContain("Social overlays");
+    await click(row("overlays")!);
+    expect(info()!.getAttribute("data-view")).toBe("overlays");
+    expect(document.activeElement).toBe(back());
+    await flushUntil(() => info()!.querySelector('[data-testid="project-social-overlays"]') !== null, "the picker in the pushed view");
+    await click(back()!);
+    expect(document.activeElement).toBe(row("overlays"));
+  });
+
+  it("gives no Social overlays row while video review is closed", async () => {
+    authState.role = "admin";
+    const fallback = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string, init?: unknown) => path.endsWith("/video-review") ? Promise.resolve({ open: false, parts: [] }) : fallback(path, init));
+    await renderSheet();
+    await openInfo();
+    await flush(20);
+    expect(row("overlays")).toBeNull();
+    expect(apiGetMock.mock.calls.some(([path]) => String(path).endsWith("/social-overlays"))).toBe(false);
   });
 });

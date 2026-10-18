@@ -25,7 +25,7 @@ import { WhiteboardButton } from "../components/ProjectHeader";
 import { DeliveryTab } from "../components/delivery/DeliveryTab";
 import { useProjectDeliveryQuery } from "../lib/delivery-data";
 import { ProjectCollaborationPanel, type CollaborationView } from "../components/ProjectCollaborationPanel";
-import { ProjectHeader } from "../components/ProjectHeader";
+import { ProjectHeader, type StageMoveOutcome } from "../components/ProjectHeader";
 import { Button, buttonClasses } from "../components/quincy/Button";
 import { Notice } from "../components/quincy/Notice";
 import { Eyebrow } from "../components/quincy/Eyebrow";
@@ -541,8 +541,9 @@ function WorkspaceBody(props: WorkspaceChromeProps) {
   }, [project.id, project.stageKey, stageMovePending]);
   const hasRawFolder = project.editedUploadAvailable ?? Boolean(project.rawFolderPath || project.rawFolderLink);
   const autohdrTerminal = props.autohdrStatus?.state === "retired" || props.autohdrStatus?.state === "failed"; const autohdrBlocked = !autohdrTerminal && (props.autohdrStatus?.state === "blocked" || props.autohdrStatus?.mappingState === "blocked_collision");
-  const moveStage = useCallback(async (targetStageKey: ProjectStageKey): Promise<"archived" | void> => {
-    if (stageMovePending || !can("moveProjectStage") || project.archivedAt || !project.contractEnabled) return;
+  // #914 (settled plan, from the Codex plan): an explicit outcome, so the phone Stage view returns to Project info only on `saved`.
+  const moveStage = useCallback(async (targetStageKey: ProjectStageKey): Promise<StageMoveOutcome> => {
+    if (stageMovePending || !can("moveProjectStage") || project.archivedAt || !project.contractEnabled) return "cancelled";
     restoreStageFocusRef.current = true;
     setStageMovePending(true);
     setStageMoveDisabledReason(null);
@@ -555,7 +556,7 @@ function WorkspaceBody(props: WorkspaceChromeProps) {
       const response = await submitStageMoveWithConfirmation(request, (body) => apiPost<MoveProjectStageResponse, MoveProjectStageRequest>(`/api/projects/${encodeURIComponent(project.id)}/stage`, body), { confirmationPolicy: "stage-move" });
       if (!response) {
         await props.onRefreshDetail().catch(() => undefined);
-        return;
+        return "cancelled";
       }
       if (response.changed) {
         await invalidateProjectSurfaces(queryClient, {
@@ -571,15 +572,16 @@ function WorkspaceBody(props: WorkspaceChromeProps) {
       } catch (refreshError) {
         setStageMoveDisabledReason("The Stage move was saved, but the latest project could not be loaded. Refresh to continue.");
         toast(refreshError instanceof Error ? refreshError.message : "The latest project could not be loaded.", "error");
-        return;
+        return "saved";
       }
       const label = stages.find((stage) => stage.key === targetStageKey)?.label ?? targetStageKey;
       toast(response.changed ? `Moved to ${label}.` : `Already in ${label}.`);
+      return "saved";
     } catch (reason) {
       const code = reason instanceof ApiError && reason.details && typeof reason.details === "object" ? (reason.details as { code?: unknown }).code : undefined;
       if (reason instanceof ApiError && reason.status === 401) {
         terminateOnUnauthorized(reason);
-        return;
+        return "failed";
       } else if (reason instanceof ApiError && reason.status === 503 && code === "board_contract_disabled") {
         setStageMoveDisabledReason("Stage movement is temporarily unavailable while the Board contract is disabled.");
       } else if (reason instanceof ApiError && reason.status === 503 && code === "board_schema_maintenance") {
@@ -598,6 +600,7 @@ function WorkspaceBody(props: WorkspaceChromeProps) {
       } else {
         toast(reason instanceof Error ? reason.message : "The Stage could not be updated.", "error");
       }
+      return "failed";
     } finally {
       setStageMovePending(false);
     }

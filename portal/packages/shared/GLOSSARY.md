@@ -26,13 +26,20 @@ A Project's discussion, subtasks and activity history. Not a Collection: it hold
 _Avoid_: Comments panel, chat
 
 **Workspace tab**:
-One selectable view of a Project's workspace: each Collection, plus Project collaboration.
-Project collaboration is the tab a Project opens on, unless its link names another Workspace
+One selectable view of a Project's workspace: each Collection, plus Project collaboration, plus
+the Delivery tab for staff who may preview the Delivery page, once it exists. Project collaboration is the tab a Project opens on, unless its link names another Workspace
 tab (`?tab=<collection>`; Collaboration's own is `?collaboration=open`). A Project's link always
 names the tab being viewed, so a copied link reopens that tab. The Project whiteboard is not a
-Workspace tab: an icon button beside Collaboration opens it over the workspace, with its own link
-(`?whiteboard=open`).
-_Avoid_: Collection (for the Collaboration tab)
+Workspace tab: a whiteboard button in the Project header, outside the Workspace tabs, opens it over
+the workspace, with its own link (`?whiteboard=open`).
+_Avoid_: Collection (for the Collaboration tab), collection tabs (for the set of Workspace tabs)
+
+**Project info**:
+The layer one step down from the Project header that holds what the header no longer shows in
+full: client, shoot, Deadline, Team, Dropbox status and sync, Production notes, and the Project's
+less-used actions. Opened from the header; it reads and quick-edits, while Edit project details
+stays the full form.
+_Avoid_: Project details, details sheet, drawer, panel, Project overview
 
 **Project workspace**:
 Everything about one Project in one place: its header, its Workspace tabs and their content.

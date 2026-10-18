@@ -71,10 +71,18 @@ function ShowInButton({ label, icon, destination, testId, describedBy }: { label
   );
 }
 
-function ProjectShowInControl({ project, isAdmin }: { project: ProjectDetail; isAdmin: boolean }) {
+/**
+ * #914: the two destinations, for any surface that offers them (this button group, the header's ⋯ menu, the phone Project info).
+ * `null` for roles without `viewProductionCalendar` (a Photographer): the caller shows nothing. `reason` is the first unavailable
+ * destination's, for a disabled item's description.
+ */
+export function useShowInDestinations(project: ProjectDetail): { calendar: ShowInDestination; timeline: ShowInDestination; reason: string | null } | null {
+  const { can, role } = useCapabilities();
   const backdrop = useDashboardReturnLink().to;
   const subtasks = useCachedSubtasks(project.id);
   const calendarBase = useMemo(() => rememberedCalendarState(), []);
+  if (!can("viewProductionCalendar")) return null;
+  const isAdmin = role === "admin";
 
   const args: ShowInArgs = {
     project: {
@@ -92,6 +100,13 @@ function ProjectShowInControl({ project, isAdmin }: { project: ProjectDetail; is
   const calendar = buildShowInCalendar(args);
   const timeline = buildShowInTimeline(args);
   const reason = !calendar.available ? calendar.reason : !timeline.available ? timeline.reason : null;
+  return { calendar, timeline, reason };
+}
+
+function ProjectShowInControl({ project }: { project: ProjectDetail }) {
+  const destinations = useShowInDestinations(project);
+  if (!destinations) return null;
+  const { calendar, timeline, reason } = destinations;
   const reasonId = `project-show-in-reason-${project.id}`;
 
   return (
@@ -107,7 +122,5 @@ function ProjectShowInControl({ project, isAdmin }: { project: ProjectDetail; is
 }
 
 export function ProjectShowIn({ project }: { project: ProjectDetail }) {
-  const { can, role } = useCapabilities();
-  if (!can("viewProductionCalendar")) return null;
-  return <ProjectShowInControl project={project} isAdmin={role === "admin"} />;
+  return <ProjectShowInControl project={project} />;
 }

@@ -1,9 +1,11 @@
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
-import { DEADLINE_PRESET_TIME, resolveSydneyCivilMinute, type ProjectDeadlineSchedule } from "@quincy/shared";
+import { DEADLINE_PRESET_TIME, SYDNEY_TIME_ZONE, resolveSydneyCivilMinute, type ProjectDeadlineSchedule } from "@quincy/shared";
+import { Button } from "@/components/reui/button";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/reui/field";
 import { Input } from "@/components/reui/input";
 import { buildShortcuts, civilToCell, joinCivilMinute, parseTypedTime, POPUP_SHORT_QUERY, POPUP_STACKED_QUERY, sameReminderOffsets, splitCivilMinute, sydneyToday, timeSlots, yearBounds, type DateShortcut } from "@/lib/date-time-field";
 import { useMediaQuery } from "@/lib/use-media-query";
+import { cn } from "@/lib/utils";
 import { CalendarPane } from "./CalendarPane";
 import { FoldChoice } from "./FoldChoice";
 import { NextReminder } from "./NextReminder";
@@ -69,6 +71,12 @@ export type DateTimePopupProps = {
   focusOnMount?: boolean;
   /** A mutation the caller owns is in flight: Apply is disabled until it settles. */
   busy?: boolean;
+  /**
+   * #914: `stacked` draws the one-column arrangement at every width (the form inline in Project info's 440px sheet). `phone` (M5,
+   * settled decision) draws the date and the time as native fields instead of the shortcuts, calendar and time column, with Clear
+   * and Save deadline as a footer the caller pins; the draft and its rules are the same.
+   */
+  layout?: "responsive" | "stacked" | "phone";
   /** Apply submits even on an untouched draft (it re-saves the stored value). For a value the caller wants a person to confirm, e.g. an Automatic Deadline (#484). */
   applyUntouched?: boolean;
   onApply: (next: DateTimeApply) => void | Promise<void>;
@@ -112,7 +120,7 @@ export function ordered(calendarFirst: boolean, [shortcuts, calendar]: [ReactNod
 const TIME_ERROR = "Enter a time as HH:MM, from 00:00 to 23:59.";
 const SLOTS = timeSlots();
 
-function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedback, focusOnMount, busy = false, applyUntouched = false, onApply, onClose }: Omit<DateTimePopupProps, "seedKey">) {
+function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedback, focusOnMount, busy = false, applyUntouched = false, layout = "responsive", onApply, onClose }: Omit<DateTimePopupProps, "seedKey">) {
   const anchor = useContext(PopupAnchorContext);
   const ownId = useId();
   const ownBodyRef = useRef<HTMLDivElement>(null);
@@ -121,7 +129,8 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
   const timeId = useId();
   // #686: a short viewport has no time-slot list (the typed time stays), the title scrolls with the body, and a stacked body shows the calendar first.
   const short = useMediaQuery(POPUP_SHORT_QUERY);
-  const stacked = useMediaQuery(POPUP_STACKED_QUERY);
+  const stackedViewport = useMediaQuery(POPUP_STACKED_QUERY);
+  const stacked = layout === "stacked" || stackedViewport;
   const calendarFirst = short && stacked;
 
   // Sydney's today, read once when the popup opens so it cannot change under the user.
@@ -215,12 +224,46 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
 
   const hint = draft.touched && !draft.clear && civil === null && !timeInvalid ? "Pick a date and a time." : null;
 
+  if (layout === "phone") {
+    const clearNow = async () => {
+      setApplying(true);
+      try {
+        await onApply({ localCivil: null });
+        if (mounted.current) onClose();
+      } catch {
+        if (mounted.current) setApplying(false);
+      }
+    };
+    return <PhoneDraft
+      bodyRef={bodyRef}
+      zoneId={zoneId}
+      day={draft.day}
+      time={draft.time}
+      onDay={(day) => day ? pickDay(day, "grid") : change({ day: null, clear: false })}
+      onTime={(value) => { const time = value.slice(0, 5); change({ time: time || null, timeText: time, clear: false }); }}
+      hint={hint}
+      gapMessage={gap && resolution && !resolution.ok ? resolution.message : null}
+      fold={choices && <FoldChoice choices={choices} selected={activeChoice} onSelect={(choice) => civil && change({ fold: { minute: civil, choice } })} />}
+      reminders={reminders && <>
+        <RemindersStrip offsets={draft.offsets} onChange={(offsets) => change({ offsets })} />
+        {reminders.next !== undefined && <NextReminder saved stale={savedLineStale} next={reminders.next} hasReminders={reminders.offsets.length > 0} />}
+      </>}
+      facts={facts}
+      feedback={feedback}
+      clearable={clearable}
+      applying={applying}
+      saveDisabled={blocked || busy || (draft.touched && !draft.clear && civil === null)}
+      onClear={() => { void clearNow(); }}
+      onSave={() => { void apply(); }}
+    />;
+  }
+
   return (
     <PopupFrame label={label} zoneId={zoneId} bodyRef={bodyRef} applying={applying} applyDisabled={blocked || busy} scrollTitle={short} revealFallback={short ? REVEAL_TODAY : undefined} onCancel={onClose} onApply={() => { void apply(); }}>
       <div className="flex flex-col gap-[var(--space-4)]">
-        <div className="flex flex-col gap-[var(--space-4)] min-[721px]:flex-row">
+        <div className={cn("flex flex-col gap-[var(--space-4)]", layout !== "stacked" && "min-[721px]:flex-row")}>
           {ordered(calendarFirst, [
-            <ShortcutList key="shortcuts" shortcuts={shortcuts} activeId={activeId} onPick={pickShortcut} />,
+            <ShortcutList key="shortcuts" shortcuts={shortcuts} activeId={activeId} onPick={pickShortcut} layout={layout} />,
             <CalendarPane
               key="calendar"
               selection={{ mode: "single", day: draft.day }}
@@ -233,8 +276,8 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
             />,
           ])}
           {!short && (
-            <div className="flex min-w-0 flex-col gap-[var(--space-2)] min-[721px]:w-28 min-[721px]:shrink-0">
-              <TimeColumn selected={draft.time} skipped={skipped} onPick={pickSlot} />
+            <div className={cn("flex min-w-0 flex-col gap-[var(--space-2)]", layout !== "stacked" && "min-[721px]:w-28 min-[721px]:shrink-0")}>
+              <TimeColumn selected={draft.time} skipped={skipped} onPick={pickSlot} layout={layout} />
             </div>
           )}
         </div>
@@ -254,6 +297,66 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
       </div>
     </PopupFrame>
   );
+}
+
+/**
+ * The native date and time pickers (`.m-field .box`): the prototype's 48px field (`--space-7`, as a fixed height and the minimum
+ * both), filling the column and never wider. iOS draws `type="date"`/`"time"` with its own intrinsic width and height unless the
+ * native appearance is off (`appearance-none`), and its value box keeps a min-height and centring of its own (reset with the
+ * `::-webkit-date-and-time-value` rules). 16px type so iOS does not zoom on focus.
+ */
+const PHONE_FIELD = "block h-[var(--space-7)] min-h-[var(--space-7)] max-[721px]:min-h-[var(--space-7)] w-full min-w-0 max-w-full appearance-none py-0 text-start text-[length:var(--text-base)] [&::-webkit-date-and-time-value]:m-0 [&::-webkit-date-and-time-value]:min-h-0 [&::-webkit-date-and-time-value]:text-start leading-[calc(var(--space-7)_-_2px)]";
+
+/**
+ * M5's body: Date, Time (native pickers, so iOS raises no keyboard), then the reminders, the facts and the feedback, scrolling;
+ * Clear and Save deadline below it, pinned above the home indicator. The caller gives it a bounded height.
+ */
+function PhoneDraft({ bodyRef, zoneId, day, time, onDay, onTime, hint, gapMessage, fold, reminders, facts, feedback, clearable, applying, saveDisabled, onClear, onSave }: {
+  bodyRef: Ref<HTMLDivElement>;
+  zoneId: string;
+  day: string | null;
+  time: string | null;
+  onDay: (day: string) => void;
+  onTime: (time: string) => void;
+  hint: string | null;
+  gapMessage: string | null;
+  fold: ReactNode;
+  reminders: ReactNode;
+  facts: ReactNode;
+  feedback: ReactNode;
+  clearable: boolean;
+  applying: boolean;
+  saveDisabled: boolean;
+  onClear: () => void;
+  onSave: () => void;
+}) {
+  const dateId = useId();
+  const timeId = useId();
+  return <div className="flex min-h-0 flex-1 flex-col" data-testid="deadline-phone-form">
+    {/* One column that may shrink below its content (`minmax(0,1fr)`): an `auto` track grows to a native picker's intrinsic width,
+        pushing the fields past the drawer's right edge. */}
+    <div ref={bodyRef} className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] content-start gap-[var(--space-4)] overflow-y-auto overscroll-contain px-[var(--space-4)] pt-[var(--space-1)] pb-[var(--space-5)]">
+      <Field className="min-w-0">
+        <FieldLabel htmlFor={dateId}>Date</FieldLabel>
+        <Input id={dateId} type="date" className={PHONE_FIELD} value={day ?? ""} aria-describedby={zoneId} onChange={(event) => onDay(event.target.value)} />
+      </Field>
+      <Field className="min-w-0" data-invalid={gapMessage ? true : undefined}>
+        <FieldLabel htmlFor={timeId}>Time</FieldLabel>
+        <Input id={timeId} type="time" step={60} className={PHONE_FIELD} value={time ?? ""} aria-invalid={gapMessage ? true : undefined} aria-describedby={zoneId} onChange={(event) => onTime(event.target.value)} />
+        <FieldDescription id={zoneId} className="text-[length:var(--text-xs)]">{SYDNEY_TIME_ZONE}</FieldDescription>
+        {gapMessage && <FieldError>{gapMessage}</FieldError>}
+        {hint && <FieldDescription className="text-[length:var(--text-xs)]">{hint}</FieldDescription>}
+      </Field>
+      {fold}
+      {reminders}
+      {facts}
+      {feedback}
+    </div>
+    <div className="flex shrink-0 gap-[var(--space-2)] border-t border-border bg-background px-[var(--space-4)] pt-[var(--space-3)] pb-[max(var(--space-5),env(safe-area-inset-bottom))] *:min-h-[var(--space-7)] *:flex-1">
+      {clearable && <Button type="button" variant="ghost" disabled={applying} onClick={onClear}>Clear</Button>}
+      <Button type="button" disabled={applying || saveDisabled} onClick={onSave}>Save deadline</Button>
+    </div>
+  </div>;
 }
 
 export function DateTimePopup({ seedKey, ...props }: DateTimePopupProps) {

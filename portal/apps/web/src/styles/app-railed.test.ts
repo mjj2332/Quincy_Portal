@@ -452,81 +452,92 @@ describe("header-relative offsets derive from --shell-header-height (#113)", () 
     }
   }
 
-  // #213: row 2 is the prototype's one flat control row — a four-column grid (Stage, Team,
-  // Deadline, Dropbox) with a hairline divider drawn on every cell but the first. Grid, not
-  // flex-wrap, because the 1024 and 720 layouts must be deterministic: two columns at 1024, one at
-  // 720 (#206's "wraps" / "stacks" criteria), with the divider reset on each new first column.
-  it("lays the header's four controls out in one grid row with hairline dividers (#213)", () => {
-    const controls = ruleBody(appCss, ".project-header__controls");
-    expect(controls, ".project-header__controls base rule").not.toBeNull();
-    expect(controls).toMatch(/display:\s*grid/);
-    // #213 follow-up: Team is `auto`, not `1fr`, and the grid packs to the start — the Team box
-    // sizes to its chips and a short team leaves the row's free space at the end (prototype 2a),
-    // instead of a box stretched across whatever the other three cells leave.
-    expect(controls).toMatch(/grid-template-columns:\s*max-content minmax\(0, auto\) max-content max-content/);
-    expect(controls).toMatch(/justify-content:\s*start/);
-    const cell = ruleBody(appCss, ".project-header__control");
-    expect(cell, ".project-header__control base rule").not.toBeNull();
-    expect(cell).toMatch(/border-inline-start:\s*1px solid var\(--border-hairline\)/);
-    const first = ruleBody(appCss, ".project-header__control:first-child");
-    expect(first).toMatch(/border-inline-start:\s*0/);
-    expect(appCss).not.toMatch(/\.project-header__controls > section/);
+  // #914 D1: Row A (identity + the status cluster) is one wrapping flex row, the identity at the start and the cluster at the end.
+  it("lays Row A out as the identity then the status cluster, pushed apart, wrapping as one row (#914 D1)", () => {
+    const rowA = ruleBody(appCss, ".project-header__row-a");
+    expect(rowA, ".project-header__row-a base rule").not.toBeNull();
+    expect(rowA).toMatch(/display:\s*flex/);
+    expect(rowA).toMatch(/flex-wrap:\s*wrap/);
+    expect(rowA).toMatch(/justify-content:\s*space-between/);
+    // The old #213 four-cell control grid and its identity hairline are gone.
+    expect(ruleBody(appCss, ".project-header__controls")).toBeNull();
+    expect(ruleBody(appCss, ".project-header__identity")).toBeNull();
+    expect(ruleBody(appCss, ".project-header__tabrow")).toBeNull();
   });
 
-  // The wrap breakpoints are the header's own content width (Sol, #213 review: a viewport media
-  // query left a 1025–1279px band where four columns squeezed Team to nothing whenever a Deadline
-  // was set, and could not see the rail closing). 859px = the measured worst-case row (~820px) no
-  // longer fits; 639px = a 320px cell no longer fits a scheduled Deadline. The 720px "stacks" state
-  // (#206) stays a viewport rule and must come AFTER the container rules: at 720 the header's
-  // content is 688px, wider than a 1024 railed viewport's 693px, so width alone cannot tell them
-  // apart and the later rule has to win at equal specificity.
-  it("wraps the header's controls two per line below 860px of header width (1024px railed) and stacks them below 640px and at a 720px viewport (#206, #213)", () => {
+  // #914 T1: measured by the header's own width (the rail may be open or closed at one viewport), below the size where the
+  // identity and the cluster share a line Row A becomes one column, and the rule before Whiteboard and ⋯ pushes them to the end.
+  it("stacks Row A by a container query on the header and pushes Whiteboard and ⋯ to the cluster's end (#914 T1)", () => {
     const header = ruleBody(appCss, ".project-header");
     expect(header).toMatch(/container:\s*project-header \/ inline-size/);
-    expect(containerRule("859px", ".project-header__controls")).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 1fr\)\s*;/);
-    expect(containerRule("859px", ".project-header__control:nth-child(odd)")).toMatch(/border-inline-start:\s*0/);
-    expect(containerRule("639px", ".project-header__controls")).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\)\s*;/);
-    expect(containerRule("639px", ".project-header__control")).toMatch(/border-inline-start:\s*0/);
-    expect(mediaRule("720px", ".project-header")).toMatch(/padding:\s*var\(--space-4\)/);
-    expect(mediaRule("720px", ".project-header__controls")).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\)\s*;/);
-    expect(mediaRule("720px", ".project-header__control")).toMatch(/border-inline-start:\s*0/);
-    // (Several `@media (max-width: 720px)` blocks exist; the header's is the one carrying its padding.)
-    expect(appCss.indexOf("@container project-header (max-width: 859px) {")).toBeLessThan(appCss.indexOf(".project-header { padding: var(--space-4); }"));
-    // The two-per-line layout must not also hang off the viewport — one source of truth.
-    expect(mediaRule("1024px", ".project-header__controls")).toBeNull();
+    expect(containerRule("1087px", ".project-header__row-a")).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\)\s*;/);
+    expect(containerRule("1087px", ".project-header__push")).toMatch(/margin-inline-start:\s*auto/);
+    expect(mediaRule("720px", ".project-header")).toMatch(/padding:\s*var\(--space-4\) var\(--space-4\) var\(--space-3\)/);
+    expect(mediaRule("720px", ".project-header__tabbar")).toMatch(/padding-inline:\s*var\(--space-4\)/);
+    // One source of truth: the stacking does not also hang off the viewport.
+    expect(mediaRule("1024px", ".project-header__row-a")).toBeNull();
   });
 
-  // #213 follow-up: prototype 2a closes the identity row with a hairline spanning the header's
-  // full width, so the rule sits on the identity row and bleeds through the header's side padding
-  // (`--space-6`, or `--space-4` at the 720px viewport where the header's own padding shrinks).
-  it("draws a full-bleed hairline under the header's identity row, in step with the header's side padding (#213)", () => {
-    const identity = ruleBody(appCss, ".project-header__identity");
-    expect(identity).toMatch(/border-bottom:\s*1px solid var\(--border-hairline\)/);
-    expect(identity).toMatch(/margin-inline:\s*calc\(-1 \* var\(--space-6\)\)/);
-    expect(identity).toMatch(/padding-inline:\s*var\(--space-6\)/);
-    expect(mediaRule("720px", ".project-header__identity")).toMatch(/margin-inline:\s*calc\(-1 \* var\(--space-4\)\)/);
-    expect(mediaRule("720px", ".project-header__identity")).toMatch(/padding-inline:\s*var\(--space-4\)/);
+  // #914 D1: Row B, the tab bar, is the header section's sibling with its own full-width hairline, in step with the header's side padding.
+  it("draws the tab bar's full-width hairline and side padding on the tab bar itself (#914 D1)", () => {
+    const tabbar = ruleBody(appCss, ".project-header__tabbar");
+    expect(tabbar).toMatch(/border-bottom:\s*1px solid var\(--border-hairline\)/);
+    expect(tabbar).toMatch(/padding-inline:\s*var\(--space-6\)/);
   });
-  // #460: the Project sheet's close x is absolute (right space-4, 44px, top space-3 on phones) and the
-  // title h2 had no inline-end clearance, so a long title ran under it. The rules must sit AFTER the
+
+  // #914 D5: Row B is the condensed bar, so it is the sticky row (Row A, the labelled section, still is not: #201). It sticks under
+  // the shell header (0 inside the sheet), above `.worktools` (z 20), at a known rest height so condensing can keep its flow height.
+  it("makes Row B the sticky row, above the worktools, at its rest height (#914 D5)", () => {
+    const tabbar = ruleBody(appCss, ".project-header__tabbar") ?? "";
+    expect(tabbar).toMatch(/position:\s*sticky/);
+    expect(tabbar).toMatch(/top:\s*var\(--shell-header-height\)/);
+    expect(tabbar).toMatch(/z-index:\s*21\b/);
+    expect(tabbar).toMatch(/height:\s*var\(--project-tabbar-rest\)/);
+    expect(tabbar).toMatch(/--project-tabbar-rest:\s*calc\(44px \+ var\(--border-width-hair\)\)/);
+    // The tabs are the rest height's 44px: the tablist adds no block padding of its own.
+    expect(ruleBody(appCss, '.project-header__tabs [role="tablist"]')).toMatch(/padding-block:\s*0/);
+  });
+
+  // #914 D5: condensed, Row B is 60px (--project-chrome-stuck) and grows upward by exactly what it gains, so the work area below
+  // never moves (`overflow-anchor: none` on the body means no scroll compensation). It reserves the sheet's Close, which moves up
+  // to centre in it.
+  it("grows the condensed bar to --project-chrome-stuck with a matching negative margin, reserving the Close that centres in it (#914 D5)", () => {
+    const condensed = ruleBody(appCss, ".project-header__tabbar[data-header-condensed]") ?? "";
+    expect(condensed).toMatch(/height:\s*var\(--project-chrome-stuck\)/);
+    expect(condensed).toMatch(/margin-block-start:\s*calc\(var\(--project-tabbar-rest\) - var\(--project-chrome-stuck\)\)/);
+    expect(condensed).toMatch(/padding-inline-end:\s*calc\(var\(--space-4\) \+ 44px \+ var\(--space-4\)\)/);
+    expect(condensed).toMatch(/box-shadow:\s*var\(--shadow-sm\)/);
+    const close = ruleBody(appCss, ".project-sheet:has([data-header-condensed]) .project-sheet__close") ?? "";
+    // (60 - 44) / 2.
+    expect(close).toMatch(/top:\s*var\(--space-2\)/);
+  });
+
+  // #914 D5: what sticks inside the sheet sticks below the condensed bar, and focus is never scrolled under it (WCAG 2.4.11). Only
+  // with a header: the edit sheet and the Collaboration-only view keep the old offsets (0, and below the sheet's own Close).
+  it("offsets the sheet's sticky rows and scroll padding by --project-chrome-stuck only when the header is there (#914 D5)", () => {
+    expect(ruleBody(appCss, ".project-sheet__body")).toMatch(/--project-chrome-stuck:\s*0px/);
+    expect(ruleBody(appCss, ".project-sheet__body")).toMatch(/--collab-rail-top:\s*calc\(var\(--space-4\) \+ 44px \+ var\(--space-2\)\)/);
+    const withHeader = ruleBody(appCss, ".project-sheet__body:has(.project-header__tabbar)") ?? "";
+    expect(withHeader).toMatch(/--project-chrome-stuck:\s*60px/);
+    expect(withHeader).toMatch(/--collab-rail-top:\s*calc\(var\(--project-chrome-stuck\) \+ var\(--space-2\)\)/);
+    expect(withHeader).toMatch(/scroll-padding-top:\s*calc\(var\(--project-chrome-stuck\) \+ var\(--space-2\)\)/);
+    expect(ruleBody(appCss, ".project-sheet__body .worktools")).toMatch(/top:\s*var\(--project-chrome-stuck\)/);
+    expect(ruleBody(appCss, ".project-sheet__body .rich-text-toolbar-sticky")).toMatch(/top:\s*var\(--project-chrome-stuck\)/);
+  });
+
+  // #460 / #914 D1: the Project sheet's close x is absolute (right space-4, 44px, top space-3 on phones), so Row A stops short of it
+  // ("Row A stops 36px short of it"). The tab bar sits below the close button and needs no reservation. The rules sit AFTER the
   // sheet's `.worktools` reservation so the phone override wins on source order.
-  it("reserves the sheet close button's width on the Project title's inline end (#460)", () => {
-    const sel = ".project-sheet__body .project-header__identity > h2";
+  it("reserves the sheet close button's width on Row A's inline end, and not on the rest tab bar or the worktools (#460, #914)", () => {
+    const sel = ".project-sheet__body .project-header__row-a";
     const base = ruleBody(appCss, sel) ?? "";
     expect(base).toMatch(/padding-inline-end:\s*calc\(var\(--space-4\) \+ 44px \+ var\(--space-2\) - var\(--space-6\)\)/);
-    expect(base).toMatch(/overflow-wrap:\s*anywhere/);
     const phone = mediaRule("720px", sel) ?? "";
     expect(phone).toMatch(/padding-inline-end:\s*calc\(var\(--space-4\) \+ 44px \+ var\(--space-2\) - var\(--space-4\)\)/);
-    expect(appCss.indexOf(`${sel} {`)).toBeGreaterThan(appCss.indexOf(".project-sheet__body .worktools {"));
     expect(appCss.indexOf(`@media (max-width: 720px) {\n  ${sel}`)).toBeGreaterThan(appCss.indexOf(`${sel} {`));
-  });
-  // #613 (below): the tab row.
-  // Same clearance as the title (#460): the whiteboard button at the row's end scrolled into the 44px close button's column.
-  const sel = ".project-sheet__body .project-header__tabrow";
-  it("reserves the close button's width on the tab row's inline end, in step with the header's padding", () => {
-    expect(ruleBody(appCss, sel) ?? "").toMatch(/padding-inline-end:\s*calc\(var\(--space-4\) \+ 44px \+ var\(--space-2\) - var\(--space-6\)\)/);
-    expect(mediaRule("720px", sel) ?? "").toMatch(/padding-inline-end:\s*calc\(var\(--space-4\) \+ 44px \+ var\(--space-2\) - var\(--space-4\)\)/);
-    expect(appCss.indexOf(`@media (max-width: 720px) {\n  ${sel}`)).toBeGreaterThan(appCss.indexOf(`${sel} {`));
+    expect(ruleBody(appCss, ".project-sheet__body .project-header__tabbar")).toBeNull();
+    // #914: the worktools stick below the condensed bar, which holds the Close, so they no longer reserve it.
+    expect(ruleBody(appCss, ".project-sheet__body .worktools")).not.toMatch(/padding-inline-end/);
   });
 });
 

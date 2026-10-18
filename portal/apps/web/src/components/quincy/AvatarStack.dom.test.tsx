@@ -26,6 +26,13 @@ describe("AvatarStack", () => {
     expect(host.textContent).toContain("+2");
   });
 
+  it("fullLimit shows the limit's worth of faces and then the +N chip (#914, D3)", () => {
+    act(() => root.render(<AvatarStack fullLimit people={[1, 2, 3, 4, 5].map((n) => person(n))} personNoun="team member" emptyLabel="None" />));
+    expect(labels()).toEqual(["Person 1", "Person 2", "Person 3", "2 more team members"]);
+    act(() => root.render(<AvatarStack fullLimit people={[1, 2, 3].map((n) => person(n))} personNoun="team member" emptyLabel="None" />));
+    expect(labels()).toEqual(["Person 1", "Person 2", "Person 3"]);
+  });
+
   it("suffixes an inactive person and names an unnamed one", () => {
     act(() => root.render(<AvatarStack people={[person(1, { inactive: true }), person(2, { name: "  " })]} personNoun="Editor" emptyLabel="None" />));
     expect(labels()).toEqual(["Person 1 (inactive)", "Editor (name unavailable)"]);

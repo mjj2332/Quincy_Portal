@@ -6,6 +6,7 @@ import { focusManager } from "@tanstack/react-query";
 import { nearestScrollContainer } from "../lib/scroll-container";
 import { ProjectWorkspace } from "./ProjectWorkspace";
 import { ProjectSheet } from "../components/quincy/ProjectSheet";
+import { mockViewport } from "../testing/viewport";
 import { ConfirmModalHost } from "../components/ConfirmDialog";
 import { confirm, confirmStore } from "../lib/confirm";
 import { QuincyQueryProvider } from "../lib/query-client";
@@ -163,21 +164,61 @@ const openButton = () => document.querySelector<HTMLButtonElement>('[data-testid
 const boardRoot = () => document.querySelector<HTMLElement>('[data-testid="project-whiteboard"]');
 
 describe("the whiteboard entry button (#498)", () => {
-  it("sits right after the Collaboration tab, outside the tablist, and opens the board through the shell", async () => {
+  // #914 D1: the entry moved out of the tab row into the status cluster, before ⋯ — one button, outside every tablist.
+  it("sits in the header's status cluster before ⋯, outside every tablist, and opens the board through the shell", async () => {
     await renderSheet();
     const button = openButton()!;
     expect(button).not.toBeNull();
+    expect(document.querySelectorAll('[data-testid="project-whiteboard-open"]')).toHaveLength(1);
     expect(button.getAttribute("aria-label")).toBe("Open whiteboard");
     expect(button.closest('[role="tablist"]')).toBeNull();
-    // Beside the horizontally scrolling tab strip, never inside it (it would scroll out of view at 390px):
-    // the strip is the tablist's ancestor that sits directly under the wrapper that also holds the button.
-    let strip: Element = tab("Collaboration")!.closest('[role="tablist"]')!;
-    while (strip.parentElement && !strip.parentElement.contains(button)) strip = strip.parentElement;
-    expect(strip.contains(button)).toBe(false);
-    expect(strip.nextElementSibling!.contains(button)).toBe(true);   // a sibling after the scroller
-    expect(button.parentElement!.previousElementSibling!.contains(tab("Collaboration")!)).toBe(true);
+    const cluster = document.querySelector('[data-testid="project-status-cluster"]')!;
+    expect(cluster.contains(button)).toBe(true);
+    expect(button.compareDocumentPosition(cluster.querySelector('[data-testid="project-more-actions"]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await click(button);
     expect(onOpenWhiteboard).toHaveBeenCalledTimes(1);
+  });
+});
+
+// #914 M1: on the phone the entry is the project bar's, beside Close, still outside every tablist; closing the board refocuses it.
+describe("the phone whiteboard entry (#914 M1)", () => {
+  let viewport: ReturnType<typeof mockViewport>;
+  beforeEach(() => { viewport = mockViewport({ width: 390, height: 844, coarse: true }); });
+  afterEach(() => { viewport.restore(); });
+
+  it("sits in the project bar beside Close, opens the board, and closing the board returns focus to it", async () => {
+    await renderSheet();
+    const button = openButton()!;
+    expect(document.querySelectorAll('[data-testid="project-whiteboard-open"]')).toHaveLength(1);
+    expect(button.closest('[role="tablist"]')).toBeNull();
+    const bar = document.querySelector('[data-testid="project-header"]')!;
+    expect(bar.contains(button)).toBe(true);
+    expect(button.nextElementSibling?.getAttribute("aria-label")).toBe("Close project");
+    await click(button);
+    expect(onOpenWhiteboard).toHaveBeenCalledTimes(1);
+    await rerenderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null, "the board");
+    await click(document.querySelector('[data-testid="project-whiteboard-close"]')!);
+    await rerenderSheet({ whiteboardOpen: false });
+    await flush(3);
+    expect(document.activeElement).toBe(openButton());
+  });
+
+  it("is Project info's first action: it closes Project info, opens the board, and closing the board focuses the project bar's button", async () => {
+    await renderSheet();
+    const opener = document.querySelector<HTMLElement>('[data-testid="project-header"] button[aria-label^="Project info, "]')!;
+    await click(opener);
+    await flushUntil(() => document.querySelector('[data-testid="project-info-sheet"]') !== null, "Project info");
+    const action = document.querySelector<HTMLElement>('[data-testid="project-info-actions"] > *')!;
+    expect(action.textContent?.trim()).toBe("Open whiteboard");
+    await click(action);
+    expect(onOpenWhiteboard).toHaveBeenCalledTimes(1);
+    await rerenderSheet({ whiteboardOpen: true });
+    await flushUntil(() => document.querySelector('[data-testid="whiteboard-stand-in"]') !== null && document.querySelector('[data-testid="project-info-sheet"]') === null, "the board, with Project info closed");
+    await click(document.querySelector('[data-testid="project-whiteboard-close"]')!);
+    await rerenderSheet({ whiteboardOpen: false });
+    await flush(3);
+    expect(document.activeElement).toBe(openButton());
   });
 });
 

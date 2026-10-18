@@ -178,10 +178,11 @@ async function openDeadlineDialog(host: HTMLElement): Promise<HTMLElement> {
   return document.querySelector<HTMLElement>('[role="dialog"][aria-label="Deadline"]')!;
 }
 
+/** #914 D2: Dropbox's Open and Sync live in Project info; opens it and returns its Dropbox section. */
 async function openDropboxDialog(host: HTMLElement): Promise<HTMLElement> {
-  await click(host.querySelector<HTMLButtonElement>('[data-testid="project-dropbox-trigger"]')!);
+  await click(host.querySelector<HTMLButtonElement>('[data-testid="project-info-open"]')!);
   await flush(5);
-  return document.querySelector<HTMLElement>('[role="dialog"][aria-label="Dropbox"]')!;
+  return document.querySelector<HTMLElement>('[data-testid="project-info-dropbox"]')!;
 }
 
 // `.project-collaboration__head` was retired to Tailwind (TB8-07 §7.1) — the Hide button carries
@@ -699,7 +700,7 @@ afterEach(async () => {
     queryClient!.setQueryData(dashboardKey, []);
     const dashboardObserver = new QueryObserver(queryClient!, { queryKey: dashboardKey, queryFn: () => Promise.resolve([]), staleTime: Infinity });
     const stopDashboardObserver = dashboardObserver.subscribe(() => undefined);
-    const trigger = host.querySelector<HTMLButtonElement>('[aria-label="Move project Stage"]');
+    const trigger = host.querySelector<HTMLButtonElement>('[role="combobox"][aria-label^="Stage: "]');
     expect(trigger).not.toBeNull();
     await chooseStage(trigger!, "Awaiting RAW"); await flush(20);
     expect(confirmMock).toHaveBeenCalledWith({ title: "Confirm Stage move", message: "This move moves backward. Continue?", confirmLabel: "Move project" });
@@ -778,7 +779,8 @@ afterEach(async () => {
         return Promise.resolve({});
       });
     });
-    const group = (name: string) => host.querySelector<HTMLElement>(`[role="group"][aria-label="${name}"]`);
+    // #914: the Dropbox group is in Project info, portalled outside `host`.
+    const group = (name: string) => document.querySelector<HTMLElement>(`[role="group"][aria-label="${name}"]`);
 
     it("a Dropbox sync refused as archived shows no toast, refetches the detail and turns the header Dropbox read-only", async () => {
       apiPostMock.mockImplementationOnce(async () => { archivedAt = Date.now(); throw new ApiError("Archived projects can't sync from Dropbox. Restore the project first.", 409, { code: "dropbox_sync_project_archived" }); });
@@ -792,7 +794,7 @@ afterEach(async () => {
       expect(host.querySelector('[role="alert"]')).toBeNull();
       expect(detailFetches()).toBeGreaterThan(before);
       expect(group("Dropbox")?.textContent).toContain("Not monitored");
-      expect(host.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
+      expect(document.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
     });
 
     it("a 409 that is not the archive refusal still toasts its message", async () => {
@@ -826,33 +828,42 @@ afterEach(async () => {
       apiGetMock.mockImplementation((path: string, init?: unknown) => path === "/api/projects/p1" ? gate.then(() => stalled(path, init)) : stalled(path, init));
       return release;
     };
-    const expectHeaderReadOnly = () => {
+    // #914 D5: "Edit project details" / "Restore or delete" live in the header's ⋯ menu.
+    const moreItems = async () => {
+      await click(host.querySelector<HTMLButtonElement>('[data-testid="project-more-actions"]')!); await flush();
+      const items = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].map((item) => item.textContent?.trim());
+      await act(async () => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await Promise.resolve(); });
+      await flush();
+      return items;
+    };
+    const expectHeaderReadOnly = async () => {
       expect(group("Deadline")).not.toBeNull();
       expect(group("Team")).not.toBeNull();
-      expect(host.textContent).not.toContain("Edit details");
-      expect(host.textContent).toContain("Restore or delete");
+      const items = await moreItems();
+      expect(items).not.toContain("Edit project details");
+      expect(items).toContain("Restore or delete");
     };
 
     it("a Dropbox sync refused as archived turns Edit details, Deadline and Team read-only before the detail refetch resolves", async () => {
       apiPostMock.mockImplementationOnce(async () => { archivedAt = Date.now(); throw new ApiError("Archived projects can't sync from Dropbox. Restore the project first.", 409, { code: "dropbox_sync_project_archived" }); });
       await render(<ProjectWorkspace projectId="p1" />); await flush();
-      expect(host.textContent).toContain("Edit details");
+      expect(await moreItems()).toContain("Edit project details");
       const dropboxDialog = await openDropboxDialog(host);
       const release = stallDetailReads();
       await click(dropboxDialog.querySelector<HTMLButtonElement>('[data-testid="dropbox-sync"]')!);
       await flush(20);
-      expectHeaderReadOnly();
+      await expectHeaderReadOnly();
       release(); await flush(20);
     });
 
     it("a Stage move refused as archived turns Edit details, Deadline and Team read-only before the detail refetch resolves", async () => {
       apiPostMock.mockImplementationOnce(async () => { archivedAt = Date.now(); throw new ApiError("Project is archived and read-only.", 409, { code: "project_archived_read_only" }); });
       await render(<ProjectWorkspace projectId="p1" />); await flush();
-      expect(host.textContent).toContain("Edit details");
+      expect(await moreItems()).toContain("Edit project details");
       const trigger = host.querySelector<HTMLButtonElement>('[data-focus-key="rail-stage:p1"]')!;
       const release = stallDetailReads();
       await chooseStage(trigger, "Awaiting RAW"); await flush(20);
-      expectHeaderReadOnly();
+      await expectHeaderReadOnly();
       release(); await flush(20);
     });
   });
@@ -2396,9 +2407,12 @@ describe("ProjectWorkspace collaboration relocation", () => {
     await render(<ProjectWorkspace projectId={externalProjectId} />); await flush(20);
 
     expect(host.querySelector('a[href$="/edit"]')).toBeNull();
-    // dropbox-sync now lives in a closed popover for every role, so gating is proven by the trigger's absence.
-    expect(host.querySelector('[data-testid="project-dropbox-trigger"]')).toBeNull();
-    expect(host.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
+    // #914: dropbox-sync lives in Project info; it offers no Dropbox section to this role.
+    await openDropboxDialog(host);
+    expect(document.querySelector('[data-testid="project-info-dropbox"]')).toBeNull();
+    expect(document.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
+    await act(async () => { document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await Promise.resolve(); });
+    await flush(5);
     expect(host.querySelector('input[type="file"]')).toBeNull();
     expect(host.querySelector('[title="Use as project cover"]')).toBeNull();
 
@@ -2588,7 +2602,8 @@ describe("Collaboration is the default Workspace tab (#336)", () => {
     mockProject();
     await render(<ProjectWorkspace projectId="p1" />); await flush(20);
     expect(tabTexts().map((text) => text.replace(/[0-9—]+$/, "").replace(/Collaboration.*/, "Collaboration"))).toEqual(["RAW", "Edited", "Video", "Floorplan", "Copy", "Collaboration"]);
-    const tablists = host.querySelectorAll('[data-testid="project-header"] [role="tablist"]');
+    // #914 D1: Row B (the tab bar) is the header section's sibling.
+    const tablists = host.querySelectorAll('[data-testid="project-header-tabbar"] [role="tablist"]');
     expect(tablists).toHaveLength(1);
     expect(tablists[0]!.getAttribute("aria-label")).toBe("Workspace");
     const tabs = [...host.querySelectorAll<HTMLElement>('[data-testid="project-overview-tab"]')];

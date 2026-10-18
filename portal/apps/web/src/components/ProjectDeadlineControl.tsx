@@ -56,6 +56,8 @@ type ProjectDeadlineControlProps = {
   onClose?: () => void;
   /** Move focus into the popup when it mounts (the Timeline cell mounts it after the detail loads). */
   focusOnMount?: boolean;
+  /** #914: the form's arrangement (DateTimePopup `layout`): `stacked` for Project info's in-place Change, `phone` for the M5 view. */
+  layout?: "responsive" | "stacked" | "phone";
   /** #455: a write is about to be sent (Apply, Clear or Resume). The header captures where focus is, so it can tell later whether the refusal's flip lost it. */
   onRequestStart?: () => void;
   /** #455: the server refused a write with 409 `deadline_project_archived`. Reported once per refusal; the header latches its read-only state on it. */
@@ -85,7 +87,7 @@ function scheduleText(schedule: ProjectDeadlineSchedule): string {
   return `${schedule.deadline.localCivil.replace("T", " ")} · ${schedule.reminderOffsetsMinutes.length ? schedule.reminderOffsetsMinutes.slice(0, 8).map(deadlineOffsetLabel).join(", ") : "no advance reminders"}`;
 }
 
-export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, focusOnMount, onRequestStart, onArchivedRefusal }: ProjectDeadlineControlProps) {
+export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, focusOnMount, layout, onRequestStart, onArchivedRefusal }: ProjectDeadlineControlProps) {
   const queryClient = useOptionalProjectQueryClient();
   const runtime = useProjectQueryRuntime();
   const [visibleSchedule, setVisibleSchedule] = useState(schedule);
@@ -309,6 +311,7 @@ export function ProjectDeadlineControl({ projectId, schedule, canEdit, onClose, 
     busy={saving}
     applyUntouched={automatic}
     focusOnMount={focusOnMount}
+    layout={layout}
     onApply={apply}
     onClose={() => onClose?.()}
   />;
