@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type Ref } from "react";
+import { useId, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { ChevronDown, ClockIcon } from "lucide-react";
 import type { ProjectDeadlineSchedule } from "@quincy/shared";
 import { Popover, PopoverTrigger } from "@/components/reui/popover";
@@ -11,6 +11,7 @@ import { useReresolveOnResize } from "../lib/use-reresolve-on-resize";
 import { AutomaticDeadlineMark } from "./AutomaticDeadlineMark";
 import { deadlineCountdown, type DeadlineDueInTone } from "../lib/deadline-due-in";
 import { cn } from "../lib/utils";
+import { useMinuteNow } from "../lib/use-minute-now";
 import { HEADER_CHEVRON, HEADER_CHIP, HEADER_CHIP_LOCK } from "./project-header/header-styles";
 import { ARCHIVED_HEADER_NOTICE_CLASS } from "./archived-notice";
 
@@ -41,8 +42,6 @@ import { ARCHIVED_HEADER_NOTICE_CLASS } from "./archived-notice";
  * cleanup) rather than leaving it held while the popover sits closed.
  */
 
-const DUE_IN_REFRESH_MS = 60_000;
-
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -53,11 +52,16 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
  * abbreviates September as "Sept" for en-AU, and the weekday is the only thing a `Date` is used for.
  */
 export function deadlineTriggerText(localCivil: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(localCivil);
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/.exec(localCivil);
   if (!match) return localCivil.replace("T", " ");
-  const [, year, month, day, hours, minutes] = match;
-  const weekday = WEEKDAYS[new Date(Date.UTC(Number(year), Number(month) - 1, Number(day))).getUTCDay()];
-  return `${weekday} ${Number(day)} ${MONTHS[Number(month) - 1]} · ${hours}:${minutes}`;
+  const [, day, hours, minutes] = match;
+  return `${civilDayText(day!)} · ${hours}:${minutes}`;
+}
+
+/** A civil date ("2026-09-16") as "Wed 16 Sep", with the same name tables (the shoot date, the deadline's day). */
+export function civilDayText(isoDate: string): string {
+  const [year, month, day] = isoDate.split("-").map(Number) as [number, number, number];
+  return `${WEEKDAYS[new Date(Date.UTC(year, month - 1, day)).getUTCDay()]} ${day} ${MONTHS[month - 1]}`;
 }
 
 /** #914: the chip's date, "Thu 18 Sep, 17:00" (prototype D1): `deadlineTriggerText` with a comma before the time. */
@@ -101,12 +105,7 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit, archived =
   const focusInCell = () => { const active = document.activeElement; return Boolean(active && (triggerRef.current?.contains(active) || popupRef.current?.contains(active))); };
   // An archived Project has no editor: close the popover on the read-only edge, else it would reopen (with focus on Restore) when the Project comes back.
   useLayoutEffect(() => { if (archived || !canEdit) setOpen(false); }, [archived, canEdit]);
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), DUE_IN_REFRESH_MS);
-    return () => clearInterval(id);
-  }, []);
+  const now = useMinuteNow();
 
   // #213: the accessible name is built from the visible text (WCAG 2.5.3 Label in Name — a speech-control user says what they
   // see), prefixed with the fact it is. #914: the date reads "Due Thu 18 Sep, 17:00" while it is ahead, the date alone once it is

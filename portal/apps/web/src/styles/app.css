@@ -258,15 +258,15 @@
 /* #914 (prototype project-header-revamp D1/T1): Row A, the labelled header section, holds the identity and the status cluster; the
    Workspace tab bar (Row B) follows it as a sibling under `main.work`, so a sticky tab bar is bounded by the whole work area rather
    than by the section. The header owns no `top:` (#201). */
-.project-header { container: project-header / inline-size; display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; padding: var(--space-5) var(--space-6) var(--space-3); background: var(--paper-000); }
+.project-header { container: project-header / inline-size; display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; padding: var(--space-5) var(--space-6) var(--space-3); background: var(--bg-surface); }
 .project-header__row-a { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-4) var(--space-5); min-width: 0; }
 /* #914 D5: Row B is the sticky row (Row A is not, #201) and, once Row A has scrolled out, the condensed bar. Its rest height is the
    tabs' 44px target plus the hairline, so condensing to --project-chrome-stuck can grow it upward by exactly what it gains and the
    work area below never moves (the body sets `overflow-anchor: none`, so nothing compensates a shift). z 21: above `.worktools`. */
-.project-header__tabbar { --project-tabbar-rest: calc(44px + var(--border-width-hair)); position: sticky; top: var(--shell-header-height); z-index: 21; display: flex; align-items: center; gap: var(--space-5); height: var(--project-tabbar-rest); min-width: 0; padding-inline: var(--space-6); background: var(--paper-000); border-bottom: 1px solid var(--border-hairline); }
+.project-header__tabbar { --project-tabbar-rest: calc(44px + var(--border-width-hair)); position: sticky; top: var(--shell-header-height); z-index: 21; display: flex; align-items: center; gap: var(--space-5); height: var(--project-tabbar-rest); min-width: 0; padding-inline: var(--space-6); background: var(--bg-surface); border-bottom: 1px solid var(--border-hairline); }
 .project-header__tabbar[data-header-condensed] { height: var(--project-chrome-stuck); margin-block-start: calc(var(--project-tabbar-rest) - var(--project-chrome-stuck)); padding-inline-end: calc(var(--space-4) + 44px + var(--space-4)); box-shadow: var(--shadow-sm); }
 /* The sheet's Close moves up to centre in the condensed bar: (60 - 44) / 2. Unlayered, so it wins over the button's top utility. */
-[data-testid="project-sheet"]:has([data-header-condensed]) [data-testid="project-sheet-close"] { top: var(--space-2); }
+.project-sheet:has([data-header-condensed]) .project-sheet__close { top: var(--space-2); }
 .project-header__tabs { min-width: 0; overflow-x: auto; scroll-padding-inline: var(--space-2); }
 /* #514: the strip scrolls, so it clips its overflow; the first/last tab's focus ring (outside the tab) was cut at the
    clip edge. The padding is the fix; scroll-padding makes an auto-revealed tab land with the same margin. */
@@ -286,11 +286,11 @@
 /* #914 M1/M2 — the phone header (HeaderPhone): three siblings under `main.work`. The slim bar (48px, --space-7) sticks at the top and
    gives its height back with a negative margin, so it covers the project bar's top until that has scrolled under it; it is inert
    and transparent until then (a reveal: opacity only). The tabs stick under it, so stuck chrome is 48 + the tab row: 93px. */
-.project-phone__slim { position: sticky; top: var(--shell-header-height); z-index: 22; display: flex; align-items: center; gap: var(--space-1); height: var(--space-7); margin-block-end: calc(var(--space-7) * -1); padding-inline: var(--space-4) var(--space-1); background: var(--paper-000); opacity: 0; transition: opacity var(--dur-base) var(--ease-standard); }
+.project-phone__slim { position: sticky; top: var(--shell-header-height); z-index: 22; display: flex; align-items: center; gap: var(--space-1); height: var(--space-7); margin-block-end: calc(var(--space-7) * -1); padding-inline: var(--space-4) var(--space-1); background: var(--bg-surface); opacity: 0; transition: opacity var(--dur-base) var(--ease-standard); }
 .project-phone__slim[data-on] { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .project-phone__slim { transition: none; } }
 /* M1: 62px at rest (the 44px targets plus the bar's block padding), the title block first and the bar's buttons at the end. */
-.project-phone__bar { display: grid; min-height: 62px; padding-block: var(--space-2); padding-inline: var(--space-4) var(--space-1); background: var(--paper-000); }
+.project-phone__bar { display: grid; min-height: 62px; padding-block: var(--space-2); padding-inline: var(--space-4) var(--space-1); background: var(--bg-surface); }
 .project-header__tabbar--phone { top: calc(var(--shell-header-height) + var(--space-7)); }
 .project-header__tabbar--phone[data-stuck] { box-shadow: var(--shadow-sm); }
 .worktools { position: sticky; top: var(--shell-header-height); z-index: 20; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-6); background: color-mix(in srgb, var(--paper-050) 90%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border-hairline); flex-wrap: wrap; }

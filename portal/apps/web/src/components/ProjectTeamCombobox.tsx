@@ -36,6 +36,7 @@ import {
 import { AvatarStack } from "./quincy/AvatarStack";
 import { HEADER_CHIP, HEADER_CHIP_LOCK } from "./project-header/header-styles";
 import { HeaderTooltip } from "./project-header/HeaderTooltip";
+import { uniqueByUser } from "./project-header/header-parts";
 import { Avatar, AvatarFallback } from "./reui/avatar";
 import { Item, ItemContent, ItemDescription, ItemTitle } from "./reui/item";
 
@@ -498,12 +499,12 @@ function TeamComboboxView({ groups, value, onValueChange, visible, hiddenCount, 
 
 /** #914 D3: the Team chip's accessible name, from the same people its avatars show. */
 function teamTriggerName(value: TeamOption[]): string {
-  const names = [...new Map(value.map((option) => [option.userId, displayName(option.name, option.email)])).values()];
+  const names = uniqueByUser(value).map((option) => displayName(option.name, option.email));
   return names.length ? `Team: ${names.join(", ")}` : "Team: nobody assigned";
 }
 
 function stackPeople(value: TeamOption[]) {
-  return [...new Map(value.map((option) => [option.userId, { id: option.userId, name: displayName(option.name, option.email), inactive: !option.active }])).values()];
+  return uniqueByUser(value).map((option) => ({ id: option.userId, name: displayName(option.name, option.email), inactive: !option.active }));
 }
 
 const TEAM_POPOVER_META = "m-0 [font:var(--type-eyebrow)] text-foreground-secondary";
@@ -810,13 +811,15 @@ export function ProjectTeamCombobox({ projectId, members, canEdit, archived = fa
   }
 
   const candidatesError = editable && candidatesQuery.isError && <p className={PROJECT_TEAM_MESSAGE} role="alert">Candidates could not be loaded. {candidatesQuery.error instanceof Error ? candidatesQuery.error.message : "Try again shortly."}</p>;
-  const messages = Object.entries(mutationStates).filter(([, state]) => state.kind !== "pending").map(([key, state]) => {
-    if (state.kind === "pending") return null;
+  // A pending row has no message; skipping it here (not in a filter) is what narrows `state` to error / conflict below.
+  const messages = Object.entries(mutationStates).flatMap(([key, state]) => {
+    if (state.kind === "pending") return [];
     const name = state.retry === "add" ? displayName(state.candidate.name, state.candidate.email) : displayName(state.member.name, state.member.email);
-    return <div key={key} id={`project-member-message-${key}`} data-testid={`project-member-message-${key}`} role="alert" className={cn(PROJECT_TEAM_MESSAGE, presentation === "popover" && "px-[var(--space-3)] pb-[var(--space-2)]")}>
-      {name}: {state.message}
-      {state.kind === "error" && !readOnly && <Button type="button" variant="text" className="ml-[var(--space-2)] min-h-[44px]" onClick={() => state.retry === "add" ? void add(state.role, state.candidate) : void removeWithSnapshot(state.member)}>Retry</Button>}
-    </div>;
+    // The text wraps in its own column and Retry keeps its 44px target beside it, so Retry never drops onto a line of its own.
+    return [<div key={key} id={`project-member-message-${key}`} data-testid={`project-member-message-${key}`} role="alert" className={cn(PROJECT_TEAM_MESSAGE, "flex items-center gap-[var(--space-2)]", presentation === "popover" && "px-[var(--space-3)] pb-[var(--space-2)]")}>
+      <span className="min-w-0 flex-1">{name}: {state.message}</span>
+      {state.kind === "error" && !readOnly && <Button type="button" variant="text" className="shrink-0 min-h-[44px]" onClick={() => state.retry === "add" ? void add(state.role, state.candidate) : void removeWithSnapshot(state.member)}>Retry</Button>}
+    </div>];
   });
   const latchedNotice = latched && <p id={noticeId} role="status" className={ARCHIVED_HEADER_NOTICE_CLASS}>{ARCHIVED_TEAM_NOTICE}</p>;
 

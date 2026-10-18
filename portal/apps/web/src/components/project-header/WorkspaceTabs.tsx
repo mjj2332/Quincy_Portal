@@ -4,6 +4,7 @@ import type { WorkspaceTab } from "../../lib/workspace-tab";
 import { Tabs, TabsList, TabsTrigger } from "@/components/reui/tabs";
 import { Badge } from "@/components/reui/badge";
 import { cn, formatUnreadCount } from "../../lib/utils";
+import { useLatest } from "../../lib/use-latest";
 import { SCROLL_FADE_EDGE_FRACTION, SCROLL_FADE_MASK_CLASSES, useScrollFade } from "../../lib/use-scroll-fade";
 import type { ProjectDetail } from "../../lib/project-data";
 
@@ -39,10 +40,9 @@ export function WorkspaceTabs({ project, activeTab, availableTabs, deliveryOffer
   const { fade: tabsFade, onScroll: onTabsScroll } = useScrollFade(tabsRef);
   // One stable callback per tab for the component's lifetime: a fresh ref callback every render makes
   // Base UI's trigger re-run its own ref registration (a state update), which loops. A `useRef` Map,
-  // not `useMemo`, because React may discard a memo; the registry prop is read through a ref.
+  // not `useMemo`, because React may discard a memo; the registry prop is read through `useLatest`.
   const tabRefCallbacks = useRef(new Map<WorkspaceTab, (element: HTMLButtonElement | null) => void>());
-  const workspaceTabRefsRef = useRef(workspaceTabRefs);
-  workspaceTabRefsRef.current = workspaceTabRefs;
+  const workspaceTabRefsRef = useLatest(workspaceTabRefs);
   const tabRef = (tab: WorkspaceTab) => {
     let callback = tabRefCallbacks.current.get(tab);
     if (!callback) {

@@ -13,14 +13,14 @@ import type { ProjectDetail } from "../../lib/project-data";
 import { cn } from "../../lib/utils";
 import { ProjectInfoSheet } from "./ProjectInfoSheet";
 import { ClientFacts, DeadlineFacts, INFO_LINK, InfoSection, NotesFacts, SocialOverlaysSection, TeamFacts } from "./info-sections";
-import { projectDetailsAction } from "./ProjectMoreMenu";
-import { noteWhiteboardOpener } from "./whiteboard-opener";
+import { projectDetailsAction } from "./header-parts";
+import { openWhiteboardFromInfo } from "./whiteboard-opener";
+import { DROPBOX_BADGE } from "./header-styles";
 import type { ArchivedLatch } from "./StatusCluster";
 
 /** Where Project info opens: at the top, or with one section in view (the meta line's notes link, the "Dropbox blocked" chip). */
 export type InfoTarget = "notes" | "dropbox" | null;
 
-const DROPBOX_BADGE = { positive: "success-light", caution: "warning-light", neutral: "secondary" } as const;
 const FOOTER_ACTION = buttonVariants({ variant: "outline", size: "header" });
 
 export type ProjectInfoPanelProps = {
@@ -101,12 +101,8 @@ export function ProjectInfoPanel(props: ProjectInfoPanelProps) {
     flushSync(() => setManagingTeam(false));
     manageRef.current?.focus();
   }
-  function openWhiteboard() {
-    // The footer's button goes with the sheet: the board returns focus to the header's own Whiteboard button.
-    noteWhiteboardOpener(null);
-    props.onClose();
-    props.onOpenWhiteboard?.();
-  }
+  // The footer's button goes with the sheet: the board returns focus to the header's own Whiteboard button.
+  const openWhiteboard = () => openWhiteboardFromInfo(props.onClose, props.onOpenWhiteboard);
 
   return <ProjectInfoSheet
     open={props.open}

@@ -507,7 +507,7 @@ describe("header-relative offsets derive from --shell-header-height (#113)", () 
     expect(condensed).toMatch(/margin-block-start:\s*calc\(var\(--project-tabbar-rest\) - var\(--project-chrome-stuck\)\)/);
     expect(condensed).toMatch(/padding-inline-end:\s*calc\(var\(--space-4\) \+ 44px \+ var\(--space-4\)\)/);
     expect(condensed).toMatch(/box-shadow:\s*var\(--shadow-sm\)/);
-    const close = ruleBody(appCss, '[data-testid="project-sheet"]:has([data-header-condensed]) [data-testid="project-sheet-close"]') ?? "";
+    const close = ruleBody(appCss, ".project-sheet:has([data-header-condensed]) .project-sheet__close") ?? "";
     // (60 - 44) / 2.
     expect(close).toMatch(/top:\s*var\(--space-2\)/);
   });

@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { flushSync } from "react-dom";
+import { useLatest } from "../../lib/use-latest";
+import { useProjectSheet } from "../quincy/ProjectSheet";
 
 /**
  * #914 — whether `target` has scrolled out above the top of the Project sheet's scroller (shrunk by `rootMargin`). One
- * IntersectionObserver (root: the sheet body, threshold 0) on an element whose own geometry never depends on the answer, so the
- * observation cannot feed back into itself. Re-made for another Project, and dropped while `enabled` is false (the whiteboard covers
+ * IntersectionObserver (root: the sheet context's `body`, threshold 0) on an element whose own geometry never depends on the answer,
+ * so the observation cannot feed back into itself. Re-made for another Project, and dropped while `enabled` is false (the whiteboard covers
  * the Workspace, and a hidden element has no geometry to measure). With no IntersectionObserver the answer stays false.
  *
  * - D5: Row A out condenses Row B (desktop).
@@ -16,9 +18,10 @@ import { flushSync } from "react-dom";
 export function useScrolledOut(target: RefObject<HTMLElement | null>, projectId: string, enabled: boolean, options: { rootMargin?: string; handOff?: (next: boolean) => (() => void) | void } = {}): boolean {
   const [out, setOut] = useState(false);
   const current = useRef(false);
-  const handOff = useRef(options.handOff);
-  handOff.current = options.handOff;
+  const handOff = useLatest(options.handOff);
   const rootMargin = options.rootMargin ?? "0px";
+  // The sheet's scroll body (its context's `body`, set once it mounts); outside a sheet, the viewport.
+  const scroller = useProjectSheet()?.body ?? null;
   useEffect(() => {
     current.current = false;
     setOut(false);
@@ -34,11 +37,20 @@ export function useScrolledOut(target: RefObject<HTMLElement | null>, projectId:
       const after = handOff.current?.(next);
       flushSync(() => setOut(next));
       after?.();
-    }, { root: element.closest<HTMLElement>(".project-sheet__body"), rootMargin, threshold: 0 });
+    }, { root: scroller, rootMargin, threshold: 0 });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [target, projectId, enabled, rootMargin]);
+  }, [target, projectId, enabled, rootMargin, handOff, scroller]);
   return out;
+}
+
+/**
+ * Whether `element` is a control a person can reach now. The header draws some controls twice and makes the twin it is not showing
+ * inert (`data-twin-bar`); only that disqualifies one. An `inert` a modal layer puts on the page around itself does not, or a
+ * layer closing would find nowhere to return focus to.
+ */
+export function isLiveTwin(element: HTMLElement | null | undefined): element is HTMLElement {
+  return Boolean(element?.isConnected && !element.closest("[data-twin-bar][inert]"));
 }
 
 /**

@@ -3,6 +3,7 @@ import { cn } from "../../lib/utils";
 import { HEADER_CHIP } from "./header-styles";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/reui/select";
 import { HeaderTooltip } from "./HeaderTooltip";
+import { stageLabel } from "./header-parts";
 import type { useStages } from "../../lib/stages";
 import type { ProjectDetail } from "../../lib/project-data";
 
@@ -35,7 +36,7 @@ export function StageControl({ project, currentStageKey, stages, contractEnabled
   // workspace can return focus to the same control while exposing the reason.
   // The contract-off state remains a genuinely disabled control.
   const disabled = pending || (!contractEnabled && !disabledReason);
-  const labelFor = (key: ProjectDetail["stageKey"]) => stages.find((item) => item.key === key)?.label ?? key;
+  const labelFor = (key: ProjectDetail["stageKey"]) => stageLabel(stages, key);
   const reasonId = `project-stage-reason-${project.id}`;
   return <div className="grid gap-[var(--space-1)]">
     <Select

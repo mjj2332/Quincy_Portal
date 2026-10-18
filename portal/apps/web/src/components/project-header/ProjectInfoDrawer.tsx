@@ -1,4 +1,4 @@
-import { useContext, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { flushSync } from "react-dom";
 import { CalendarDaysIcon, ChartGanttIcon, ChevronLeftIcon, ChevronRightIcon, LinkIcon, PencilIcon, PresentationIcon, XIcon } from "lucide-react";
 import type { Role, WorkspaceTab } from "@quincy/shared";
@@ -24,10 +24,12 @@ import type { useStages } from "../../lib/stages";
 import type { ShowInDestination } from "../../lib/project-show-in";
 import { KEYBOARD_MIN_PX, useVisualViewport } from "../../lib/use-visual-viewport";
 import { cn } from "../../lib/utils";
+import { useMinuteNow } from "../../lib/use-minute-now";
 import { shootLongText } from "./info-sections";
-import { projectDetailsAction } from "./ProjectMoreMenu";
 import type { ProjectInfoPanelProps } from "./ProjectInfoPanel";
-import { noteWhiteboardOpener } from "./whiteboard-opener";
+import { openWhiteboardFromInfo } from "./whiteboard-opener";
+import { projectDetailsAction, stageLabel, uniqueByUser } from "./header-parts";
+import { DROPBOX_BADGE } from "./header-styles";
 
 /** The views Project info pushes on the phone (M3–M6). */
 export type DrawerView = "info" | "stage" | "deadline" | "team" | "overlays" | "dropbox";
@@ -59,29 +61,24 @@ const GROUP = "bg-card border-y border-border";
  * `.row`: 52px (no token: the prototype's row, above the 44px target), the 20px left gutter, a hairline between rows that starts
  * at the gutter. A row that opens a view is a button; a static row is a plain block.
  */
-const ROW = "relative flex w-full min-h-[52px] items-center gap-[var(--space-3)] py-[calc(var(--space-1)+2px)] ps-[calc(var(--space-4)+var(--space-1))] pe-[var(--space-3)] text-start [font:var(--weight-regular)_var(--text-base)/var(--leading-snug)_var(--font-sans)] text-foreground [&+&]:before:absolute [&+&]:before:inset-x-0 [&+&]:before:start-[calc(var(--space-4)+var(--space-1))] [&+&]:before:top-0 [&+&]:before:h-px [&+&]:before:bg-[var(--paper-200)]";
+const ROW = "relative flex w-full min-h-[52px] items-center gap-[var(--space-3)] py-[calc(var(--space-1)+2px)] ps-[calc(var(--space-4)+var(--space-1))] pe-[var(--space-3)] text-start [font:var(--weight-regular)_var(--text-base)/var(--leading-snug)_var(--font-sans)] text-foreground [&+&]:before:absolute [&+&]:before:inset-x-0 [&+&]:before:start-[calc(var(--space-4)+var(--space-1))] [&+&]:before:top-0 [&+&]:before:h-px [&+&]:before:bg-[var(--border-subtle)]";
 const ROW_BUTTON = cn(ROW, "h-auto justify-start rounded-none border-0 bg-transparent normal-case tracking-normal hover:bg-muted aria-expanded:bg-transparent");
 const ROW_STATIC = cn(ROW, "outline-none focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring -outline-offset-2 focus-visible:!-outline-offset-2");
 /** `.row .k`: the row's term, 92px wide (no token), in the secondary ink. */
 const ROW_TERM = "w-[92px] shrink-0 text-foreground-secondary";
 const ROW_VALUE = "flex min-w-0 flex-1 items-center justify-end gap-[var(--space-2)] text-end";
-const ROW_CHEVRON = "size-[18px] shrink-0 text-[var(--greige-400)]";
+const ROW_CHEVRON = "size-[18px] shrink-0 text-[var(--text-muted)]";
 /** `.acts .qb`: the 48px outline actions, two to a line. */
 const ACTION = cn(buttonVariants({ variant: "outline", size: "header" }), "min-h-[var(--space-7)] justify-center no-underline text-foreground [font:var(--weight-regular)_var(--text-base)/1.2_var(--font-sans)]");
 const NOTES = "m-0 mx-[var(--space-4)] whitespace-pre-wrap border border-border bg-card px-[var(--space-4)] py-[calc(var(--space-3)+2px)] [font:var(--weight-regular)_var(--text-base)/var(--leading-relaxed)_var(--font-body-serif)] text-foreground";
 const QUIET = "m-0 px-[calc(var(--space-4)+var(--space-1))] py-[var(--space-3)] [font:var(--type-label)] text-foreground-secondary";
 
-const DROPBOX_BADGE = { positive: "success-light", caution: "warning-light", neutral: "secondary" } as const;
-
 function firstName(member: ProjectMember): string {
   return (member.name || member.email).trim().split(/\s+/)[0] ?? "";
 }
 
-function uniquePeople(members: ProjectMember[]) {
-  return [...new Map(members.map((member) => [member.userId, member])).values()];
-}
-
-/** The head of the info view (`.sh-head`): the street at 26px (no token rung: the 28px `--text-xl` would wrap a long street) and the suburb; ×. */
+/** The head of the info view (`.sh-head`): the street and the suburb; ×. The frame sets the street at 26px, which has no type
+ *  rung; it renders at the nearest, `--text-xl` (28px), and a street too long for the line wraps anywhere rather than overflowing. */
 function InfoHead({ street, place }: { street: string; place: string }) {
   return <div className="flex shrink-0 items-start gap-[var(--space-2)] ps-[calc(var(--space-4)+var(--space-1))] pe-[var(--space-2)] pt-[calc(var(--space-2)+2px)] pb-[calc(var(--space-3)+2px)]">
     <div className="grid min-w-0 flex-1 gap-[2px] pt-[calc(var(--space-1)+2px)]">
@@ -164,12 +161,8 @@ export function ProjectInfoDrawer(props: ProjectInfoDrawerProps) {
     flushSync(() => setRequested("info"));
     rows.current[from]?.focus({ preventScroll: true });
   }
-  function openWhiteboard() {
-    // The action goes with the drawer: the board returns focus to the project bar's own Whiteboard button.
-    noteWhiteboardOpener(null);
-    changeOpen(false);
-    props.onOpenWhiteboard?.();
-  }
+  // The action goes with the drawer: the board returns focus to the project bar's own Whiteboard button.
+  const openWhiteboard = () => openWhiteboardFromInfo(() => changeOpen(false), props.onOpenWhiteboard);
   const rowRef = (name: DrawerView) => (element: HTMLElement | null) => { rows.current[name] = element; };
 
   let content: ReactNode;
@@ -239,7 +232,7 @@ export function ProjectInfoDrawer(props: ProjectInfoDrawerProps) {
       )}
     >
       {/* `.handle`, decorative: the whole sheet takes the drag. 36×5 (no token: the prototype's grip). */}
-      <span aria-hidden="true" className="mx-auto mt-[var(--space-2)] block h-[5px] w-9 shrink-0 rounded-[var(--radius-pill)] bg-[var(--greige-300)]" />
+      <span aria-hidden="true" className="mx-auto mt-[var(--space-2)] block h-[5px] w-9 shrink-0 rounded-[var(--radius-pill)] bg-[var(--border-hover)]" />
       {content}
     </DrawerContent>
   </Drawer>;
@@ -256,16 +249,16 @@ function InfoView({ project, archived, latch, canEdit, canAdminBackend, stage, s
   onPush: (view: Exclude<DrawerView, "info">) => void;
   onOpenWhiteboard?: () => void;
 }) {
-  const stageLabel = stage.stages.find((item) => item.key === stage.currentStageKey)?.label ?? stage.currentStageKey;
+  const currentLabel = stageLabel(stage.stages, stage.currentStageKey);
   const schedule = project.deadlineSchedule;
-  const countdown = deadlineCountdown(schedule, Date.now());
-  const people = uniquePeople(project.members);
+  const countdown = deadlineCountdown(schedule, useMinuteNow());
+  const people = uniqueByUser(project.members);
   const details = projectDetailsAction(project, { canEdit, archived, canAdminBackend });
   const status = dropboxStatus(project, dropbox?.autohdrBlocked ?? false, archived);
   const notes = project.productionNotes?.trim();
   const shoot = shootLongText(project) ?? "Date pending";
 
-  const stageValue = <span className={ROW_VALUE}><StageDot stageKey={stage.currentStageKey} /><span className="truncate">{stageLabel}</span></span>;
+  const stageValue = <span className={ROW_VALUE}><StageDot stageKey={stage.currentStageKey} /><span className="truncate">{currentLabel}</span></span>;
   const deadlineValue = <span className={ROW_VALUE}>
     {schedule.deadline
       ? <><span className="truncate">{deadlineChipDate(schedule.deadline.localCivil)}</span>{countdown && <Badge variant={COUNTDOWN_BADGE[countdown.tone]} data-tone={countdown.tone} className="normal-case tracking-normal">{countdown.short}</Badge>}</>
@@ -280,7 +273,7 @@ function InfoView({ project, archived, latch, canEdit, canAdminBackend, stage, s
   return <>
     <h3 className={GROUP_LABEL}>Status</h3>
     <div className={GROUP} data-testid="project-info-status">
-      <StatusRow id="stage" name="Stage" label={`Stage: ${stageLabel}`} offered={stage.canMove} rowRef={(element) => { rowRef("stage")(element); assign(stageRowRef, element); }} onPush={() => onPush("stage")} value={stageValue} />
+      <StatusRow id="stage" name="Stage" label={`Stage: ${currentLabel}`} offered={stage.canMove} rowRef={(element) => { rowRef("stage")(element); assign(stageRowRef, element); }} onPush={() => onPush("stage")} value={stageValue} />
       <StatusRow id="deadline" name="Deadline" label={schedule.deadline ? `Deadline: ${deadlineChipDate(schedule.deadline.localCivil)}` : editable ? "Deadline: set deadline" : "Deadline: not set"} offered={editable} rowRef={(element) => { rowRef("deadline")(element); assign(deadlineSectionRef, element); }} onPush={() => onPush("deadline")} value={deadlineValue} />
       <StatusRow id="team" name="Team" label={people.length ? `Team: ${people.map((member) => member.name || member.email).join(", ")}` : "Team: nobody assigned"} offered={editable} rowRef={rowRef("team")} onPush={() => onPush("team")} value={teamValue} />
       {overlays && <VideoReviewGate projectId={project.id} role={overlays.role}><OverlaysRow projectId={project.id} role={overlays.role} offered={overlays.canEdit && !archived} rowRef={(element) => { rowRef("overlays")(element); assign(overlaysSectionRef, element); }} onPush={() => onPush("overlays")} /></VideoReviewGate>}
@@ -385,7 +378,10 @@ function ShowInAction({ label, name, icon, destination }: { label: string; name:
  * Back to Project info only once the move is saved.
  */
 function StageView({ stage, onSaved }: { stage: ProjectInfoDrawerProps["stage"]; onSaved: () => void }) {
+  // True from an arrow key's capture until the next task, so the focus move it causes is not taken as a choice.
   const arrowing = useRef(false);
+  const arrowingReset = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(arrowingReset.current), []);
   const choices = stage.stages.filter((item) => item.active || item.key === stage.currentStageKey);
   async function choose(next: ProjectDetail["stageKey"]) {
     const result = await stage.onMove(next);
@@ -402,7 +398,8 @@ function StageView({ stage, onSaved }: { stage: ProjectInfoDrawerProps["stage"];
       onKeyDownCapture={(event) => {
         if (!event.key.startsWith("Arrow")) return;
         arrowing.current = true;
-        setTimeout(() => { arrowing.current = false; }, 0);
+        clearTimeout(arrowingReset.current);
+        arrowingReset.current = setTimeout(() => { arrowing.current = false; }, 0);
       }}
       onValueChange={(next, details) => {
         if (arrowing.current) { details.cancel(); return; }
@@ -421,7 +418,7 @@ function StageView({ stage, onSaved }: { stage: ProjectInfoDrawerProps["stage"];
       >
         <span className="flex min-w-0 items-center gap-[calc(var(--space-2)+2px)]"><StageDot stageKey={item.key} /><span className="truncate">{item.label}</span></span>
         {/* `.radio`: a 22px ring (no token), filled at its centre when chosen. */}
-        <span aria-hidden="true" className="ms-auto grid size-[22px] shrink-0 place-items-center rounded-full border-[length:var(--border-width-mid)] border-[var(--greige-300)] group-data-checked/radio-group-item:border-foreground after:size-2.5 after:rounded-full after:bg-transparent group-data-checked/radio-group-item:after:bg-foreground" />
+        <span aria-hidden="true" className="ms-auto grid size-[22px] shrink-0 place-items-center rounded-full border-[length:var(--border-width-mid)] border-[var(--border-hover)] group-data-checked/radio-group-item:border-foreground after:size-2.5 after:rounded-full after:bg-transparent group-data-checked/radio-group-item:after:bg-foreground" />
       </RadioGroupItem>)}
     </RadioGroup>
     <p className={QUIET}>{stage.disabledReason ?? "Choosing a stage saves it straight away."}</p>

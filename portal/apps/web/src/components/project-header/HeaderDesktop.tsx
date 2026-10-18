@@ -5,15 +5,16 @@ import { Button } from "@/components/reui/button";
 import { cn } from "../../lib/utils";
 import { INFO_LINK } from "./info-sections";
 import type { ProjectDetail } from "../../lib/project-data";
-import { deadlineTriggerText } from "../ProjectHeaderDeadline";
+import { civilDayText } from "../ProjectHeaderDeadline";
 import { StatusCluster, type StatusClusterProps } from "./StatusCluster";
 import { HEADER_CHIP } from "./header-styles";
+import { META_DOT } from "./header-parts";
 import { WhiteboardButton } from "./WhiteboardButton";
 
 /** The shoot date as D1's meta line reads it, "Tue 16 Sep": the Deadline's fixed name tables (no "Sept"), read off the civil date. */
 export function shootDateText(value: string | null): string {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return "Shoot date pending";
-  return `Shoot ${deadlineTriggerText(`${value}T00:00`).split(" · ")[0]}`;
+  return `Shoot ${civilDayText(value)}`;
 }
 
 export function clientText(project: Pick<ProjectDetail, "agencyName" | "agentName">): string | null {
@@ -21,7 +22,6 @@ export function clientText(project: Pick<ProjectDetail, "agencyName" | "agentNam
   return parts.length ? parts.join(", ") : null;
 }
 
-const META_DOT = <span aria-hidden="true" className="text-muted-foreground">·</span>;
 
 /**
  * #914 D1/T1 — the desktop header. Row A is the labelled section: the title in the display face with the suburb beside it, the

@@ -1,3 +1,5 @@
+import { isLiveTwin } from "./use-scrolled-out";
+
 /**
  * #914 — where focus goes when the Project whiteboard closes. The header can draw the whiteboard's button in more than one place
  * (the status cluster, the condensed bar, the phone project bar, Project info's action), so the board no longer returns focus to
@@ -16,6 +18,16 @@ export function noteWhiteboardOpener(element: HTMLElement | null) {
 export function whiteboardReturnTarget(): HTMLElement | null {
   const opener = lastOpener;
   lastOpener = null;
-  if (opener?.isConnected && !opener.closest("[inert]")) return opener;
+  if (isLiveTwin(opener)) return opener;
   return document.querySelector<HTMLElement>(`[data-testid="${WHITEBOARD_OPEN_TESTID}"]`);
+}
+
+/**
+ * Project info's "Open whiteboard" (desktop sheet and phone drawer): the action closes Project info with it, so it records no
+ * opener and the board returns focus to the header's own Whiteboard button.
+ */
+export function openWhiteboardFromInfo(close: () => void, open?: () => void) {
+  noteWhiteboardOpener(null);
+  close();
+  open?.();
 }

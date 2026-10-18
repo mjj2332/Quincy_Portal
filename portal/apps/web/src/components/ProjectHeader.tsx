@@ -3,6 +3,7 @@ import { PROJECT_SHEET_PHONE_QUERY } from "./quincy/ProjectSheet";
 import { WorkspaceTabs } from "./project-header/WorkspaceTabs";
 import { HeaderDesktop } from "./project-header/HeaderDesktop";
 import type { ArchivedLatch } from "./project-header/StatusCluster";
+import { latchFocusTarget } from "./project-header/latch-focus";
 import { useStages } from "../lib/stages";
 import { useCapabilities } from "../lib/capabilities";
 import type { ProjectDetail } from "../lib/project-data";
@@ -11,7 +12,7 @@ import type { WorkspaceTab } from "../lib/workspace-tab";
 import { ProjectInfoPanel, type InfoTarget, type ProjectInfoPanelProps } from "./project-header/ProjectInfoPanel";
 import { ProjectInfoDrawer, type StageMoveOutcome } from "./project-header/ProjectInfoDrawer";
 import { HeaderPhone } from "./project-header/HeaderPhone";
-import { twinHandOff, useScrolledOut } from "./project-header/use-scrolled-out";
+import { isLiveTwin, twinHandOff, useScrolledOut } from "./project-header/use-scrolled-out";
 import { useMediaQuery } from "../lib/use-media-query";
 
 export { WhiteboardButton } from "./project-header/WhiteboardButton";
@@ -120,10 +121,13 @@ export function ProjectHeader({
     const flip = focusAfterFlip.current;
     if (!latch || !flip) return;
     focusAfterFlip.current = null;
-    // While Project info is open (a modal over the header), focus stays inside it: on the section the refusal came from.
-    const target = info.open
-      ? { stage: infoStageRef, deadline: infoDeadlineRef, dropbox: dropboxGroupRef, team: null, "social-overlays": infoOverlaysRef }[flip.source]?.current
-      : { stage: stageGroupRef, deadline: deadlineGroupRef, dropbox: dropboxGroupRef, team: null, "social-overlays": stageGroupRef }[flip.source]?.current;
+    const target = latchFocusTarget({
+      stage: { info: infoStageRef, header: stageGroupRef },
+      deadline: { info: infoDeadlineRef, header: deadlineGroupRef },
+      dropbox: { info: dropboxGroupRef, header: dropboxGroupRef },
+      team: { info: null, header: null },
+      "social-overlays": { info: infoOverlaysRef, header: null },
+    }, flip.source, info.open);
     if (!target) return;
     const active = document.activeElement;
     const reclaimed = !!active && active !== document.body && active !== target && active.contains(target);
@@ -151,8 +155,8 @@ export function ProjectHeader({
     open: info.open,
     onClose: () => setInfo((current) => ({ ...current, open: false })),
     // The opener, or (it was swapped out while Project info was open) the live Project info control of the bar showing now.
-    returnFocus: () => (infoOpener.current?.isConnected && !infoOpener.current.closest("[inert]") ? infoOpener.current
-      : [...document.querySelectorAll<HTMLElement>('[data-twin="info"]')].find((element) => !element.closest("[inert]")) ?? null),
+    returnFocus: () => (isLiveTwin(infoOpener.current) ? infoOpener.current
+      : [...document.querySelectorAll<HTMLElement>('[data-twin="info"]')].find(isLiveTwin) ?? null),
     project,
     place,
     archived,

@@ -11,18 +11,10 @@ import type { ProjectDetail } from "../../lib/project-data";
 import { cn } from "../../lib/utils";
 import { HEADER_ICON_CHIP } from "./header-styles";
 import { passEscape } from "./HeaderTooltip";
+import { projectDetailsAction } from "./header-parts";
 
 const ITEM = cn(MENU_ITEM, "gap-[var(--space-2)] no-underline [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-foreground-secondary");
 const REASON = "block [font:var(--type-eyebrow)] text-foreground-secondary";
-
-/**
- * Where "Edit project details" leads, or null when it is not offered. #455: an archived Project's details are read-only, so an Admin
- * with backend access is offered "Restore or delete" there instead, and nobody else is offered the link.
- */
-export function projectDetailsAction(project: Pick<ProjectDetail, "id">, { canEdit, archived, canAdminBackend }: { canEdit: boolean; archived: boolean; canAdminBackend: boolean }): { href: string; label: string } | null {
-  if (!canEdit || (archived && !canAdminBackend)) return null;
-  return { href: `/projects/${encodeURIComponent(project.id)}/edit`, label: archived ? "Restore or delete" : "Edit project details" };
-}
 
 function ShowInItem({ label, icon, destination }: { label: string; icon: React.ReactNode; destination: ShowInDestination }) {
   if (!destination.available) {

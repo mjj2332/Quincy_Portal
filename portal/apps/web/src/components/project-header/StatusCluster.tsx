@@ -8,6 +8,7 @@ import { StageControl, StageOption } from "./StageControl";
 import { ProjectMoreMenu } from "./ProjectMoreMenu";
 import { WhiteboardButton } from "./WhiteboardButton";
 import { ArchivedBadge } from "./ArchivedBadge";
+import { stageLabel } from "./header-parts";
 import { HEADER_CHIP, HEADER_CHIP_LOCK, HEADER_CHIP_WARN, HEADER_RULE } from "./header-styles";
 import type { InfoTarget } from "./ProjectInfoPanel";
 import type { useStages } from "../../lib/stages";
@@ -50,7 +51,7 @@ export type StatusClusterProps = {
  */
 export function StatusCluster(props: StatusClusterProps) {
   const { project, archived, latch, canEdit, canMoveStage, currentStageKey, stages } = props;
-  const stageLabel = stages.find((stage) => stage.key === currentStageKey)?.label ?? currentStageKey;
+  const label = stageLabel(stages, currentStageKey);
   return <div className="flex min-w-0 flex-wrap items-center gap-[var(--space-2)]" data-testid="project-status-cluster">
     <div ref={props.stageCellRef} className="contents">
       {canMoveStage
@@ -60,7 +61,7 @@ export function StatusCluster(props: StatusClusterProps) {
           {...(archived ? { role: "group", "aria-label": "Stage", tabIndex: -1 } : {})}
           data-header-value="stage"
           className={HEADER_CHIP_LOCK}
-        ><StageOption stageKey={currentStageKey} label={stageLabel} /></span>}
+        ><StageOption stageKey={currentStageKey} label={label} /></span>}
     </div>
     <ProjectHeaderDeadline projectId={project.id} schedule={project.deadlineSchedule} canEdit={canEdit} archived={archived} archivedNotice={latch === "deadline"} readOnlyRef={props.deadlineGroupRef} onArchivedRefusal={(inside) => props.latchArchived("deadline", inside)} />
     <ProjectTeamCombobox presentation="popover" projectId={project.id} members={project.members} canEdit={canEdit} archived={archived} onArchivedRefusal={() => props.latchArchived("team", false)} />

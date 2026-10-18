@@ -520,6 +520,12 @@ describe("the phone header inside the Project sheet (#914 M1, M2)", () => {
   });
   afterEach(() => { viewport.restore(); stubRailMedia(true); vi.unstubAllGlobals(); });
 
+  it("observes the project bar against the Project sheet's scroll body (the sheet context's `body`)", async () => {
+    await renderSheet();
+    expect(barObserver()!.options?.root).toBe(document.querySelector('[data-testid="project-sheet-body"]'));
+    expect(barObserver()!.options?.root).not.toBeNull();
+  });
+
   it("has exactly one live Close project, inside the header landmark, in place of the sheet's own; it asks the sheet to close", async () => {
     await renderSheet();
     expect(document.querySelector('[data-testid="project-sheet-close"]')).toBeNull();

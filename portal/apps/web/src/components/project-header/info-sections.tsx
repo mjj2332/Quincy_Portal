@@ -4,7 +4,8 @@ import { Badge } from "@/components/reui/badge";
 import { useVideoReviewQuery, type ProjectDetail, type ProjectMember } from "../../lib/project-data";
 import { deadlineCountdown } from "../../lib/deadline-due-in";
 import { cn } from "../../lib/utils";
-import { COUNTDOWN_BADGE, deadlineChipDate, deadlineTriggerText } from "../ProjectHeaderDeadline";
+import { useMinuteNow } from "../../lib/use-minute-now";
+import { COUNTDOWN_BADGE, civilDayText, deadlineChipDate } from "../ProjectHeaderDeadline";
 import { ProjectSocialOverlayPicker } from "../quincy/ProjectSocialOverlayPicker";
 import { AutomaticDeadlineMark } from "../AutomaticDeadlineMark";
 import { HEADER_TEXT_LINK } from "../project-header-popover";
@@ -64,7 +65,7 @@ export function NotesFacts({ notes }: { notes: string | null | undefined }) {
 export function shootLongText(project: Pick<ProjectDetail, "shootDate" | "timeWindow">): string | null {
   const value = project.shootDate;
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-  const date = `${deadlineTriggerText(`${value}T00:00`).split(" · ")[0]} ${value.slice(0, 4)}`;
+  const date = `${civilDayText(value)} ${value.slice(0, 4)}`;
   return project.timeWindow?.trim() ? `${date}, ${project.timeWindow.trim()}` : date;
 }
 
@@ -78,8 +79,9 @@ export function ClientFacts({ project }: { project: ProjectDetail }) {
 
 /** The Deadline summary: the due date with its countdown Badge, and the advance reminders. */
 export function DeadlineFacts({ schedule }: { schedule: ProjectDeadlineSchedule }) {
+  const now = useMinuteNow();
   if (!schedule.deadline) return <p className="m-0 [font:var(--type-label)] text-foreground-secondary">No deadline set.</p>;
-  const countdown = deadlineCountdown(schedule, Date.now());
+  const countdown = deadlineCountdown(schedule, now);
   const offsets = schedule.reminderOffsetsMinutes.filter((offset) => offset > 0);
   return <InfoFacts rows={[
     ["Due", <span className="inline-flex flex-wrap items-center gap-[var(--space-2)]">

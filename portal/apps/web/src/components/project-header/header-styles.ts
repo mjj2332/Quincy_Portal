@@ -29,3 +29,6 @@ export const HEADER_CHEVRON = "size-[14px] shrink-0 text-muted-foreground";
 
 /** The rule between the status controls and Whiteboard / Project info / ⋯ (`.vr`, 1×24). */
 export const HEADER_RULE = "block w-px h-[var(--space-5)] shrink-0 bg-border";
+
+/** Project info's Dropbox status badge, by the status's tone (`dropboxStatus`). */
+export const DROPBOX_BADGE = { positive: "success-light", caution: "warning-light", neutral: "secondary" } as const;

@@ -477,6 +477,20 @@ describe("Project header Stage control", () => {
     expect(section.nextElementSibling?.querySelector('[role="tablist"]')).not.toBeNull();
   });
 
+  // #914 standards review: Project info's countdown follows the clock while it is open (the header's one-minute tick).
+  it("D2: the Deadline section's countdown moves on while Project info stays open", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"], now: new Date("2026-09-16T07:00:00.000Z") });
+    try {
+      const schedule = { version: 1, source: "manual", deadline: { localCivil: "2026-09-18T17:00", instant: "2026-09-18T07:00:00.000Z", utcOffsetMinutes: 600, fold: 0 }, reminderOffsetsMinutes: [], state: "scheduled", nextOccurrence: null, canResume: false } as unknown as ProjectDetail["deadlineSchedule"];
+      render(<ProjectHeader {...baseProps(project({ deadlineSchedule: schedule }))} />);
+      const info = await openInfo();
+      const badge = () => info.querySelector('[data-testid="project-info-deadline"] [data-tone]')?.textContent;
+      expect(badge()).toBe("2d");
+      act(() => { vi.advanceTimersByTime(60_000); });
+      expect(badge()).toBe("1d");
+    } finally { vi.useRealTimers(); }
+  });
+
   // #914 spec: the "← Dashboard" crumb goes. Every live route renders the header inside the Project sheet, whose Close returns there.
   it("D1: draws no Dashboard link, even outside a Project sheet", () => {
     render(<ProjectHeader {...baseProps(project())} />);
@@ -609,6 +623,32 @@ describe("Project header Stage control", () => {
       expect(sub().textContent).toBe("Editing");
       act(() => { root.render(<ProjectHeader {...baseProps(project({ deadlineSchedule: schedule("2026-09-18T07:00:00.000Z", "2026-09-18T17:00") }))} />); });
       expect(sub().querySelector('[data-tone="critical"]')?.textContent).toBe("Overdue");
+    });
+
+    it("the drawer's Deadline row countdown moves on while Project info stays open", async () => {
+      vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"], now: new Date("2026-09-16T07:00:00.000Z") });
+      render(<ProjectHeader {...baseProps(project({ deadlineSchedule: schedule("2026-09-18T07:00:00.000Z", "2026-09-18T17:00") }))} />);
+      const opener = bar().querySelector<HTMLButtonElement>('button[aria-label="Project info, 12 Example St"]')!;
+      await act(async () => { opener.click(); await Promise.resolve(); await Promise.resolve(); });
+      const badge = () => document.querySelector('[data-testid="project-info-sheet"] [aria-label^="Deadline: "] [data-tone]')?.textContent;
+      expect(badge()).toBe("2d");
+      act(() => { vi.advanceTimersByTime(60_000); });
+      expect(badge()).toBe("1d");
+    });
+
+    // Escape puts focus back on the bar's Project info button at once (the Project sheet reclaims homeless focus a frame later, #669)
+    // and it stays there.
+    it("Escape returns focus to the bar's Project info button at once, and it stays there", async () => {
+      render(<ProjectHeader {...baseProps(project())} />);
+      const opener = bar().querySelector<HTMLButtonElement>('button[aria-label="Project info, 12 Example St"]')!;
+      act(() => { opener.focus(); });
+      await act(async () => { opener.click(); await Promise.resolve(); await Promise.resolve(); });
+      expect(document.querySelector('[data-testid="project-info-sheet"]')!.contains(document.activeElement)).toBe(true);
+      act(() => { document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+      expect(document.activeElement).toBe(opener);
+      await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 20)); });
+      expect(document.querySelector('[data-testid="project-info-sheet"]')).toBeNull();
+      expect(document.activeElement).toBe(opener);
     });
 
     // Story 3: a Delivered or archived Project keeps its due date on the bar, read-only and without a countdown (as the desktop chip).
