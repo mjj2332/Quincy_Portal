@@ -103,6 +103,20 @@ export function projectLateness(
   return latenessOf(epochOf(project.deadlineAt), now);
 }
 
+/**
+ * Whether a Project's Deadline falls on today's Sydney civil day and it isn't late yet (the Table's and Board's
+ * "Today · 17:00" dot). A Deadline earlier today has already passed, so `projectLateness` calls it late and this is
+ * false: the dot and the late chip never show together.
+ */
+export function dueToday(
+  project: { stageKey: string | null | undefined; deadlineAt: string | number | null; archived: boolean },
+  now: Instant,
+): boolean {
+  if (project.deadlineAt === null || projectLateness(project, now).late) return false;
+  const due = epochOf(project.deadlineAt);
+  return Number.isFinite(due) && sydneyDayKey(due) === sydneyDayKey(epochOf(now));
+}
+
 /** A Subtask is late when its due (the end of its Subtask range) is in the past and it is not complete. */
 export function subtaskLateness(subtask: { dueAt: Instant; complete: boolean }, now: Instant): Lateness {
   if (subtask.complete) return NOT_LATE;
