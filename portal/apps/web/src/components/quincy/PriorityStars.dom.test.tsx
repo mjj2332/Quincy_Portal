@@ -248,6 +248,31 @@ describe("PriorityStars (#81)", () => {
     });
   });
 
+  // #923 D4 (ADR 0003): the compact Board card draws a smaller star. Only the glyph's type changes; each star's
+  // hit cell is the same element with the same classes, so its 36px (44px on touch) target cannot shrink with it.
+  describe("the small glyph (#923 D4)", () => {
+    const glyph = (radio: Element) => radio.querySelector('[aria-hidden="true"]')!;
+    const cellClasses = (radio: Element) => [...radio.classList].filter((name) => !/^text-/.test(name)).sort();
+
+    it("sets the glyph in the 14px type token and leaves every hit cell as it was", async () => {
+      await render({ priority: 3 });
+      const defaultCells = radios().map(cellClasses);
+      expect(radios().every((radio) => radio.classList.contains("text-[18px]"))).toBe(true);
+      await render({ priority: 3, glyph: "sm" });
+      expect(radios()).toHaveLength(5);
+      expect(radios().every((radio) => radio.classList.contains("text-sm") && !radio.classList.contains("text-[18px]"))).toBe(true);
+      expect(radios().map(cellClasses)).toEqual(defaultCells);
+      expect(radios().map((radio) => glyph(radio).textContent)).toEqual(["★", "★", "★", "★", "★"]);
+    });
+
+    it("applies to the read-only stars too", async () => {
+      await render({ canPrioritize: false, priority: 2, glyph: "sm" });
+      const readOnly = host.querySelector<HTMLElement>('[role="img"]')!;
+      expect(readOnly.classList.contains("text-sm")).toBe(true);
+      expect(readOnly.classList.contains("text-base")).toBe(false);
+    });
+  });
+
   describe("non-Admin", () => {
     it("renders a static, non-focusable image with the value in its name — never a radiogroup", async () => {
       await render({ canPrioritize: false, priority: 3 });

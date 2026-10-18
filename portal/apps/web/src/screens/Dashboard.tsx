@@ -15,14 +15,14 @@ import { Button, buttonClasses } from "../components/quincy/Button";
 import { DashboardHeader } from "./DashboardHeader";
 import { DashboardViewBar, TOOLBAR_CONTROL_TYPE, VIEW_PANEL_ID, VIEW_TAB_ID } from "./DashboardViewBar";
 import { BoardDisplayContent, CalendarDisplayContent, TableDisplayContent, TimelineDisplayContent } from "./DashboardDisplay";
-import { DashboardTable } from "../components/DashboardTable";
+import { DashboardTable, TableSkeleton } from "../components/DashboardTable";
 import { hideableColumnsFor } from "../lib/dashboard-table-model";
 import { useBoardCollapse } from "../lib/use-board-collapse";
 import { useDashboardTablePrefs } from "../lib/use-dashboard-table-prefs";
 import { DashboardFilter as DashboardFilterControl } from "./DashboardFilter";
 import { dashboardSummary } from "../lib/dashboard-summary";
 import { useNow } from "../lib/use-now";
-import { Skeleton } from "../components/reui/skeleton";
+import { BoardSkeleton } from "../components/board/board-skeleton";
 import { EmptyState } from "../components/quincy/EmptyState";
 import { Notice } from "../components/quincy/Notice";
 import { ViewLoadBoundary } from "../components/ViewLoadBoundary";
@@ -1655,6 +1655,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
                   hiddenColumns={tablePrefs.hiddenColumns}
                   hideableColumns={hideableColumnsFor(role)}
                   onColumnVisibilityChange={(column, visible) => updateTablePrefs({ hiddenColumns: visible ? tablePrefs.hiddenColumns.filter((id) => id !== column) : [...tablePrefs.hiddenColumns, column] })}
+                  showDelivered={tablePrefs.showDelivered}
+                  onShowDeliveredChange={(showDelivered) => updateTablePrefs({ showDelivered })}
                 />
               : renderedView === "calendar" && calendarState
                 ? <CalendarDisplayContent
@@ -1749,23 +1751,16 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
           </ViewLoadBoundary>
         )}
 
-        {!isCalendarView && !isGanttView && isLoading && (
-          <div role="status" className="relative flex min-h-0 flex-1 flex-col border-solid border-[length:var(--border-width-hair)] border-border bg-card motion-safe:animate-[fade_var(--dur-slow)_var(--ease-entrance)]">
-            <span className="absolute size-px overflow-hidden [clip-path:inset(50%)] whitespace-nowrap">{`Loading ${archivedMode === "only" ? "archived " : ""}projects. Preparing the production desk.`}</span>
-            {[0, 1, 2, 3, 4].map((row) => (
-              <div key={row} className="[display:grid] grid-cols-[72px_minmax(0,1fr)_96px] gap-[var(--space-4)] items-center px-[var(--space-5)] py-[var(--space-3)] [border-top-style:solid] border-t-[length:var(--border-width-hair)] border-t-border first:border-t-0" aria-hidden="true">
-                <Skeleton className="h-[var(--space-7)]" />
-                <Skeleton className="h-[10px] w-2/5" />
-                <Skeleton className="h-[10px]" />
-              </div>
-            ))}
-          </div>
-        )}
+        {/* #923 frame 4h: one query feeds every column and group, so the region loads in its view's own shape and
+            fails as one inline error with Retry; no column or group ever errors on its own. */}
+        {!isCalendarView && !isGanttView && isLoading && (view === "table"
+          ? <TableSkeleton label={`Loading ${archivedMode === "only" ? "archived " : ""}projects.`} />
+          : <BoardSkeleton stages={boardStages} collapsedStageKeys={collapsedStageKeys} />)}
 
         {!isCalendarView && !isGanttView && !isLoading && error && (
-          <EmptyState tone="error" role="alert" title={`${archivedMode === "only" ? "Archived projects" : "Projects"} are unavailable.`} className="border-solid border-[length:var(--border-width-hair)] border-border bg-card [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-destructive">
-            {error}
-            <div><Button type="button" variant="secondary" className="mt-[var(--space-4)]" onClick={() => void projectsQuery.refetch()}>Try again</Button></div>
+          <EmptyState tone="error" size="compact" role="alert" data-testid="dashboard-projects-error" title="Couldn't load these projects." className="ps-[var(--space-4)]">
+            <span className="block text-xs">Check your connection, then try again.</span>
+            <Button type="button" variant="secondary" className="mt-[var(--space-3)]" onClick={() => void projectsQuery.refetch()}>Retry</Button>
           </EmptyState>
         )}
 
@@ -1794,6 +1789,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             terminal={Boolean(queryRuntime?.principalTerminal || projects.some((project) => queryRuntime?.isProjectRemoved(project.id)))}
             onPriorityChange={setProjectPriority}
             projectHrefFor={projectHrefFor}
+            now={now}
+            showDelivered={tablePrefs.showDelivered}
+            onShowDelivered={() => updateTablePrefs({ showDelivered: true })}
           />
         )}
 
@@ -1820,6 +1818,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             onAnnounce={(message) => { if (message !== undefined) setAnnouncement(message); }}
             projectHrefFor={(project) => projectHrefFor(project.id)}
             now={now}
+            canCreateProject={canCreateProject}
           />
         )}
       </div>

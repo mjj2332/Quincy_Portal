@@ -55,9 +55,19 @@ export type PriorityStarsProps = {
   /** True while a write for this Project is in flight; commits are ignored and the group is busy. */
   pending?: boolean;
   onPriorityChange?: (priority: number | null) => void;
+  /**
+   * Adaptation (#923 D4, ADR 0003): `"sm"` sets the star glyph in `text-sm` (14px, the token nearest frame 4e's
+   * 13px star) for the compact Board card. It changes the glyph only: every hit cell keeps its 36px (44px on
+   * touch) size, so the touch contract above is untouched. The default stays 18px for every other caller.
+   */
+  glyph?: "default" | "sm";
 };
 
-export function PriorityStars({ priority, street, canPrioritize, pending = false, onPriorityChange }: PriorityStarsProps) {
+/** The glyph's type per `glyph` size: the interactive cell's star, and the read-only row's. */
+const GLYPH_CLASS = { default: "text-[18px]", sm: "text-sm" } as const;
+const READ_ONLY_GLYPH_CLASS = { default: "text-base", sm: "text-sm" } as const;
+
+export function PriorityStars({ priority, street, canPrioritize, pending = false, onPriorityChange, glyph = "default" }: PriorityStarsProps) {
   // Roving focus index, not a value: the *value* is `priority`, owned by the caller. Keeping a
   // second copy of the value here would hide the coordinator's optimistic update and its rollback.
   const [focusIndex, setFocusIndex] = useState(() => (priority ?? 1) - 1);
@@ -90,7 +100,7 @@ export function PriorityStars({ priority, street, canPrioritize, pending = false
   if (!canPrioritize) {
     return (
       <div className="flex items-center px-[var(--space-3)]" data-testid="board-card-priority">
-        <span role="img" aria-label={`Priority ${priority} of 5 stars`} className="inline-flex items-center gap-[2px] text-base leading-none">
+        <span role="img" aria-label={`Priority ${priority} of 5 stars`} className={`inline-flex items-center gap-[2px] ${READ_ONLY_GLYPH_CLASS[glyph]} leading-none`}>
           {STARS.map((star) => (
             <span key={star} aria-hidden="true" className={star <= (priority ?? 0) ? "text-star-on" : "text-star-off"}>★</span>
           ))}
@@ -187,7 +197,7 @@ export function PriorityStars({ priority, street, canPrioritize, pending = false
               // Roving tabindex: only one star is ever in the tab order.
               tabIndex={index === tabIndexOwner ? 0 : -1}
               onClick={() => commit(star)}
-              // 44px is the *hit box*, not the star — the glyph stays ~18px. Matches the drag
+              // 44px is the *hit box*, not the star — the glyph stays ~18px (14px with `glyph="sm"`). Matches the drag
               // handle's existing `size-9 / pointer-coarse:size-11` idiom in `board/card.tsx`.
               // While a write is in flight the stars ignore clicks, and the value on screen is
               // already the new one (#232). A `progress` cursor (the `aria-disabled:cursor-*`
@@ -195,7 +205,7 @@ export function PriorityStars({ priority, street, canPrioritize, pending = false
               // glyphs' `starpulse` tells touch and keyboard (all five while a clear is saving,
               // since none are lit). The pulse is a scale, not an opacity
               // fade: a fade is what took the disabled drag handle to 1.72:1.
-              className={`group inline-grid place-items-center size-9 pointer-coarse:size-11 max-[641px]:size-11 cursor-pointer aria-disabled:cursor-progress select-none text-[18px] leading-none focus-visible:!outline-[var(--focus-ring)] outline-offset-[-2px] focus-visible:!outline-offset-[-2px] ${on ? "text-star-on" : "text-star-off"}`}
+              className={`group inline-grid place-items-center size-9 pointer-coarse:size-11 max-[641px]:size-11 cursor-pointer aria-disabled:cursor-progress select-none ${GLYPH_CLASS[glyph]} leading-none focus-visible:!outline-[var(--focus-ring)] outline-offset-[-2px] focus-visible:!outline-offset-[-2px] ${on ? "text-star-on" : "text-star-off"}`}
             >
               <span aria-hidden="true" className={on || priority === null ? "inline-block group-aria-disabled:motion-safe:animate-[starpulse_var(--dur-reveal)_var(--ease-standard)_infinite_alternate]" : undefined}>★</span>
             </span>
