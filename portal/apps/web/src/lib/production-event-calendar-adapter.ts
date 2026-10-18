@@ -109,13 +109,8 @@ function instant(value: string): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-export function assigneeInitials(name: string): string | null {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return null;
-  const first = words[0]!.charAt(0);
-  const last = words.length > 1 ? words[words.length - 1]!.charAt(0) : "";
-  return `${first}${last}`.toUpperCase();
-}
+/** #916: initials moved to the appearance module, the one place a person's bar label comes from. */
+export { personInitials as assigneeInitials } from "./dashboard-appearance";
 
 function shapeOf(dto: CalendarEventDto): ProductionEventCalendarShape {
   return dto.kind === "project_deadline" ? "deadline" : "range";

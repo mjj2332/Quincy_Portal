@@ -128,6 +128,14 @@ The Dashboard view that lays Projects and their Subtasks out against time, one b
 It was called Gantt until the Dashboard took its tabs.
 _Avoid_: Gantt, roadmap
 
+**Colour by**:
+The Timeline's choice of what a bar's colour means: Stage (the default; each Stage its own tone) or
+People (a Subtask bar takes its one Subtask assignee's colour, a shared Subtask a neutral fill with
+every avatar, an unassigned one a dashed outline; Project bars go neutral). A person's colour comes
+from their user id, so it is the same on every device. A viewer preference, remembered per browser;
+it changes what is drawn, never what the Filter shows. Offered on the Timeline only.
+_Avoid_: Colour mode, view mode, group by
+
 **Shoot date**:
 The civil day, in the studio's timezone, a Project's property is shot. A date, never a time.
 A Project with none is given today's date when it leaves the Awaiting RAW Stage by any route,
@@ -148,6 +156,14 @@ anyone sets the Deadline by hand, it is an ordinary Deadline and is never moved 
 Deadline already held is never replaced by an Automatic one. It carries the same reminders
 as any Deadline.
 _Avoid_: Default deadline, due date
+
+**Late**:
+A Project is late when its Deadline has passed and it has not reached Delivered, whatever Stage it
+is in (Edited review included); an archived Project is never late. A Subtask is late when its due
+has passed and it is not complete. How late is counted in civil days in the studio's timezone
+("Late today", "1 day late", "N days late"). One rule everywhere: the Filter's "is overdue", the
+Dashboard's overdue count and the server's `project-deadline.ts` all mean the same thing.
+_Avoid_: Overdue (as a separate rule), behind, at risk
 
 **Subtask**:
 One unit of work inside a Project's collaboration, with any number of Subtask assignees and a
@@ -174,7 +190,9 @@ The span a Subtask is scheduled across, from a start moment to a later end momen
 date-times in the studio's timezone; every Subtask has one. A date picked without a time takes the
 preset time: 09:00 for a start, 17:00 for an end. A Subtask's "due" is simply the end of its
 range. When none is given, it is copied once from the Project (shoot date at 09:00 to the
-Deadline) and is the Subtask's own thereafter.
+Deadline) and is the Subtask's own thereafter. A range that starts and ends on the same civil day
+is drawn as a diamond on the Dashboard ("Same day" in the key): a display rule, not a kind of
+Subtask.
 _Avoid_: Schedule mode, all-day, date-only, unscheduled, due-only, milestone
 
 **Project default range**:

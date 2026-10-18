@@ -20,6 +20,7 @@ import {
   dashboardFilterToQuery,
   queryToDashboardFilter,
   queryToDashboardFilterResult,
+  toggleStageInDashboardFilter,
   DASHBOARD_FILTER_RULE_ID,
   DASHBOARD_UNASSIGNED_OPTION,
 } from "./dashboard-filter-query";
@@ -210,5 +211,56 @@ describe("whole-filter helpers", () => {
     expect(dashboardFilterAppliedCount(filterOf())).toBe(0);
     expect(dashboardFilterAppliedCount(filterOf({ editorIds: [E1], includeUnassigned: true, overdueOnly: true, myTasks: true }))).toBe(3);
     expect(dashboardFilterAppliedCount(treeFilter(orTree))).toBe(3);
+  });
+});
+
+describe("toggleStageInDashboardFilter: a key-row chip writes the shared Filter's Stage rule (#916)", () => {
+  const stagesLeaf = (...values: string[]) => ({ kind: "leaf" as const, field: "stages" as const, values: values as never[] });
+  const priorityLeaf = { kind: "leaf" as const, field: "priority" as const, values: ["5" as const] };
+  const same = (left: DashboardFilter | null, right: DashboardFilter) => {
+    expect(left).not.toBeNull();
+    expect(dashboardFilterKey(left!)).toBe(dashboardFilterKey(right));
+  };
+
+  it("adds a Stage rule to an empty Filter, counted on the Filter button", () => {
+    const next = toggleStageInDashboardFilter(filterOf(), "editing");
+    same(next, filterOf({ stageKeys: ["editing"] }));
+    expect(dashboardFilterAppliedCount(next!)).toBe(1);
+  });
+
+  it("adds a Stage to the one Stage rule there is", () => {
+    same(toggleStageInDashboardFilter(filterOf({ stageKeys: ["editing"] }), "raw_review"), filterOf({ stageKeys: ["raw_review", "editing"] }));
+  });
+
+  it("removes a Stage from the rule, and the rule itself once it is empty", () => {
+    same(toggleStageInDashboardFilter(filterOf({ stageKeys: ["raw_review", "editing"] }), "editing"), filterOf({ stageKeys: ["raw_review"] }));
+    const cleared = toggleStageInDashboardFilter(filterOf({ stageKeys: ["editing"] }), "editing");
+    same(cleared, filterOf());
+    expect(dashboardFilterAppliedCount(cleared!)).toBe(0);
+  });
+
+  it("keeps every other rule, flat or in a tree", () => {
+    // The new Stage rule goes last, where the popover's own "Add filter" puts a rule.
+    same(toggleStageInDashboardFilter(filterOf({ priorities: ["5"] }), "delivered"), filterOf({ priorities: ["5"], stageKeys: ["delivered"], order: ["priority", "stages"] }));
+    const nestedOther: DashboardFilterTree = { kind: "group", op: "and", children: [{ kind: "group", op: "or", children: [priorityLeaf, { kind: "leaf", field: "mine" }] }] };
+    const next = toggleStageInDashboardFilter(treeFilter(nestedOther), "editing");
+    same(next, treeFilter({ ...nestedOther, children: [...nestedOther.children, stagesLeaf("editing")] }));
+  });
+
+  it("refuses an OR root: adding a Stage there would widen the Filter, not narrow it", () => {
+    expect(toggleStageInDashboardFilter(treeFilter({ kind: "group", op: "or", children: [priorityLeaf, { kind: "leaf", field: "mine" }] }), "editing")).toBeNull();
+    expect(toggleStageInDashboardFilter(treeFilter({ kind: "group", op: "or", children: [stagesLeaf("editing"), priorityLeaf] }), "editing")).toBeNull();
+  });
+
+  it("refuses a negated Stage rule", () => {
+    expect(toggleStageInDashboardFilter(treeFilter({ kind: "group", op: "and", children: [{ ...stagesLeaf("editing"), negated: true }] }), "editing")).toBeNull();
+  });
+
+  it("refuses a Stage rule nested in a group", () => {
+    expect(toggleStageInDashboardFilter(treeFilter({ kind: "group", op: "and", children: [{ kind: "group", op: "or", children: [stagesLeaf("editing"), priorityLeaf] }] }), "raw_review")).toBeNull();
+  });
+
+  it("refuses a repeated Stage rule", () => {
+    expect(toggleStageInDashboardFilter(treeFilter({ kind: "group", op: "and", children: [stagesLeaf("editing"), stagesLeaf("raw_review", "editing")] }), "editing")).toBeNull();
   });
 });

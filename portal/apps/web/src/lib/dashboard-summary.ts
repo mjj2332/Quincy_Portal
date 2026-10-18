@@ -1,4 +1,5 @@
 import type { DashboardArchivedMode } from "@quincy/shared";
+import { projectLateness } from "./dashboard-appearance";
 
 /**
  * The Dashboard header's summary line (#427), which replaced the search chip's count text (#260).
@@ -36,9 +37,10 @@ const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ?
 
 /** The server's own rule (`workers/app/src/lib/project-deadline.ts`): a delivered project is never
  * overdue, an unset deadline is not overdue, and only a deadline strictly in the past counts. An
- * archived project is never overdue either (#428: it is out of the production desk). */
+ * archived project is never overdue either (#428: it is out of the production desk). #916: one rule
+ * with "late" on the Timeline and Calendar, so it is the appearance module's `projectLateness`. */
 export function isOverdueProject(project: DashboardSummaryProject, now: number): boolean {
-  return project.stageKey !== "delivered" && !project.archivedAt && project.deadlineAt !== null && project.deadlineAt < now;
+  return projectLateness({ stageKey: project.stageKey, deadlineAt: project.deadlineAt, archived: Boolean(project.archivedAt) }, now).late;
 }
 
 export function dashboardSummary(input: DashboardSummaryInput): DashboardSummary | null {

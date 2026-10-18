@@ -24,6 +24,8 @@ import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
+import { STAGE_PRESENTATION_KEYS } from "@quincy/shared";
+import { PEOPLE_TONE_COUNT, stageTone } from "../lib/dashboard-appearance";
 
 const stylesDir = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(stylesDir, "..");
@@ -1738,5 +1740,127 @@ describe("guard: the Admin Social overlays thumbnail is token-sized (#876)", () 
   it("uses the --space-8 token width, not an ad-hoc multiple of it", () => {
     expect(source).toContain("aspect-[9/16] w-[var(--space-8)]");
     expect(source).not.toMatch(/--space-8\)\s*\*\s*1\.25/);
+  });
+});
+
+/**
+ * #916 / #918: the Dashboard appearance tokens. Every Stage tone, `--late` and the people palette is
+ * what the Timeline and Calendar paint a bar or chip edge with, and a person's colour fills a bar under
+ * paper initials. A tone below 3:1 on the canvas passes every other mechanical check (gantt-skin
+ * Detector 9 reads only `stage-colors.ts`), so this measures them. "Dark pair" here is an
+ * `-on-inverse` twin per token (owner decision D1): the Portal has no dark theme (`.dark` is inert,
+ * gantt-skin Detector 1 bans `dark:`), and the ink surfaces are where these tones must still read.
+ */
+type TokenScope = Map<string, string>;
+
+function appearanceTokenProblems(scope: TokenScope, names: { stages: string[]; late: string; people: string[] }): string[] {
+  const problems: string[] = [];
+  const resolve = (name: string, seen: string[] = []): string | null => {
+    const value = scope.get(name);
+    if (value === undefined || seen.includes(name)) return null;
+    const ref = /^var\((--[\w-]+)\)$/.exec(value);
+    if (ref) return resolve(ref[1]!, [...seen, name]);
+    return /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : null;
+  };
+  const luminance = (hex: string) => {
+    const [r, g, b] = [1, 3, 5].map((i) => {
+      const c = Number.parseInt(hex.slice(i, i + 2), 16) / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+  };
+  const contrast = (a: string, b: string) => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi! + 0.05) / (lo! + 0.05);
+  };
+  const hexOf = (name: string): string | null => {
+    const value = resolve(name);
+    if (value === null) problems.push(`${name} is not declared, or does not resolve to a #rrggbb value`);
+    return value;
+  };
+  const atLeast = (fg: string, fgHex: string, ground: string, floor: number) => {
+    const groundHex = hexOf(ground);
+    if (groundHex === null) return;
+    const ratio = contrast(fgHex, groundHex);
+    if (ratio < floor) problems.push(`${fg} on ${ground} is ${ratio.toFixed(2)}:1, under ${floor}:1`);
+  };
+  const tones = [...names.stages, names.late, ...names.people];
+  const paper = new Map<string, string>();
+  for (const name of tones) {
+    const hex = hexOf(name);
+    const twin = hexOf(`${name}-on-inverse`);
+    if (hex !== null) {
+      paper.set(name, hex);
+      for (const ground of ["--bg-canvas", "--bg-surface"]) atLeast(name, hex, ground, 3);
+    }
+    if (twin !== null) for (const ground of ["--ink-900", "--ink-800"]) atLeast(`${name}-on-inverse`, twin, ground, 3);
+  }
+  // Paper initials sit on a person's colour.
+  const initials = hexOf("--paper-000");
+  for (const name of names.people) {
+    const hex = paper.get(name);
+    const ratio = hex !== undefined && initials !== null ? contrast(initials, hex) : Infinity;
+    if (ratio < 4.5) problems.push(`paper initials on ${name} are ${ratio.toFixed(2)}:1, under 4.5:1`);
+  }
+  // Two tones that resolve to one colour are one tone: RAW review and Edited review shared ochre (#257).
+  const distinct = (group: string[], label: string) => {
+    for (let i = 0; i < group.length; i++) {
+      for (let j = i + 1; j < group.length; j++) {
+        const [a, b] = [paper.get(group[i]!), paper.get(group[j]!)];
+        if (a !== undefined && a === b) problems.push(`${label}: ${group[i]} and ${group[j]} are both ${a}`);
+      }
+    }
+  };
+  distinct([...names.stages, names.late], "Stage tones and --late must differ");
+  for (const person of names.people) {
+    for (const other of [...names.stages, names.late]) {
+      if (paper.get(person) !== undefined && paper.get(person) === paper.get(other)) problems.push(`${person} reuses ${other} (${paper.get(person)})`);
+    }
+  }
+  distinct(names.people, "people tokens must differ");
+  return problems;
+}
+
+describe("guard: dashboard appearance tokens (#916)", () => {
+  const colors: TokenScope = new Map(
+    [...stripCssComments(readFileSync(join(stylesDir, "tokens/colors.css"), "utf8")).matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)]
+      .map((m) => [m[1]!, m[2]!.trim()] as const),
+  );
+  const tokenOf = (reference: string) => /^var\((--[\w-]+)\)$/.exec(reference)?.[1] ?? reference;
+  // The names come from the module, so a tone the views paint can never escape the measurement.
+  const names = {
+    stages: STAGE_PRESENTATION_KEYS.map((key) => tokenOf(stageTone(key).color)),
+    late: "--late",
+    people: Array.from({ length: PEOPLE_TONE_COUNT }, (_, index) => `--people-${index + 1}`),
+  };
+
+  it("the module paints five distinct Stage tokens", () => {
+    expect(new Set(names.stages).size).toBe(STAGE_PRESENTATION_KEYS.length);
+    for (const name of names.stages) expect(name).toMatch(/^--stage-/);
+  });
+
+  it("every Stage, --late and people token is declared with an -on-inverse twin, clears contrast and is distinct", () => {
+    expect(appearanceTokenProblems(colors, names)).toEqual([]);
+  });
+
+  it("proves the detector on planted fixtures", () => {
+    const planted: TokenScope = new Map([
+      ["--bg-canvas", "#faf8f2"], ["--bg-surface", "#ffffff"], ["--paper-000", "#ffffff"], ["--ink-900", "#0a0a0a"], ["--ink-800", "#141414"],
+      ["--stage-a", "#2f6b66"], ["--stage-a-on-inverse", "#8fc7c0"],
+      ["--stage-b", "var(--stage-a)"], ["--stage-b-on-inverse", "#8fc7c0"],
+      ["--late", "#e4ded0"], ["--late-on-inverse", "#232323"],
+      ["--people-1", "#8f8775"], ["--people-1-on-inverse", "#f0a020"],
+      ["--people-2", "#2f6b66"],
+    ]);
+    const problems = appearanceTokenProblems(planted, { stages: ["--stage-a", "--stage-b"], late: "--late", people: ["--people-1", "--people-2"] });
+    expect(problems).toEqual(expect.arrayContaining([
+      "Stage tones and --late must differ: --stage-a and --stage-b are both #2f6b66",
+      expect.stringMatching(/^--late on --bg-canvas is .* under 3:1$/),
+      expect.stringMatching(/^--late-on-inverse on --ink-900 is .* under 3:1$/),
+      expect.stringMatching(/^paper initials on --people-1 are .* under 4.5:1$/),
+      "--people-2-on-inverse is not declared, or does not resolve to a #rrggbb value",
+      "--people-2 reuses --stage-a (#2f6b66)",
+    ]));
+    expect(problems.some((p) => p.startsWith("--stage-a on"))).toBe(false);
   });
 });
