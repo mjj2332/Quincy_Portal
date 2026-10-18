@@ -17,7 +17,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { vi } from "vitest";
-import type { DashboardCalendarState, ProductionCalendarRangeResponse } from "@quincy/shared";
+import type { DashboardCalendarState, DashboardFilter, ProductionCalendarRangeResponse } from "@quincy/shared";
 import type { CalendarSettleState } from "../lib/production-calendar-interaction";
 import { ProjectQueryRuntimeProvider, type ProjectQueryRuntime } from "../lib/project-query-sync";
 import { ProductionEventCalendar, type ProductionEventCalendarFocus, type ProductionEventCalendarFocusOutcome } from "../components/ProductionEventCalendar";
@@ -82,6 +82,8 @@ export type SurfaceProps = {
   projectHrefFor?: (projectId: string) => string | undefined;
   onOpenProject?: (projectId: string) => void;
   onShownProjectsChange?: (count: number | null) => void;
+  /** #922: the Stage key row's Filter write (the Dashboard's `writeFilter`). */
+  onFilterChange?: (next: DashboardFilter) => void;
   /** #464: the Show in Calendar landing request and its one-per-token outcome. */
   focus?: ProductionEventCalendarFocus | null;
   onFocusSettled?: (token: number, outcome: ProductionEventCalendarFocusOutcome) => void;
@@ -132,6 +134,7 @@ export function createHarness(): Harness {
         projectHrefFor={props.projectHrefFor}
         onOpenProject={props.onOpenProject}
         onShownProjectsChange={props.onShownProjectsChange}
+        onFilterChange={props.onFilterChange}
         focus={props.focus}
         onFocusSettled={props.onFocusSettled}
       />
