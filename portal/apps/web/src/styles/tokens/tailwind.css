@@ -46,6 +46,10 @@
   --color-signal-caution-text: var(--signal-caution-text);
   --color-signal-critical: var(--signal-critical);
   --color-signal-info: var(--signal-info);
+  /* #916: the Dashboard's late colour (`text-late`, `border-late`, `inset-ring-late`), painted only on what
+     lib/dashboard-appearance.ts calls late; and text on a solid tone (`text-on-tone`, colors.css). */
+  --color-late: var(--late);
+  --color-on-tone: var(--text-on-tone);
 
   /* ---- TB8-01 narrow semantic roles — never the raw ramp (colors.css:33) ---- */
   /* Mid-tone body text: darker than muted-foreground, lighter than foreground.

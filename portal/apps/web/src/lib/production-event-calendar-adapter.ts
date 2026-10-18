@@ -30,11 +30,12 @@ import {
 import { cn } from "@/lib/utils";
 import { formatDayRangePortal } from "./date-format";
 import {
+  deadlineFill,
   lateLabel,
-  projectLateness,
   stageTone,
   subtaskLateness,
   subtaskPeopleTone,
+  type DeadlineFill,
   type Instant,
   type Lateness,
   type PeopleTone,
@@ -88,7 +89,7 @@ export type ProductionEventCalendarShape = "deadline" | "range";
  * - `range`: the Project's Stage tone, the Subtask's lateness and its Colour-by-People tone.
  */
 export type ProductionEventCalendarAppearance =
-  | { kind: "deadline"; fill: "ink" | "late" | "delivered"; lateness: Lateness; lateLabel: string | null }
+  | { kind: "deadline"; fill: DeadlineFill; color: string; lateness: Lateness; lateLabel: string | null }
   | { kind: "range"; tone: StageTone; lateness: Lateness; lateLabel: string | null; people: PeopleTone; done: boolean };
 
 export type ProductionEventCalendarData = {
@@ -119,9 +120,6 @@ export type ProductionEventCalendarEvent = {
   data: ProductionEventCalendarData;
 };
 
-/** A Deadline's fill by state; also its `--ec-event-color`, so the drag ghost and agenda dot follow it. */
-const DEADLINE_FILL_COLOR = { ink: "var(--ink-900)", late: "var(--late)", delivered: "var(--stage-delivered)" } as const;
-
 /** Sydney zoned midnight of a civil date, or null (midnight never falls in a Sydney transition). */
 function zonedMidnight(date: string): Date | null {
   const resolved = resolveSydneyCivilMinute(`${date.slice(0, 10)}T00:00`, "earlier");
@@ -132,9 +130,6 @@ function instant(value: string): Date | null {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
-
-/** #916: initials moved to the appearance module, the one place a person's bar label comes from. */
-export { personInitials as assigneeInitials } from "./dashboard-appearance";
 
 function shapeOf(dto: CalendarEventDto): ProductionEventCalendarShape {
   return dto.kind === "project_deadline" ? "deadline" : "range";
@@ -174,9 +169,8 @@ function dueInstant(dto: CalendarEventDto, placed: { start: Date; end: Date; syn
 
 function appearanceOf(dto: CalendarEventDto, due: Instant, now: Instant): ProductionEventCalendarAppearance {
   if (dto.kind === "project_deadline") {
-    const lateness = projectLateness({ stageKey: dto.project.stageKey, deadlineAt: new Date(due).getTime(), archived: dto.project.archived }, now);
-    const fill = stageTone(dto.project.stageKey).stage === "delivered" ? "delivered" : lateness.late ? "late" : "ink";
-    return { kind: "deadline", fill, lateness, lateLabel: lateLabel(lateness) };
+    const { fill, color, lateness } = deadlineFill({ stageKey: dto.project.stageKey, deadlineAt: new Date(due).getTime(), archived: dto.project.archived }, now);
+    return { kind: "deadline", fill, color, lateness, lateLabel: lateLabel(lateness) };
   }
   const lateness = subtaskLateness({ dueAt: due, complete: dto.status.completed }, now);
   return {
@@ -213,7 +207,7 @@ export function toProductionEventCalendarEvent(dto: CalendarEventDto, now: Insta
     start: placed.start,
     end: placed.end,
     allDay: placed.allDay,
-    color: appearance.kind === "deadline" ? DEADLINE_FILL_COLOR[appearance.fill] : appearance.tone.color,
+    color: appearance.kind === "deadline" ? appearance.color : appearance.tone.color,
     draggable: dto.permissions.canDrag,
     data,
   };
@@ -240,14 +234,15 @@ export function toProductionEventCalendarEvents(dtos: readonly CalendarEventDto[
  * writes it to `--ec-event-color` on the chip, and every branch paints with that property. So one
  * class per treatment serves every Stage, and the drag ghost and agenda dot follow the same colour.
  *
- * - A range: a 14% wash of its Stage tone, edged `--border-width-mid` (1.5px) in the full tone; ink
- *   text. Awaiting RAW draws hollow (the module's `hollow-dashed`): paper with a dashed tone edge.
- * - A late range keeps its wash and swaps the edge for a `--border-width-bold` `--late` ring; the
+ * - A range: the Stage wash of its tone (`--stage-wash-mix`, the one mix the Timeline and the key
+ *   swatch share), edged `--border-width-mid` (1.5px) in the full tone; ink text. Awaiting RAW draws hollow (the module's `hollow-dashed`): paper with a dashed tone edge.
+ * - A late range keeps its wash and swaps the edge for a `--border-width-bold` late ring; the
  *   chip's content prints the module's late label, so colour is never the only cue.
- * - A done range: paper-100 with a `--text-muted` edge (3.36:1, the owner's done look, D2) and
- *   secondary text; its title is struck through in the content.
- * - A Deadline: solid `--ec-event-color`: ink on time, `--late` once missed, `--stage-delivered`
- *   once the Project is Delivered.
+ * - A done range: the raised paper (`bg-muted`, as the Timeline's done Subtask) with a `--text-muted`
+ *   edge (3.36:1, the owner's done look, D2) and secondary text; selected takes an ink wash and ring
+ *   (`foreground`, the Timeline's selected ring). Its title is struck through in the content.
+ * - A Deadline: solid `--ec-event-color`, the module's `deadlineFill`: ink on time, the late colour
+ *   once missed, Delivered's tone once the Project is Delivered; `--text-on-tone` text.
  *
  * Every branch must override EVERY state the vendor tints — rest, `hover:` and `data-selected:`.
  * The vendor runs the consumer class through `cn()` after its own, and tailwind-merge drops a
@@ -263,7 +258,7 @@ export function toProductionEventCalendarEvents(dtos: readonly CalendarEventDto[
  *
  * Deadlines: left to the vendor, a selected Deadline was ink-900/30 under paper text (2.03:1).
  * Selected holds the fill and draws a double keyline INSIDE the chip: 2px fill colour at the edge,
- * then 2px paper, then the fill. That is a 4px paper inset ring with a 2px inset shadow on top
+ * then 2px on-tone paper, then the fill. That is a 4px on-tone inset ring with a 2px inset shadow on top
  * (Tailwind composes `box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), …`, and the
  * first layer paints on top). A plain paper ring touched the chip edge and merged into the paper
  * page, so the chip only looked 2px smaller: a shrink, not a mark. An outer `ring` would collide
@@ -284,27 +279,27 @@ export function toProductionEventCalendarEvents(dtos: readonly CalendarEventDto[
  * role that compiles to `color: var(--muted-foreground)`, so the re-scope reaches the vendored
  * agenda time column inside the chip without a selector on that span: greige-300 reads 6.8:1 on
  * the lifted ink and 8.6:1 at rest. On oxblood and olive it falls under 4.5:1, so a late or
- * delivered Deadline's muted text is paper-050 instead.
+ * delivered Deadline's muted text is `--text-on-tone` instead.
  */
 /** Frame 3d's meta line (`.ev small`): greige-600 for the vendor's `text-muted-foreground` time text. */
 const RANGE_META = "[--muted-foreground:var(--text-secondary)]";
 const RANGE_WASH =
-  "bg-(--ec-event-color)/14 hover:bg-(--ec-event-color)/20 data-selected:bg-(--ec-event-color)/24 data-selected:hover:bg-(--ec-event-color)/28 text-foreground";
+  "bg-[color-mix(in_srgb,var(--ec-event-color)_var(--stage-wash-mix),var(--bg-surface))] hover:bg-(--ec-event-color)/20 data-selected:bg-(--ec-event-color)/24 data-selected:hover:bg-(--ec-event-color)/28 text-foreground";
 const RANGE_HOLLOW =
-  "bg-(--paper-000) hover:bg-(--ec-event-color)/8 data-selected:bg-(--ec-event-color)/14 data-selected:hover:bg-(--ec-event-color)/20 text-foreground border-(length:--border-width-mid) border-dashed border-(--ec-event-color) inset-ring-0";
+  "bg-card hover:bg-(--ec-event-color)/8 data-selected:bg-(--ec-event-color)/14 data-selected:hover:bg-(--ec-event-color)/20 text-foreground border-(length:--border-width-mid) border-dashed border-(--ec-event-color) inset-ring-0";
 const RANGE_EDGE = "inset-ring-(length:--border-width-mid) inset-ring-(--ec-event-color) data-selected:inset-ring-2 data-selected:inset-ring-(--ec-event-color)";
 /** The hollow chip draws its edge as a dashed border; selected adds the tone ring inside it. */
 const HOLLOW_SELECTED_EDGE = "data-selected:inset-ring-2 data-selected:inset-ring-(--ec-event-color)";
-const RANGE_LATE = "inset-ring-(length:--border-width-bold) inset-ring-(--late) data-selected:inset-ring-2 data-selected:inset-ring-(--late)";
+const RANGE_LATE = "inset-ring-(length:--border-width-bold) inset-ring-late data-selected:inset-ring-2 data-selected:inset-ring-late";
 const RANGE_DONE =
-  "bg-(--paper-100) hover:bg-(--paper-200) inset-ring-(length:--border-width-mid) inset-ring-(--text-muted) text-foreground-secondary data-selected:bg-(--ink-700)/10 data-selected:inset-ring-2 data-selected:inset-ring-(--ink-700)";
+  "bg-muted hover:bg-surface-sunken inset-ring-(length:--border-width-mid) inset-ring-(--text-muted) text-foreground-secondary data-selected:bg-foreground/10 data-selected:inset-ring-2 data-selected:inset-ring-foreground";
 const DEADLINE_SELECTED =
-  "data-selected:bg-(--ec-event-color) data-selected:hover:bg-(--ec-event-color)/85 data-selected:inset-ring-4 data-selected:inset-ring-(--paper-050) data-selected:inset-shadow-[0_0_0_2px_var(--ec-event-color)]";
+  "data-selected:bg-(--ec-event-color) data-selected:hover:bg-(--ec-event-color)/85 data-selected:inset-ring-4 data-selected:inset-ring-on-tone data-selected:inset-shadow-[0_0_0_2px_var(--ec-event-color)]";
 export const DEADLINE_AGENDA_HOVER = "data-[view=agenda]:hover:bg-(--ec-event-color)/85";
-/** #602: `--focus-ring` is ink, the same as the ink Deadline fill, so the inset ring would be invisible; draw it paper, and lift the fill so focus reads apart from the selected state. Light chips keep the default. */
-const DEADLINE_FOCUS_RING = "[--focus-ring:var(--paper-050)] focus-visible:bg-(--ec-event-color)/85";
+/** #602: `--focus-ring` is ink, the same as the ink Deadline fill, so the inset ring would be invisible; draw it on-tone paper, and lift the fill so focus reads apart from the selected state. Light chips keep the default. */
+const DEADLINE_FOCUS_RING = "[--focus-ring:var(--text-on-tone)] focus-visible:bg-(--ec-event-color)/85";
 /** Mirrors `tokens/inverse.css`'s `--muted-foreground` for a dark surface; paper on the two lighter fills. */
-const DEADLINE_INVERSE_ROLES = { ink: "[--muted-foreground:var(--greige-300)]", late: "[--muted-foreground:var(--paper-050)]", delivered: "[--muted-foreground:var(--paper-050)]" } as const;
+const DEADLINE_INVERSE_ROLES = { ink: "[--muted-foreground:var(--greige-300)]", late: "[--muted-foreground:var(--text-on-tone)]", delivered: "[--muted-foreground:var(--text-on-tone)]" } as const;
 /**
  * Hides the vendored agenda row's colour dot on a Deadline, keeping its box so titles stay aligned
  * with checklist rows. The ink fill already carries the Deadline's colour; the dot is ink-on-ink,
@@ -343,7 +338,7 @@ function chipColourClassName(data: ProductionEventCalendarData | undefined): str
   if (!data) return undefined;
   const { appearance } = data;
   if (appearance.kind === "deadline") {
-    return `bg-(--ec-event-color) hover:bg-(--ec-event-color)/85 text-(--paper-050) inset-ring-(--ec-event-color) ${DEADLINE_SELECTED} ${DEADLINE_AGENDA_HOVER} ${DEADLINE_INVERSE_ROLES[appearance.fill]} ${DEADLINE_AGENDA_DOT} ${DEADLINE_FOCUS_RING}`;
+    return `bg-(--ec-event-color) hover:bg-(--ec-event-color)/85 text-on-tone inset-ring-(--ec-event-color) ${DEADLINE_SELECTED} ${DEADLINE_AGENDA_HOVER} ${DEADLINE_INVERSE_ROLES[appearance.fill]} ${DEADLINE_AGENDA_DOT} ${DEADLINE_FOCUS_RING}`;
   }
   if (appearance.done) return `${RANGE_DONE} ${RANGE_META}`;
   const hollow = appearance.tone.treatment === "hollow-dashed";

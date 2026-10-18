@@ -747,7 +747,7 @@ describe("#919: appearance", () => {
     const later = applyGanttAppearance(model, new Date("2026-06-23T00:00:00.000Z"));
     const [taskEvent] = eventsFor(later, `task:${task.id}`);
     expect(dataOf(taskEvent!).appearance).toMatchObject({ lateness: { late: true } });
-    expect(taskEvent!.className).toContain("border-(--late)");
+    expect(taskEvent!.className).toContain("border-late");
     const bar = later.events.find((event) => event.id === `project-bar:${project.id}`)!;
     expect(dataOf(bar).appearance).toMatchObject({ lateness: { late: false } });
   });

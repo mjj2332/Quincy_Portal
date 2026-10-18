@@ -94,9 +94,10 @@
 
   /* ---- Dashboard appearance (#916) ------------------------------------
      What the Timeline and Calendar paint, read through lib/dashboard-appearance.ts (stageTone,
-     projectLateness, personColor) and never named by a view directly. One tone per Stage: Edited
-     review gets a teal of its own, so it no longer shares ochre with RAW review. Awaiting RAW is
-     greige-500, drawn hollow with a dashed edge. Each tone has an -on-inverse twin for an ink
+     projectLateness, personColor, the bar colours, deadlineFill) and never named by a view
+     directly; a view reaches --late only as the `late` theme colour, on what the module has called
+     late. One tone per Stage: Edited review gets a teal of its own, so it no longer shares ochre
+     with RAW review. Awaiting RAW is greige-500, drawn hollow with a dashed edge. Each tone has an -on-inverse twin for an ink
      surface (the Portal has no dark theme). Ratios are against --paper-050 / --paper-000 for the
      paper value and --ink-900 / --ink-800 for the twin; styles/design-system-guards.test.ts
      ("dashboard appearance tokens") measures every one. */
@@ -106,6 +107,15 @@
   --stage-edited-review:  #2f6b66;               /* deep teal, 5.79:1 / 6.15:1 */
   --stage-delivered:      var(--signal-positive);
   --late:                 var(--signal-critical);
+  /* Text and marks on a solid tone (a solid-Stage Project bar, a person's colour, a Calendar
+     Deadline): paper-000, 4.71:1 on RAW review's ochre, 5.9:1 or better on every --people-N. Its
+     twin is ink on the light -on-inverse tones. Views spell it `text-on-tone` (tokens/tailwind.css). */
+  --text-on-tone:            var(--paper-000);
+  --text-on-tone-on-inverse: var(--ink-900);
+  /* The one Stage wash: how much of a tone tints the surface paper behind it (Delivered's Timeline
+     bar, a Calendar range chip, the key swatch), frame 3d `.ad`'s 16%. A share, not a colour:
+     `color-mix(in srgb, <tone> var(--stage-wash-mix), var(--bg-surface))`. */
+  --stage-wash-mix:       16%;
 
   --stage-awaiting-raw-on-inverse:  var(--greige-300);
   --stage-raw-review-on-inverse:    var(--signal-caution-on-inverse);

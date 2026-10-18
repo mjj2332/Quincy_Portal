@@ -120,10 +120,10 @@ describe("ProductionEventCalendar chips: Stage tones, late treatment and type (#
   it("draws each chip from the appearance: the late ring on a late range, the tone wash on time, the done paper", async () => {
     await mount([lateRange, onTime, done]);
     const classes = (id: string) => (h.host.querySelector(`[data-event-id="${id}"]`)!.closest("li")!.getAttribute("class") ?? "").split(" ");
-    expect(classes(lateRange.id)).toContain("inset-ring-(--late)");
-    expect(classes(onTime.id)).toContain("bg-(--ec-event-color)/14");
-    expect(classes(onTime.id)).not.toContain("inset-ring-(--late)");
-    expect(classes(done.id)).toContain("bg-(--paper-100)");
+    expect(classes(lateRange.id)).toContain("inset-ring-late");
+    expect(classes(onTime.id)).toContain("bg-[color-mix(in_srgb,var(--ec-event-color)_var(--stage-wash-mix),var(--bg-surface))]");
+    expect(classes(onTime.id)).not.toContain("inset-ring-late");
+    expect(classes(done.id)).toContain("bg-muted");
   });
 
   it("strikes a done range's title through and leaves an open one alone", async () => {

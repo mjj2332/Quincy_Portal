@@ -245,6 +245,15 @@ export function formatWeekdayDay(instant: Instant): string {
 }
 
 /**
+ * #916: "today" when the instant falls on `todayKey` (a `sydneyDayKey`), else `formatWeekdayDay` ("Fri 18"). The one
+ * day word the Dashboard Timeline prints: the phone row meta ("due today", frame 3c) and the People-mode Project label
+ * ("Mon 14 → today", frame 3b). A day key, not a clock, so a caller re-renders once a day rather than every tick.
+ */
+export function formatWeekdayDayOrToday(instant: Instant, todayKey: string): string {
+  return sydneyDayKey(instant) === todayKey ? "today" : formatWeekdayDay(instant);
+}
+
+/**
  * #643: a day range as the Portal writes it, day-first, in Sydney days: "7 Oct 2026", "7–20 Oct 2026",
  * "28 Sep – 4 Oct 2026", "28 Dec 2026 – 3 Jan 2027". `endInclusive` is the LAST day shown (a caller holding an
  * exclusive end subtracts a millisecond first). The separator is an en dash, tight within a month and spaced

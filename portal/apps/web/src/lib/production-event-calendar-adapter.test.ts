@@ -10,7 +10,6 @@ import {
   PRODUCTION_EVENT_CALENDAR_DISPLAY_MINUTES,
   PRODUCTION_EVENT_CALENDAR_I18N,
   PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS,
-  assigneeInitials,
   calendarViewToSubview,
   productionEventCalendarEventClassName,
   subviewToCalendarView,
@@ -79,11 +78,11 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
 
   it("colour and class: Deadlines solid ink, ranges in their Stage tone, done dimmed", () => {
     const deadline = toProductionEventCalendarEvent(deadlineEvent("2026-08-27T09:00"), NOW)!;
-    expect(deadline.color).toBe("var(--ink-900)");
+    expect(deadline.color).toBe("var(--bg-inverse)");
     expect(productionEventCalendarEventClassName(deadline.data)).toContain("bg-(--ec-event-color)");
     const range = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00")), NOW)!;
     expect(range.color).toBe("var(--stage-editing)");
-    expect(productionEventCalendarEventClassName(range.data)).toContain("bg-(--ec-event-color)/14");
+    expect(productionEventCalendarEventClassName(range.data)).toContain("bg-[color-mix(in_srgb,var(--ec-event-color)_var(--stage-wash-mix),var(--bg-surface))]");
     expect(range.data.done).toBe(false);
     const done = toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00"), { completed: true }), NOW)!;
     expect(done.data.done).toBe(true);
@@ -103,9 +102,6 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
     const deadline = toProductionEventCalendarEvent(deadlineEvent("2026-08-27T09:00"), NOW)!.data;
     expect(deadline.assignees).toEqual([]);
     expect(deadline.otherAssigneeCount).toBe(0);
-    expect(assigneeInitials("ada")).toBe("A");
-    expect(assigneeInitials("  Grace  Brewster Hopper ")).toBe("GH");
-    expect(assigneeInitials("")).toBeNull();
   });
 
   it("drops an event whose timing cannot be placed instead of throwing", () => {
@@ -131,10 +127,10 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
     expect(PRODUCTION_EVENT_CALENDAR_VIEW_SETTINGS.scrollToHour).toBe(8);
   });
 
-  it("frame 3d: a range is a 14% wash of its Stage tone edged 1.5px in the full tone; selected deepens the wash inside a 2px tone ring", () => {
+  it("frame 3d: a range is the Stage wash of its tone edged 1.5px in the full tone; selected deepens the wash inside a 2px tone ring", () => {
     const range = productionEventCalendarEventClassName(toProductionEventCalendarEvent(rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00")), NOW)!.data)!;
     expect(range.split(" ")).toEqual(expect.arrayContaining([
-      "bg-(--ec-event-color)/14", "hover:bg-(--ec-event-color)/20", "inset-ring-(length:--border-width-mid)", "inset-ring-(--ec-event-color)", "text-foreground",
+      "bg-[color-mix(in_srgb,var(--ec-event-color)_var(--stage-wash-mix),var(--bg-surface))]", "hover:bg-(--ec-event-color)/20", "inset-ring-(length:--border-width-mid)", "inset-ring-(--ec-event-color)", "text-foreground",
       "data-selected:bg-(--ec-event-color)/24", "data-selected:hover:bg-(--ec-event-color)/28", "data-selected:inset-ring-2", "data-selected:inset-ring-(--ec-event-color)",
     ]));
   });
@@ -143,35 +139,35 @@ describe("production event-calendar adapter: DTO → vendor event (#222)", () =>
     const awaiting = { ...rangeEvent(timed("2026-08-26T09:00"), timed("2026-08-26T11:00")) };
     awaiting.project = { ...awaiting.project, stageKey: "awaiting_raw" } as typeof awaiting.project;
     const classes = productionEventCalendarEventClassName(toProductionEventCalendarEvent(awaiting, NOW)!.data)!.split(" ");
-    expect(classes).toEqual(expect.arrayContaining(["bg-(--paper-000)", "border-(length:--border-width-mid)", "border-dashed", "border-(--ec-event-color)", "inset-ring-0", "data-selected:bg-(--ec-event-color)/14"]));
-    expect(classes).not.toContain("bg-(--ec-event-color)/14");
+    expect(classes).toEqual(expect.arrayContaining(["bg-card", "border-(length:--border-width-mid)", "border-dashed", "border-(--ec-event-color)", "inset-ring-0", "data-selected:bg-(--ec-event-color)/14"]));
+    expect(classes).not.toContain("bg-[color-mix(in_srgb,var(--ec-event-color)_var(--stage-wash-mix),var(--bg-surface))]");
   });
 
-  it("a late range keeps its wash and swaps its edge for a 2px --late ring, selected or not", () => {
+  it("a late range keeps its wash and swaps its edge for a 2px late ring, selected or not", () => {
     const classes = productionEventCalendarEventClassName(toProductionEventCalendarEvent(rangeEvent(timed("2026-08-17T09:00"), timed("2026-08-18T17:00")), NOW)!.data)!.split(" ");
-    expect(classes).toEqual(expect.arrayContaining(["bg-(--ec-event-color)/14", "inset-ring-(length:--border-width-bold)", "inset-ring-(--late)", "data-selected:inset-ring-(--late)"]));
+    expect(classes).toEqual(expect.arrayContaining(["bg-[color-mix(in_srgb,var(--ec-event-color)_var(--stage-wash-mix),var(--bg-surface))]", "inset-ring-(length:--border-width-bold)", "inset-ring-late", "data-selected:inset-ring-late"]));
     expect(classes).not.toContain("inset-ring-(length:--border-width-mid)");
     expect(classes).not.toContain("inset-ring-(--ec-event-color)");
   });
 
-  it("a done range rests on paper-100 with a --text-muted edge and secondary text; selected takes a light ink wash", () => {
+  it("a done range rests on the raised paper with a --text-muted edge and secondary text; selected takes a light ink wash", () => {
     const classes = productionEventCalendarEventClassName(toProductionEventCalendarEvent(rangeEvent(timed("2026-08-17T09:00"), timed("2026-08-18T17:00"), { completed: true }), NOW)!.data)!.split(" ");
-    expect(classes).toEqual(expect.arrayContaining(["bg-(--paper-100)", "hover:bg-(--paper-200)", "inset-ring-(--text-muted)", "text-foreground-secondary", "data-selected:bg-(--ink-700)/10", "data-selected:inset-ring-(--ink-700)"]));
-    expect(classes.some((token) => token.includes("--late"))).toBe(false);
+    expect(classes).toEqual(expect.arrayContaining(["bg-muted", "hover:bg-surface-sunken", "inset-ring-(--text-muted)", "text-foreground-secondary", "data-selected:bg-foreground/10", "data-selected:inset-ring-foreground"]));
+    expect(classes.some((token) => token.includes("late"))).toBe(false);
   });
 
-  it("a Deadline fills with --ec-event-color (ink, --late or --stage-delivered) and holds it inside a double keyline when selected", () => {
+  it("a Deadline fills with --ec-event-color (ink, late or Delivered) and holds it inside a double keyline when selected", () => {
     const deadline = productionEventCalendarEventClassName(toProductionEventCalendarEvent(deadlineEvent("2026-08-27T09:00"), NOW)!.data)!;
     expect(deadline).toBe(
-      "bg-(--ec-event-color) hover:bg-(--ec-event-color)/85 text-(--paper-050) inset-ring-(--ec-event-color) " +
-        "data-selected:bg-(--ec-event-color) data-selected:hover:bg-(--ec-event-color)/85 data-selected:inset-ring-4 data-selected:inset-ring-(--paper-050) " +
+      "bg-(--ec-event-color) hover:bg-(--ec-event-color)/85 text-on-tone inset-ring-(--ec-event-color) " +
+        "data-selected:bg-(--ec-event-color) data-selected:hover:bg-(--ec-event-color)/85 data-selected:inset-ring-4 data-selected:inset-ring-on-tone " +
         "data-selected:inset-shadow-[0_0_0_2px_var(--ec-event-color)] data-[view=agenda]:hover:bg-(--ec-event-color)/85 " +
-        "[--muted-foreground:var(--greige-300)] [&_[data-slot=event-calendar-agenda-dot]]:invisible [--focus-ring:var(--paper-050)] focus-visible:bg-(--ec-event-color)/85 " +
+        "[--muted-foreground:var(--greige-300)] [&_[data-slot=event-calendar-agenda-dot]]:invisible [--focus-ring:var(--text-on-tone)] focus-visible:bg-(--ec-event-color)/85 " +
         "focus-visible:![outline-offset:calc(-1*var(--border-width-bold))]",
     );
     // greige-300 is under 4.5:1 on oxblood and olive, so a late or delivered Deadline's muted text is paper.
     const late = productionEventCalendarEventClassName(toProductionEventCalendarEvent(deadlineEvent("2026-08-19T09:00"), NOW)!.data)!;
-    expect(late).toContain("[--muted-foreground:var(--paper-050)]");
+    expect(late).toContain("[--muted-foreground:var(--text-on-tone)]");
     expect(late).not.toContain("[--muted-foreground:var(--greige-300)]");
   });
 
@@ -307,7 +303,7 @@ describe("production event-calendar adapter: focus ring and day headers (#602)",
   });
 
   it("a Deadline chip's focus ring is paper, since --focus-ring and its ink fill are the same colour; light chips keep the default", () => {
-    const override = "[--focus-ring:var(--paper-050)]";
+    const override = "[--focus-ring:var(--text-on-tone)]";
     const deadline = productionEventCalendarEventClassName(toProductionEventCalendarEvent(deadlineEvent("2026-08-27T09:00"), NOW)!.data)!;
     expect(deadline).toContain(override);
     // Keyboard focus lifts the fill to the hover ink, so it reads apart from the selected state (#602).
@@ -412,15 +408,15 @@ describe("production event-calendar adapter: appearance from the dashboard appea
   it("a Deadline is late from its own instant, not from the synthetic display end; ink, --late or --stage-delivered", () => {
     const deadline = deadlineEvent("2026-08-19T09:00");
     const quarterPast = toProductionEventCalendarEvent(deadline, at("2026-08-19T09:15"))!;
-    expect(quarterPast.data.appearance).toEqual({ kind: "deadline", fill: "late", lateness: { late: true, daysLate: 0 }, lateLabel: "Late today" });
+    expect(quarterPast.data.appearance).toEqual({ kind: "deadline", fill: "late", color: "var(--late)", lateness: { late: true, daysLate: 0 }, lateLabel: "Late today" });
     expect(quarterPast.color).toBe("var(--late)");
     const dayLate = toProductionEventCalendarEvent(deadline, NOW)!;
     expect(dayLate.data.appearance).toMatchObject({ fill: "late", lateLabel: "1 day late" });
     const onTime = toProductionEventCalendarEvent(deadline, at("2026-08-19T08:59"))!;
-    expect(onTime.data.appearance).toEqual({ kind: "deadline", fill: "ink", lateness: { late: false }, lateLabel: null });
-    expect(onTime.color).toBe("var(--ink-900)");
+    expect(onTime.data.appearance).toEqual({ kind: "deadline", fill: "ink", color: "var(--bg-inverse)", lateness: { late: false }, lateLabel: null });
+    expect(onTime.color).toBe("var(--bg-inverse)");
     const delivered = toProductionEventCalendarEvent(inStage(deadline, "delivered"), NOW)!;
-    expect(delivered.data.appearance).toEqual({ kind: "deadline", fill: "delivered", lateness: { late: false }, lateLabel: null });
+    expect(delivered.data.appearance).toEqual({ kind: "deadline", fill: "delivered", color: "var(--stage-delivered)", lateness: { late: false }, lateLabel: null });
     expect(delivered.color).toBe("var(--stage-delivered)");
   });
 

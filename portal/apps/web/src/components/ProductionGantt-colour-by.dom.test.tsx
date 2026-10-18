@@ -110,9 +110,9 @@ function ganttResponse(projects: GanttProjectRowDto[]) {
 
 const identity: DashboardIdentity = { principalId: "user-1", role: "admin", authorizationEpoch: 0 };
 
-async function render(root: Root) {
+async function render(root: Root, projects: GanttProjectRowDto[] = [PROJECT]) {
   apiGetMock.mockReset();
-  apiGetMock.mockImplementation((path: string) => (path.startsWith("/api/production-gantt") ? Promise.resolve(ganttResponse([PROJECT])) : Promise.reject(new Error(`unexpected fetch: ${path}`))));
+  apiGetMock.mockImplementation((path: string) => (path.startsWith("/api/production-gantt") ? Promise.resolve(ganttResponse(projects)) : Promise.reject(new Error(`unexpected fetch: ${path}`))));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   await act(async () => {
     root.render(
@@ -135,6 +135,9 @@ function barFor(host: HTMLElement, text: string): HTMLElement {
   if (!match) throw new Error(`no bar with aria-label including "${text}"`);
   return match;
 }
+
+/** The bar's row in the timeline: what sits beside a bar is in the row, not in the bar. */
+const rowOf = (bar: HTMLElement) => bar.closest<HTMLElement>("[data-gantt-resource]")!;
 
 function option(host: HTMLElement, value: "stage" | "people"): HTMLButtonElement {
   const button = host.querySelector<HTMLButtonElement>(`[data-testid="timeline-colour-by-${value}"]`);
@@ -204,7 +207,7 @@ describe("ProductionGantt — Colour by People, frame 3b (#920)", () => {
     const bar = barFor(host, "HDR blend");
     expect(colourOf(bar)).toBe(personColor(ANIKA.id));
     expect(bar.className).toContain("bg-(--gantt-event-color)");
-    expect(bar.className).toContain("text-[var(--paper-000)]");
+    expect(bar.className).toContain("text-on-tone");
     expect(bar.querySelector('[data-testid="gantt-bar-initials"]')?.textContent).toBe("AN");
   });
 
@@ -262,6 +265,34 @@ describe("ProductionGantt — Colour by People, frame 3b (#920)", () => {
     await choose(host, "stage");
     expect(treeAvatarColours(teamCell(host))).toEqual({ "Anika Nair": "", "Rob Keane": "" });
     expect(treeAvatarColours(assigneeCell(host, "HDR blend"))).toEqual({ "Anika Nair": "" });
+  });
+
+  it("a same-day Subtask keeps its assignee's initials beside the diamond, so colour is never the only cue (story 13)", async () => {
+    const sameDay = makeTask({
+      id: "22222222-2222-4222-8222-920000000005",
+      title: "Twilight edit",
+      assignees: [ANIKA],
+      schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: startMoment("2026-09-18"), end: endMoment("2026-09-18"), due: "2026-09-18" },
+    });
+    const shared = makeTask({
+      id: "22222222-2222-4222-8222-920000000006",
+      title: "Twilight review",
+      assignees: [ANIKA, ROB],
+      schedule: { state: "range", version: 1, zone: PRODUCTION_GANTT_ZONE, start: startMoment("2026-09-19"), end: endMoment("2026-09-19"), due: "2026-09-19" },
+    });
+    const rows = [sameDay, shared];
+    await render(root, [{ ...PROJECT, checklist: { completed: 0, total: rows.length }, children: { rows, total: rows.length, returned: rows.length, truncated: false, nextCursor: null } }]);
+    await choose(host, "people");
+    const bar = barFor(host, "Twilight edit");
+    expect(bar.querySelector('[data-testid="gantt-bar-face"]')?.getAttribute("data-shape")).toBe("diamond");
+    const beside = rowOf(bar).querySelector<HTMLElement>('[data-testid="gantt-diamond-people"]');
+    expect(beside?.textContent).toBe("AN");
+    expect(bar.contains(beside)).toBe(false);
+    // At Day zoom the diamond is a bar again and prints its own initials, so the copy beside it steps aside.
+    expect(beside?.className).toContain("in-data-[scale=day]:hidden");
+    expect(rowOf(barFor(host, "Twilight review")).querySelector('[data-testid="gantt-diamond-people"]')?.textContent).toBe("ANRK");
+    await choose(host, "stage");
+    expect(rowOf(barFor(host, "Twilight edit")).querySelector('[data-testid="gantt-diamond-people"]')).toBeNull();
   });
 
   it("Stage again restores the Stage look", async () => {

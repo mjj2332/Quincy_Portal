@@ -4,6 +4,7 @@ import { lateLabel, type PeopleTone } from "../lib/dashboard-appearance";
 import type { ProductionGanttRowData } from "../lib/production-gantt-adapter";
 import { peopleProjectSpanLabel } from "../lib/timeline-colour-by";
 import { cn } from "../lib/utils";
+import { PersonToneAvatar } from "./ProductionGanttColourBy";
 import { AvatarStack } from "./quincy/AvatarStack";
 
 /**
@@ -56,7 +57,7 @@ function GanttBarPeople({ people, assignees, hiddenCount, complete, hidden }: { 
         data-testid="gantt-bar-initials"
         className={cn(
           "relative inline-flex size-5.5 shrink-0 items-center justify-center rounded-full border-[length:var(--border-width-hair)] text-xs leading-none",
-          complete ? "border-border bg-card text-foreground" : "border-[color-mix(in_oklab,var(--paper-000)_60%,transparent)] text-[var(--paper-000)]",
+          complete ? "border-border bg-card text-foreground" : "border-on-tone/60 text-on-tone",
           hidden,
         )}
       >
@@ -67,7 +68,7 @@ function GanttBarPeople({ people, assignees, hiddenCount, complete, hidden }: { 
   if (people.kind === "shared") {
     return (
       <span data-testid="gantt-bar-avatars" className={cn("relative inline-flex shrink-0", hidden)}>
-        <AvatarStack people={assignees} hiddenCount={hiddenCount} limit={Math.max(assignees.length, 1)} fullLimit decorative personNoun="Assignee" emptyLabel="Unassigned" avatarClassName="size-5.5" />
+        <AvatarStack people={assignees} hiddenCount={hiddenCount} limit={Math.max(assignees.length, 1)} fullLimit decorative personNoun="Assignee" emptyLabel="Unassigned" size="bar" />
       </span>
     );
   }
@@ -107,7 +108,8 @@ export function renderGanttBarContent(
       <span
         data-testid="gantt-bar-face"
         data-treatment={tone.treatment}
-        className="flex min-w-0 items-center gap-1.5 text-sm"
+        // `relative`: the label paints above the vendor's absolutely placed completion fill.
+        className="relative flex min-w-0 items-center gap-1.5 text-sm"
         title={data.hollowStart ? "No shoot date" : undefined}
       >
         {data.hollowStart && (
@@ -139,7 +141,7 @@ export function renderGanttBarContent(
             "border-[length:var(--border-width-bold)] border-(--gantt-event-color)",
             appearance.people.kind === "unassigned" && "border-dashed",
             appearance.complete && "border-solid border-(--text-muted) bg-muted",
-            appearance.lateness.late && "border-(--late)",
+            appearance.lateness.late && "border-late",
             isSelected && "ring-[length:var(--border-width-bold)] ring-foreground ring-offset-[length:var(--border-width-hair)] ring-offset-card",
           )}
         />
@@ -160,20 +162,50 @@ export function renderGanttBarContent(
 }
 
 /**
+ * Story 13 (#916): in Colour by People a same-day Subtask's diamond is edged in its person's colour, which two people can
+ * share, so who has it prints beside the diamond: the sole assignee's initials on their colour, or every assignee's avatar
+ * on a shared one. Beside, not inside: the diamond is too small for initials, and its shell sheds its fill at Week and
+ * coarser. At Day zoom (D4) the diamond is an ordinary bar printing its own initials, so this copy steps aside. Unassigned
+ * prints nobody; its dashed diamond says so.
+ */
+function diamondPeople(data: ProductionGanttRowData) {
+  if (data.kind !== "task") return null;
+  const { people } = data.appearance;
+  if (data.colourBy !== "people" || data.appearance.shape !== "diamond" || people.kind === "unassigned") return null;
+  return (
+    <span data-testid="gantt-diamond-people" className="flex shrink-0 items-center in-data-[scale=day]:hidden">
+      {people.kind === "person" ? (
+        <PersonToneAvatar initials={people.initials} color={people.color} size="bar" />
+      ) : (
+        <AvatarStack people={data.dto.assignees} hiddenCount={data.dto.otherAssigneeCount} limit={Math.max(data.dto.assignees.length, 1)} fullLimit decorative personNoun="Assignee" emptyLabel="Unassigned" size="bar" />
+      )}
+    </span>
+  );
+}
+
+/**
  * Frame 3a `.chipbad`: "2 days late" beside a late bar, after its outside title when it has one (the
  * vendor's `renderEventTrailing`). Drawn once per bar, on its last segment. Text, not colour alone:
- * the wording carries the meaning, and `--late` is 4.5:1 or better on the surface paper.
+ * the wording carries the meaning, and the late colour is 4.5:1 or better on the surface paper. A
+ * People-mode diamond's people (`diamondPeople`) come first.
  */
 export function renderGanttBarTrailing(data: ProductionGanttRowData | undefined, isLastSegment: boolean) {
   if (!data || !isLastSegment) return null;
   const label = lateLabel(data.appearance.lateness);
-  if (!label) return null;
-  return (
+  const people = diamondPeople(data);
+  const chip = label && (
     <span
       data-testid="gantt-late-chip"
-      className="inline-flex h-6 items-center whitespace-nowrap rounded-sm border-[length:var(--border-width-hair)] border-(--late) bg-card px-2 text-xs text-(--late)"
+      className="inline-flex h-6 items-center whitespace-nowrap rounded-sm border-[length:var(--border-width-hair)] border-late bg-card px-2 text-xs text-late"
     >
       {label}
+    </span>
+  );
+  if (!people || !chip) return people ?? chip ?? null;
+  return (
+    <span className="flex items-center gap-1.5">
+      {people}
+      {chip}
     </span>
   );
 }

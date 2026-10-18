@@ -45,7 +45,7 @@ export function StageToneSwatch({ tone, className }: { tone: StageTone; classNam
         "size-3.5 shrink-0 rounded-xs",
         tone.treatment === "solid" && "bg-(--swatch-color)",
         tone.treatment === "hollow-dashed" && "border-[length:var(--border-width-mid)] border-dashed border-(--swatch-color) bg-card",
-        tone.treatment === "wash" && "border-[length:var(--border-width-mid)] border-(--swatch-color) bg-[color-mix(in_oklab,var(--swatch-color)_16%,var(--bg-surface))]",
+        tone.treatment === "wash" && "border-[length:var(--border-width-mid)] border-(--swatch-color) bg-[color-mix(in_srgb,var(--swatch-color)_var(--stage-wash-mix),var(--bg-surface))]",
         className,
       )}
       style={{ "--swatch-color": tone.color } as CSSProperties}

@@ -11,10 +11,15 @@
  * `components/reui/**` is imported, not even a type (`harness-reachability.guard.test.ts`).
  *
  * Colours are token references (`var(--stage-…)`, `var(--people-N)`, `styles/tokens/colors.css`),
- * never values, so the design-system guards measure what the views paint.
+ * never values, so the design-system guards measure what the views paint. Every colour RULE (which
+ * token, when) is here: the bar colours per Colour by, the People key's swatches and a Calendar
+ * Deadline's fill. A view names `--late` only through the `late` theme colour (`tokens/tailwind.css`),
+ * and only on what this module has called late.
  */
 import type { StagePresentationKey, StageTransportKey } from "@quincy/shared";
 import { sydneyDayKey } from "./date-format";
+import { initials } from "./initials";
+import type { ColourBy } from "./timeline-colour-by";
 
 /** An instant as the Dashboard's DTOs carry it: a `Date`, epoch milliseconds, or an ISO string. */
 export type Instant = Date | number | string;
@@ -151,15 +156,6 @@ export function personColor(userId: string): string {
   return `var(--people-${personColorIndex(userId) + 1})`;
 }
 
-/** The first and last word's initials, upper-cased ("Grace Brewster Hopper" → "GH"); `null` for a blank name. */
-export function personInitials(name: string): string | null {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return null;
-  const first = words[0]!.charAt(0);
-  const last = words.length > 1 ? words[words.length - 1]!.charAt(0) : "";
-  return `${first}${last}`.toUpperCase();
-}
-
 /** One named person on a shared Subtask. */
 export type PeopleToneMember = { personId: string; initials: string; color: string };
 
@@ -176,21 +172,66 @@ export type PeopleTone =
   | { kind: "shared"; people: PeopleToneMember[]; hiddenCount: number }
   | { kind: "unassigned" };
 
-/** A blank name still prints something in the bar ("?"), so a bar never shows colour as its only cue. */
-const initialsOf = (name: string) => personInitials(name) ?? "?";
+/**
+ * A person's initials: `lib/initials.ts`, the one formatter every avatar uses (first two words, by code
+ * point, #91), so a bar and its avatar always agree. A blank name prints "?", so a bar never shows colour
+ * as its only cue.
+ */
+export const personInitials = (name: string) => initials(name) || "?";
 
 export function subtaskPeopleTone(subtask: { assignees: readonly { id: string; name: string }[]; otherAssigneeCount: number }): PeopleTone {
   const { assignees, otherAssigneeCount } = subtask;
   if (assignees.length === 0 && otherAssigneeCount === 0) return { kind: "unassigned" };
   if (assignees.length === 1 && otherAssigneeCount === 0) {
     const [only] = assignees as [{ id: string; name: string }];
-    return { kind: "person", personId: only.id, color: personColor(only.id), initials: initialsOf(only.name) };
+    return { kind: "person", personId: only.id, color: personColor(only.id), initials: personInitials(only.name) };
   }
   return {
     kind: "shared",
-    people: assignees.map((person) => ({ personId: person.id, initials: initialsOf(person.name), color: personColor(person.id) })),
+    people: assignees.map((person) => ({ personId: person.id, initials: personInitials(person.name), color: personColor(person.id) })),
     hiddenCount: otherAssigneeCount,
   };
+}
+
+/* ------------------------------------------------------------------ Bar colours */
+
+/** Colour by People's neutral: a Project bar and a shared Subtask (`--text-muted`, 3.57:1 on the surface paper). */
+const PEOPLE_NEUTRAL_COLOR = "var(--text-muted)";
+
+/** A People tone's colour: the sole assignee's own, neutral when shared, Awaiting RAW's greige (drawn dashed) when nobody's. */
+export function peopleToneColor(people: PeopleTone): string {
+  if (people.kind === "person") return people.color;
+  return people.kind === "shared" ? PEOPLE_NEUTRAL_COLOR : STAGE_TONES.awaiting_raw.color;
+}
+
+/** A Timeline Project bar's colour: its Stage tone, or neutral in Colour by People (frame 3b `.pbar.neutral`). */
+export function projectBarColor(tone: StageTone, colourBy: ColourBy): string {
+  return colourBy === "people" ? PEOPLE_NEUTRAL_COLOR : tone.color;
+}
+
+/** A Timeline Subtask bar's colour: its Project's Stage tone, or its People tone in Colour by People. */
+export function subtaskBarColor(tone: StageTone, people: PeopleTone, colourBy: ColourBy): string {
+  return colourBy === "people" ? peopleToneColor(people) : tone.color;
+}
+
+/* ------------------------------------------------------------------ Deadline fill */
+
+/** A Calendar Deadline's solid fill: ink on time, the late colour once missed, Delivered's tone once Delivered. */
+export type DeadlineFill = "ink" | "late" | "delivered";
+
+const DEADLINE_FILL_COLOR: Record<DeadlineFill, string> = { ink: "var(--bg-inverse)", late: "var(--late)", delivered: STAGE_TONES.delivered.color };
+
+/**
+ * A Deadline's fill, its colour and its lateness (frame 3d `.ev.dl`). Delivered wins over late: a
+ * Delivered Project is never late (`projectLateness`).
+ */
+export function deadlineFill(
+  project: { stageKey: string | null | undefined; deadlineAt: string | number | null; archived: boolean },
+  now: Instant,
+): { fill: DeadlineFill; color: string; lateness: Lateness } {
+  const lateness = projectLateness(project, now);
+  const fill: DeadlineFill = stageTone(project.stageKey).stage === "delivered" ? "delivered" : lateness.late ? "late" : "ink";
+  return { fill, color: DEADLINE_FILL_COLOR[fill], lateness };
 }
 
 /* ------------------------------------------------------------------ Done count */

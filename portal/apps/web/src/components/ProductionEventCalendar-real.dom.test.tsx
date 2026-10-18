@@ -64,10 +64,10 @@ describe("ProductionEventCalendar through the real vendored event calendar", () 
     expect(checklist).toBeDefined();
     // #922: the colour rides `--ec-event-color` (ink on an on-time Deadline, the Stage tone on a range);
     // the class paints with it.
-    expect(deadline!.closest("button")!.style.getPropertyValue("--ec-event-color")).toBe("var(--ink-900)");
+    expect(deadline!.closest("button")!.style.getPropertyValue("--ec-event-color")).toBe("var(--bg-inverse)");
     expect(deadline!.closest("button")?.className.split(/\s+/)).toContain("bg-(--ec-event-color)");
     expect(checklist!.closest("button")!.style.getPropertyValue("--ec-event-color")).toMatch(/^var\(--stage-[\w-]+\)$/);
-    expect(checklist!.closest("button")?.className.split(/\s+/)).toContain("bg-(--ec-event-color)/14");
+    expect(checklist!.closest("button")?.className.split(/\s+/)).toContain("bg-[color-mix(in_srgb,var(--ec-event-color)_var(--stage-wash-mix),var(--bg-surface))]");
     // The chip stack draws one initial per avatar (#370); the full name is the avatar's label.
     const avatar = checklist!.querySelector('[role="img"][aria-label="Maya Editor"]');
     expect(avatar?.textContent).toBe("M");
@@ -81,7 +81,7 @@ describe("ProductionEventCalendar through the real vendored event calendar", () 
     // Same for a Deadline: it owns its selected state too (held ink inside an ink-then-paper double
     // keyline), or the vendor's ink-900/30 wash would sit under paper text.
     const deadlineClass = deadline!.closest("button")!.className.split(/\s+/);
-    for (const utility of ["data-selected:bg-(--ec-event-color)", "data-selected:hover:bg-(--ec-event-color)/85", "data-selected:inset-ring-4", "data-selected:inset-ring-(--paper-050)", "data-selected:inset-shadow-[0_0_0_2px_var(--ec-event-color)]"]) {
+    for (const utility of ["data-selected:bg-(--ec-event-color)", "data-selected:hover:bg-(--ec-event-color)/85", "data-selected:inset-ring-4", "data-selected:inset-ring-on-tone", "data-selected:inset-shadow-[0_0_0_2px_var(--ec-event-color)]"]) {
       expect(deadlineClass).toContain(utility);
     }
     // #602: the chip's focusable root (the button) carries the inset focus ring, so the cell's overflow-hidden cannot clip it.

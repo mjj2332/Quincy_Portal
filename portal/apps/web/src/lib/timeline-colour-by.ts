@@ -14,7 +14,7 @@
  * colour, initials) is `dashboard-appearance.ts`'s; this only words and counts it.
  */
 import { personColor, personInitials } from "./dashboard-appearance";
-import { formatWeekdayDay, sydneyDayKey } from "./date-format";
+import { formatWeekdayDayOrToday } from "./date-format";
 import { uiPrefKey, useUiPref } from "./ui-prefs";
 
 export type ColourBy = "stage" | "people";
@@ -33,19 +33,14 @@ export function useTimelineColourBy(): [ColourBy, (next: ColourBy) => void] {
 
 /* ------------------------------------------------------------------ Project bar label */
 
-/** "Mon 14", or "today": a Sydney civil day (never the device's zone). */
-function civilDayShort(instant: Date, todayKey: string): string {
-  return sydneyDayKey(instant) === todayKey ? "today" : formatWeekdayDay(instant);
-}
-
 /**
  * Frame 3b's neutral Project bar label, shoot to Deadline: "Mon 14 → Fri 18", "Mon 14 → today".
  * A Project with no shoot date (its bar starts at its creation, `hollowStart`) names only the Deadline:
  * "Due Fri 18".
  */
 export function peopleProjectSpanLabel(span: { start: Date; end: Date; hollowStart: boolean; todayKey: string }): string {
-  const due = civilDayShort(span.end, span.todayKey);
-  return span.hollowStart ? `Due ${due}` : `${civilDayShort(span.start, span.todayKey)} → ${due}`;
+  const due = formatWeekdayDayOrToday(span.end, span.todayKey);
+  return span.hollowStart ? `Due ${due}` : `${formatWeekdayDayOrToday(span.start, span.todayKey)} → ${due}`;
 }
 
 /* ------------------------------------------------------------------ Key row */
@@ -71,7 +66,7 @@ export function peopleKeyEntries(
     for (const person of subtask.assignees) {
       let entry = byId.get(person.id);
       if (!entry) {
-        entry = { personId: person.id, label: person.name.trim() || "Assignee (name unavailable)", initials: personInitials(person.name) ?? "?", color: personColor(person.id), open: 0 };
+        entry = { personId: person.id, label: person.name.trim() || "Assignee (name unavailable)", initials: personInitials(person.name), color: personColor(person.id), open: 0 };
         byId.set(person.id, entry);
       }
       if (!subtask.done) entry.open += 1;

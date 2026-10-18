@@ -245,7 +245,7 @@ const MORE_SELECTOR = '[data-slot="event-calendar-more"]';
 
 /**
  * "2 days late", from `data.appearance` (`lib/dashboard-appearance.ts`), so lateness never rests on colour
- * alone (#922, frame 3d). On a range chip it prints in `--late` over the Stage wash; on a Deadline the
+ * alone (#922, frame 3d). On a range chip it prints in the late colour over the Stage wash; on a Deadline the
  * fill is already `--late`, so it inherits the chip's paper text. Grid chips get it from `ChipContent`,
  * agenda rows from the vendor's `renderAgendaEventTrailing`, which keeps the row's own time column.
  */
@@ -265,7 +265,7 @@ function CalendarKeySymbols(): JSX.Element {
 function LateLabel({ data }: { data: ProductionEventCalendarData | undefined }): JSX.Element | null {
   const appearance = data?.appearance;
   if (!appearance?.lateLabel) return null;
-  return <span className={cn("shrink-0 text-xs", appearance.kind === "range" && "text-(--late)")} data-testid="event-calendar-late">{appearance.lateLabel}</span>;
+  return <span className={cn("shrink-0 text-xs", appearance.kind === "range" && "text-late")} data-testid="event-calendar-late">{appearance.lateLabel}</span>;
 }
 
 function ChipContent({ id, data, title }: { id: string; data: ProductionEventCalendarData | undefined; title: string }): JSX.Element {

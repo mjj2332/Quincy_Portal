@@ -157,7 +157,7 @@ describe("ProductionGantt — frame 3a bar content (#919)", () => {
     vi.useRealTimers();
   });
 
-  it("a Project bar shows its Stage label and treatment, filled with the Stage tone, with no progress fill", async () => {
+  it("a Project bar shows its Stage label and treatment, filled with the Stage tone", async () => {
     await render(host, root, [
       makeProject({ id: PROJECT_ID, street: STREET }),
       makeProject({ id: AWAITING_PROJECT_ID, street: AWAITING_STREET, stageKey: "awaiting_raw" }),
@@ -221,7 +221,35 @@ describe("ProductionGantt — frame 3a bar content (#919)", () => {
     expect(projectBar.contains(projectChip)).toBe(false);
     const taskBar = barFor(host, "Overdue edit");
     expect(rowOf(taskBar).querySelector('[data-testid="gantt-late-chip"]')?.textContent).toBe("1 day late");
-    expect(taskBar.className).toContain("border-(--late)");
+    expect(taskBar.className).toContain("border-late");
+  });
+
+  it("a late Project bar takes the 2px late edge over its Stage edge (spec story 16)", async () => {
+    await render(host, root, [
+      makeProject({ id: LATE_PROJECT_ID, street: LATE_STREET, deadline: { at: "2026-09-15T07:00:00.000Z", localCivil: "2026-09-15T17:00", version: 1, reminderOffsetsMinutes: [], overdue: true } }),
+      makeProject({ id: PROJECT_ID, street: STREET }),
+    ]);
+    const late = barFor(host, LATE_STREET).className.split(/\s+/);
+    expect(late).toEqual(expect.arrayContaining(["border-[length:var(--border-width-bold)]", "border-late"]));
+    // tailwind-merge keeps one edge colour: the late one replaces the vendor's Stage edge.
+    expect(late).not.toContain("border-(--gantt-event-color)");
+    expect(barFor(host, STREET).className.split(/\s+/)).not.toContain("border-late");
+  });
+
+  it("a Project bar keeps its completion fill, completed Subtasks over total, under its label (spec #916)", async () => {
+    await render(host, root, [
+      withChildren(makeProject({ id: PROJECT_ID, street: STREET }), [
+        makeTask({ id: "22222222-2222-4222-8222-919000000005", projectId: PROJECT_ID, title: "Cull", from: "2026-09-14", to: "2026-09-15", done: true }),
+        makeTask({ id: "22222222-2222-4222-8222-919000000006", projectId: PROJECT_ID, title: "Edit", from: "2026-09-15", to: "2026-09-18" }),
+        makeTask({ id: "22222222-2222-4222-8222-919000000007", projectId: PROJECT_ID, title: "Review", from: "2026-09-18", to: "2026-09-21" }),
+      ]),
+    ]);
+    const bar = barFor(host, STREET);
+    const fill = bar.querySelector<HTMLElement>('[data-testid="gantt-bar-progress"]');
+    expect(fill?.style.width).toBe("33%");
+    expect(bar.className).not.toContain("gantt-bar-progress]]:hidden");
+    expect(bar.className).toContain("[&>[data-slot=gantt-bar-progress]]:bg-[color-mix(in_srgb,var(--gantt-event-color)_70%,var(--text-primary))]");
+    expect(bar.querySelector('[data-testid="gantt-bar-face"]')?.className.split(/\s+/)).toContain("relative");
   });
 
   it("an on-time bar carries no late chip", async () => {

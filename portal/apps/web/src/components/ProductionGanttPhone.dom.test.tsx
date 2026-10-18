@@ -17,7 +17,8 @@ if (!Element.prototype.getAnimations) Element.prototype.getAnimations = () => []
 // Thu 17 Sep 2026, 12:00 in Sydney.
 const NOW = new Date("2026-09-17T02:00:00.000Z");
 const FRI_18 = new Date("2026-09-18T07:00:00.000Z");
-const LABELS: Record<string, string> = { editing: "Editing · autoHDR", raw_review: "RAW review" };
+/** Short Stage names, as `stageShortLabelLookup` gives them (an Admin's "Editing · autoHDR" reads as Editing). */
+const LABELS: Record<string, string> = { editing: "Editing", raw_review: "RAW review" };
 const stageLabelFor = (key: StagePresentationKey) => LABELS[key];
 
 const projectDto = { id: "p-1", stageKey: "editing_autohdr" } as unknown as GanttProjectRowDto;

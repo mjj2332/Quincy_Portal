@@ -201,6 +201,7 @@ import {
   ganttFacetIsDefault,
   ganttKeyEntries,
   productionStageFilterOptions,
+  stageShortLabelLookup,
   type ProductionGanttFacetFilters,
 } from "../lib/production-gantt-filters";
 import { doneCount, personColor } from "../lib/dashboard-appearance";
@@ -836,6 +837,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // eslint-disable-next-line react-hooks/exhaustive-deps -- `facetKey` is the value key of `facetFilters`
   }, [facetKey, onFilterChange]);
   const stageLabelFor = useCallback((key: StagePresentationKey) => stageOptions.find((option) => option.key === key)?.label, [stageOptions]);
+  // #916: the phone row meta names a Stage as every role sees it ("Editing", not an Admin's "Editing · autoHDR").
+  const stageShortLabelFor = useMemo(() => stageShortLabelLookup(stages), [stages]);
   // #920: the remembered Colour by (per browser, `useUiPref`). The bars, the key row and the nav switch read it here.
   const [colourBy, setColourBy] = useTimelineColourBy();
   // #255: the empty state's Clear filters button unmounts with the empty state, which would drop
@@ -1585,9 +1588,9 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         <ProjectCalendarAnchor testId="gantt-project-link" className={GANTT_ROW_LINK} href={projectHrefFor(projectId)} onOpenProject={() => onOpenProject?.(projectId)}>{resource.title}</ProjectCalendarAnchor>
       ) : resource.title;
       const status = retryChildren ? <GanttChildLoadErrorBadge onRetry={retryChildren} /> : attention ? <GanttRowAttentionBadge reason={attention.reason} /> : undefined;
-      return <GanttPhoneRowLabel row={row} name={name} meta={phoneRowMeta(row, new Date(defaultNow), stageLabelFor)} status={status} />;
+      return <GanttPhoneRowLabel row={row} name={name} meta={phoneRowMeta(row, new Date(defaultNow), stageShortLabelFor)} status={status} />;
     },
-    [phoneRowByResourceId, attentionByResourceId, childLoadRetryByProjectResourceId, projectHrefFor, onOpenProject, defaultNow, stageLabelFor],
+    [phoneRowByResourceId, attentionByResourceId, childLoadRetryByProjectResourceId, projectHrefFor, onOpenProject, defaultNow, stageShortLabelFor],
   );
 
   // #365: the People and Due columns. `displayProjects` (the accept-gate baseline, the same source

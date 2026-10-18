@@ -38,9 +38,9 @@ describe("ganttProjectBarClass (frame 3a project bars)", () => {
     for (const state of VENDOR_BG_STATES) expect(bgs.has(state), `${stage}: ${state || "rest"}`).toBe(true);
   });
 
-  it("solid: the stage tone itself, paper-000 label (4.71:1 on RAW review, where paper-050 is 4.44:1)", () => {
+  it("solid: the stage tone itself, the on-tone label (4.71:1 on RAW review, where paper-050 is 4.44:1)", () => {
     const value = ganttProjectBarClass({ tone: stageTone("raw_review"), lateness: NOT_LATE, done: null }, { milestone: false });
-    expect(classes(value)).toEqual(expect.arrayContaining(["bg-(--gantt-event-color)", "text-[var(--paper-000)]"]));
+    expect(classes(value)).toEqual(expect.arrayContaining(["bg-(--gantt-event-color)", "text-on-tone"]));
   });
 
   it("hollow-dashed (Awaiting RAW): the surface paper inside a dashed edge in the tone", () => {
@@ -50,12 +50,33 @@ describe("ganttProjectBarClass (frame 3a project bars)", () => {
 
   it("wash (Delivered): a quiet tint of the tone inside a solid edge", () => {
     const value = classes(ganttProjectBarClass({ tone: stageTone("delivered"), lateness: NOT_LATE, done: null }, { milestone: false }));
-    expect(value.some((cls) => cls.startsWith("bg-[color-mix(in_oklab,var(--gantt-event-color)_16%"))).toBe(true);
+    expect(value.some((cls) => cls === "bg-[color-mix(in_srgb,var(--gantt-event-color)_var(--stage-wash-mix),var(--bg-surface))]")).toBe(true);
     expect(value).not.toContain("border-dashed");
   });
 
-  it("hides the vendor's progress fill (the frame draws none; 'N of M done' is in the tree)", () => {
-    expect(ganttProjectBarClass({ tone: stageTone("editing"), lateness: NOT_LATE, done: null }, { milestone: false })).toContain("[&>[data-slot=gantt-bar-progress]]:hidden");
+  // Spec #916: "The Project bar keeps its existing fill: completed Subtasks ÷ total". The vendor's own fill is the tone at
+  // 40% over the bar, which vanishes on a solid tone, so the class repaints it: a deeper step of the tone on a solid bar,
+  // a wash of the tone on a paper or washed one. It owns the completed state too, so a fully done Project reads full.
+  const PROGRESS = "[&>[data-slot=gantt-bar-progress]]:";
+  const progressFills = (value: string) => classes(value).filter((cls) => cls.includes(`${PROGRESS}bg-`));
+  it.each([
+    ["raw_review", "stage", "bg-[color-mix(in_srgb,var(--gantt-event-color)_70%,var(--text-primary))]"],
+    ["awaiting_raw", "stage", "bg-[color-mix(in_srgb,var(--gantt-event-color)_var(--stage-wash-mix),transparent)]"],
+    ["delivered", "stage", "bg-[color-mix(in_srgb,var(--gantt-event-color)_var(--stage-wash-mix),transparent)]"],
+    ["editing", "people", "bg-[color-mix(in_srgb,var(--gantt-event-color)_var(--stage-wash-mix),transparent)]"],
+  ] as const)("draws the completion fill on a %s bar in %s mode, in rest and once complete", (stage, colourBy, fill) => {
+    const value = ganttProjectBarClass({ tone: stageTone(stage), lateness: NOT_LATE, done: null }, { milestone: false, colourBy });
+    expect(value).not.toContain(`${PROGRESS}hidden`);
+    expect(progressFills(value)).toEqual([`${PROGRESS}${fill}`, `data-completed:${PROGRESS}${fill}`]);
+  });
+
+  it.each(["stage", "people"] as const)("a late Project takes the 2px late edge in %s mode, in every state the vendor recolours (spec story 16)", (colourBy) => {
+    for (const stage of ["awaiting_raw", "editing", "delivered"] as const) {
+      const value = classes(ganttProjectBarClass({ tone: stageTone(stage), lateness: { late: true, daysLate: 2 }, done: null }, { milestone: false, colourBy }));
+      expect(value, stage).toEqual(expect.arrayContaining(["border-[length:var(--border-width-bold)]", "border-late", "data-completed:border-late", "data-completed:data-selected:border-late"]));
+    }
+    const onTime = classes(ganttProjectBarClass({ tone: stageTone("editing"), lateness: NOT_LATE, done: null }, { milestone: false, colourBy }));
+    expect(onTime).not.toContain("border-late");
   });
 
   it("an inverted-Deadline milestone keeps the vendor's own milestone look: no class", () => {
@@ -90,7 +111,7 @@ describe("ganttTaskBarClass (frame 3a Subtask bars)", () => {
   });
 
   it("late: a 2px --late edge", () => {
-    expect(classes(ganttTaskBarClass(task({ lateness: { late: true, daysLate: 2 } })))).toEqual(expect.arrayContaining(["border-[length:var(--border-width-bold)]", "border-(--late)"]));
+    expect(classes(ganttTaskBarClass(task({ lateness: { late: true, daysLate: 2 } })))).toEqual(expect.arrayContaining(["border-[length:var(--border-width-bold)]", "border-late"]));
   });
 
   it("unassigned: a dashed edge (frame 3a `.tbar.unas`)", () => {
@@ -117,14 +138,14 @@ describe("Colour by People (frame 3b)", () => {
     expect(classes(value)).toContain("border-[length:var(--border-width-hair)]");
     expect(classes(value)).toContain("text-foreground");
     expect(classes(value)).not.toContain("border-dashed");
-    expect(classes(value)).toContain("[&>[data-slot=gantt-bar-progress]]:hidden");
+    expect(classes(value)).not.toContain("[&>[data-slot=gantt-bar-progress]]:hidden");
   });
 
   it("a Subtask with one assignee fills with their colour in every state, under paper text", () => {
     const value = ganttTaskBarClass(task(), { colourBy: "people" });
     const bgs = backgroundsByVariant(value);
     for (const state of VENDOR_BG_STATES) expect(bgs.get(state), state || "rest").toBe("bg-(--gantt-event-color)");
-    expect(classes(value)).toContain("text-[var(--paper-000)]");
+    expect(classes(value)).toContain("text-on-tone");
     expect(classes(value)).not.toContain("border-dashed");
   });
 
@@ -144,7 +165,7 @@ describe("Colour by People (frame 3b)", () => {
   it("done and late keep their Stage-mode look (D2 fill, the --late edge)", () => {
     expect(ganttTaskBarClass(task({ complete: true }), { colourBy: "people" })).toBe(ganttTaskBarClass(task({ complete: true })));
     const late = ganttTaskBarClass(task({ lateness: { late: true, daysLate: 1 } }), { colourBy: "people" });
-    expect(classes(late)).toContain("border-(--late)");
+    expect(classes(late)).toContain("border-late");
     expect(backgroundsByVariant(late).get("")).toBe("bg-(--gantt-event-color)");
   });
 

@@ -1,18 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
   civilDaysBetween,
+  deadlineFill,
   doneCount,
   lateLabel,
   PEOPLE_TONE_COUNT,
   personColor,
   personColorIndex,
-  personInitials,
+  peopleToneColor,
+  projectBarColor,
   projectLateness,
   stageTone,
+  subtaskBarColor,
   subtaskLateness,
   subtaskPeopleTone,
   subtaskShape,
+  type PeopleTone,
 } from "./dashboard-appearance";
+import { initials } from "./initials";
 
 describe("stageTone: one tone and treatment per Stage (#916)", () => {
   it.each([
@@ -175,11 +180,65 @@ describe("person colour: stable per user id over the people tokens (#916)", () =
   });
 });
 
-describe("personInitials (#916)", () => {
-  it("takes the first and last word's initial, upper-cased", () => {
-    expect(personInitials("ada")).toBe("A");
-    expect(personInitials("  Grace  Brewster Hopper ")).toBe("GH");
-    expect(personInitials("")).toBeNull();
+describe("a person's initials: one formatter for the bar and the avatar (#916, #91)", () => {
+  const tone = (name: string) => subtaskPeopleTone({ assignees: [{ id: "u1", name }], otherAssigneeCount: 0 });
+
+  it("takes the first two words, as every avatar does: a bar and its avatar never disagree", () => {
+    expect(tone("  Grace  Brewster Hopper ")).toMatchObject({ kind: "person", initials: "GB" });
+    expect(initials("Grace Brewster Hopper")).toBe("GB");
+  });
+
+  it("keeps an astral-plane character whole, never a lone surrogate half", () => {
+    const astral = "\u{20BB7}";
+    expect(tone(`${astral}野 太郎`)).toMatchObject({ kind: "person", initials: `${astral}太` });
+    expect(initials(`${astral}野 太郎`)).toBe(`${astral}太`);
+  });
+
+  it("prints ? for a blank name, so a bar never shows colour as its only cue", () => {
+    expect(tone("   ")).toMatchObject({ kind: "person", initials: "?" });
+  });
+});
+
+describe("bar colours: what --gantt-event-color is in each Colour by (#916)", () => {
+  const editing = stageTone("editing");
+  const person: PeopleTone = { kind: "person", personId: "u1", color: "var(--people-3)", initials: "AN" };
+  const shared: PeopleTone = { kind: "shared", people: [], hiddenCount: 1 };
+  const unassigned: PeopleTone = { kind: "unassigned" };
+
+  it("Stage paints every bar its Project's Stage tone", () => {
+    expect(projectBarColor(editing, "stage")).toBe("var(--stage-editing)");
+    for (const people of [person, shared, unassigned]) expect(subtaskBarColor(editing, people, "stage")).toBe("var(--stage-editing)");
+  });
+
+  it("People: a Project bar and a shared Subtask are neutral, a sole assignee's is theirs, an unassigned one Awaiting RAW's greige", () => {
+    expect(projectBarColor(editing, "people")).toBe("var(--text-muted)");
+    expect(subtaskBarColor(editing, person, "people")).toBe("var(--people-3)");
+    expect(subtaskBarColor(editing, shared, "people")).toBe("var(--text-muted)");
+    expect(subtaskBarColor(editing, unassigned, "people")).toBe("var(--stage-awaiting-raw)");
+  });
+
+  it("peopleToneColor is the People key's swatch colour for the same three tones", () => {
+    expect(peopleToneColor(person)).toBe("var(--people-3)");
+    expect(peopleToneColor(shared)).toBe("var(--text-muted)");
+    expect(peopleToneColor(unassigned)).toBe("var(--stage-awaiting-raw)");
+  });
+});
+
+describe("deadlineFill: a Calendar Deadline's solid fill (#916, frame 3d)", () => {
+  const now = new Date("2026-09-17T02:00:00.000Z");
+  const future = "2026-09-24T07:00:00.000Z";
+  const past = "2026-09-15T07:00:00.000Z";
+
+  it("is ink while on time", () => {
+    expect(deadlineFill({ stageKey: "editing_autohdr", deadlineAt: future, archived: false }, now)).toEqual({ fill: "ink", color: "var(--bg-inverse)", lateness: { late: false } });
+  });
+
+  it("is the late colour once missed", () => {
+    expect(deadlineFill({ stageKey: "raw_review", deadlineAt: past, archived: false }, now)).toEqual({ fill: "late", color: "var(--late)", lateness: { late: true, daysLate: 2 } });
+  });
+
+  it("is Delivered's tone once Delivered, late or not", () => {
+    expect(deadlineFill({ stageKey: "delivered", deadlineAt: past, archived: false }, now)).toEqual({ fill: "delivered", color: "var(--stage-delivered)", lateness: { late: false } });
   });
 });
 

@@ -1786,6 +1786,7 @@ function appearanceTokenProblems(scope: TokenScope, names: { stages: string[]; l
   };
   const tones = [...names.stages, names.late, ...names.people];
   const paper = new Map<string, string>();
+  const inverse = new Map<string, string>();
   for (const name of tones) {
     const hex = hexOf(name);
     const twin = hexOf(`${name}-on-inverse`);
@@ -1793,14 +1794,20 @@ function appearanceTokenProblems(scope: TokenScope, names: { stages: string[]; l
       paper.set(name, hex);
       for (const ground of ["--bg-canvas", "--bg-surface"]) atLeast(name, hex, ground, 3);
     }
-    if (twin !== null) for (const ground of ["--ink-900", "--ink-800"]) atLeast(`${name}-on-inverse`, twin, ground, 3);
+    if (twin !== null) {
+      inverse.set(name, twin);
+      for (const ground of ["--ink-900", "--ink-800"]) atLeast(`${name}-on-inverse`, twin, ground, 3);
+    }
   }
-  // Paper initials sit on a person's colour.
-  const initials = hexOf("--paper-000");
-  for (const name of names.people) {
+  // `--text-on-tone` is the label on a solid tone (a solid-Stage bar, a person's initials, a Deadline), and its twin
+  // the label on each tone's -on-inverse twin: text, so 4.5:1 on every one.
+  const onTone = hexOf("--text-on-tone");
+  const onToneTwin = hexOf("--text-on-tone-on-inverse");
+  for (const name of tones) {
     const hex = paper.get(name);
-    const ratio = hex !== undefined && initials !== null ? contrast(initials, hex) : Infinity;
-    if (ratio < 4.5) problems.push(`paper initials on ${name} are ${ratio.toFixed(2)}:1, under 4.5:1`);
+    if (hex !== undefined && onTone !== null && contrast(onTone, hex) < 4.5) problems.push(`--text-on-tone on ${name} is ${contrast(onTone, hex).toFixed(2)}:1, under 4.5:1`);
+    const twin = inverse.get(name);
+    if (twin !== undefined && onToneTwin !== null && contrast(onToneTwin, twin) < 4.5) problems.push(`--text-on-tone-on-inverse on ${name}-on-inverse is ${contrast(onToneTwin, twin).toFixed(2)}:1, under 4.5:1`);
   }
   // Two tones that resolve to one colour are one tone: RAW review and Edited review shared ochre (#257).
   const distinct = (group: string[], label: string) => {
@@ -1839,13 +1846,13 @@ describe("guard: dashboard appearance tokens (#916)", () => {
     for (const name of names.stages) expect(name).toMatch(/^--stage-/);
   });
 
-  it("every Stage, --late and people token is declared with an -on-inverse twin, clears contrast and is distinct", () => {
+  it("every Stage, --late and people token is declared with an -on-inverse twin, clears contrast under --text-on-tone and is distinct", () => {
     expect(appearanceTokenProblems(colors, names)).toEqual([]);
   });
 
   it("proves the detector on planted fixtures", () => {
     const planted: TokenScope = new Map([
-      ["--bg-canvas", "#faf8f2"], ["--bg-surface", "#ffffff"], ["--paper-000", "#ffffff"], ["--ink-900", "#0a0a0a"], ["--ink-800", "#141414"],
+      ["--bg-canvas", "#faf8f2"], ["--bg-surface", "#ffffff"], ["--text-on-tone", "#ffffff"], ["--text-on-tone-on-inverse", "#0a0a0a"], ["--ink-900", "#0a0a0a"], ["--ink-800", "#141414"],
       ["--stage-a", "#2f6b66"], ["--stage-a-on-inverse", "#8fc7c0"],
       ["--stage-b", "var(--stage-a)"], ["--stage-b-on-inverse", "#8fc7c0"],
       ["--late", "#e4ded0"], ["--late-on-inverse", "#232323"],
@@ -1857,7 +1864,8 @@ describe("guard: dashboard appearance tokens (#916)", () => {
       "Stage tones and --late must differ: --stage-a and --stage-b are both #2f6b66",
       expect.stringMatching(/^--late on --bg-canvas is .* under 3:1$/),
       expect.stringMatching(/^--late-on-inverse on --ink-900 is .* under 3:1$/),
-      expect.stringMatching(/^paper initials on --people-1 are .* under 4.5:1$/),
+      expect.stringMatching(/^--text-on-tone on --people-1 is .* under 4.5:1$/),
+      expect.stringMatching(/^--text-on-tone-on-inverse on --late-on-inverse is .* under 4.5:1$/),
       "--people-2-on-inverse is not declared, or does not resolve to a #rrggbb value",
       "--people-2 reuses --stage-a (#2f6b66)",
     ]));

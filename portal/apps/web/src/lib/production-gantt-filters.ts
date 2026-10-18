@@ -150,6 +150,17 @@ export function productionStageFilterOptions(stages: readonly PipelineStage[], c
 }
 
 /**
+ * #916: a Stage's short name, as every role sees it: the role-neutral presentation's label, so an Admin's internal
+ * editing stage ("Editing · autoHDR") reads as the Editing everyone else sees. The phone row meta's Stage ("Editing ·
+ * due Fri 18", frame 3c), where the long internal name would crowd out the due day. A renamed Stage keeps its name; an
+ * inactive one has none.
+ */
+export function stageShortLabelLookup(stages: readonly PipelineStage[]): (key: StagePresentationKey) => string | undefined {
+  const labels = new Map(productionStageFilterOptions(stages, false).map((option) => [option.key, option.label]));
+  return (key) => labels.get(key);
+}
+
+/**
  * The Timeline's Stage key (#254; frame 3a since #919): EVERY role-aware stage option, so a chip
  * pressed away stays on screen to be pressed back, labelled from the real stage list, never from the
  * colour map (which carries both `editing` and `editing_autohdr`, only one of which a role sees).

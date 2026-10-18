@@ -20,9 +20,18 @@
 //    is `toggle-group.tsx` item 2): a 30px, 14px regular segment in the secondary text role on the
 //    group's paper-100 track; pressed lifts to the surface paper in ink with the whisper shadow token.
 //    44px at <=721px and on a coarse pointer. Scoped: no other caller passes these.
+// 8. #916 review (2026-10-18): items 6 and 7 dropped their `data-[state=on]:bg-card`: Base UI's Toggle marks
+//    pressed with `aria-pressed` / `data-pressed`, never `data-state`, so it never applied (`aria-pressed:` carries
+//    it). Item 6's pill and size are named once (`CHIP_PILL`, `CHIP_SIZE`) and exported as
+//    `toggleChipDisplayClassName`: the same pill, drawn pressed, for a display-only chip that is not a control
+//    (`ProductionGanttColourBy.tsx`'s People key chip, owner decision D6), so the two never drift.
 import { Toggle as TogglePrimitive } from "@base-ui/react/toggle"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
+
+/** Item 6's chip pill and size (frame 3a `.kchip`), shared with `toggleChipDisplayClassName`. */
+const CHIP_PILL = "gap-2 rounded-full border border-border font-normal"
+const CHIP_SIZE = "h-8 ps-2 pe-3 max-[721px]:h-11 pointer-coarse:h-11"
 
 const toggleVariants = cva(
   "group/toggle inline-flex items-center justify-center gap-1 rounded-lg text-sm font-medium whitespace-nowrap transition-all hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:text-muted-foreground aria-invalid:border-destructive aria-invalid:ring-destructive/20 aria-pressed:bg-muted data-[state=on]:bg-muted [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
@@ -31,15 +40,15 @@ const toggleVariants = cva(
       variant: {
         default: "bg-transparent",
         outline: "border border-input bg-transparent hover:bg-muted",
-        chip: "gap-2 rounded-full border border-border bg-transparent font-normal text-foreground-secondary hover:bg-muted hover:text-foreground aria-pressed:bg-card aria-pressed:text-foreground data-[state=on]:bg-card",
-        segment: "rounded-[var(--radius-sm)] bg-transparent font-normal text-foreground-secondary hover:bg-transparent hover:text-foreground aria-pressed:bg-card aria-pressed:text-foreground aria-pressed:shadow-[var(--shadow-sm)] data-[state=on]:bg-card",
+        chip: `${CHIP_PILL} bg-transparent text-foreground-secondary hover:bg-muted hover:text-foreground aria-pressed:bg-card aria-pressed:text-foreground`,
+        segment: "rounded-[var(--radius-sm)] bg-transparent font-normal text-foreground-secondary hover:bg-transparent hover:text-foreground aria-pressed:bg-card aria-pressed:text-foreground aria-pressed:shadow-[var(--shadow-sm)]",
       },
       size: {
         default:
           "h-8 min-w-8 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
         sm: "h-7 min-w-7 max-[721px]:h-11 max-[721px]:min-w-11 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
         lg: "h-9 min-w-9 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
-        chip: "h-8 ps-2 pe-3 max-[721px]:h-11 pointer-coarse:h-11",
+        chip: CHIP_SIZE,
         segment: "h-7.5 px-3.5 max-[721px]:h-11 pointer-coarse:h-11",
       },
     },
@@ -65,4 +74,15 @@ function Toggle({
   )
 }
 
-export { Toggle, toggleVariants }
+/**
+ * Item 8: the chip's pressed look on a display-only element (not a control: no hover, no pressed state).
+ * Layout and type match the Toggle base; the pill and size are item 6's own.
+ */
+const toggleChipDisplayClassName = cn(
+  "inline-flex items-center whitespace-nowrap text-sm",
+  CHIP_PILL,
+  CHIP_SIZE,
+  "bg-card text-foreground"
+)
+
+export { Toggle, toggleVariants, toggleChipDisplayClassName }

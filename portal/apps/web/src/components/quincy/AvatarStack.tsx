@@ -38,6 +38,8 @@ export type AvatarStackProps = {
    * Off by default, so every other caller renders as before.
    */
   colorFor?: (personId: string) => string | undefined;
+  /** #916: `bar` draws the 22px avatars that sit inside a Timeline bar (`reui/avatar.tsx`'s scoped size); `sm` (24px) otherwise. */
+  size?: "sm" | "bar";
 };
 
 /**
@@ -46,7 +48,7 @@ export type AvatarStackProps = {
  * avatar is load-bearing: `aria-label` on a roleless `<span>` is dropped by every major screen
  * reader. The avatars are static; the 44px touch-target contract belongs to whatever wraps them.
  */
-export function AvatarStack({ people, limit = 3, personNoun, emptyLabel, hiddenCount = 0, decorative = false, className, avatarClassName, singleInitial = false, fullLimit = false, colorFor }: AvatarStackProps) {
+export function AvatarStack({ people, limit = 3, personNoun, emptyLabel, hiddenCount = 0, decorative = false, className, avatarClassName, singleInitial = false, fullLimit = false, colorFor, size = "sm" }: AvatarStackProps) {
   const hidden = decorative ? { "aria-hidden": true as const } : {};
   if (people.length === 0 && hiddenCount <= 0) {
     return (
@@ -71,13 +73,13 @@ export function AvatarStack({ people, limit = 3, personNoun, emptyLabel, hiddenC
         const label = (empty ? `${personNoun} (name unavailable)` : name) + (person.inactive ? " (inactive)" : "");
         const color = colorFor?.(person.id);
         return (
-          <Avatar key={person.id} size="sm" role="img" aria-label={label} className={cn(person.inactive && "opacity-60", avatarClassName)} style={color ? ({ "--person-color": color } as CSSProperties) : undefined}>
-            <AvatarFallback aria-hidden="true" className={cn(color && "bg-(--person-color) text-[var(--paper-000)]")}>{empty ? "?" : singleInitial ? [...initials(person.name)].slice(0, 1).join("") : initials(person.name)}</AvatarFallback>
+          <Avatar key={person.id} size={size} role="img" aria-label={label} className={cn(person.inactive && "opacity-60", avatarClassName)} style={color ? ({ "--person-color": color } as CSSProperties) : undefined}>
+            <AvatarFallback aria-hidden="true" className={cn(color && "bg-(--person-color) text-on-tone")}>{empty ? "?" : singleInitial ? [...initials(person.name)].slice(0, 1).join("") : initials(person.name)}</AvatarFallback>
           </Avatar>
         );
       })}
       {(overflow > 0 || hiddenCount > 0) && (
-        <AvatarGroupCount role="img" aria-label={countLabel} className={cn(avatarClassName, hiddenCount > 0 && "w-auto group-has-data-[size=sm]/avatar-group:w-auto min-w-6 px-[var(--space-2)] whitespace-nowrap", hiddenCount > 0 && !avatarClassName && "text-xs")}>
+        <AvatarGroupCount role="img" aria-label={countLabel} className={cn(avatarClassName, hiddenCount > 0 && "w-auto group-has-data-[size=sm]/avatar-group:w-auto group-has-data-[size=bar]/avatar-group:w-auto min-w-6 px-[var(--space-2)] whitespace-nowrap", hiddenCount > 0 && !avatarClassName && size === "sm" && "text-xs")}>
           <span aria-hidden="true">{hiddenCount > 0 ? `+${overflow + hiddenCount} others` : `+${overflow}`}</span>
         </AvatarGroupCount>
       )}

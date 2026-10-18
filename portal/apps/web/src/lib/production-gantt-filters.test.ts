@@ -12,6 +12,7 @@ import {
   ganttRouteFor,
   productionStageFilterOptions,
   stageOptionsWithTone,
+  stageShortLabelLookup,
   type ProductionGanttFacetFilters,
 } from "./production-gantt-filters";
 import { stageTone } from "./dashboard-appearance";
@@ -47,6 +48,22 @@ describe("productionStageFilterOptions", () => {
   it("drops inactive stages", () => {
     const stages = storedStages.map((stage) => (stage.key === "raw_review" ? { ...stage, active: false } : stage));
     expect(productionStageFilterOptions(stages, true).map((option) => option.key)).not.toContain("raw_review");
+  });
+});
+
+describe("stageShortLabelLookup (#916, the phone row meta)", () => {
+  it("names each Stage as every role sees it, so an Admin's internal editing stage reads as Editing", () => {
+    const shortLabel = stageShortLabelLookup([...storedStages.slice(0, 2), { key: "editing_autohdr", label: "Editing · autoHDR", displayOrder: 3, active: true }, ...storedStages.slice(3)]);
+    expect(shortLabel("editing")).toBe("Editing");
+    expect(shortLabel("raw_review")).toBe("RAW review");
+    expect(shortLabel("delivered")).toBe("Delivered");
+  });
+
+  it("keeps a renamed Stage's own label, and has none for an inactive one", () => {
+    const stages = storedStages.map((stage) => (stage.key === "raw_review" ? { ...stage, label: "Cull" } : stage.key === "delivered" ? { ...stage, active: false } : stage));
+    const shortLabel = stageShortLabelLookup(stages);
+    expect(shortLabel("raw_review")).toBe("Cull");
+    expect(shortLabel("delivered")).toBeUndefined();
   });
 });
 

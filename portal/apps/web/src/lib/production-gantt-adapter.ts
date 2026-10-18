@@ -43,7 +43,7 @@ import {
   type GanttProjectRowDto,
 } from "@quincy/shared";
 import { sydneyDayKey } from "./date-format";
-import { doneCount, projectLateness, stageTone, subtaskLateness, subtaskPeopleTone, subtaskShape, type PeopleTone, type StageTone } from "./dashboard-appearance";
+import { doneCount, projectBarColor, projectLateness, stageTone, subtaskBarColor, subtaskLateness, subtaskPeopleTone, subtaskShape, type StageTone } from "./dashboard-appearance";
 import {
   ganttProjectBarClass,
   ganttTaskBarClass,
@@ -180,24 +180,8 @@ function taskAppearance(row: GanttChecklistRowDto, tone: StageTone, start: Date,
 
 const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
-/**
- * #920: `--gantt-event-color`, which the bar's edge (and its fill, where the class fills) is drawn in.
- * Stage: the Project's Stage tone. People (frame 3b): a Project bar and a shared Subtask are neutral
- * (`--text-muted`, 3.57:1 on the surface paper); one assignee's Subtask is their colour; an unassigned
- * one Awaiting RAW's greige, drawn dashed.
- */
-const NEUTRAL_COLOR = "var(--text-muted)";
-const UNASSIGNED_COLOR = "var(--stage-awaiting-raw)";
-
-function projectBarColor(tone: StageTone, colourBy: ColourBy): string {
-  return colourBy === "people" ? NEUTRAL_COLOR : tone.color;
-}
-
-function taskBarColor(tone: StageTone, people: PeopleTone, colourBy: ColourBy): string {
-  if (colourBy !== "people") return tone.color;
-  if (people.kind === "person") return people.color;
-  return people.kind === "shared" ? NEUTRAL_COLOR : UNASSIGNED_COLOR;
-}
+/* #920: `--gantt-event-color` (the bar's edge, and its fill where the class fills) is the module's
+   `projectBarColor` / `subtaskBarColor`: the Stage tone, or the bar's People colour. */
 
 /**
  * Re-derives every event's appearance from its DRAWN range and `now`: the per-minute clock (`useNow`)
@@ -230,7 +214,7 @@ export function applyGanttAppearance(model: ProductionGanttModel, now: Date, opt
       if (data.colourBy === colourBy && sameJson(appearance, data.appearance)) return event;
       next = {
         ...event,
-        color: taskBarColor(appearance.tone, appearance.people, colourBy),
+        color: subtaskBarColor(appearance.tone, appearance.people, colourBy),
         className: ganttTaskBarClass(appearance, { colourBy }),
         data: { ...data, appearance, colourBy },
       };
@@ -296,7 +280,7 @@ function buildTaskResult(row: GanttChecklistRowDto, tone: StageTone, now: Date, 
       start: span.start,
       end: span.end,
       allDay: false,
-      color: taskBarColor(tone, appearance.people, colourBy),
+      color: subtaskBarColor(tone, appearance.people, colourBy),
       className: ganttTaskBarClass(appearance, { colourBy }),
       readOnly: true,
       resourceId,

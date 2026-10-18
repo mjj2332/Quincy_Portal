@@ -114,6 +114,15 @@ function paintOf(utility: string, kind: "bg" | "text" | "inset-ring", extra: Map
   const alpha = match[2] ? Number(match[2]) / 100 : 1;
   const value = match[1]!;
   if (value.startsWith("[length:")) return null;
+  // The Stage wash (#916): `color-mix(in srgb, A P, B)` is opaque, A at P (a percentage, or a token holding one) over B,
+  // mixed in gamma-encoded sRGB as `in srgb` specifies.
+  const mix = /^\[color-mix\(in_srgb,var\((--[\w-]+)\)_(?:(\d+)%|var\((--[\w-]+)\)),var\((--[\w-]+)\)\)\]$/.exec(value);
+  if (mix) {
+    const share = mix[2] ?? /^(\d+)%$/.exec(TOKENS.get(mix[3]!) ?? "")?.[1];
+    if (share === undefined) throw new Error(`cannot read the mix share in ${kind}-${value}`);
+    const [a, b, p] = [resolveVar(mix[1]!, extra), resolveVar(mix[4]!, extra), Number(share) / 100];
+    return { rgb: a.map((c, i) => p * c + (1 - p) * b[i]!) as unknown as Rgb, alpha };
+  }
   const arbitrary = /^\((--[\w-]+)\)$/.exec(value) ?? /^\[(?:color:)?var\((--[\w-]+)\)\]$/.exec(value);
   if (!arbitrary && value.startsWith("[")) throw new Error(`cannot read the arbitrary value in ${kind}-${value}`);
   const name = arbitrary ? arbitrary[1]! : `--color-${value}`;

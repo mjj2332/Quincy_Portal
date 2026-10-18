@@ -4,7 +4,7 @@ import type { GanttChecklistRowDto, GanttProjectRowDto, StagePresentationKey } f
 import { Button } from "@/components/reui/button";
 import { Drawer, DrawerClose, DrawerContent, DrawerTitle, DrawerTrigger } from "@/components/reui/drawer";
 import { lateLabel, stageTone } from "../lib/dashboard-appearance";
-import { formatWeekdayDay, sydneyDayKey } from "../lib/date-format";
+import { formatWeekdayDayOrToday, sydneyDayKey } from "../lib/date-format";
 import type { ProductionGanttRowData } from "../lib/production-gantt-adapter";
 import { TAP_SLOP } from "../lib/tap-slop";
 import { cn } from "../lib/utils";
@@ -27,26 +27,21 @@ export type GanttPhoneRow =
 
 export type GanttPhoneMeta = { text: string; late: boolean };
 
-/** "today" when the instant falls on today's Sydney day, else "Fri 18". */
-function dueDay(end: Date, now: Date): string {
-  return sydneyDayKey(end) === sydneyDayKey(now) ? "today" : formatWeekdayDay(end);
-}
-
 /**
  * Frame 3c `.pm`, from the drawn bar's appearance (the same lateness the bar draws, so the two never disagree):
- * a Project reads "Editing · due Fri 18" (the Stage's short name) or its late label; a Subtask reads "Done", its
+ * a Project reads "Editing · due Fri 18" (the Stage's short name, `stageShortLabelLookup`) or its late label; a Subtask reads "Done", its
  * late label, or "Due Mon 21". `null` for a row with no bar: its attention reason says why instead.
  */
-export function phoneRowMeta(row: GanttPhoneRow, now: Date, stageLabelFor: (key: StagePresentationKey) => string | undefined): GanttPhoneMeta | null {
+export function phoneRowMeta(row: GanttPhoneRow, now: Date, stageShortLabelFor: (key: StagePresentationKey) => string | undefined): GanttPhoneMeta | null {
   if (!row.data || !row.end) return null;
   const late = lateLabel(row.data.appearance.lateness);
   if (late) return { text: late, late: true };
   if (row.kind === "task") {
     if (row.data.appearance.complete) return { text: "Done", late: false };
-    return { text: `Due ${dueDay(row.end, now)}`, late: false };
+    return { text: `Due ${formatWeekdayDayOrToday(row.end, sydneyDayKey(now))}`, late: false };
   }
-  const stage = stageLabelFor(row.data.appearance.tone.stage)?.split(" · ")[0];
-  const due = `due ${dueDay(row.end, now)}`;
+  const stage = stageShortLabelFor(row.data.appearance.tone.stage);
+  const due = `due ${formatWeekdayDayOrToday(row.end, sydneyDayKey(now))}`;
   return { text: stage ? `${stage} · ${due}` : due.charAt(0).toUpperCase() + due.slice(1), late: false };
 }
 
@@ -71,7 +66,7 @@ export function GanttPhoneRowLabel({ row, name, meta, status }: { row: GanttPhon
       <GanttPhoneRowMark row={row} />
       <span className={cn("min-w-0 flex-1 truncate", row.kind === "task" && row.dto.done && "text-foreground-secondary")}>{name}</span>
       {status ?? (meta && (
-        <span data-testid="gantt-phone-meta" className={cn("shrink-0 whitespace-nowrap text-xs", meta.late ? "text-(--late)" : "text-foreground-secondary")}>
+        <span data-testid="gantt-phone-meta" className={cn("shrink-0 whitespace-nowrap text-xs", meta.late ? "text-late" : "text-foreground-secondary")}>
           {meta.text}
         </span>
       ))}

@@ -11,6 +11,7 @@ import {
   formatDistinctTimes,
   formatCivilSchedule,
   formatWeekdayDay,
+  formatWeekdayDayOrToday,
   formatDayGroupedTime,
   formatDayRangePortal,
   formatDueCivil,
@@ -201,5 +202,20 @@ describe("formatWeekdayDay (#921, the phone row meta)", () => {
     // 2026-09-17T15:30Z is Fri 18 Sep 01:30 in Sydney, still Thu 17 in Los Angeles.
     expect(formatWeekdayDay("2026-09-17T15:30:00.000Z")).toBe("Fri 18");
     expect(formatWeekdayDay(new Date("2026-09-21T02:00:00.000Z"))).toBe("Mon 21");
+  });
+});
+
+describe("formatWeekdayDayOrToday (#916: the phone row meta and the People-mode Project label)", () => {
+  // Thu 17 Sep 2026 in Sydney.
+  const now = sydneyDayKey(new Date("2026-09-17T02:00:00.000Z"));
+
+  it("says today for any instant on today's Sydney day, however late", () => {
+    expect(formatWeekdayDayOrToday("2026-09-17T13:59:00.000Z", now)).toBe("today");
+  });
+
+  it("names any other Sydney day short, including one that is still today in UTC", () => {
+    // 14:30Z on the 17th is 00:30 Fri 18 in Sydney.
+    expect(formatWeekdayDayOrToday("2026-09-17T14:30:00.000Z", now)).toBe("Fri 18");
+    expect(formatWeekdayDayOrToday(new Date("2026-09-14T02:00:00.000Z"), now)).toBe("Mon 14");
   });
 });
