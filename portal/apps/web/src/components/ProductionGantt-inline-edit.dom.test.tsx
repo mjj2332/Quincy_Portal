@@ -541,7 +541,11 @@ describe("ProductionGantt — People and Due columns (#365)", () => {
       expect(host.querySelector('[data-testid="gantt-team"]')).toBeNull();
       expect(host.querySelector('[data-testid="gantt-deadline-trigger"]')).toBeNull();
       expect(host.querySelector('[data-testid="gantt-deadline-action"]')).toBeNull();
-      expect(host.textContent).not.toContain("People");
+      // #920: scoped to the tree, since the nav's Colour by switch now says "People" too.
+      const tree = host.querySelector<HTMLElement>('[data-testid="gantt-tree-column"]');
+      expect(tree).not.toBeNull();
+      expect(tree!.textContent).not.toContain("People");
+      expect(tree!.textContent).not.toContain("Due");
       expect(host.textContent).not.toContain("Due");
     } finally { viewport.restore(); }
   });

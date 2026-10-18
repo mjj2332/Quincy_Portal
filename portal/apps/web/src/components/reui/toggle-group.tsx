@@ -7,6 +7,9 @@
  *    `button-group.tsx` item 4, `tabs.tsx` and `separator.tsx` (#279). Without it the first/last corner radii
  *    and the outline variant's `border-l-0` never applied (#498 design review).
  *    `toggle-group-orientation.dom.test.tsx` pins it.
+ * 2. #920 (frame 3b `.seg2`): `variant="segment"` draws the group as a segmented track: paper-100 inside a
+ *    hairline, a 2px inset, its radius concentric with the segments' `--radius-sm`. The segments are
+ *    `toggle.tsx` item 7. Scoped by `data-variant`: every other group renders as before.
  */
 import * as React from "react"
 import { Toggle as TogglePrimitive } from "@base-ui/react/toggle"
@@ -51,6 +54,7 @@ function ToggleGroup({
       style={{ "--gap": spacing } as React.CSSProperties}
       className={cn(
         "group/toggle-group flex w-fit flex-row items-center gap-[--spacing(var(--gap))] rounded-lg data-[size=sm]:rounded-[min(var(--radius-md),10px)] data-[orientation=vertical]:flex-col data-[orientation=vertical]:items-stretch",
+        "data-[variant=segment]:rounded-[calc(var(--radius-sm)+--spacing(0.5))] data-[variant=segment]:border data-[variant=segment]:border-border data-[variant=segment]:bg-muted data-[variant=segment]:p-0.5",
         className
       )}
       {...props}

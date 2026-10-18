@@ -1,8 +1,10 @@
 import type { StagePresentationKey } from "@quincy/shared";
 import { CheckIcon } from "lucide-react";
-import { lateLabel } from "../lib/dashboard-appearance";
+import { lateLabel, type PeopleTone } from "../lib/dashboard-appearance";
 import type { ProductionGanttRowData } from "../lib/production-gantt-adapter";
+import { peopleProjectSpanLabel } from "../lib/timeline-colour-by";
 import { cn } from "../lib/utils";
+import { AvatarStack } from "./quincy/AvatarStack";
 
 /**
  * #916 / #919: what the Dashboard Timeline draws inside and beside each bar, frame 3a
@@ -16,6 +18,11 @@ import { cn } from "../lib/utils";
  * suppressed for every bar (lesson "A render-override prop gated on its own PRESENCE, not its
  * per-call return value, is global even when you only meant it for one case"). The frame draws no
  * time label in a bar; the bar's accessible name still carries the vendor's dated string.
+ *
+ * #920 (frame 3b, Colour by People, read from `data.colourBy` so content and class never disagree): a
+ * Project bar is labelled shoot → Deadline ("Mon 14 → Fri 18") and shows no Delivered tick; every
+ * Subtask bar prints who has it, so colour is never the only cue: one assignee's initials, or every
+ * assignee's avatar on a shared Subtask. An unassigned Subtask prints nobody; its dashed edge says so.
  *
  * Plain inputs, not the vendor's render props: `ProductionGantt.tsx` is the only app file that may
  * import `components/reui/gantt` (`harness-reachability.guard.test.ts`), so it unpacks them.
@@ -36,7 +43,43 @@ export function GanttDoneMark() {
   return <CheckIcon data-testid="gantt-done-mark" className="relative size-3.5 shrink-0" aria-hidden="true" />;
 }
 
-export function renderGanttBarContent(input: GanttBarContentInput, stageLabelFor: (key: StagePresentationKey) => string | undefined) {
+/**
+ * Frame 3b `.bav`: who has a Subtask, inside its bar. One assignee: their initials in a ring, paper on
+ * their solid colour, ink on the surface paper once done. Shared: every named assignee's avatar (and
+ * "+N others" for any the viewer may not see). Decorative: the tree's People column names them.
+ */
+function GanttBarPeople({ people, assignees, hiddenCount, complete, hidden }: { people: PeopleTone; assignees: { id: string; name: string }[]; hiddenCount: number; complete: boolean; hidden: string | false }) {
+  if (people.kind === "person") {
+    return (
+      <span
+        aria-hidden="true"
+        data-testid="gantt-bar-initials"
+        className={cn(
+          "relative inline-flex size-5.5 shrink-0 items-center justify-center rounded-full border-[length:var(--border-width-hair)] text-xs leading-none",
+          complete ? "border-border bg-card text-foreground" : "border-[color-mix(in_oklab,var(--paper-000)_60%,transparent)] text-[var(--paper-000)]",
+          hidden,
+        )}
+      >
+        {people.initials}
+      </span>
+    );
+  }
+  if (people.kind === "shared") {
+    return (
+      <span data-testid="gantt-bar-avatars" className={cn("relative inline-flex shrink-0", hidden)}>
+        <AvatarStack people={assignees} hiddenCount={hiddenCount} limit={Math.max(assignees.length, 1)} fullLimit decorative personNoun="Assignee" emptyLabel="Unassigned" avatarClassName="size-5.5" />
+      </span>
+    );
+  }
+  return null;
+}
+
+export function renderGanttBarContent(
+  input: GanttBarContentInput,
+  stageLabelFor: (key: StagePresentationKey) => string | undefined,
+  /** #920: today's Sydney day key, so a People-mode Project label can say "today". */
+  todayKey = "",
+) {
   const { data, title, start, end, isSelected } = input;
   if (!data) return <span className={INSIDE_LABEL}>{title}</span>;
 
@@ -58,7 +101,8 @@ export function renderGanttBarContent(input: GanttBarContentInput, stageLabelFor
       );
     }
     const { tone } = data.appearance;
-    const delivered = tone.stage === "delivered";
+    const people = data.colourBy === "people";
+    const delivered = tone.stage === "delivered" && !people;
     return (
       <span
         data-testid="gantt-bar-face"
@@ -69,8 +113,8 @@ export function renderGanttBarContent(input: GanttBarContentInput, stageLabelFor
         {data.hollowStart && (
           <span aria-hidden="true" data-testid="gantt-hollow-start" className="size-2.5 shrink-0 rounded-[var(--radius-xs)] border border-current bg-transparent" />
         )}
-        {/* Frame 3a labels a Project bar with its Stage; the tree beside it carries the street. */}
-        <span className={INSIDE_LABEL}>{stageLabelFor(tone.stage) ?? title}</span>
+        {/* Frame 3a labels a Project bar with its Stage, frame 3b with its shoot → Deadline; the tree beside it carries the street. */}
+        <span className={INSIDE_LABEL}>{people ? peopleProjectSpanLabel({ start, end, hollowStart: data.hollowStart, todayKey }) : (stageLabelFor(tone.stage) ?? title)}</span>
         {delivered && <GanttDoneMark />}
       </span>
     );
@@ -98,6 +142,15 @@ export function renderGanttBarContent(input: GanttBarContentInput, stageLabelFor
             appearance.lateness.late && "border-(--late)",
             isSelected && "ring-[length:var(--border-width-bold)] ring-foreground ring-offset-[length:var(--border-width-hair)] ring-offset-card",
           )}
+        />
+      )}
+      {data.colourBy === "people" && (
+        <GanttBarPeople
+          people={appearance.people}
+          assignees={data.dto.assignees}
+          hiddenCount={data.dto.otherAssigneeCount}
+          complete={appearance.complete}
+          hidden={appearance.shape === "diamond" && "not-in-data-[scale=day]:hidden"}
         />
       )}
       <span className={cn(INSIDE_LABEL, appearance.shape === "diamond" && "not-in-data-[scale=day]:hidden")}>{title}</span>

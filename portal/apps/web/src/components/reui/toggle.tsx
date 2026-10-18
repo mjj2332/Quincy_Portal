@@ -15,6 +15,11 @@
 //    label, 8px swatch gap; pressed keeps the surface (the frame draws every in-scope Stage that way),
 //    unpressed falls back to the canvas with the secondary text role. 44px at <=721px and on a coarse
 //    pointer. Scoped: no other caller passes these, so every existing Toggle renders as before.
+// 7. #920 (frame 3b `.seg2 button`): `variant="segment"` + `size="segment"`, a segment of the Dashboard
+//    Timeline's "Colour by: Stage | People" `ToggleGroup` (`ProductionGanttColourBy.tsx`; the group's track
+//    is `toggle-group.tsx` item 2): a 30px, 14px regular segment in the secondary text role on the
+//    group's paper-100 track; pressed lifts to the surface paper in ink with the whisper shadow token.
+//    44px at <=721px and on a coarse pointer. Scoped: no other caller passes these.
 import { Toggle as TogglePrimitive } from "@base-ui/react/toggle"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
@@ -27,6 +32,7 @@ const toggleVariants = cva(
         default: "bg-transparent",
         outline: "border border-input bg-transparent hover:bg-muted",
         chip: "gap-2 rounded-full border border-border bg-transparent font-normal text-foreground-secondary hover:bg-muted hover:text-foreground aria-pressed:bg-card aria-pressed:text-foreground data-[state=on]:bg-card",
+        segment: "rounded-[var(--radius-sm)] bg-transparent font-normal text-foreground-secondary hover:bg-transparent hover:text-foreground aria-pressed:bg-card aria-pressed:text-foreground aria-pressed:shadow-[var(--shadow-sm)] data-[state=on]:bg-card",
       },
       size: {
         default:
@@ -34,6 +40,7 @@ const toggleVariants = cva(
         sm: "h-7 min-w-7 max-[721px]:h-11 max-[721px]:min-w-11 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
         lg: "h-9 min-w-9 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
         chip: "h-8 ps-2 pe-3 max-[721px]:h-11 pointer-coarse:h-11",
+        segment: "h-7.5 px-3.5 max-[721px]:h-11 pointer-coarse:h-11",
       },
     },
     defaultVariants: {

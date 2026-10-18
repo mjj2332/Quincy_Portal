@@ -10,11 +10,18 @@
  * `data-completed:` pairs (lesson "A consumer `eventClassName` must override every state the vendor
  * tints"). The colour is `--gantt-event-color`, which the adapter sets to the Stage tone.
  *
+ * #920 (frame 3b, Colour by People): Project bars go neutral and each Subtask takes its People tone. The
+ * neutral look is the sunken paper (paper-200, the frame's `.pbar.neutral` fill) inside a `--text-muted`
+ * edge, which the adapter sets as `--gantt-event-color`: 3.57:1 on the surface paper, where the frame's
+ * greige-300 measures 2.17:1 (the D2 reasoning). Stage stays the default, so a caller that passes no
+ * `colourBy` renders exactly as before.
+ *
  * Owner decision D2 (2026-10-18): a done Subtask is paper-100 with a solid `--text-muted` edge (3.36:1)
  * and a tick, distinct from Awaiting RAW's dashed greige-500. This scopes the vendor's "a done bar rests
  * as an outline" (#247) to callers other than the Dashboard Timeline; `gantt-skin.guard.test.ts` pins both.
  */
 import type { doneCount, Lateness, PeopleTone, StageTone, SubtaskShape } from "./dashboard-appearance";
+import type { ColourBy } from "./timeline-colour-by";
 
 /** What a Project bar draws from. */
 export type GanttProjectAppearance = {
@@ -55,15 +62,20 @@ const OWN_TONE_EDGE = "data-completed:border-(--gantt-event-color) data-complete
 /** A quiet tint of the tone over the surface paper: Delivered's wash (frame 3a `--st-dlv-wash`), the same mix as `StageToneSwatch`. */
 const WASH = "bg-[color-mix(in_oklab,var(--gantt-event-color)_16%,var(--bg-surface))]";
 
+/** Frame 3b's neutral fill: a People-mode Project bar and a shared Subtask (`.pbar.neutral`). */
+const NEUTRAL_FILL = "bg-surface-sunken";
+
 /**
  * A Project bar (shoot to Deadline). Solid stages fill with the tone under a paper-000 label (4.71:1 on
  * RAW review, where paper-050 measures 4.44:1); Awaiting RAW is the surface paper in a dashed edge;
  * Delivered a wash in a solid edge. The progress fill is hidden: the frame draws none, and the tree's
  * "N of M done" carries the count. An inverted-Deadline milestone keeps the vendor's own diamond.
  */
-export function ganttProjectBarClass(appearance: GanttProjectAppearance, opts: { milestone: boolean }): string {
+export function ganttProjectBarClass(appearance: GanttProjectAppearance, opts: { milestone: boolean; colourBy?: ColourBy }): string {
   if (opts.milestone) return "";
   const shared = ["[&>[data-slot=gantt-bar-progress]]:hidden", OWN_TONE_EDGE, SELECTED_RING];
+  // Frame 3b `.pbar.neutral`: every Project the same quiet bar, so the Subtasks' people colours lead.
+  if (opts.colourBy === "people") return [ownFill(NEUTRAL_FILL), "border-[length:var(--border-width-hair)] text-foreground", ...shared].join(" ");
   switch (appearance.tone.treatment) {
     case "solid":
       // Hover keeps the fill: a lighter step would take RAW review's label under 4.5:1.
@@ -76,12 +88,25 @@ export function ganttProjectBarClass(appearance: GanttProjectAppearance, opts: {
 }
 
 /**
+ * An open Subtask's fill and text. Stage: the surface paper (the edge carries the tone), hover stepping
+ * to paper-100. People (frame 3b): one assignee's colour, solid (`.tbar.solid`) under paper text, which
+ * clears 5.9:1 on every `--people-N` and so keeps its fill on hover; a shared Subtask neutral; an
+ * unassigned one the surface paper in a dashed edge (`.tbar.unas`).
+ */
+function openTaskLook(people: PeopleTone, colourBy: ColourBy): string {
+  if (colourBy === "people" && people.kind === "person") return [ownFill("bg-(--gantt-event-color)"), "text-[var(--paper-000)]"].join(" ");
+  if (colourBy === "people" && people.kind === "shared") return [ownFill(NEUTRAL_FILL), "text-foreground"].join(" ");
+  return [ownFill("bg-card", "bg-muted"), "text-foreground"].join(" ");
+}
+
+/**
  * A Subtask bar. Open: the surface paper in a 1.5px edge of the parent Project's tone (dashed when
- * unassigned). Late: a 2px `--late` edge. Done: see the header (D2). A same-day Subtask (`diamond`)
+ * unassigned); in Colour by People, see `openTaskLook`, the edge in the bar's People colour. Late: a 2px
+ * `--late` edge. Done: see the header (D2), in either mode. A same-day Subtask (`diamond`)
  * sheds the shell's fill, edge and resize grips at Week and coarser so the content's diamond stands alone; at Day zoom
  * (`data-scale="day"` on the vendor's `gantt-view`) it is an ordinary bar again (D4).
  */
-export function ganttTaskBarClass(appearance: GanttTaskAppearance): string {
+export function ganttTaskBarClass(appearance: GanttTaskAppearance, opts: { colourBy?: ColourBy } = {}): string {
   const parts = appearance.complete
     ? [
         ownFill("bg-muted"),
@@ -89,7 +114,7 @@ export function ganttTaskBarClass(appearance: GanttTaskAppearance): string {
         "data-completed:border-(--text-muted) data-completed:data-selected:border-(--text-muted) data-completed:border-solid",
         SELECTED_RING,
       ]
-    : [ownFill("bg-card", "bg-muted"), "border-[length:var(--border-width-mid)] border-(--gantt-event-color) text-foreground", OWN_TONE_EDGE, SELECTED_RING];
+    : [openTaskLook(appearance.people, opts.colourBy ?? "stage"), "border-[length:var(--border-width-mid)] border-(--gantt-event-color)", OWN_TONE_EDGE, SELECTED_RING];
   // A done Subtask is never late, and its solid muted edge replaces the unassigned dash.
   if (!appearance.complete && appearance.people.kind === "unassigned") parts.push("border-dashed");
   if (appearance.lateness.late) parts.push("border-[length:var(--border-width-bold)] border-(--late)");

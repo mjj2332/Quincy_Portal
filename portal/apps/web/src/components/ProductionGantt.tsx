@@ -206,6 +206,9 @@ import {
 import { doneCount } from "../lib/dashboard-appearance";
 import { toggleStageInDashboardFilter } from "../lib/dashboard-filter-query";
 import { renderGanttBarContent, renderGanttBarTrailing } from "./ProductionGanttBarContent";
+import { PeopleKeyRow, TimelineColourBySwitch } from "./ProductionGanttColourBy";
+import { peopleKeyEntries, useTimelineColourBy, type ColourBy } from "../lib/timeline-colour-by";
+import { sydneyDayKey } from "../lib/date-format";
 import { deadlineFoldOf, projectDefaultFromFacts } from "../lib/date-time-range";
 import { useNow } from "../lib/use-now";
 import { useStages } from "../lib/stages";
@@ -348,7 +351,18 @@ export function scrollGanttRowToTop(root: HTMLElement, rowId: string): "done" | 
  * landing. `GanttNavToday` spreads its props after its own `onClick={today}`, so a consumer
  * `onClick` would REPLACE the horizontal re-centre; this wrapper therefore calls `today()` itself.
  */
-function ProductionGanttNav({ onToday, zoomTargetRef }: { onToday: () => void; zoomTargetRef: (el: HTMLDivElement | null) => void }) {
+function ProductionGanttNav({
+  onToday,
+  zoomTargetRef,
+  colourBy,
+  onColourByChange,
+}: {
+  onToday: () => void;
+  zoomTargetRef: (el: HTMLDivElement | null) => void;
+  /** #920: frame 3b's "Colour by: Stage | People", before Zoom. Phones get it in the Key drawer (#921, D7). */
+  colourBy: ColourBy;
+  onColourByChange: (next: ColourBy) => void;
+}) {
   const { today } = useGanttNavigation();
   return (
     <GanttNav>
@@ -366,6 +380,7 @@ function ProductionGanttNav({ onToday, zoomTargetRef }: { onToday: () => void; z
         </div>
         <GanttTitle />
         <div className="grow" />
+        <TimelineColourBySwitch colourBy={colourBy} onColourByChange={onColourByChange} className="max-[721px]:hidden" />
         {/* #738: GanttView portals its zoom buttons here (hidden below 1024px with `zoomControl`). */}
         <div ref={zoomTargetRef} data-testid="gantt-nav-zoom" className="flex items-center" />
       </TooltipProvider>
@@ -803,6 +818,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   // eslint-disable-next-line react-hooks/exhaustive-deps -- `facetKey` is the value key of `facetFilters`
   }, [facetKey, onFilterChange]);
   const stageLabelFor = useCallback((key: StagePresentationKey) => stageOptions.find((option) => option.key === key)?.label, [stageOptions]);
+  // #920: the remembered Colour by (per browser, `useUiPref`). The bars, the key row and the nav switch read it here.
+  const [colourBy, setColourBy] = useTimelineColourBy();
   // #255: the empty state's Clear filters button unmounts with the empty state, which would drop
   // focus to <body>. Focus moves to the Dashboard's always-mounted Filter trigger instead (#430; the
   // Display trigger for Show delivered Projects) — the controls the empty state pointed the user to. The browser's own focus scroll only brings the
@@ -1333,8 +1350,14 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   const model = useMemo(
     // #919: appearance last, over the DRAWN ranges and the per-minute clock, so a tick refreshes "late"
     // without rebuilding `baseModel` (query generations, child chains and pins never see the clock).
-    () => applyGanttAppearance(withPendingRange(applyGanttOptimisticOverlay(baseModel, commands.optimisticOverlay, effectivePendingDeadline), effectivePending), new Date(defaultNow)),
-    [baseModel, commands.optimisticOverlay, effectivePendingDeadline, effectivePending, defaultNow],
+    // #920: Colour by too, so switching it recolours the drawn model without a rebuild.
+    () => applyGanttAppearance(withPendingRange(applyGanttOptimisticOverlay(baseModel, commands.optimisticOverlay, effectivePendingDeadline), effectivePending), new Date(defaultNow), { colourBy }),
+    [baseModel, commands.optimisticOverlay, effectivePendingDeadline, effectivePending, defaultNow, colourBy],
+  );
+  // #920: frame 3b's key row, from the Subtasks actually drawn. Only computed in People mode.
+  const peopleKey = useMemo(
+    () => (colourBy === "people" ? peopleKeyEntries(model.events.flatMap((event) => (event.data?.kind === "task" ? [event.data.dto] : []))) : null),
+    [colourBy, model.events],
   );
 
   // fix-220-sol1 #3: the server's own `density.tooManyToDraw`, read off the FIRST page, is
@@ -1596,10 +1619,12 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   }, [identity.role, createDraft, projectDefaultById, changeCreateDraft]);
 
   // #919: every bar's content (`ProductionGanttBarContent.tsx`), and the late chip beside a late bar.
+  // #920: today's day key (it changes once a day, not per tick) lets a People-mode Project label say "today".
+  const todayKey = sydneyDayKey(defaultNow);
   const renderEvent = useCallback(
     ({ occurrence, isSelected }: GanttRenderEventProps<ProductionGanttRowData>) =>
-      renderGanttBarContent({ data: occurrence.event.data, title: occurrence.event.title, start: occurrence.start, end: occurrence.end, isSelected }, stageLabelFor),
-    [stageLabelFor],
+      renderGanttBarContent({ data: occurrence.event.data, title: occurrence.event.title, start: occurrence.start, end: occurrence.end, isSelected }, stageLabelFor, todayKey),
+    [stageLabelFor, todayKey],
   );
   const renderEventTrailing = useCallback(
     ({ occurrence, segment }: GanttRenderEventTrailingProps<ProductionGanttRowData>) => renderGanttBarTrailing(occurrence.event.data, !segment.continuesAfter),
@@ -2165,7 +2190,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
             renderEventTrailing={renderEventTrailing}
             className="min-h-0 flex-1"
           >
-            <ProductionGanttNav onToday={armLanding} zoomTargetRef={setZoomTarget} />
+            <ProductionGanttNav onToday={armLanding} zoomTargetRef={setZoomTarget} colourBy={colourBy} onColourByChange={setColourBy} />
             <GanttToolbar />
             <GanttView zoomControlTarget={zoomTarget} />
           </Gantt>
@@ -2177,7 +2202,11 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   return (
     <div ref={containerRef} className="flex min-h-0 flex-1 flex-col gap-[var(--space-3)]" data-testid="production-gantt-root" {...itemMenu.wrapperProps}>
       <div data-testid="production-gantt-key" className="border-y-[length:var(--border-width-hair)] border-border bg-background py-[var(--space-2)]">
-        <StageKeyRow entries={keyEntries} onToggle={toggleStage} trailing={<GanttKeySymbols />} />
+        {peopleKey ? (
+          <PeopleKeyRow people={peopleKey.people} unassignedOpen={peopleKey.unassignedOpen} trailing={<GanttKeySymbols />} />
+        ) : (
+          <StageKeyRow entries={keyEntries} onToggle={toggleStage} trailing={<GanttKeySymbols />} />
+        )}
       </div>
       {commands.settle.recoveryReason && (
         <Notice role="alert" data-testid="production-gantt-recovery-notice" className="flex items-center justify-between gap-[var(--space-4)]">
