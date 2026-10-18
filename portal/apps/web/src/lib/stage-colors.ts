@@ -30,20 +30,11 @@ export function stageColorFor(stageKey: ProjectStageKey | null | undefined): str
   return (stageKey !== null && stageKey !== undefined ? stageColors[stageKey] : undefined) ?? stageColors.awaiting_raw;
 }
 
-/** A stage's secondary visual cue beside its colour, or `null` for a plain solid swatch/bar. */
-export type StagePattern = "hatch";
-
 /**
- * #257: Raw review and Edited review deliberately share `var(--signal-caution)` (owner decision —
- * both are "a review is waiting"), so colour alone cannot tell them apart. Edited review carries a
- * diagonal hatch as the second cue; every other stage is solid. Same key handling as
- * `stageColorFor`: an unknown or absent key is the fallback stage's pattern (none).
- */
-export function stagePatternFor(stageKey: ProjectStageKey | null | undefined): StagePattern | null {
-  return stageKey === "edited_review" ? "hatch" : null;
-}
-
-/**
+ * #923: `stagePatternFor` and the Board's `StageSwatch` are gone. Edited review has its own tone (`stageTone`), so
+ * nothing draws the hatch. This class stays only because `production-gantt-adapter.test.ts` asserts that no bar
+ * carries it; delete it with that assertion.
+ *
  * #257: the hatch itself — a `background-image`-only Tailwind arbitrary class, so it layers over
  * whatever tint the bar shell or swatch already paints (`background-color` is untouched). Modelled
  * on the Gantt's own off-day hatch (`gantt-view.tsx`): 135° stripes 2px wide every 6px, drawn from
