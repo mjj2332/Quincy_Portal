@@ -305,7 +305,7 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
  * native appearance is off (`appearance-none`), and its value box keeps a min-height and centring of its own (reset with the
  * `::-webkit-date-and-time-value` rules). 16px type so iOS does not zoom on focus.
  */
-const PHONE_FIELD = "block h-[var(--space-7)] min-h-[var(--space-7)] max-[721px]:min-h-[var(--space-7)] w-full min-w-0 max-w-full appearance-none py-0 text-start text-[length:var(--text-base)] [&::-webkit-date-and-time-value]:m-0 [&::-webkit-date-and-time-value]:min-h-0 [&::-webkit-date-and-time-value]:text-start";
+const PHONE_FIELD = "block h-[var(--space-7)] min-h-[var(--space-7)] max-[721px]:min-h-[var(--space-7)] w-full min-w-0 max-w-full appearance-none py-0 text-start text-[length:var(--text-base)] [&::-webkit-date-and-time-value]:m-0 [&::-webkit-date-and-time-value]:min-h-0 [&::-webkit-date-and-time-value]:text-start leading-[calc(var(--space-7)_-_2px)]";
 
 /**
  * M5's body: Date, Time (native pickers, so iOS raises no keyboard), then the reminders, the facts and the feedback, scrolling;
