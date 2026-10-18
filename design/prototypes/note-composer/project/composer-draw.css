@@ -1,0 +1,34 @@
+/* Round 2: the drawing row, the palette, the edit / reply / guest variants, Full screen's floating box. */
+.draw-layer { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 5; touch-action: none; }
+
+.cmp-tool:disabled { opacity: .35; cursor: default; background: transparent; }
+.cmp-tool[aria-checked="true"] { color: var(--foreground); background: var(--ink-600); box-shadow: inset 0 0 0 1px var(--border-hover); }
+.cmp-draw { gap: 0; }
+.cmp-draw .grp { display: inline-flex; }
+.cmp-sep { width: 1px; height: 18px; margin: 0 2px; background: color-mix(in srgb, var(--border) 70%, transparent); flex: none; }
+.cmp-phone .cmp-draw .cmp-tool { width: 40px; }
+.cmp-phone .cmp-draw .cmp-sep { display: none; }
+.sw { display: block; width: 16px; height: 16px; border-radius: 50%; box-shadow: 0 0 0 1.5px var(--card), 0 0 0 2.5px var(--border-hover); }
+.cmp-phone .sw { width: 20px; height: 20px; }
+
+.cmp-palette { position: absolute; left: -40px; bottom: calc(100% + 8px); z-index: 20; display: grid; gap: 4px; padding: 6px; border-radius: var(--radius-md); background: var(--ink-800); border: 1px solid var(--border); box-shadow: 0 12px 32px rgba(0,0,0,.45); animation: rise var(--dur-base) var(--ease-entrance); }
+.cmp-palette .sws { display: flex; gap: 2px; }
+.sw-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; }
+.sw-btn:hover { background: var(--ink-700); }
+.sw-btn[aria-pressed="true"] .sw { box-shadow: 0 0 0 2px var(--ink-800), 0 0 0 4px var(--paper-050); }
+.cmp-phone .sw-btn { width: 44px; height: 44px; }
+.pal-clear { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 10px; border: 0; border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); border-radius: 0 0 6px 6px; background: transparent; color: var(--tone-critical); font-size: 14px; cursor: pointer; text-align: left; }
+.pal-clear:disabled { opacity: .4; cursor: default; }
+
+.cmp-vis.static { cursor: default; border-style: dashed; color: var(--fg2); padding: 0 10px; }
+.cmp-vis.static:hover { background: transparent; }
+.cmp-text-btn { height: 32px; padding: 0 10px; margin-left: 6px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--fg2); font-size: 13px; cursor: pointer; }
+.cmp-text-btn:hover { color: var(--foreground); background: var(--ink-600); }
+.cmp-save { height: 32px; padding: 0 14px; border: 0; border-radius: var(--radius-pill); background: var(--primary); color: var(--primary-fg); font-size: 13px; cursor: pointer; }
+.cmp-save:disabled { opacity: .35; cursor: default; }
+
+.cmp-wrap.cmp-floating { padding: 0; border: 0; background: transparent; }
+.cmp-floating .cmp { background: color-mix(in srgb, var(--ink-800) 92%, transparent); box-shadow: 0 16px 48px rgba(0,0,0,.55); backdrop-filter: blur(12px); }
+
+/* The reply form sits indented under its note. */
+.reply-wrap .cmp-wrap { padding: 4px 12px 12px 54px; border-top: 0; background: transparent; }

@@ -24,6 +24,7 @@ against.
 | `prototypes/video-review-revamp/` | Video review revamp, #879–#884 | P1–P10 phone, F1–F4, W1–W4, T1–T5, V1–V6 |
 | `prototypes/dashboard-views/` | Dashboard Timeline and Calendar revamp (not yet planned or built); round 3 is current | 3a–3d, 2c carried forward |
 | `prototypes/project-header-revamp/` | Project header revamp (not yet planned or built); one hand-authored HTML page, not a design export | D1–D6 desktop, T1 tablet, M1–M6 phone, A1 alternative |
+| `prototypes/note-composer/` | Note composer revamp on the Video review page (spec pending); round 2 is current. Open `project/Note Composer.html` over HTTP, not as a file | C1, F1 desktop; C2–C7 rail; G1 guest, R1 reply, E1 edit; P1–P5 phone |
 
 ## What does not belong here
 
