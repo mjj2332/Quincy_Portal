@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { projectLateness } from "./dashboard-appearance";
 import { dashboardSummary, isOverdueProject } from "./dashboard-summary";
 
 const NOW = 1_800_000_000_000;
@@ -78,5 +79,23 @@ describe("dashboardSummary (#427)", () => {
     expect(dashboardSummary({ ...filtered, projects: [project("editing", null, archivedAt)], archived: "only" })?.text).toBe("1 of 40 archived projects");
     expect(dashboardSummary({ ...filtered, projects: [project(), project("editing", null, archivedAt)], archived: "include" })?.text).toBe("2 of 40 projects · 1 archived");
     expect(dashboardSummary({ ...filtered, searchTotal: null, projects: [project(), project()] })?.text).toBe("2 active projects");
+  });
+});
+
+// #916: "Overdue" and "late" are one rule. The Board, Table and summary count overdue through
+// `isOverdueProject`; the Timeline and Calendar draw late through `projectLateness`. They must agree.
+describe("isOverdueProject agrees with the appearance module's projectLateness (#916)", () => {
+  const stages = ["awaiting_raw", "raw_review", "editing", "editing_autohdr", "edited_review", "delivered"];
+  const deadlines = [null, NOW - 86_400_000 * 3, NOW - 1, NOW, NOW + 1];
+  const archived = [null, "2026-01-01T00:00:00Z"];
+  const table = stages.flatMap((stageKey) => deadlines.flatMap((deadlineAt) => archived.map((archivedAt) => project(stageKey, deadlineAt, archivedAt))));
+
+  it.each(table)("%o", (row) => {
+    expect(isOverdueProject(row, NOW)).toBe(projectLateness({ stageKey: row.stageKey, deadlineAt: row.deadlineAt, archived: row.archivedAt !== null }, NOW).late);
+  });
+
+  it("covers both answers", () => {
+    expect(table.some((row) => isOverdueProject(row, NOW))).toBe(true);
+    expect(table.some((row) => !isOverdueProject(row, NOW))).toBe(true);
   });
 });

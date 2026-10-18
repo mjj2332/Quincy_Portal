@@ -92,6 +92,58 @@
   --signal-critical-on-inverse: #e8968f;  /*  8.66:1 on --ink-900, 8.06:1 on --ink-800 */
   /* caution reuses --signal-caution-on-inverse (star-amber): 9.20:1 / 8.56:1 */
 
+  /* ---- Dashboard appearance (#916) ------------------------------------
+     What the Timeline and Calendar paint, read through lib/dashboard-appearance.ts (stageTone,
+     projectLateness, personColor, the bar colours, deadlineFill) and never named by a view
+     directly; a view reaches --late only as the `late` theme colour, on what the module has called
+     late. One tone per Stage: Edited review gets a teal of its own, so it no longer shares ochre
+     with RAW review. Awaiting RAW is greige-500, drawn hollow with a dashed edge. Each tone has an -on-inverse twin for an ink
+     surface (the Portal has no dark theme). Ratios are against --paper-050 / --paper-000 for the
+     paper value and --ink-900 / --ink-800 for the twin; styles/design-system-guards.test.ts
+     ("dashboard appearance tokens") measures every one. */
+  --stage-awaiting-raw:   var(--greige-500);
+  --stage-raw-review:     var(--signal-caution);
+  --stage-editing:        var(--signal-info);
+  --stage-edited-review:  #2f6b66;               /* deep teal, 5.79:1 / 6.15:1 */
+  --stage-delivered:      var(--signal-positive);
+  --late:                 var(--signal-critical);
+  /* Text and marks on a solid tone (a solid-Stage Project bar, a person's colour, a Calendar
+     Deadline): paper-000, 4.71:1 on RAW review's ochre, 5.9:1 or better on every --people-N. Its
+     twin is ink on the light -on-inverse tones. Views spell it `text-on-tone` (tokens/tailwind.css). */
+  --text-on-tone:            var(--paper-000);
+  --text-on-tone-on-inverse: var(--ink-900);
+  /* The one Stage wash: how much of a tone tints the surface paper behind it (Delivered's Timeline
+     bar, a Calendar range chip, the key swatch), frame 3d `.ad`'s 16%. A share, not a colour:
+     `color-mix(in srgb, <tone> var(--stage-wash-mix), var(--bg-surface))`. */
+  --stage-wash-mix:       16%;
+
+  --stage-awaiting-raw-on-inverse:  var(--greige-300);
+  --stage-raw-review-on-inverse:    var(--signal-caution-on-inverse);
+  --stage-editing-on-inverse:       var(--signal-info-on-inverse);
+  --stage-edited-review-on-inverse: #8fc7c0;     /* 10.46:1 on --ink-900 */
+  --stage-delivered-on-inverse:     var(--signal-positive-on-inverse);
+  --late-on-inverse:                var(--signal-critical-on-inverse);
+
+  /* People: a person's colour, picked from the user id (personColorIndex). Each carries paper
+     initials at 5.9:1 or better and stays clear of every Stage tone and --late, so Colour by People
+     never reads as a Stage. Owner-reviewable hexes. */
+  --people-1: #3d5a80;  /* denim,  7.06:1 under paper-000 initials */
+  --people-2: #6b4a6e;  /* plum,   7.42:1 */
+  --people-3: #8a4b2a;  /* rust,   6.73:1 */
+  --people-4: #5b6a2e;  /* moss,   5.92:1 */
+  --people-5: #2a5f74;  /* petrol, 7.03:1 */
+  --people-6: #7a3e5c;  /* berry,  7.86:1 */
+  --people-7: #6e5136;  /* umber,  7.26:1 */
+  --people-8: #4a4f8a;  /* indigo, 7.56:1 */
+  --people-1-on-inverse: #9eb4d1;  /* 9.34:1 on --ink-900 */
+  --people-2-on-inverse: #c3aac6;  /* 9.32:1 */
+  --people-3-on-inverse: #d8ae97;  /* 9.82:1 */
+  --people-4-on-inverse: #c6d49b;  /* 12.53:1 */
+  --people-5-on-inverse: #97c5d8;  /* 10.65:1 */
+  --people-6-on-inverse: #cfa0b8;  /* 8.84:1 */
+  --people-7-on-inverse: #d0b79f;  /* 10.33:1 */
+  --people-8-on-inverse: #a2a5cd;  /* 8.30:1 */
+
   --border-hairline:  var(--greige-200);
   --border-strong:    var(--ink-900);
   --border-subtle:    var(--paper-200);

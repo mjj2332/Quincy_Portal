@@ -15,12 +15,14 @@ import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CalendarEventDto, ChecklistCalendarEventDto } from "@quincy/shared";
 import { eventCalendarFake } from "../testing/event-calendar-fake";
-import { dated, deadlineEvent, oneDayEvent, PROJECT_ID, PROJECT_STREET, rangeResponse } from "../testing/production-calendar-fixtures";
+import { dated, deadlineEvent, oneDayEvent, PROJECT_ID, PROJECT_STREET, rangeEvent, rangeResponse, timed } from "../testing/production-calendar-fixtures";
 import { calendarState, createHarness, flush, stubCalendarFetch, type Harness } from "../testing/production-event-calendar-harness";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: null, isPending: false }) }));
+// #922: lateness is judged at `useNow`; pin it to 2026-08-12 12:00 Sydney so the fixtures' late/on-time split is fixed.
+vi.mock("../lib/use-now", () => ({ useNow: () => Date.parse("2026-08-12T02:00:00.000Z") }));
 vi.mock("./reui/event-calendar/event-calendar", async () => (await import("../testing/event-calendar-fake")).eventCalendarModule);
 vi.mock("./reui/event-calendar/event-calendar-nav", async () => (await import("../testing/event-calendar-fake")).eventCalendarNavModule);
 vi.mock("./reui/event-calendar/event-calendar-content", async () => (await import("../testing/event-calendar-fake")).eventCalendarContentModule);
@@ -97,5 +99,63 @@ describe("ProductionEventCalendar chips", () => {
     await act(async () => { eventCalendarFake.click(event.id); await Promise.resolve(); await Promise.resolve(); });
     await flush(30);
     expect(menu()?.textContent).toContain("Overlaps another task");
+  });
+});
+
+describe("ProductionEventCalendar chips: Stage tones, late treatment and type (#922, frame 3d)", () => {
+  const lateRange = rangeEvent(timed("2026-08-10T09:00"), timed("2026-08-11T17:00"), { id: "checklist:44444444-4444-4444-8444-444444444444" });
+  const onTime = oneDayEvent(dated("2026-08-13"));
+  const lateDeadline = deadlineEvent("2026-08-11T10:00");
+  const done = rangeEvent(timed("2026-08-10T09:00"), timed("2026-08-11T17:00"), { id: "checklist:55555555-5555-4555-8555-555555555555", completed: true });
+  const late = (id: string) => chip(id).querySelector<HTMLElement>('[data-testid="event-calendar-late"]');
+
+  it("prints the module's late label on a late range and a late Deadline, and none on time or done", async () => {
+    await mount([lateRange, onTime, lateDeadline, done]);
+    expect(late(lateRange.id)?.textContent).toBe("1 day late");
+    expect(late(DEADLINE_ID)?.textContent).toBe("1 day late");
+    expect(late(onTime.id)).toBeNull();
+    expect(late(done.id)).toBeNull();
+  });
+
+  it("draws each chip from the appearance: the late ring on a late range, the tone wash on time, the done paper", async () => {
+    await mount([lateRange, onTime, done]);
+    const classes = (id: string) => (h.host.querySelector(`[data-event-id="${id}"]`)!.closest("li")!.getAttribute("class") ?? "").split(" ");
+    expect(classes(lateRange.id)).toContain("inset-ring-late");
+    expect(classes(onTime.id)).toContain("bg-[color-mix(in_srgb,var(--ec-event-color)_var(--stage-wash-mix),var(--bg-surface))]");
+    expect(classes(onTime.id)).not.toContain("inset-ring-late");
+    expect(classes(done.id)).toContain("bg-muted");
+  });
+
+  it("strikes a done range's title through and leaves an open one alone", async () => {
+    await mount([onTime, done]);
+    const title = (id: string) => chip(id).querySelector<HTMLElement>('[data-testid="event-calendar-chip-title"]')!;
+    expect(title(done.id).className.split(" ")).toContain("line-through");
+    expect(title(onTime.id).className.split(" ")).not.toContain("line-through");
+  });
+
+  it("draws chip avatars at 20px with 12px initials: nothing under the 12px type floor", async () => {
+    await mount([onTime]);
+    const avatar = chip(onTime.id).querySelector<HTMLElement>('[role="img"]')!;
+    const classes = avatar.className.split(" ");
+    expect(classes).toContain("size-5");
+    expect(avatar.className).not.toMatch(/text-2xs|--text-2xs|text-\[(10|11)px\]|0\.6875rem/);
+  });
+
+  it("asks the calendar for the readable type scale and adds the late label to agenda rows", async () => {
+    await mount([lateRange, onTime]);
+    const props = eventCalendarFake.lastProps!;
+    expect(props.eventSize).toBe("readable");
+    const trailing = props.renderAgendaEventTrailing as (p: { occurrence: { key: string; event: { data?: unknown } } }) => unknown;
+    const occurrenceOf = (id: string) => {
+      const event = (props.events ?? []).find((candidate) => candidate.id === id)!;
+      return { key: id, event };
+    };
+    const host = document.createElement("div");
+    const { createRoot } = await import("react-dom/client");
+    const root = createRoot(host);
+    await act(async () => { root.render(<>{trailing({ occurrence: occurrenceOf(lateRange.id) }) as never}</>); });
+    expect(host.textContent).toBe("1 day late");
+    expect(trailing({ occurrence: occurrenceOf(onTime.id) })).toBeUndefined();
+    await act(async () => { root.unmount(); });
   });
 });

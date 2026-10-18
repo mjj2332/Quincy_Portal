@@ -319,3 +319,34 @@ export function applyDashboardFilter<T extends object>(base: T, filter: Dashboar
 export function dashboardFilterAppliedCount(filter: DashboardFilter): number {
   return dashboardFilterRuleCount(dashboardFilterTreeOf(filter));
 }
+
+/**
+ * #916: a Stage key-row chip toggles `stage` in the shared Filter, so the key row and the Filter button
+ * are one filter: it survives a view switch and counts on the badge (`dashboardFilterAppliedCount`).
+ *
+ * Owner rule (2026-10-18): only an AND root with at most one plain (non-negated) root-level Stage rule
+ * can be toggled. No Stage rule: append `stages = [stage]`. One: add or remove `stage` in its values,
+ * dropping the rule once it is empty. Anything else (an OR root, a negated, nested or repeated Stage
+ * rule) returns `null`: the chip is disabled and titled "Edit Stage in Filter". A complex tree is never
+ * rewritten. The result is normalised, so a filter the URL can say flat stays flat.
+ */
+export function toggleStageInDashboardFilter(filter: DashboardFilter, stage: StagePresentationKey): DashboardFilter | null {
+  const tree = dashboardFilterTreeOf(normalizeDashboardFilter(filter));
+  if (tree.op !== "and") return null;
+  const hasNestedStage = (node: DashboardFilterNode): boolean =>
+    node.kind === "group" ? node.children.some((child) => (child.kind === "leaf" ? child.field === "stages" : hasNestedStage(child))) : false;
+  if (tree.children.some(hasNestedStage)) return null;
+  const stageRules = tree.children.filter((child): child is Extract<DashboardFilterLeaf, { field: "stages" }> => child.kind === "leaf" && child.field === "stages");
+  if (stageRules.length > 1 || stageRules.some((rule) => rule.negated)) return null;
+  const [rule] = stageRules;
+  let children: DashboardFilterNode[];
+  if (rule === undefined) {
+    children = [...tree.children, { kind: "leaf", field: "stages", values: [stage] }];
+  } else {
+    const values = rule.values.includes(stage) ? rule.values.filter((value) => value !== stage) : [...rule.values, stage];
+    children = values.length === 0
+      ? tree.children.filter((child) => child !== rule)
+      : tree.children.map((child) => (child === rule ? { ...rule, values } : child));
+  }
+  return normalizeDashboardFilter({ tree: { ...tree, children } });
+}

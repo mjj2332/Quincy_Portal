@@ -10,7 +10,8 @@
  * `production-gantt-facet.ts`; what is left here interprets a filter and reads it only through the shared
  * tree helpers.)
  *
- * The one role-aware stage-option derivation the shared Filter uses (`productionStageFilterOptions`), and the Gantt legend built from it (#254).
+ * The one role-aware stage-option derivation the shared Filter uses (`productionStageFilterOptions`), and the Timeline's Stage key
+ * built from it (#254; frame 3a's key row since #919).
  */
 import {
   dashboardFilterMentionsDeliveredStage,
@@ -23,7 +24,8 @@ import {
   type StagePresentationKey,
   STAGE_PRESENTATION_KEYS,
 } from "@quincy/shared";
-import { stageColorFor, stagePatternFor, type StagePattern } from "./stage-colors";
+import { stageTone, type StageTone } from "./dashboard-appearance";
+import { toggleStageInDashboardFilter } from "./dashboard-filter-query";
 import { presentationStages, type PipelineStage } from "./stages";
 
 // The URL <-> request mappers (they copy every flat facet, so they live apart: this file only INTERPRETS a filter, through the shared tree helpers — `dashboard-filter-access.guard.test.ts`).
@@ -39,8 +41,11 @@ export {
 
 export type StageFilterOption = { key: StagePresentationKey; label: string };
 
-/** `pattern` (#257): the stage's secondary cue beside its colour — `"hatch"` for Edited review, else `null`. */
-export type GanttLegendEntry = StageFilterOption & { color: string; pattern: StagePattern | null };
+/** A stage option with its frame 3a tone (`dashboard-appearance.ts`): one Stage, one look on the Dashboard (D3). */
+export type StageToneOption = StageFilterOption & { tone: StageTone };
+
+/** One chip of the Timeline's Stage key (`StageKeyRow`'s entry). */
+export type GanttKeyEntry = StageToneOption & { pressed: boolean; picked: boolean; disabled: boolean };
 
 // ---------------------------------------------------------------------------
 // The Delivered pair and the empty-state recovery. The Timeline's Display (#430) and the shared
@@ -145,24 +150,38 @@ export function productionStageFilterOptions(stages: readonly PipelineStage[], c
 }
 
 /**
- * The Gantt's stage legend (#254): the role-aware stage options — so every label is a real stage's
- * label and a key with no label never appears — restricted to the selected stages when any are
- * selected, and without `delivered` unless delivered projects are shown (they are not drawn
- * otherwise). Never built from the colour map itself: that map carries both `editing` and
- * `editing_autohdr`, only one of which a given role ever sees.
+ * #916: a Stage's short name, as every role sees it: the role-neutral presentation's label, so an Admin's internal
+ * editing stage ("Editing · autoHDR") reads as the Editing everyone else sees. The phone row meta's Stage ("Editing ·
+ * due Fri 18", frame 3c), where the long internal name would crowd out the due day. A renamed Stage keeps its name; an
+ * inactive one has none.
  */
-export function ganttLegendEntries({ stageOptions, filters }: { stageOptions: readonly StageFilterOption[]; filters: DeliveredPair }): GanttLegendEntry[] {
-  // The stages the filter can still match (every stage when no Stage rule narrows it): exact for a flat filter and a tree alike.
-  const scope = new Set<StagePresentationKey>(dashboardFilterStageScope(dashboardFilterTreeOf(normalizeDashboardFilter(filters))));
-  return stageOptionsWithColor(
-    stageOptions
-      .filter((option) => scope.has(option.key))
-      .filter((option) => option.key !== "delivered" || filters.delivered),
-  );
+export function stageShortLabelLookup(stages: readonly PipelineStage[]): (key: StagePresentationKey) => string | undefined {
+  const labels = new Map(productionStageFilterOptions(stages, false).map((option) => [option.key, option.label]));
+  return (key) => labels.get(key);
 }
 
-/** Each stage option with its swatch colour and pattern: the one place a legend entry or a Stage
- * filter option takes its colour (and, #257, its hatch) from the stage colour map. */
-export function stageOptionsWithColor(stageOptions: readonly StageFilterOption[]): GanttLegendEntry[] {
-  return stageOptions.map((option) => ({ ...option, color: stageColorFor(option.key), pattern: stagePatternFor(option.key) }));
+/**
+ * The Timeline's Stage key (#254; frame 3a since #919): EVERY role-aware stage option, so a chip
+ * pressed away stays on screen to be pressed back, labelled from the real stage list, never from the
+ * colour map (which carries both `editing` and `editing_autohdr`, only one of which a role sees).
+ * `pressed`: the filter can still match the stage, and for Delivered, delivered Projects are drawn.
+ * `disabled`: the Filter's Stage rule is one a chip may not rewrite (`toggleStageInDashboardFilter`
+ * returns `null`), so the chip defers to the Filter.
+ */
+export function ganttKeyEntries({ stageOptions, filters }: { stageOptions: readonly StageFilterOption[]; filters: DeliveredPair }): GanttKeyEntry[] {
+  const filter = normalizeDashboardFilter(filters);
+  // The stages the filter can still match (every stage when no Stage rule narrows it): exact for a flat filter and a tree alike.
+  const scope = new Set<StagePresentationKey>(dashboardFilterStageScope(dashboardFilterTreeOf(filter)));
+  // #916 design review: a Stage rule narrows the key when it leaves a listed Stage out. Only then are the pressed chips
+  // "picked" (an ink edge), so the key at rest stays frame 3a's row of hairline chips.
+  const narrowed = stageOptions.some((option) => !scope.has(option.key));
+  return stageOptionsWithTone(stageOptions).map((option) => {
+    const pressed = scope.has(option.key) && (option.key !== "delivered" || filters.delivered);
+    return { ...option, pressed, picked: pressed && narrowed, disabled: toggleStageInDashboardFilter(filter, option.key) === null };
+  });
+}
+
+/** Each stage option with its tone: the one place a key chip or a Stage filter option takes its swatch from. */
+export function stageOptionsWithTone(stageOptions: readonly StageFilterOption[]): StageToneOption[] {
+  return stageOptions.map((option) => ({ ...option, tone: stageTone(option.key) }));
 }

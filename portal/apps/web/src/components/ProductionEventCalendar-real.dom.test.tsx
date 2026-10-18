@@ -17,6 +17,8 @@ import { startMoment, endMoment, subtaskReminders } from "@/testing/subtask-sche
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: null, isPending: false }) }));
+// #922: lateness is judged at `useNow`; 2026-08-11 noon Sydney, before both fixtures, keeps them on time.
+vi.mock("../lib/use-now", () => ({ useNow: () => Date.parse("2026-08-11T02:00:00.000Z") }));
 
 const principal = "11111111-1111-4111-8111-111111111111";
 const assignee = "22222222-2222-4222-8222-222222222222";
@@ -45,7 +47,7 @@ beforeEach(() => { host = document.createElement("div"); document.body.append(ho
 afterEach(async () => { await act(async () => { root.unmount(); await Promise.resolve(); }); host.remove(); document.body.replaceChildren(); vi.unstubAllGlobals(); });
 
 describe("ProductionEventCalendar through the real vendored event calendar", () => {
-  it("draws both chips via renderEvent, with the Deadline ink class and the assignee initials", async () => {
+  it("draws both chips via renderEvent, with the Deadline ink fill, the Stage wash and the assignee initials", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(response), { status: 200, headers: { "content-type": "application/json" } })));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     await act(async () => {
@@ -60,22 +62,26 @@ describe("ProductionEventCalendar through the real vendored event calendar", () 
     const checklist = chips.find((chip) => chip.textContent?.includes("Select hero images"));
     expect(deadline).toBeDefined();
     expect(checklist).toBeDefined();
-    expect(deadline!.closest("button")?.className).toContain("bg-(--ink-900)");
-    expect(checklist!.closest("button")?.className).toContain("bg-(--paper-000)");
+    // #922: the colour rides `--ec-event-color` (ink on an on-time Deadline, the Stage tone on a range);
+    // the class paints with it.
+    expect(deadline!.closest("button")!.style.getPropertyValue("--ec-event-color")).toBe("var(--bg-inverse)");
+    expect(deadline!.closest("button")?.className.split(/\s+/)).toContain("bg-(--ec-event-color)");
+    expect(checklist!.closest("button")!.style.getPropertyValue("--ec-event-color")).toMatch(/^var\(--stage-[\w-]+\)$/);
+    expect(checklist!.closest("button")?.className.split(/\s+/)).toContain("bg-[color-mix(in_srgb,var(--ec-event-color)_var(--stage-wash-mix),var(--bg-surface))]");
     // The chip stack draws one initial per avatar (#370); the full name is the avatar's label.
     const avatar = checklist!.querySelector('[role="img"][aria-label="Maya Editor"]');
     expect(avatar?.textContent).toBe("M");
     // The consumer's selected state replaces the vendor's (tailwind-merge drops the vendor's
-    // same-variant utilities), so a selected checklist chip keeps paper + a light wash + one ring.
+    // same-variant utilities), so a selected checklist chip deepens its own Stage wash under a 2px tone ring.
     const checklistClass = checklist!.closest("button")!.className.split(/\s+/);
-    expect(checklistClass).toContain("data-selected:bg-(--ink-700)/10");
-    expect(checklistClass).toContain("data-selected:inset-ring-(--ink-700)");
+    expect(checklistClass).toContain("data-selected:bg-(--ec-event-color)/24");
+    expect(checklistClass).toContain("data-selected:inset-ring-(--ec-event-color)");
     expect(checklistClass).not.toContain("data-selected:bg-(--ec-event-color)/30");
     expect(checklistClass).not.toContain("data-selected:inset-ring-(--ec-event-color)/40");
     // Same for a Deadline: it owns its selected state too (held ink inside an ink-then-paper double
     // keyline), or the vendor's ink-900/30 wash would sit under paper text.
     const deadlineClass = deadline!.closest("button")!.className.split(/\s+/);
-    for (const utility of ["data-selected:bg-(--ink-900)", "data-selected:hover:bg-(--ink-700)", "data-selected:inset-ring-4", "data-selected:inset-ring-(--paper-050)", "data-selected:inset-shadow-[0_0_0_2px_var(--ink-900)]"]) {
+    for (const utility of ["data-selected:bg-(--ec-event-color)", "data-selected:hover:bg-(--ec-event-color)/85", "data-selected:inset-ring-4", "data-selected:inset-ring-on-tone", "data-selected:inset-shadow-[0_0_0_2px_var(--ec-event-color)]"]) {
       expect(deadlineClass).toContain(utility);
     }
     // #602: the chip's focusable root (the button) carries the inset focus ring, so the cell's overflow-hidden cannot clip it.

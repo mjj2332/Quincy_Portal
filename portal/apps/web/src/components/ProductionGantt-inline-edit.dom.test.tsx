@@ -33,6 +33,7 @@ import type { ProjectMember } from "../lib/project-data";
 import { ConfirmModalHost } from "./ConfirmDialog";
 import { ProductionGantt, type ProductionGanttProps } from "./ProductionGantt";
 import { mockViewport } from "@/testing/viewport";
+import { showGanttScale } from "@/testing/gantt-scale";
 
 const apiGetMock = vi.hoisted(() => vi.fn<(path: string) => Promise<unknown>>());
 const apiPutMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promise<unknown>>());
@@ -354,6 +355,8 @@ describe("ProductionGantt — People and Due columns (#365)", () => {
 
   it("T1b both triggers are disabled while a bar drag is in progress (before release) and re-enable when the gesture ends", async () => {
     await render();
+    // #919: the Timeline opens at Week; this fixture's Deadline grip is drawn at Month.
+    await showGanttScale(host, "Month");
     expect(teamTrigger()!.disabled).toBe(false);
     expect(deadlineTrigger()!.disabled).toBe(false);
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
@@ -529,8 +532,8 @@ describe("ProductionGantt — People and Due columns (#365)", () => {
     expect(host.querySelector('[data-testid="gantt-team-trigger"]')).not.toBeNull();
   });
 
-  it("T7c in the names-only layout (here 720px) the People and Due columns are not rendered, and the row link is still there", async () => {
-    const viewport = mockViewport({ width: 720 });
+  it("T7c in the names-only layout (here 721px; #921: a phone has its own row label) the People and Due columns are not rendered, and the row link is still there", async () => {
+    const viewport = mockViewport({ width: 721 });
     try {
       await render();
       expect(host.querySelector('[data-testid="gantt-project-link"]')).not.toBeNull();
@@ -538,7 +541,11 @@ describe("ProductionGantt — People and Due columns (#365)", () => {
       expect(host.querySelector('[data-testid="gantt-team"]')).toBeNull();
       expect(host.querySelector('[data-testid="gantt-deadline-trigger"]')).toBeNull();
       expect(host.querySelector('[data-testid="gantt-deadline-action"]')).toBeNull();
-      expect(host.textContent).not.toContain("People");
+      // #920: scoped to the tree, since the nav's Colour by switch now says "People" too.
+      const tree = host.querySelector<HTMLElement>('[data-testid="gantt-tree-column"]');
+      expect(tree).not.toBeNull();
+      expect(tree!.textContent).not.toContain("People");
+      expect(tree!.textContent).not.toContain("Due");
       expect(host.textContent).not.toContain("Due");
     } finally { viewport.restore(); }
   });

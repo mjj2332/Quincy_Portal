@@ -43,7 +43,14 @@ import {
   type GanttProjectRowDto,
 } from "@quincy/shared";
 import { sydneyDayKey } from "./date-format";
-import { STAGE_HATCH_CLASS, stageColorFor, stagePatternFor } from "./stage-colors";
+import { doneCount, projectBarColor, projectLateness, stageTone, subtaskBarColor, subtaskLateness, subtaskPeopleTone, subtaskShape, type StageTone } from "./dashboard-appearance";
+import {
+  ganttProjectBarClass,
+  ganttTaskBarClass,
+  type GanttProjectAppearance,
+  type GanttTaskAppearance,
+} from "./production-gantt-appearance-classes";
+import type { ColourBy } from "./timeline-colour-by";
 
 // ---------------------------------------------------------------------------
 // Local, structurally-`GanttResource`/`GanttEvent`-compatible shapes — see header.
@@ -53,6 +60,8 @@ export interface ProductionGanttResource {
   id: string;
   title: string;
   color?: string;
+  /** #919: the row's own height floor in rem (`GanttResource.minRowHeight`, a Quincy vendor addition). */
+  minRowHeight?: number;
   children?: ProductionGanttResource[];
 }
 
@@ -75,9 +84,8 @@ export interface ProductionGanttEvent<TData = unknown> {
   draggable?: boolean;
   resizable?: boolean;
   resizableEdges?: { start?: boolean; end?: boolean };
-  /** #257 — the stage pattern class (`STAGE_HATCH_CLASS` for Edited review), mirroring
-   * `GanttEvent.className`; omitted (never `undefined`) when the stage has no pattern, so every
-   * other stage's output stays byte-identical. */
+  /** #919 — the frame 3a bar class (`production-gantt-appearance-classes.ts`), mirroring
+   * `GanttEvent.className`. Every event carries one (#257's Edited review hatch is gone). */
   className?: string;
   data?: TData;
 }
@@ -87,8 +95,14 @@ export type ProductionGanttRowFacts =
   | { kind: "project"; dto: GanttProjectRowDto; hollowStart: boolean; missingDeadline: boolean }
   | { kind: "task"; dto: GanttChecklistRowDto; hollowStart: false; missingDeadline: false };
 
-/** `GanttEvent.data`'s shape for every event this adapter emits. */
-export type ProductionGanttRowData = ProductionGanttRowFacts;
+/**
+ * `GanttEvent.data`'s shape for every event this adapter emits: the row's facts plus its frame 3a
+ * appearance (#919) and the Colour by it is drawn in (#920: the bar content reads it, so a bar's
+ * content and its class never disagree). Attention entries carry facts only; they draw no bar.
+ */
+export type ProductionGanttRowData =
+  | (Extract<ProductionGanttRowFacts, { kind: "project" }> & { appearance: GanttProjectAppearance; colourBy: ColourBy })
+  | (Extract<ProductionGanttRowFacts, { kind: "task" }> & { appearance: GanttTaskAppearance; colourBy: ColourBy });
 
 /**
  * Why a row produced no event. Facts, not copy — the surface decides the displayed label
@@ -142,6 +156,80 @@ function resolveStoredInstant(instant: string | null): EndpointResolution {
 }
 
 // ---------------------------------------------------------------------------
+// #916 / #919: frame 3a appearance. Every rule is `dashboard-appearance.ts`'s; this only feeds it the
+// DRAWN range, so an optimistic or pending range draws with the look it will have once saved.
+// ---------------------------------------------------------------------------
+
+function projectAppearance(project: GanttProjectRowDto, drawnDeadline: Date, now: Date): GanttProjectAppearance {
+  return {
+    tone: stageTone(project.stageKey),
+    lateness: projectLateness({ stageKey: project.stageKey, deadlineAt: drawnDeadline.getTime(), archived: project.archived }, now),
+    done: doneCount(project.checklist),
+  };
+}
+
+function taskAppearance(row: GanttChecklistRowDto, tone: StageTone, start: Date, end: Date, now: Date): GanttTaskAppearance {
+  return {
+    tone,
+    lateness: subtaskLateness({ dueAt: end, complete: row.done }, now),
+    shape: subtaskShape({ start, end }),
+    people: subtaskPeopleTone(row),
+    complete: row.done,
+  };
+}
+
+const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/* #920: `--gantt-event-color` (the bar's edge, and its fill where the class fills) is the module's
+   `projectBarColor` / `subtaskBarColor`: the Stage tone, or the bar's People colour. */
+
+/**
+ * Re-derives every event's appearance from its DRAWN range and `now`: the per-minute clock (`useNow`)
+ * and the optimistic/pending ranges change lateness and shape without rebuilding the model, so query
+ * generations, child pagination and pins never see the clock. An event whose appearance is unchanged
+ * keeps its identity, so a tick that changes nothing re-renders nothing.
+ *
+ * #920: `colourBy` (default Stage) is applied here too, so switching Colour by recolours the drawn
+ * model without rebuilding it.
+ */
+export function applyGanttAppearance(model: ProductionGanttModel, now: Date, opts: { colourBy?: ColourBy } = {}): ProductionGanttModel {
+  const colourBy = opts.colourBy ?? "stage";
+  let changed = false;
+  const events = model.events.map((event) => {
+    const data = event.data;
+    if (!data) return event;
+    let next: ProductionGanttEvent<ProductionGanttRowData>;
+    if (data.kind === "project") {
+      const appearance = projectAppearance(data.dto, event.end, now);
+      if (data.colourBy === colourBy && sameJson(appearance, data.appearance)) return event;
+      const milestone = event.start.getTime() === event.end.getTime();
+      next = {
+        ...event,
+        color: projectBarColor(appearance.tone, colourBy),
+        className: ganttProjectBarClass(appearance, { milestone, colourBy }),
+        data: { ...data, appearance, colourBy },
+      };
+    } else {
+      const appearance = taskAppearance(data.dto, data.appearance.tone, event.start, event.end, now);
+      if (data.colourBy === colourBy && sameJson(appearance, data.appearance)) return event;
+      next = {
+        ...event,
+        color: subtaskBarColor(appearance.tone, appearance.people, colourBy),
+        className: ganttTaskBarClass(appearance, { colourBy }),
+        data: { ...data, appearance, colourBy },
+      };
+    }
+    changed = true;
+    return next;
+  });
+  return changed ? { ...model, events } : model;
+}
+
+/** Frame 3a's row heights: a Project row 48px, a Subtask row 40px. A coarse pointer's 44px view floor still lifts the shorter. */
+const PROJECT_ROW_REM = 3;
+const SUBTASK_ROW_REM = 2.5;
+
+// ---------------------------------------------------------------------------
 // Per-row builders
 // ---------------------------------------------------------------------------
 
@@ -170,7 +258,7 @@ function resolveTaskSpan(row: GanttChecklistRowDto): { ok: true; start: Date; en
   return { ok: true, start: startResolved.date, end: endResolved.date };
 }
 
-function buildTaskResult(row: GanttChecklistRowDto, color: string, className: string | undefined, interactive: boolean): RowBuildResult {
+function buildTaskResult(row: GanttChecklistRowDto, tone: StageTone, now: Date, interactive: boolean, colourBy: ColourBy): RowBuildResult {
   const resourceId = `task:${row.id}`;
   const attentionFor = (reason: ProductionGanttAttentionReason): ProductionGanttAttention => ({
     kind: "task",
@@ -184,6 +272,7 @@ function buildTaskResult(row: GanttChecklistRowDto, color: string, className: st
   // Every Subtask is a timed range (ADR 0011, ADR 0016): the bar is [start, end) in stored instants.
   const span = resolveTaskSpan(row);
   if (!span.ok) return { event: null, attention: attentionFor("resolution_failed") };
+  const appearance = taskAppearance(row, tone, span.start, span.end, now);
   return {
     event: {
       id: resourceId,
@@ -191,19 +280,19 @@ function buildTaskResult(row: GanttChecklistRowDto, color: string, className: st
       start: span.start,
       end: span.end,
       allDay: false,
-      color,
-      ...(className ? { className } : {}),
+      color: subtaskBarColor(tone, appearance.people, colourBy),
+      className: ganttTaskBarClass(appearance, { colourBy }),
       readOnly: true,
       resourceId,
       ...(row.done ? { progress: 100 } : {}),
-      data: { kind: "task", dto: row, hollowStart: false, missingDeadline: false },
+      data: { kind: "task", dto: row, hollowStart: false, missingDeadline: false, appearance, colourBy },
       ...(interactive ? taskInteraction(row) : {}),
     },
     attention: null,
   };
 }
 
-function buildProjectBar(project: GanttProjectRowDto, color: string, className: string | undefined, interactive: boolean): RowBuildResult {
+function buildProjectBar(project: GanttProjectRowDto, tone: StageTone, now: Date, interactive: boolean, colourBy: ColourBy): RowBuildResult {
   const resourceId = `project:${project.id}`;
 
   if (!project.deadline) {
@@ -282,8 +371,7 @@ function buildProjectBar(project: GanttProjectRowDto, color: string, className: 
   // that is always the complete denominator regardless of child pagination state.
   //
   // fix-220-sol2 #6: `Math.round` alone reports 100 for a genuinely INCOMPLETE project —
-  // `Math.round((199 / 200) * 100)` is `100` — which then renders the completed styling and the
-  // done checkmark (`renderGanttEventContent` in `ProductionGantt.tsx`, `progress === 100`) on a
+  // `Math.round((199 / 200) * 100)` is `100` — which then renders the completed styling (the vendor shell's `data-completed`, `progress === 100`) on a
   // project that still has work outstanding. `100` is now emitted only when every row is actually
   // done; every other ratio is rounded normally and then capped at `99`, so "nearly done" and
   // "actually done" can never collide on the one value the UI treats as a completion signal.
@@ -293,25 +381,28 @@ function buildProjectBar(project: GanttProjectRowDto, color: string, className: 
         ? 100
         : Math.min(99, Math.round((project.checklist.completed / project.checklist.total) * 100))
       : undefined;
+  const appearance = projectAppearance(project, endDate, now);
+  // #919: a Delivered Project's Deadline is history, so its bar carries no Deadline grip.
+  const canEditDeadline = project.permissions.canEditDeadline && project.stageKey !== "delivered";
   const event: ProductionGanttEvent<ProductionGanttRowData> = {
     id: `project-bar:${project.id}`,
     title: project.street,
     start: barStart,
     end: endDate,
     allDay: false,
-    color,
-    ...(className ? { className } : {}),
+    color: projectBarColor(tone, colourBy),
+    className: ganttProjectBarClass(appearance, { milestone: barStart.getTime() === endDate.getTime(), colourBy }),
     readOnly: true,
     resourceId,
     ...(progress !== undefined ? { progress } : {}),
-    data: { kind: "project", dto: project, hollowStart, missingDeadline: false },
+    data: { kind: "project", dto: project, hollowStart, missingDeadline: false, appearance, colourBy },
     // #221: only the deadline (end edge) is editable from the Gantt; the start is derived.
     ...(interactive
       ? {
-          readOnly: !project.permissions.canEditDeadline || inverted,
+          readOnly: !canEditDeadline || inverted,
           draggable: false,
-          resizable: project.permissions.canEditDeadline,
-          resizableEdges: { start: false, end: project.permissions.canEditDeadline },
+          resizable: canEditDeadline,
+          resizableEdges: { start: false, end: canEditDeadline },
         }
       : {}),
   };
@@ -433,15 +524,16 @@ export function ganttLandingProject(
 
 /**
  * `now` is accepted (not `Date.now()` read internally) for determinism/testability, matching this
- * codebase's other builders — nothing in this builder's contract is `now`-relative (no "today"
- * marker, no client-side overdue recompute: `GanttProjectDeadlineDto.overdue` is already
- * server-computed), so it is intentionally unused here. The landing row is `ganttLandingProject`,
- * which takes its own `now`.
+ * codebase's other builders. Since #919 it decides each bar's lateness (frame 3a's late edge and
+ * chip); a caller holding a model across a clock tick refreshes it with `applyGanttAppearance`
+ * rather than rebuilding. The landing row is `ganttLandingProject`, which takes its own `now`.
  *
  * `interactive` (#221, default false) adds the per-event drag/resize vetoes the writable Gantt
  * needs; when false the output is exactly what it was before the option existed.
  * `deadlineInteractive` (#221 PR B2, default false) additionally opens the project bar's deadline
  * grip; it has no effect without `interactive`. Off, project bars keep the read-only output.
+ * `colourBy` (#920, default Stage) is the Timeline's Colour by; `applyGanttAppearance` can switch it
+ * on a built model.
  */
 export function buildProductionGanttModel(
   projects: readonly GanttProjectRowDto[],
@@ -455,8 +547,10 @@ export function buildProductionGanttModel(
      * real rows alone, so a pin can never push its own project (and itself) out of the model.
      */
     budgetExemptRowIds?: ReadonlySet<string>;
+    colourBy?: ColourBy;
   },
 ): ProductionGanttModel {
+  const colourBy = opts.colourBy ?? "stage";
   const interactive = opts.interactive === true;
   const deadlineInteractive = interactive && opts.deadlineInteractive === true;
   const resources: ProductionGanttResource[] = [];
@@ -477,26 +571,26 @@ export function buildProductionGanttModel(
     rowBudget += rowCount;
     includedProjectIds.add(project.id);
 
-    const color = stageColorFor(project.stageKey);
-    // #257: the stage's secondary cue, on the project bar and every checklist child bar alike.
-    const className = stagePatternFor(project.stageKey) === "hatch" ? STAGE_HATCH_CLASS : undefined;
+    // #919: the Stage tone drives `--gantt-event-color` on the Project bar and every Subtask bar.
+    const tone = stageTone(project.stageKey);
+    const color = tone.color;
     const projectResourceId = `project:${project.id}`;
     const childResources: ProductionGanttResource[] = [];
 
     for (const row of sortedChildren) {
       const taskResourceId = `task:${row.id}`;
-      childResources.push({ id: taskResourceId, title: row.title, color });
-      const result = buildTaskResult(row, color, className, interactive);
+      childResources.push({ id: taskResourceId, title: row.title, color, minRowHeight: SUBTASK_ROW_REM });
+      const result = buildTaskResult(row, tone, opts.now, interactive, colourBy);
       if (result.event) events.push(result.event);
       if (result.attention) attention.push(result.attention);
     }
 
-    resources.push({ id: projectResourceId, title: project.street, color, children: childResources });
+    resources.push({ id: projectResourceId, title: project.street, color, minRowHeight: PROJECT_ROW_REM, children: childResources });
 
     // #429: a Project listed only as the parent of a matching checklist row (`deadlineInScope === false`)
     // draws no shoot -> Deadline bar and raises no attention entry: the filter did not select its Deadline.
     if (project.deadlineInScope === false) continue;
-    const barResult = buildProjectBar(project, color, className, deadlineInteractive);
+    const barResult = buildProjectBar(project, tone, opts.now, deadlineInteractive, colourBy);
     if (barResult.event) events.push(barResult.event);
     if (barResult.attention) attention.push(barResult.attention);
   }

@@ -33,6 +33,15 @@ describe("AvatarStack", () => {
     expect(labels()).toEqual(["Person 1", "Person 2", "Person 3"]);
   });
 
+  it("colorFor fills each named avatar with its colour, leaves an uncoloured one and the +N chip neutral (#920, frame 3b)", () => {
+    const colorFor = (id: string) => (id === "id-2" ? undefined : `var(--people-${id.slice(3)})`);
+    act(() => root.render(<AvatarStack colorFor={colorFor} people={[1, 2, 3, 4].map((n) => person(n))} personNoun="Editor" emptyLabel="None" />));
+    const colours = [...host.querySelectorAll<HTMLElement>('[role="img"]')].map((el) => el.style.getPropertyValue("--person-color"));
+    expect(colours).toEqual(["var(--people-1)", "", ""]);
+    act(() => root.render(<AvatarStack people={[person(1)]} personNoun="Editor" emptyLabel="None" />));
+    expect(host.querySelector<HTMLElement>('[role="img"]')!.style.getPropertyValue("--person-color")).toBe("");
+  });
+
   it("suffixes an inactive person and names an unnamed one", () => {
     act(() => root.render(<AvatarStack people={[person(1, { inactive: true }), person(2, { name: "  " })]} personNoun="Editor" emptyLabel="None" />));
     expect(labels()).toEqual(["Person 1 (inactive)", "Editor (name unavailable)"]);

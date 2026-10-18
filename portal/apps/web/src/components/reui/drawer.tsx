@@ -16,6 +16,9 @@ import { cn } from "@/lib/utils"
 //   Team view hands its ref to `useVisualViewport`, which writes `height`/`transform` there, never on
 //   the Popup, whose transform Base UI owns for the swipe).
 // - The backdrop is rendered when `modal === true` OR `overlayProps.forceRender` is set.
+// - `createDrawerHandle` re-exports Base UI's `Drawer.createHandle` (#916 design review): a handle joins a `Drawer` root
+//   to a `DrawerTrigger` rendered outside it (a detached trigger), so a view's nav row can hold the trigger while the
+//   root stays in an always-mounted band (`quincy/KeyDrawer.tsx`).
 // - The backdrop paints the Quincy scrim token (`--scrim-overlay`, as `reui/sheet.tsx`), not `bg-black/10` (reui-skin guard #239).
 
 type DrawerContextProps = {
@@ -235,7 +238,10 @@ function DrawerDescription({
   )
 }
 
+const createDrawerHandle = DrawerPrimitive.createHandle
+
 export {
+  createDrawerHandle,
   Drawer,
   DrawerPortal,
   DrawerOverlay,

@@ -45,11 +45,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { adminProductionCalendarRangeResponseSchema, PRODUCTION_CALENDAR_ZONE, type DashboardCalendarState } from "@quincy/shared";
 import { ProductionEventCalendar } from "./ProductionEventCalendar";
 import { DEADLINE_AGENDA_DOT } from "../lib/production-event-calendar-adapter";
-import { startMoment, endMoment, subtaskReminders } from "@/testing/subtask-schedule";
+import { startMoment, endMoment, momentScheduleDto, subtaskReminders } from "@/testing/subtask-schedule";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: null, isPending: false }) }));
+// #922: lateness is judged at `useNow`. 16:00 Sydney on 12 Aug: the 11 Aug fixtures are late, the rest on time.
+vi.mock("../lib/use-now", () => ({ useNow: () => Date.parse("2026-08-12T06:00:00.000Z") }));
 
 // ---------------------------------------------------------------------------------------------
 // Token resolution: top-level `:root` / `@theme` declarations of the live token files only.
@@ -112,6 +114,15 @@ function paintOf(utility: string, kind: "bg" | "text" | "inset-ring", extra: Map
   const alpha = match[2] ? Number(match[2]) / 100 : 1;
   const value = match[1]!;
   if (value.startsWith("[length:")) return null;
+  // The Stage wash (#916): `color-mix(in srgb, A P, B)` is opaque, A at P (a percentage, or a token holding one) over B,
+  // mixed in gamma-encoded sRGB as `in srgb` specifies.
+  const mix = /^\[color-mix\(in_srgb,var\((--[\w-]+)\)_(?:(\d+)%|var\((--[\w-]+)\)),var\((--[\w-]+)\)\)\]$/.exec(value);
+  if (mix) {
+    const share = mix[2] ?? /^(\d+)%$/.exec(TOKENS.get(mix[3]!) ?? "")?.[1];
+    if (share === undefined) throw new Error(`cannot read the mix share in ${kind}-${value}`);
+    const [a, b, p] = [resolveVar(mix[1]!, extra), resolveVar(mix[4]!, extra), Number(share) / 100];
+    return { rgb: a.map((c, i) => p * c + (1 - p) * b[i]!) as unknown as Rgb, alpha };
+  }
   const arbitrary = /^\((--[\w-]+)\)$/.exec(value) ?? /^\[(?:color:)?var\((--[\w-]+)\)\]$/.exec(value);
   if (!arbitrary && value.startsWith("[")) throw new Error(`cannot read the arbitrary value in ${kind}-${value}`);
   const name = arbitrary ? arbitrary[1]! : `--color-${value}`;
@@ -251,15 +262,11 @@ const describeFailure = ({ tuple, ratio }: Measurement) => `${tuple}: ${ratio.to
  * `<chip> × <view> × <element>`; every state and ground of that key is covered. Deadline chips may
  * never appear here.
  *
- * The vendored agenda row's time column (`event-calendar-event.tsx`, the `agendaDefaultContent`
- * span) is `text-muted-foreground`, which is the app-wide `--text-muted` token (greige-400). On a
- * paper checklist row it measures under 4.5:1. That is a token-level decision for the whole app,
- * not this chip, and is tracked as a follow-up.
+ * Empty since #922: the vendored agenda row's time column (`text-muted-foreground`, the app-wide
+ * `--text-muted`) used to sit here for both checklist rows at 2.86–3.57:1; every range chip now
+ * re-scopes `--muted-foreground` to `--text-secondary` (frame 3d's meta line).
  */
-const CONTRAST_BASELINE: Record<string, string> = {
-  "active checklist × agenda × span.text-muted-foreground.w-40.shrink-0": "--text-muted on a paper agenda row: 3.57:1 rest, 3.13:1 hover — follow-up",
-  "done checklist × agenda × span.text-muted-foreground.w-40.shrink-0": "--text-muted on the done wash: 2.86–3.16:1 rest, 3.13:1 hover — follow-up",
-};
+const CONTRAST_BASELINE: Record<string, string> = {};
 
 type Band = { paint: Paint; width: number };
 
@@ -338,17 +345,36 @@ function selectionIndistinct(label: string, className: string, view: View, event
 
 const principal = "11111111-1111-4111-8111-111111111111";
 const assignee = "22222222-2222-4222-8222-222222222222";
-const project = { id: principal, street: "12 Harbour Street", stageKey: "editing_autohdr" as const, checklist: { completed: 3, total: 5 }, delivered: false, archived: false };
-const calendarFor = (subview: DashboardCalendarState["subview"]): DashboardCalendarState => ({
-  view: "calendar", date: "2026-08-12", subview, layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const,
+const projectFor = (id: string, stageKey: "awaiting_raw" | "raw_review" | "editing_autohdr" | "edited_review" | "delivered", street: string) =>
+  ({ id, street, stageKey, checklist: { completed: 3, total: 5 }, delivered: stageKey === "delivered", archived: false });
+const project = projectFor(principal, "editing_autohdr", "12 Harbour Street");
+// #922: one Project per Stage, so every Stage tone's chip is measured (frame 3d).
+const awaitingRaw = projectFor("33333333-3333-4333-8333-333333333333", "awaiting_raw", "4 Ridge Road");
+const rawReview = projectFor("44444444-4444-4444-8444-444444444444", "raw_review", "9 Tide Lane");
+const editedReview = projectFor("55555555-5555-4555-8555-555555555555", "edited_review", "21 Cove Parade");
+const delivered = projectFor("66666666-6666-4666-8666-666666666666", "delivered", "3 Wattle Close");
+const calendarFor = (subview: DashboardCalendarState["subview"], date: string): DashboardCalendarState => ({
+  view: "calendar", date, subview, layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const,
   shootRange: null, deadlineRange: null,
   showCompletedChecklist: true, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false,
 });
-const checklistItem = (id: string, title: string, completed: boolean) => ({
-  id, kind: "checklist", title, project,   assignees: [{ id: assignee, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }], otherAssigneeCount: 0,
-  timing: { allDay: true, start: "2026-08-12", end: null }, status: { overdue: false, delivered: false, completed, sameAssigneeOverlap: false },
-  schedule: { state: "range", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: startMoment("2026-08-12"), end: endMoment("2026-08-12"), due: "2026-08-12" },
+const checklistItem = (id: string, title: string, completed: boolean, owner: typeof project = project, day = "2026-08-12") => ({
+  id, kind: "checklist", title, project: owner, assignees: [{ id: assignee, name: "Maya Editor", roleLabel: "Editor", isExternal: false, active: true }], otherAssigneeCount: 0,
+  timing: { allDay: true, start: day, end: null }, status: { overdue: false, delivered: false, completed, sameAssigneeOverlap: false },
+  schedule: { state: "range", version: 4, zone: PRODUCTION_CALENDAR_ZONE, start: startMoment(day), end: endMoment(day), due: day },
   reminders: subtaskReminders(), permissions: { canDrag: true, canResize: false, canOpenScheduleEditor: true },
+});
+/** A timed 09:00–11:00 Sydney Subtask on 11 Aug: late at the mocked now, and it draws the vendor's muted time span. */
+const lateChecklistItem = {
+  ...checklistItem("checklist:late", "Grade the twilight set", false, project, "2026-08-11"),
+  timing: { allDay: false, start: "2026-08-10T23:00:00.000Z", end: "2026-08-11T01:00:00.000Z" },
+  status: { overdue: true, delivered: false, completed: false, sameAssigneeOverlap: false },
+  schedule: momentScheduleDto("2026-08-11T09:00", "2026-08-11T11:00", 4),
+};
+const deadline = (id: string, owner: typeof project, start: string, localCivil: string, overdue: boolean) => ({
+  id, kind: "project_deadline", title: "Project handoff", project: owner, timing: { allDay: false, start, end: null },
+  status: { overdue, delivered: owner.delivered, completed: false, sameAssigneeOverlap: false }, permissions: { canDrag: true, canResize: false },
+  deadlineLocalCivil: localCivil, deadlineVersion: 3, reminderOffsetsMinutes: [],
 });
 const response = adminProductionCalendarRangeResponseSchema.parse({
   range: {
@@ -356,18 +382,39 @@ const response = adminProductionCalendarRangeResponseSchema.parse({
     appliedFilters: { layers: ["project", "checklist"], editorIds: [], includeUnassigned: false, stageKeys: [], priorities: [], archived: "hide" as const, shootRange: null, deadlineRange: null, showCompletedChecklist: true, showDeliveredProjects: false, overdueOnly: false, search: "", myTasks: false },
   },
   events: [
-    { id: "project-deadline:project", kind: "project_deadline", title: "Project handoff", project, timing: { allDay: false, start: "2026-08-12T00:00:00.000Z", end: null }, status: { overdue: false, delivered: false, completed: false, sameAssigneeOverlap: false }, permissions: { canDrag: true, canResize: false }, deadlineLocalCivil: "2026-08-12T10:00", deadlineVersion: 3, reminderOffsetsMinutes: [] },
+    // At most three chips a day, so a month cell draws every one (no "+N more").
+    // 12 Aug: the on-time Deadline (18:00 Sydney) and the original pair.
+    deadline("project-deadline:project", project, "2026-08-12T08:00:00.000Z", "2026-08-12T18:00", false),
     checklistItem("checklist:active", "Select hero images", false),
     checklistItem("checklist:done", "Cull the bracket set", true),
+    // 11 Aug: late, a day before the mocked now.
+    deadline("project-deadline:late", rawReview, "2026-08-11T00:00:00.000Z", "2026-08-11T10:00", true),
+    lateChecklistItem,
+    // 13 Aug: the three working Stage tones.
+    checklistItem("checklist:awaiting-raw", "Chase the RAW upload", false, awaitingRaw, "2026-08-13"),
+    checklistItem("checklist:raw-review", "Check the RAW set", false, rawReview, "2026-08-13"),
+    checklistItem("checklist:edited-review", "Review the edits", false, editedReview, "2026-08-13"),
+    // 14 Aug: Delivered.
+    deadline("project-deadline:delivered", delivered, "2026-08-14T02:00:00.000Z", "2026-08-14T12:00", false),
+    checklistItem("checklist:delivered", "Send the gallery", false, delivered, "2026-08-14"),
   ],
-  filterFacets: { projects: [{ id: principal, street: "12 Harbour Street" }], people: [], myTasksUserId: assignee },
+  filterFacets: { projects: [project, awaitingRaw, rawReview, editedReview, delivered].map(({ id, street }) => ({ id, street })), people: [], myTasksUserId: assignee },
 });
 
+/** Each chip with the day it sits on: every view is rendered at each day, so a day view sees every chip. */
 const CHIPS = [
-  { id: "project-deadline:project", label: "Deadline" },
-  { id: "checklist:active", label: "active checklist" },
-  { id: "checklist:done", label: "done checklist" },
+  { id: "project-deadline:project", label: "Deadline", date: "2026-08-12" },
+  { id: "checklist:active", label: "active checklist", date: "2026-08-12" },
+  { id: "checklist:done", label: "done checklist", date: "2026-08-12" },
+  { id: "project-deadline:late", label: "Deadline (late)", date: "2026-08-11" },
+  { id: "checklist:late", label: "late checklist", date: "2026-08-11" },
+  { id: "checklist:awaiting-raw", label: "Awaiting RAW checklist", date: "2026-08-13" },
+  { id: "checklist:raw-review", label: "RAW review checklist", date: "2026-08-13" },
+  { id: "checklist:edited-review", label: "Edited review checklist", date: "2026-08-13" },
+  { id: "project-deadline:delivered", label: "Deadline (delivered)", date: "2026-08-14" },
+  { id: "checklist:delivered", label: "Delivered checklist", date: "2026-08-14" },
 ] as const;
+const CHIP_DAYS = [...new Set(CHIPS.map(({ date }) => date))];
 const VIEWS: View[] = ["month", "week", "day", "days", "agenda"];
 
 let host: HTMLDivElement;
@@ -382,9 +429,9 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => { root.unmount(); await Promise.resolve(); }); host.remove(); document.body.replaceChildren(); vi.unstubAllGlobals(); });
 
-async function renderView(view: View) {
+async function renderView(view: View, date = "2026-08-12") {
   await act(async () => {
-    root.render(<QueryClientProvider client={client}><ProductionEventCalendar identity={{ principalId: principal, role: "admin", authorizationEpoch: 0 }} calendar={calendarFor(view)} onNavigate={() => undefined} /></QueryClientProvider>);
+    root.render(<QueryClientProvider client={client}><ProductionEventCalendar identity={{ principalId: principal, role: "admin", authorizationEpoch: 0 }} calendar={calendarFor(view, date)} onNavigate={() => undefined} /></QueryClientProvider>);
     await Promise.resolve();
   });
   for (let i = 0; i < 3; i += 1) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
@@ -396,16 +443,18 @@ function chipsFor(id: string, view: View): HTMLElement[] {
 
 /** Every text measurement for every chip in one view; also fails when a chip or its selection cue is missing. */
 async function measureView(view: View): Promise<{ measurements: Measurement[]; indistinct: string[] }> {
-  await renderView(view);
   const measurements: Measurement[] = [];
   const indistinct: string[] = [];
-  for (const { id, label } of CHIPS) {
-    const chips = chipsFor(id, view);
-    expect(chips.length, `${label} did not render in ${view}`).toBeGreaterThan(0);
-    for (const chip of chips) {
-      const eventColor = chip.style.getPropertyValue("--ec-event-color") || null;
-      measurements.push(...measure(label, chip, view, eventColor));
-      if (view !== "agenda") indistinct.push(...selectionIndistinct(label, chip.className, view, eventColor));
+  for (const day of CHIP_DAYS) {
+    await renderView(view, day);
+    for (const { id, label } of CHIPS.filter(({ date }) => date === day)) {
+      const chips = chipsFor(id, view);
+      expect(chips.length, `${label} did not render in ${view} on ${day}`).toBeGreaterThan(0);
+      for (const chip of chips) {
+        const eventColor = chip.style.getPropertyValue("--ec-event-color") || null;
+        measurements.push(...measure(label, chip, view, eventColor));
+        if (view !== "agenda") indistinct.push(...selectionIndistinct(label, chip.className, view, eventColor));
+      }
     }
   }
   return { measurements, indistinct };
@@ -429,17 +478,19 @@ describe("Production chip contrast through the real vendored calendar", () => {
   });
 
   it("never baselines a Deadline chip", () => {
-    expect(Object.keys(CONTRAST_BASELINE).filter((key) => key.startsWith("Deadline ×"))).toEqual([]);
+    expect(Object.keys(CONTRAST_BASELINE).filter((key) => key.startsWith("Deadline"))).toEqual([]);
   });
 
   it("an agenda Deadline row hides the vendor's colour dot; checklist rows keep theirs", async () => {
-    await renderView("agenda");
+    await renderView("agenda", "2026-08-11");
     // That the variant targets a real vendored element is pinned against the vendored source in
     // lib/production-event-calendar-adapter.test.ts, not by selecting the vendor's slot here (guard F).
-    const deadlineRows = chipsFor("project-deadline:project", "agenda");
-    expect(deadlineRows.length).toBeGreaterThan(0);
-    for (const row of deadlineRows) expect(classesOf(row)).toContain(DEADLINE_AGENDA_DOT);
-    for (const id of ["checklist:active", "checklist:done"]) {
+    for (const id of ["project-deadline:project", "project-deadline:late", "project-deadline:delivered"]) {
+      const deadlineRows = chipsFor(id, "agenda");
+      expect(deadlineRows.length).toBeGreaterThan(0);
+      for (const row of deadlineRows) expect(classesOf(row)).toContain(DEADLINE_AGENDA_DOT);
+    }
+    for (const id of ["checklist:active", "checklist:done", "checklist:late"]) {
       const rows = chipsFor(id, "agenda");
       expect(rows.length).toBeGreaterThan(0);
       for (const row of rows) {

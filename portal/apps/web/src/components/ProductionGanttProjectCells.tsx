@@ -44,13 +44,15 @@ function distinctPeople(team: GanttTeamMemberDto[]) {
 
 const personLabel = (person: { name: string; inactive: boolean }) => `${person.name.trim() || "Name unavailable"}${person.inactive ? " (inactive)" : ""}`;
 
-export function GanttTeamCell({ projectId, street, team, canEdit, disabled, role }: {
+export function GanttTeamCell({ projectId, street, team, canEdit, disabled, role, colorFor }: {
   projectId: string;
   street: string;
   team: GanttProjectRowDto["team"];
   canEdit: boolean;
   disabled: boolean;
   role: Role;
+  /** #920: Colour by People draws each team avatar in that person's colour (frame 3b `.av.pc`); absent in Stage. */
+  colorFor?: (personId: string) => string | undefined;
 }) {
   const [open, setOpen] = useState(false);
   // The picker mounts once the Project detail has loaded, AFTER the popover opened, so Base UI's
@@ -66,7 +68,7 @@ export function GanttTeamCell({ projectId, street, team, canEdit, disabled, role
   if (!canEdit) {
     return (
       <span data-testid="gantt-team" className="inline-flex items-center">
-        <AvatarStack people={people} personNoun="team member" emptyLabel="No team assigned" />
+        <AvatarStack people={people} personNoun="team member" emptyLabel="No team assigned" colorFor={colorFor} />
       </span>
     );
   }
@@ -84,7 +86,7 @@ export function GanttTeamCell({ projectId, street, team, canEdit, disabled, role
           // The only way to add the first person: the shared empty-assignee glyph (visible dashed `--border`, add-person icon).
           <EmptyAssigneeGlyph />
         ) : (
-          <AvatarStack decorative people={people} personNoun="team member" emptyLabel="No team assigned" />
+          <AvatarStack decorative people={people} personNoun="team member" emptyLabel="No team assigned" colorFor={colorFor} />
         )}
       </PopoverTrigger>
       <PopoverContent

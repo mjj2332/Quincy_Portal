@@ -155,7 +155,7 @@ describe("ProductionGantt -- fills the height (#363)", () => {
     }
     expect(classesOf(gantt)).not.toContain("h-[36rem]");
     // The legend sits above the chart body, outside it (the filters moved to the Dashboard's view bar in #430).
-    const legend = host.querySelector('[data-testid="production-gantt-legend"]')!;
+    const legend = host.querySelector('[data-testid="production-gantt-key"]')!;
     expect(legend).not.toBeNull();
     expect(host.querySelector('[data-testid="production-gantt"]')!.contains(legend)).toBe(false);
   });

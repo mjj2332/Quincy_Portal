@@ -35,6 +35,11 @@ export type SubtaskAssigneePickerProps = {
   triggerId?: string;
   /** The avatars only, with no trigger and no list: an archived Project's Checklist (#450). */
   readOnly?: boolean;
+  /**
+   * #920 (the Timeline's Colour by People, frame 3b `.av.pc`): a person's colour token. Applied only while the trigger shows a sole
+   * assignee, as the bar is filled only then; a shared or partly hidden set keeps the neutral avatars. Absent everywhere else.
+   */
+  colorFor?: (personId: string) => string | undefined;
   /** Called once when the list closes with a different set: the final ids, and those people (id and name) for a caller that keeps the selection itself. */
   onCommit: (nextIds: string[], people: AssigneePickerPerson[], baseline: AssigneePickerBaseline) => void | Promise<void>;
 };
@@ -55,7 +60,7 @@ function sameSet(a: string[], b: string[]) {
  * Picking only edits a local draft; the one write happens on close, so a burst of picks is a single versioned request
  * rather than several that would race their own `expectedVersion`.
  */
-export function SubtaskAssigneePicker({ projectId, role, label, selected, version, hiddenCount = 0, disabled = false, busy = false, compact = false, triggerId, readOnly = false, onCommit }: SubtaskAssigneePickerProps) {
+export function SubtaskAssigneePicker({ projectId, role, label, selected, version, hiddenCount = 0, disabled = false, busy = false, compact = false, triggerId, readOnly = false, colorFor, onCommit }: SubtaskAssigneePickerProps) {
   const [open, setOpen] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
   const [draft, setDraft] = useState<string[]>([]);
@@ -124,10 +129,11 @@ export function SubtaskAssigneePicker({ projectId, role, label, selected, versio
 
   const triggerPeople = open ? draftOptions : shownPeople;
   const triggerHidden = open ? 0 : hiddenCount;
+  const soleColorFor = (people: readonly unknown[], hidden: number) => (people.length === 1 && hidden <= 0 ? colorFor : undefined);
 
   // Nobody to show: no placeholder circle (it reads as a control), just the label, as the Board's card does when it has no editors.
   if (readOnly && shownPeople.length === 0 && hiddenCount <= 0) return <span className="sr-only">Unassigned</span>;
-  if (readOnly) return <span title={triggerTitle} className="inline-flex shrink-0 items-center"><AvatarStack people={shownPeople} hiddenCount={hiddenCount} personNoun="Assignee" emptyLabel="Unassigned" /></span>;
+  if (readOnly) return <span title={triggerTitle} className="inline-flex shrink-0 items-center"><AvatarStack people={shownPeople} hiddenCount={hiddenCount} personNoun="Assignee" emptyLabel="Unassigned" colorFor={soleColorFor(shownPeople, hiddenCount)} /></span>;
 
   const emptyMessage = options.isError ? "People could not be loaded." : options.isPending ? "Loading people…" : "No matching people";
 
@@ -146,7 +152,7 @@ export function SubtaskAssigneePicker({ projectId, role, label, selected, versio
     <ComboboxTrigger ref={triggerRef} id={triggerId} aria-label={label} title={triggerTitle} aria-busy={busy || undefined} aria-disabled={busy || undefined} className={cn(META_TRIGGER, TRIGGER_CLASSES, compact && COMPACT_CLASSES)}>
       {triggerPeople.length === 0 && triggerHidden <= 0
         ? <EmptyAssigneeGlyph />
-        : <AvatarStack people={triggerPeople} hiddenCount={triggerHidden} personNoun="Assignee" emptyLabel="Unassigned" />}
+        : <AvatarStack people={triggerPeople} hiddenCount={triggerHidden} personNoun="Assignee" emptyLabel="Unassigned" colorFor={soleColorFor(triggerPeople, triggerHidden)} />}
     </ComboboxTrigger>
     <ComboboxContent className="min-w-[max(var(--anchor-width),260px)] max-w-[calc(100vw-2*var(--space-4))]">
       <ComboboxInput showTrigger={false} placeholder="Search people…" aria-label="Search people" />

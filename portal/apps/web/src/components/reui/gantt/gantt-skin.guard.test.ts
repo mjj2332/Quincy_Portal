@@ -77,6 +77,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, sep } from "node:path";
 import { stageColors } from "../../../lib/stage-colors";
+import { stageTone } from "../../../lib/dashboard-appearance";
+import { ganttProjectBarClass, ganttTaskBarClass } from "../../../lib/production-gantt-appearance-classes";
 
 const ganttDir = dirname(fileURLToPath(import.meta.url));
 // components/reui/gantt -> components/reui -> components -> src
@@ -710,6 +712,22 @@ describe("guard: a Gantt bar's boundary clears 3:1 against the timeline (#247)",
     expect(failing).toEqual([]);
   });
 
+  // #916 / #919: the Dashboard Timeline draws its bars from the appearance module's Stage tones and
+  // `--late`, not `stageColors`, so a tone that dropped below 3:1 would pass the check above unseen.
+  it("every Dashboard Stage tone and the late edge clear 3:1 on both canvas tones (#919)", () => {
+    const failing: string[] = [];
+    const keys = ["awaiting_raw", "raw_review", "editing", "editing_autohdr", "edited_review", "delivered"] as const;
+    const values = [...keys.map((key) => [key, stageTone(key).color] as const), ["late", "var(--late)"] as const];
+    for (const [name, value] of values) {
+      const hue = resolveToken(value);
+      for (const bg of TIMELINE_BACKDROPS) {
+        const ratio = contrast(hue, bg);
+        if (ratio < 3) failing.push(`${name} ${hue} on ${bg}: ${ratio.toFixed(2)}:1`);
+      }
+    }
+    expect(failing).toEqual([]);
+  });
+
   it("the active bar shell draws a full-strength stage-hue border (not an alpha step)", () => {
     const shell = barShellClasses();
     expect(shell).toMatch(/(?<![\w:-])border(?![\w-])/);
@@ -747,8 +765,11 @@ describe("guard: a Gantt bar's boundary clears 3:1 against the timeline (#247)",
   // #247 design review: `--text-muted` IS `--greige-400`, the Awaiting RAW hue, so a done bar and an
   // active Awaiting RAW bar drew the same border over fills 1.07:1 apart. Nothing lighter than
   // greige-400 clears 3:1, so done differs by FILL instead: an outline with no resting wash,
-  // against every active bar's wash plus outline.
-  it("a done bar rests as an outline: no fill on the shell or its full-width progress span", () => {
+  // against every active bar's wash plus outline. This is the vendor shell's default look.
+  // Owner decision D2 (#916, 2026-10-18) scopes it: the Dashboard Timeline's done Subtask is filled
+  // (pinned in the next test), and stays distinct from Awaiting RAW by its solid edge against that
+  // Stage's dashed greige-500 one.
+  it("a done bar rests as an outline: no fill on the shell or its full-width progress span (vendor default)", () => {
     const bar = stripComments(readFileSync(join(ganttDir, "gantt-bar.tsx"), "utf8"));
     const shell = barShellClasses();
     expect(shell).toContain("data-completed:bg-transparent");
@@ -756,6 +777,21 @@ describe("guard: a Gantt bar's boundary clears 3:1 against the timeline (#247)",
     expect(shell).not.toMatch(/data-completed:bg-border\//);
     expect(bar).toContain("group-data-completed/gantt-bar-group:bg-transparent");
     expect(bar).not.toContain("group-data-completed/gantt-bar-group:bg-border/");
+  });
+
+  it("the Dashboard Timeline's done Subtask is paper-100 with a solid --text-muted edge that clears 3:1, unlike Awaiting RAW's dash (D2, #919)", () => {
+    const base = { tone: stageTone("editing"), lateness: { late: false } as const, shape: "bar" as const, people: { kind: "unassigned" } as const };
+    const done = ganttTaskBarClass({ ...base, complete: true }).split(/\s+/);
+    const awaiting = ganttProjectBarClass({ tone: stageTone("awaiting_raw"), lateness: { late: false }, done: null }, { milestone: false }).split(/\s+/);
+    expect(done).toEqual(expect.arrayContaining(["data-completed:bg-muted", "data-completed:border-(--text-muted)", "border-solid"]));
+    expect(done).not.toContain("border-dashed");
+    expect(done).not.toContain("data-completed:bg-transparent");
+    expect(resolveToken("var(--bg-raised)")).toBe(resolveToken("var(--paper-100)"));
+    for (const bg of TIMELINE_BACKDROPS) expect(contrast(resolveToken("var(--text-muted)"), bg), `--text-muted on ${bg}`).toBeGreaterThanOrEqual(3);
+    // An Awaiting RAW bar is told apart from done by its dashed edge, in its own tone (the shell's
+    // `border-(--gantt-event-color)`, pinned above), never the muted one.
+    expect(awaiting).toContain("border-dashed");
+    expect(awaiting.some((token) => token.includes("--text-muted"))).toBe(false);
   });
 });
 

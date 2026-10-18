@@ -55,10 +55,14 @@ import {
   deriveProductionCalendarWindow,
   formatDashboardFilterTree,
   formatSydneyCivilMinute,
+  PRODUCTION_CALENDAR_ZONE,
+  roleHasCapability,
   type CalendarEventDto,
   type DashboardCalendarState,
+  type DashboardFilter,
   type ProductionCalendarFilters,
   type ProductionCalendarRangeResponse,
+  type StagePresentationKey,
   subtaskIdFromCalendarEntityId,
 } from "@quincy/shared";
 import type { DashboardIdentity } from "../lib/dashboard-projects";
@@ -99,7 +103,11 @@ import { EventCalendarContent } from "./reui/event-calendar/event-calendar-conte
 import { Button } from "./reui/button";
 import { Button as QuincyButton } from "./quincy/Button";
 import { CalendarIcon } from "lucide-react";
-import { ganttShowDeliveredRecovery } from "../lib/production-gantt-filters";
+import { ganttKeyEntries, ganttShowDeliveredRecovery, productionStageFilterOptions } from "../lib/production-gantt-filters";
+import { toggleStageInDashboardFilter } from "../lib/dashboard-filter-query";
+import { useStages } from "../lib/stages";
+import { StageKeyRow } from "./quincy/StageKeyRow";
+import { KeyDrawer, KeyDrawerTrigger, useKeyDrawer } from "./quincy/KeyDrawer";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "./reui/sheet";
 import { Skeleton } from "./reui/skeleton";
 import { EmptyState } from "./quincy/EmptyState";
@@ -155,6 +163,11 @@ export type ProductionEventCalendarProps = {
   onShownProjectsChange?: (count: number | null) => void;
   /** #430: the empty state's "Show delivered Projects" (Stage = Delivered with delivered Projects hidden). */
   onShowDeliveredProjects?: () => void;
+  /**
+   * #922, frame 3d: the Stage key row doubles as a Stage filter. A press is one Filter write through the
+   * Dashboard (its `writeFilter` → `writeCalendarState`), so the Delivered pair and its notice hold (#430).
+   */
+  onFilterChange?: (next: DashboardFilter) => void;
   /** #464: land on this Project (select and ring its events, focus its chip) and report the outcome. */
   focus?: ProductionEventCalendarFocus | null;
   onFocusSettled?: (token: number, outcome: ProductionEventCalendarFocusOutcome) => void;
@@ -169,8 +182,9 @@ const ICON_TOGGLE_QUERY = "(max-width: 399px)";
 const CALENDAR_VIEWS = ["month", "week", "day", "days", "agenda"] as const;
 const TIME_GRID_SUBVIEWS = new Set(["week", "day", "days"]);
 const OVERLAP = "Overlaps another task";
-// A denser AvatarStack for the chip: 16px avatars (the size the single initials avatar had), 2xs initials and `+N`.
-const CHIP_AVATAR = "size-4 data-[size=sm]:size-4 group-has-data-[size=sm]/avatar-group:size-4 [&_[data-slot=avatar-fallback]]:text-[length:var(--text-2xs)] text-[length:var(--text-2xs)] ring-1 ring-[var(--bg-surface)]";
+// The chip's AvatarStack at frame 3d's size (#922, `design/prototypes/dashboard-views/`, `.ad .av`): 20px
+// avatars with 12px initials and `+N`, nothing under the Portal's 12px type floor.
+const CHIP_AVATAR = "size-5 data-[size=sm]:size-5 group-has-data-[size=sm]/avatar-group:size-5 [&_[data-slot=avatar-fallback]]:text-xs text-xs ring-1 ring-[var(--bg-surface)]";
 // Chip density: 2px overlap, 1px ring in the chip's surface colour (the group default is a 2px page-cream ring).
 const CHIP_STACK = "shrink-0 -space-x-0.5 *:data-[slot=avatar]:ring-1 *:data-[slot=avatar]:ring-[var(--bg-surface)]";
 
@@ -231,8 +245,61 @@ function findOverflowTrigger(chip: HTMLElement): HTMLElement | null {
 
 const MORE_SELECTOR = '[data-slot="event-calendar-more"]';
 
+/**
+ * "2 days late", from `data.appearance` (`lib/dashboard-appearance.ts`), so lateness never rests on colour
+ * alone (#922, frame 3d). On a range chip it prints in the late colour over the Stage wash; on a Deadline the
+ * fill is already `--late`, so it inherits the chip's paper text. Grid chips get it from `ChipContent`,
+ * agenda rows from the vendor's `renderAgendaEventTrailing`, which keeps the row's own time column.
+ */
+/**
+ * #922, frame 3d's trailing key (`.ksym`): the Deadline chip's ink swatch in 12px meta type. Frame 3d also
+ * keys a Shoot diamond; the Calendar draws no shoot events (plan, frame-3d conflicts), so it is left out.
+ */
+function CalendarKeySymbols(): JSX.Element {
+  return (
+    <span className="inline-flex items-center gap-2 text-xs text-foreground-secondary" data-testid="event-calendar-key-deadline">
+      <span aria-hidden="true" className="h-3 w-4.5 shrink-0 rounded-xs bg-(--ink-900)" />
+      Deadline
+    </span>
+  );
+}
+
+function LateLabel({ data }: { data: ProductionEventCalendarData | undefined }): JSX.Element | null {
+  const appearance = data?.appearance;
+  if (!appearance?.lateLabel) return null;
+  return <span className={cn("shrink-0 text-xs", appearance.kind === "range" && "text-late")} data-testid="event-calendar-late">{appearance.lateLabel}</span>;
+}
+
+const HEADER_WEEKDAY = new Intl.DateTimeFormat("en-AU", { timeZone: PRODUCTION_CALENDAR_ZONE, weekday: "short" });
+const HEADER_WEEKDAY_NARROW = new Intl.DateTimeFormat("en-AU", { timeZone: PRODUCTION_CALENDAR_ZONE, weekday: "narrow" });
+const HEADER_DATE = new Intl.DateTimeFormat("en-AU", { timeZone: PRODUCTION_CALENDAR_ZONE, day: "numeric" });
+
+/**
+ * #916 design review (should-fix 6), frame 3d (`.wd.now b`): the week / day header marks today with a pill around the
+ * date number only, sized to its content, with the weekday before it as plain text. The vendor default wrapped the
+ * whole "Sun 18" in a `max-w-full truncate` chip, which ellipsised to "Sun…" in a narrow column. Below 721px it keeps
+ * the vendor's stacked weekday-over-number with the circled numeral. The month view's weekday row stays the vendor's.
+ */
+function renderTimeGridDayHeader({ day, view, isToday }: { day: Date; view: string; isToday: boolean }): JSX.Element | undefined {
+  if (view === "month") return undefined;
+  const date = HEADER_DATE.format(day);
+  return (
+    <>
+      <span className="flex flex-col items-center leading-tight min-[721px]:hidden">
+        <span className="text-muted-foreground">{HEADER_WEEKDAY_NARROW.format(day)}</span>
+        <span className={cn(isToday && "mx-auto flex size-5 items-center justify-center rounded-full bg-primary font-light text-primary-foreground")}>{date}</span>
+      </span>
+      <span className="max-[721px]:hidden" data-testid="event-calendar-day-header">
+        {HEADER_WEEKDAY.format(day)}{" "}
+        {isToday ? <span data-testid="event-calendar-today-date" className="inline-block rounded-sm bg-primary px-1.5 font-semibold text-primary-foreground">{date}</span> : date}
+      </span>
+    </>
+  );
+}
+
 function ChipContent({ id, data, title }: { id: string; data: ProductionEventCalendarData | undefined; title: string }): JSX.Element {
   const dto = data?.dto;
+  const doneRange = data?.appearance.kind === "range" && data.appearance.done;
   const label = dto?.kind === "project_deadline" ? dto.project.street : title;
   const assignees = dto?.kind === "checklist" ? dto.assignees : [];
   const otherAssigneeCount = dto?.kind === "checklist" ? dto.otherAssigneeCount : 0;
@@ -240,7 +307,8 @@ function ChipContent({ id, data, title }: { id: string; data: ProductionEventCal
   return (
     // `data-event-id` is the controller's focus-return hook (it focuses the vendor chip button around it).
     <span className="flex w-full min-w-0 items-center gap-[var(--space-1)] pe-[var(--space-1)]" data-testid="event-calendar-chip" data-event-id={id}>
-      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span className={cn("min-w-0 flex-1 truncate", doneRange && "line-through")} data-testid="event-calendar-chip-title">{label}</span>
+      <LateLabel data={data} />
       {overlap && <span className="sr-only">{OVERLAP}</span>}
       {assignees.length + otherAssigneeCount > 0 && (
         <AvatarStack
@@ -258,7 +326,7 @@ function ChipContent({ id, data, title }: { id: string; data: ProductionEventCal
   );
 }
 
-export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppliedFilters, onAcceptGateChange, onSettleStateChange, onAccessLoss, projectHrefFor, onOpenProject, onShownProjectsChange, onShowDeliveredProjects, focus = null, onFocusSettled }: ProductionEventCalendarProps): JSX.Element {
+export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppliedFilters, onAcceptGateChange, onSettleStateChange, onAccessLoss, projectHrefFor, onOpenProject, onShownProjectsChange, onShowDeliveredProjects, onFilterChange, focus = null, onFocusSettled }: ProductionEventCalendarProps): JSX.Element {
   const query = useProductionCalendarRange({ identity, calendar, enabled: true, bounds: true });
 
   // Up next: a second, read-only agenda range from today (Sydney), same filters, outside any gate.
@@ -279,6 +347,29 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   // #652: the sheet opens on Close calendar, not Previous month (the first tabbable, since the rail precedes the close).
   const railCloseRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { if (!narrow) setRailOpen(false); }, [narrow]);
+
+  // #922, frame 3d: the Timeline's key row (#919) on the Calendar, built by the same entry builder. Every
+  // role-aware Stage is a chip (#254), pressed for the Stages this request shows (`showDeliveredProjects`
+  // is the Delivered half of the pair); a press is one Filter write through the Dashboard.
+  const { stages } = useStages();
+  const canAdminBackend = roleHasCapability(identity.role, "adminBackend");
+  const stageOptions = useMemo(() => productionStageFilterOptions(stages, canAdminBackend), [stages, canAdminBackend]);
+  const keyEntries = useMemo(() => ganttKeyEntries({ stageOptions, filters: { ...calendar, delivered: calendar.showDeliveredProjects } }), [stageOptions, calendar]);
+  const toggleStage = useCallback((key: StagePresentationKey) => {
+    const next = toggleStageInDashboardFilter(calendar, key);
+    if (next) onFilterChange?.(next);
+  }, [calendar, onFilterChange]);
+  const stageKeyRow = <StageKeyRow entries={keyEntries} onToggle={toggleStage} trailing={<CalendarKeySymbols />} />;
+  // #916 design review, item 4 (owner decision): on a phone the inline row wrapped to ~150pt of chips above the agenda, so
+  // it moves into the Timeline's Key drawer, opened from a 44pt Key button in the controls row. No Colour by here.
+  const keyDrawer = useKeyDrawer();
+  const keyRow = phoneViewport ? (
+    <KeyDrawer drawer={keyDrawer} testIdPrefix="event-calendar">{stageKeyRow}</KeyDrawer>
+  ) : (
+    <div data-testid="event-calendar-key" className="shrink-0 border-y-[length:var(--border-width-hair)] border-border bg-background px-[var(--space-2)] py-[var(--space-2)]">
+      {stageKeyRow}
+    </div>
+  );
 
   // ---------------------------------------------------------------------------------------------
   // The scheduling controller, composed as `ProductionGantt.tsx` does.
@@ -405,10 +496,11 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
   useEffect(() => { setPending(null); }, [resetKey]);
 
   const events = useMemo(() => {
-    const mapped = toProductionEventCalendarEvents(displayEvents);
+    // #922: lateness is judged at `defaultNow` (a minute tick), so a chip turns late without a refetch.
+    const mapped = toProductionEventCalendarEvents(displayEvents, defaultNow);
     if (!effectivePending) return mapped;
     return mapped.map((event) => event.id === effectivePending.eventId ? { ...event, start: effectivePending.start, end: effectivePending.end, allDay: effectivePending.allDay } : event);
-  }, [displayEvents, effectivePending]);
+  }, [displayEvents, effectivePending, defaultNow]);
 
   const handleEventUpdate = useCallback((update: EventCalendarUpdateLike & { event: { id: string | number; start: Date; end: Date } }) => {
     const dto = dtoById.get(String(update.event.id));
@@ -645,8 +737,12 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
           onViewChange={(view) => { const subview = calendarViewToSubview(view); if (subview && subview !== calendar.subview) navigate({ subview }); }}
           onSlotClick={(slot) => { if (slot.view === "month") navigate({ subview: "day", date: sydneyCivilDate(slot.date) }); }}
           eventClassName={(occurrence) => productionEventCalendarEventClassName(occurrence.event.data, landedProjectId !== null && occurrence.event.data?.dto.project.id === landedProjectId)}
+          renderDayHeader={renderTimeGridDayHeader}
           renderMoreIndicator={({ day, count, segments }) => <span data-more-event-ids={segments.map((segment) => String(segment.occurrence.event.id)).join(" ")} data-more-day={sydneyCivilDate(day)}>{`+${count} more`}</span>}
           renderEvent={({ occurrence }) => <ChipContent id={String(occurrence.event.id)} data={occurrence.event.data} title={occurrence.event.title} />}
+          // #922, frame 3d: 14px titles and 12px times; agenda rows add the late label after their own content.
+          eventSize="readable"
+          renderAgendaEventTrailing={({ occurrence }) => (occurrence.event.data?.appearance.lateLabel ? <LateLabel data={occurrence.event.data} /> : undefined)}
         >
           {/* The body is a flexed item of a definite-height column (#363), so its `minmax(0,1fr)` row is
               bounded by the page, not a viewport offset. An `auto` row would grow to the rail's content
@@ -690,6 +786,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
                         <EventCalendarNavPrev className="min-h-[44px] min-w-[44px]" />
                         <EventCalendarNavNext className="min-h-[44px] min-w-[44px]" />
                       </div>
+                      <KeyDrawerTrigger drawer={keyDrawer} testIdPrefix="event-calendar" />
                     </div>
                   </TooltipProvider>
                 </EventCalendarNav>
@@ -716,6 +813,7 @@ export function ProductionEventCalendar({ identity, calendar, onNavigate, onAppl
                 )}
               </div>
               )}
+              {keyRow}
               <EventCalendarContent className="min-h-0 flex-1" />
             </div>
           </div>

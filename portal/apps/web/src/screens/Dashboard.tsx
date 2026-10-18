@@ -1708,6 +1708,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
                 onAccessLoss={handleCalendarAccessLoss}
                 onShownProjectsChange={setViewShownProjects}
                 onShowDeliveredProjects={() => writeCalendarDisplay({ showDeliveredProjects: true })}
+                onFilterChange={writeFilter}
                 projectHrefFor={projectHrefFor}
                 onOpenProject={openCalendarProject}
                 focus={focusRequest?.view === "calendar" ? focusRequest : null}
@@ -1729,6 +1730,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
                 q={committedQuery}
                 filters={ganttFilters}
                 onFiltersChange={navigateGantt}
+                onFilterChange={writeFilter}
                 focusFilterTrigger={focusFilterTrigger}
                 focusDisplayTrigger={focusDisplayTrigger}
                 onAcceptGateChange={setCalendarInteractionBlocked}

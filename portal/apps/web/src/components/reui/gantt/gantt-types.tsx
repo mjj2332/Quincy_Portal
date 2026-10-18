@@ -86,6 +86,12 @@
  * 2026-09-28, #257 — ADDED, additive (an omitted field changes nothing): `GanttEvent.className`, a
  * per-event class `gantt-bar.tsx` puts on the bar shell. Production uses it for Edited review's
  * hatch. Covered by `gantt-bar-event-classname.dom.test.tsx`.
+ *
+ * 2026-10-18, #919 (#916, frame 3a) — ADDED, additive (an omitted field changes nothing):
+ * `GanttResource.minRowHeight`, a per-node floor on its row's height in rem, read beside the view's
+ * `metrics.minRowHeight` (the larger wins, so a coarse-pointer view floor still lifts a short row).
+ * The Dashboard Timeline sets Project rows to 3rem and Subtask rows to 2.5rem. Rendered by
+ * `gantt-view.tsx`; covered by `gantt-row-min-height.dom.test.tsx`.
  */
 
 type GanttBarId = string
@@ -131,6 +137,11 @@ interface GanttResource {
    */
   baselineStart?: Date
   baselineEnd?: Date
+  /**
+   * QUINCY ADDITION (#919): this node's own minimum row height in rem. The row is at least the
+   * larger of this and the view's `metrics.minRowHeight`; omitted, the view's floor alone applies.
+   */
+  minRowHeight?: number
   children?: GanttResource[]
 }
 
