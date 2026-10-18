@@ -81,13 +81,27 @@ function deadlineViewOf(project: ProjectSummary, appearance: ProjectAppearance):
 }
 
 /**
+ * The shared trigger pulls 4px to the start (`CELL_TRIGGER`'s `-ml-1`) but caps itself at `max-w-full`, so
+ * it fell 4px short of its own text and truncated the date with room to spare (#923 pass, row 15). Its cap
+ * here adds the pull back. Scoped to the Dashboard's Deadline; the Gantt's cells keep `CELL_TRIGGER` as is.
+ */
+const DEADLINE_TRIGGER = "max-w-[calc(100%+var(--space-1))]";
+
+/**
  * The Deadline (frames 4b/4g `.dl`): a dot before today's Deadline, the shared editable cell, then the late
  * chip with `lateLabel`'s wording. Only an editable trigger rides above the row link's overlay.
+ *
+ * In the grid (4b) it is one line: the chip keeps the date's line, and the date truncates, with a title,
+ * if the column is ever too narrow. The phone list (4g) passes `wrap`, so the chip drops under the date
+ * instead of cutting it.
  */
-export function ProjectDeadline({ project, appearance, canEditDeadline, terminal, role }: { project: ProjectSummary; appearance: ProjectAppearance; canEditDeadline: boolean; terminal: boolean; role: Role }) {
+export function ProjectDeadline({ project, appearance, canEditDeadline, terminal, role, wrap = false }: { project: ProjectSummary; appearance: ProjectAppearance; canEditDeadline: boolean; terminal: boolean; role: Role; wrap?: boolean }) {
   const canEdit = canEditDeadline && project.stageKey !== "delivered" && !project.archivedAt;
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-x-[var(--space-2)] gap-y-[var(--space-1)]">
+    <div
+      data-testid="project-table-deadline-line"
+      className={cn("flex min-w-0 items-center gap-x-[var(--space-2)]", wrap ? "flex-wrap gap-y-[var(--space-1)]" : "flex-nowrap")}
+    >
       {appearance.dueToday && (
         <span data-testid="project-table-due-today" className="inline-flex shrink-0 items-center">
           <span aria-hidden="true" className="size-1.5 rounded-full bg-foreground" />
@@ -100,6 +114,8 @@ export function ProjectDeadline({ project, appearance, canEditDeadline, terminal
           street={project.street}
           deadline={deadlineViewOf(project, appearance)}
           textClassName="!text-[length:var(--text-sm)] tabular-nums"
+          triggerClassName={DEADLINE_TRIGGER}
+          titled
           canEdit={canEdit}
           disabled={terminal}
           role={role}
@@ -127,7 +143,8 @@ export function GroupToggle({ label, stageKey, appearance, open, onToggle }: { l
         variant="ghost"
         size="sm"
         aria-expanded={open}
-        className="min-w-0 gap-[var(--space-2)] pointer-coarse:min-h-[44px] max-[721px]:min-h-[44px]"
+        // Sentence case, as in 4b / 4g: the Button's default is the uppercase eyebrow (#923 pass, row 8).
+        className="min-w-0 gap-[var(--space-2)] normal-case tracking-[var(--tracking-normal)] pointer-coarse:min-h-[44px] max-[721px]:min-h-[44px]"
         data-testid="project-table-group-trigger"
         onClick={onToggle}
       >

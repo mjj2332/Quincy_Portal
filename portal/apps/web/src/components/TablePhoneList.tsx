@@ -66,7 +66,7 @@ function PhoneRow({ project }: { project: ProjectSummary }) {
           {project.street}
         </InternalLink>
         <span className="block truncate text-xs text-foreground-secondary">{projectPlace(project)}</span>
-        <ProjectDeadline project={project} appearance={appearance} canEditDeadline={canEditDeadline} terminal={terminal} role={role} />
+        <ProjectDeadline project={project} appearance={appearance} canEditDeadline={canEditDeadline} terminal={terminal} role={role} wrap />
         {project.archivedAt && <Badge variant="secondary" size="sm" className="self-start" data-testid="project-table-archived">Archived</Badge>}
         {cover.retry}
       </div>

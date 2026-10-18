@@ -101,23 +101,29 @@ function cellOf(Project: (props: { project: ProjectSummary }) => ReactNode, Grou
 /** 4b `.proj`: the 44x30 thumb, then the street at 14px sans and the suburb at 12px. */
 function ProjectCell({ project }: { project: ProjectSummary }) {
   const { projectHrefFor, appearanceOf } = useCells();
-  const cover = useCoverRetry();
+  // One line per row (#923 pass, row 7): the retry is an icon after the text, the Archived badge sits on
+  // the street's line, and each text truncates with its full value as a title.
+  const cover = useCoverRetry("shrink-0", { iconOnly: true });
+  const place = projectPlace(project);
   return (
     <div data-testid="project-table-project" data-late={appearanceOf(project).lateness.late} className="flex min-w-0 items-center gap-[var(--space-3)]">
       <ProjectThumb project={project} retryToken={cover.token} onFailedChange={cover.setFailed} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <InternalLink
-          to={projectHrefFor(project.id)}
-          data-testid="project-table-row-link"
-          // The overlay: ::after covers the row (`tr` is `relative`), so the whole row is the link.
-          className="block truncate text-sm text-inherit no-underline after:absolute after:inset-0 after:content-[''] focus-visible:outline-none focus-visible:after:outline-[length:var(--border-width-bold)] focus-visible:after:outline-solid focus-visible:after:outline-ring after:-outline-offset-2 focus-visible:after:-outline-offset-2"
-        >
-          {project.street}
-        </InternalLink>
-        <span className="block truncate text-xs text-foreground-secondary">{projectPlace(project)}</span>
-        {project.archivedAt && <Badge variant="secondary" size="sm" className="mt-[var(--space-1)] self-start" data-testid="project-table-archived">Archived</Badge>}
-        {cover.retry}
+        <div className="flex min-w-0 items-center gap-[var(--space-2)]">
+          <InternalLink
+            to={projectHrefFor(project.id)}
+            data-testid="project-table-row-link"
+            title={project.street}
+            // The overlay: ::after covers the row (`tr` is `relative`), so the whole row is the link.
+            className="block min-w-0 truncate text-sm text-inherit no-underline after:absolute after:inset-0 after:content-[''] focus-visible:outline-none focus-visible:after:outline-[length:var(--border-width-bold)] focus-visible:after:outline-solid focus-visible:after:outline-ring after:-outline-offset-2 focus-visible:after:-outline-offset-2"
+          >
+            {project.street}
+          </InternalLink>
+          {project.archivedAt && <Badge variant="secondary" size="sm" className="shrink-0" data-testid="project-table-archived">Archived</Badge>}
+        </div>
+        <span className="block truncate text-xs text-foreground-secondary" title={place}>{place}</span>
       </div>
+      {cover.retry}
     </div>
   );
 }
@@ -133,16 +139,20 @@ function StageCell({ project }: { project: ProjectSummary }) {
 }
 
 function ClientCell({ project }: { project: ProjectSummary }) {
+  const client = project.agencyName || NO_CLIENT_LABEL;
+  const agent = project.agentName || "Agent pending";
   return (
     <span className="block min-w-0">
-      <span className="block truncate text-sm">{project.agencyName || NO_CLIENT_LABEL}</span>
-      <span className="block truncate text-xs text-foreground-secondary">{project.agentName || "Agent pending"}</span>
+      <span className="block truncate text-sm" title={client}>{client}</span>
+      <span className="block truncate text-xs text-foreground-secondary" title={agent}>{agent}</span>
     </span>
   );
 }
 
 function ShootDateCell({ project }: { project: ProjectSummary }) {
-  return <span className="text-sm tabular-nums">{formatDashboardDate(project.shootDate)}</span>;
+  // One line: "Shoot date pending" truncates, with a title, rather than wrapping (#923 pass, row 7).
+  const text = formatDashboardDate(project.shootDate);
+  return <span className="block truncate text-sm tabular-nums" title={text}>{text}</span>;
 }
 
 function DeadlineCell({ project }: { project: ProjectSummary }) {
@@ -198,10 +208,29 @@ function RawCell({ project }: { project: ProjectSummary }) {
 }
 
 /**
- * Column widths, from frame 4b's grid on the token scale. Two exceptions: Priority keeps the 36px star
- * hit cells (ADR 0003, #923 D4), so it is 190, not the frame's 92; RAW received is not in the frame.
+ * Column widths, padding included, from frame 4b's grid (#923 pass, row 6). The default columns (RAW
+ * hidden) sum to 1260, inside the 1262px table at a 1440 viewport, so nothing scrolls there; below it
+ * the table scrolls sideways. Priority keeps its 36px star hit cells (ADR 0003, #923 D4): five stars, its
+ * 8px start and the table's 16px end edge make 204, not the frame's 92, and that width comes out of
+ * Project and Client, the frame's two flexible columns. Deadline holds a date and its late chip on one
+ * line ("Wed 30 Sep · 09:00" and "19 days late" measure ~212px with the trigger's inset); Shoot holds
+ * "30 Sep 2026" (~80px). RAW received is not in the frame.
  */
-const SIZES: Record<TableColumnId, number> = { address: 280, stage: 160, client: 176, shootDate: 120, deadline: 216, progress: 128, editors: 96, priority: 190, raw: 120 };
+const SIZES: Record<TableColumnId, number> = { address: 212, stage: 164, client: 128, shootDate: 104, deadline: 232, progress: 120, editors: 96, priority: 204, raw: 120 };
+
+/**
+ * The frame's 12px column gap, on the token scale: 8px each side (16px between columns) in place of the
+ * grid's 12px, through the column's own `meta` so the shared grid is untouched. The table's outer
+ * edges keep `EDGE_CELL`'s 16px.
+ *
+ * No vertical padding either: the grid's `py-2` plus a two-line cell (20px + 16px) needs 52px before the
+ * row's hairline, so every row grew to 53 (#923 pass, row 7). Without it the content centres in the
+ * row's own height, and the frame's border-box heights (4b 52px, 4c and `.grp` 44px) hold with the
+ * hairline inside them.
+ */
+const CELL_X = "px-[var(--space-2)] py-0";
+/** 4b's header: sentence-case 12px, not the Button's uppercase eyebrow (#923 pass, row 8). */
+const HEADER_TYPE = "normal-case tracking-[var(--tracking-normal)] text-xs";
 
 const CELLS: Record<TableColumnId, { value: (project: ProjectSummary) => unknown; cell: Column["cell"] }> = {
   address: { value: (project) => project.street, cell: cellOf(ProjectCell, GroupProjectCell) },
@@ -218,9 +247,10 @@ const CELLS: Record<TableColumnId, { value: (project: ProjectSummary) => unknown
 const COLUMNS: Column[] = TABLE_COLUMN_IDS.map((id): Column => ({
   id,
   accessorFn: (data) => (data.kind === "project" ? CELLS[id].value(data.project) : undefined),
-  header: ({ column }) => <DataGridColumnHeader column={column} title={TABLE_COLUMN_LABELS[id]} />,
+  header: ({ column }) => <DataGridColumnHeader column={column} title={TABLE_COLUMN_LABELS[id]} className={HEADER_TYPE} />,
   cell: CELLS[id].cell,
   size: SIZES[id],
+  meta: { headerClassName: CELL_X, cellClassName: CELL_X },
   enableSorting: id !== "progress",
   enableHiding: id !== "address",
 }));
