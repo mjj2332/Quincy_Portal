@@ -72,3 +72,41 @@ describe("the Dashboard Timeline's type floor and Stage look (#919)", () => {
     expect(violations('// the old `text-[10px]` and STAGE_HATCH_CLASS\nconst a = "text-xs";')).toEqual([]);
   });
 });
+
+/**
+ * #922: the Calendar under the same floor (frame 3d sets meta at 12px, labels at 14px): its own files, its
+ * vendored tree and its adapter. One vendor default is exempt: the slot-draft range readout
+ * (`EVENT_CALENDAR_SLOT_DRAFT.label`, 11px), which only a drag-to-create draws, and the Production
+ * calendar turns that off (`selectSlot: false`), so the exemption holds only while it stays off.
+ */
+const calendarDir = join(componentsDir, "reui", "event-calendar");
+const SLOT_DRAFT_LABEL = /label:\s*"text-primary truncate px-1 py-0\.5 text-\[0\.6875rem\] leading-none font-medium",/;
+
+function calendarFiles(): string[] {
+  const own = readdirSync(componentsDir).filter((name) => /^ProductionEventCalendar.*\.tsx$/.test(name) && !/\.test\.tsx$/.test(name)).map((name) => join(componentsDir, name));
+  const vendored = readdirSync(calendarDir).filter((name) => name.endsWith(".tsx") && !/\.test\.tsx$/.test(name)).map((name) => join(calendarDir, name));
+  return [...own, ...vendored, join(srcDir, "lib", "production-event-calendar-adapter.ts")];
+}
+
+function calendarSource(file: string): string {
+  const source = readFileSync(file, "utf8");
+  return file === join(calendarDir, "event-calendar-event.tsx") ? source.replace(SLOT_DRAFT_LABEL, "") : source;
+}
+
+describe("the Dashboard Calendar's type floor and Stage look (#922)", () => {
+  it("scans the real files, and the slot-draft exemption still names a live vendor line", () => {
+    const files = calendarFiles();
+    expect(files.length).toBeGreaterThan(15);
+    for (const file of files) expect(readFileSync(file, "utf8").length, relative(srcDir, file)).toBeGreaterThan(200);
+    expect(readFileSync(join(calendarDir, "event-calendar-event.tsx"), "utf8")).toMatch(SLOT_DRAFT_LABEL);
+  });
+
+  it("the Production calendar never draws the exempt slot draft", () => {
+    expect(readFileSync(join(componentsDir, "ProductionEventCalendar.tsx"), "utf8")).toMatch(/selectSlot: false/);
+  });
+
+  it("no Calendar file names a size below text-xs or draws the Board's hatch", () => {
+    const failing = calendarFiles().flatMap((file) => violations(calendarSource(file)).map((hit) => `${relative(srcDir, file)}: ${hit}`));
+    expect(failing).toEqual([]);
+  });
+});

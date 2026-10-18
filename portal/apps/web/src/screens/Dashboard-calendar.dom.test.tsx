@@ -22,10 +22,12 @@ const apiPutMock = vi.hoisted(() => vi.fn<(path: string, body: unknown) => Promi
 const calendarRefetchFails = vi.hoisted(() => ({ value: false }));
 const boardPropsState = vi.hoisted(() => ({ value: null as Record<string, unknown> | null }));
 const authRole = vi.hoisted(() => ({ value: "admin" as "admin" | "editor" | "photographer" | "external_editor" }));
+// #922: empty by default (no key chips); the key-row test sets every Stage.
+const stagesState = vi.hoisted(() => ({ value: [] as { key: string; label: string; displayOrder: number; active: boolean }[] }));
 vi.mock("../lib/api", async (importOriginal) => ({ ...await importOriginal<typeof import("../lib/api")>(), apiGet: (path: string) => apiGetMock(path), apiPut: (path: string, body: unknown) => apiPutMock(path, body) }));
 vi.mock("../lib/auth", () => ({ useSession: () => ({ data: { user: { id: "user-1", role: authRole.value } } }) }));
 vi.mock("../lib/capabilities", () => ({ useCapabilities: () => ({ role: authRole.value, capabilities: [], can: (capability: string) => authRole.value === "admin" && ["adminBackend", "createProject", "viewNoticeBoard"].includes(capability) }) }));
-vi.mock("../lib/stages", () => ({ presentationStages: (stages: unknown[]) => stages, useStages: () => ({ stages: [], presentationStageKey: (key: string) => key }) }));
+vi.mock("../lib/stages", () => ({ presentationStages: (stages: unknown[]) => stages, useStages: () => ({ stages: stagesState.value, presentationStageKey: (key: string) => key }) }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
 vi.mock("../components/board/board", () => ({ ProjectKanbanBoard2: (props: Record<string, any>) => { boardPropsState.value = props; const project = Array.isArray(props.projects) ? props.projects.find((candidate: any) => typeof candidate?.id === "string") : undefined; return <div data-testid="dashboard-board">{project && props.projectHrefFor && <a className="mock-kanban-project-link" data-testid="mock-kanban-project-link" href={props.projectHrefFor(project)}>{project.street}</a>}</div>; } }));
 // #224: the Calendar is the ReUI event calendar only; it draws through the shared vendor fake
@@ -109,7 +111,7 @@ describe("Dashboard Calendar routing", () => {
     __resetDashboardSearchStoreForTest();
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
   });
-  afterEach(() => { confirmStore.resolve(false); if (root) act(() => root.unmount()); host.remove(); document.body.replaceChildren(); window.history.replaceState(null, "", "/"); __resetDashboardSearchStoreForTest(); });
+  afterEach(() => { stagesState.value = []; confirmStore.resolve(false); if (root) act(() => root.unmount()); host.remove(); document.body.replaceChildren(); window.history.replaceState(null, "", "/"); __resetDashboardSearchStoreForTest(); });
 
   // Dashboard code-splits ProductionEventCalendar behind React.lazy; warm the dynamic
   // import so the Suspense boundary resolves within the render helper's ticks.
@@ -502,6 +504,18 @@ describe("Dashboard Calendar routing", () => {
         expect(window.history.length).toBe(lengthBefore + 1);
         expect(emptyShowDelivered()).toBeNull();
         expect(document.activeElement).toBe(host.querySelector('[data-testid="dashboard-display-trigger"]'));
+      });
+
+      it("the key row's Delivered chip writes Stage through the Filter and shows delivered Projects, with the notice (#922)", async () => {
+        stagesState.value = ["awaiting_raw", "raw_review", "editing", "edited_review", "delivered"].map((key, index) => ({ key, label: key, displayOrder: index + 1, active: true }));
+        await mountAt(`${BOTH}&stages=raw_review`);
+        const chip = host.querySelector<HTMLButtonElement>('[data-testid="event-calendar-key"] button[data-stage-key="delivered"]');
+        expect(chip?.getAttribute("aria-pressed")).toBe("false");
+        await act(async () => { chip!.click(); await Promise.resolve(); });
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+        expect(url()).toBe(`${BOTH}&stages=raw_review%2Cdelivered&delivered=1`);
+        expect(live()).toBe("Also showing delivered Projects.");
+        expect(host.querySelector('[data-testid="event-calendar-key"] button[data-stage-key="delivered"]')?.getAttribute("aria-pressed")).toBe("true");
       });
 
       it("offers no Show delivered Projects when the empty range has another cause", async () => {
