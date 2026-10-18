@@ -31,9 +31,8 @@ const META_DOT = <span aria-hidden="true" className="text-muted-foreground">·</
  * D5: Row B is sticky, and once Row A has scrolled out (`condensed`, from the owner's observer on `rowARef`) it is the condensed
  * bar: the stage dot and title, the same tabs, then Whiteboard and Project info, so switching tabs never needs a scroll back up.
  */
-export function HeaderDesktop({ project, crumb, cluster, tabs, info, condensed = false, rowARef, rowBRef }: {
+export function HeaderDesktop({ project, cluster, tabs, info, condensed = false, rowARef, rowBRef }: {
   project: ProjectDetail;
-  crumb?: ReactNode;
   cluster: StatusClusterProps;
   tabs: ReactNode;
   /** Project info (D2), rendered beside the rows. */
@@ -46,7 +45,6 @@ export function HeaderDesktop({ project, crumb, cluster, tabs, info, condensed =
   const place = [project.suburb, project.postcode].filter(Boolean).join(" ");
   return <>
     <section ref={rowARef} className="project-header" aria-label="Project Overview" data-testid="project-header">
-      {crumb}
       <div className="project-header__row-a">
         <div className="grid min-w-0 gap-[var(--space-1)]">
           <div className="flex min-w-0 flex-wrap items-baseline gap-x-[var(--space-3)] gap-y-[var(--space-1)]">

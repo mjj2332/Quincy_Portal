@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CollectionKind } from "@quincy/shared";
 import { ProjectHeader } from "./ProjectHeader";
 import type { ProjectDetail } from "../lib/project-data";
+import { mockViewport, type MockViewport } from "../testing/viewport";
 
 /**
  * #455: an archived Project's header is fully read-only. On load the Deadline and Dropbox cells are plain values and the details
@@ -259,5 +260,79 @@ describe("a Stage move refusal latches the header read-only (#455)", () => {
     expect(group("Stage")).not.toBeNull();
     expect(document.activeElement).toBe(group("Stage"));
     expect(host.querySelector('[role="alert"]')).toBeNull();
+  });
+});
+
+// #914 seam 2 at phone width (M3–M5): Project info is the drawer with pushed views. A refusal from inside a view flips every Status
+// row to a plain value in the same commit; a view that edits gives way to the info view and focus lands on that view's row.
+describe("an archived refusal on the phone flips Project info read-only at once (#914 M3–M5, #455)", () => {
+  let viewport: MockViewport;
+  beforeEach(() => { viewport = mockViewport({ width: 390, height: 844, coarse: true }); });
+  afterEach(() => { viewport.restore(); });
+  const sheet = () => document.querySelector<HTMLElement>('[data-testid="project-info-sheet"]');
+  const row = (name: string) => sheet()!.querySelector<HTMLElement>(`[data-testid="project-info-${name}-row"]`);
+  const plain = (name: string) => sheet()!.querySelector<HTMLElement>(`[role="group"][aria-label^="${name}: "]`);
+  async function openPhoneInfo() {
+    const opener = host.querySelector<HTMLButtonElement>('button[aria-label="Project info, 12 Example St"]')!;
+    await act(async () => { opener.focus(); opener.click(); await Promise.resolve(); await Promise.resolve(); });
+    expect(sheet()).not.toBeNull();
+  }
+  async function push(name: string) {
+    await act(async () => { row(name)!.click(); await Promise.resolve(); });
+    expect(sheet()!.getAttribute("data-view")).toBe(name);
+  }
+  function expectAllPlain() {
+    expect(row("stage")).toBeNull();
+    expect(row("deadline")).toBeNull();
+    expect(row("team")).toBeNull();
+    expect(plain("Stage")).not.toBeNull();
+    expect(plain("Deadline")).not.toBeNull();
+    expect(sheet()!.querySelector('[role="group"][aria-label^="Team"]')).not.toBeNull();
+  }
+
+  it("Stage view: a move refused as archived returns to Project info with every row plain, focus on the Stage row", async () => {
+    let finish: (value: "archived") => void = () => undefined;
+    const onStageMove = vi.fn(() => new Promise<"archived">((resolve) => { finish = resolve; }));
+    render(header(project(), { onStageMove }));
+    await openPhoneInfo();
+    await push("stage");
+    const option = sheet()!.querySelector<HTMLElement>('[data-testid="project-info-stage-awaiting_raw"]')!;
+    await act(async () => { option.focus(); option.click(); await Promise.resolve(); });
+    expect(onStageMove).toHaveBeenCalledWith("awaiting_raw");
+    await act(async () => { finish("archived"); await Promise.resolve(); await Promise.resolve(); });
+    expect(sheet()!.getAttribute("data-view")).toBe("info");
+    expectAllPlain();
+    expect(document.activeElement).toBe(plain("Stage"));
+  });
+
+  it("Deadline view: a save refused as archived returns to Project info with every row plain, focus on the Deadline row", async () => {
+    render(header(project()));
+    await openPhoneInfo();
+    await push("deadline");
+    act(() => sheet()!.querySelector<HTMLButtonElement>('[data-testid="in-popup"]')!.focus());
+    act(() => controlProps.latest!.onArchivedRefusal!());
+    expect(sheet()!.getAttribute("data-view")).toBe("info");
+    expectAllPlain();
+    expect(document.activeElement).toBe(plain("Deadline"));
+    expect(sheet()!.querySelector('[role="status"]')?.textContent).toBe("Read-only while archived. Restore the project before changing it.");
+  });
+
+  it("Dropbox view: a sync refused as archived stays in the view, read-only with no Sync and focus on its group; Back shows every row plain", async () => {
+    let finish: (value: "archived") => void = () => undefined;
+    onSyncDropbox.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    render(header(project()));
+    await openPhoneInfo();
+    await push("dropbox");
+    const sync = sheet()!.querySelector<HTMLButtonElement>('[data-testid="dropbox-sync"]')!;
+    act(() => sync.focus());
+    await act(async () => { sync.click(); await Promise.resolve(); });
+    await act(async () => { finish("archived"); await Promise.resolve(); await Promise.resolve(); });
+    expect(sheet()!.getAttribute("data-view")).toBe("dropbox");
+    expect(sheet()!.querySelector('[data-testid="dropbox-sync"]')).toBeNull();
+    expect(document.activeElement).toBe(group("Dropbox"));
+    expect(sheet()!.contains(group("Dropbox"))).toBe(true);
+    await act(async () => { sheet()!.querySelector<HTMLButtonElement>('[data-testid="project-info-back"]')!.click(); await Promise.resolve(); });
+    expectAllPlain();
+    expect(host.querySelector('[data-testid="project-header-phone-archived"]')).not.toBeNull();
   });
 });

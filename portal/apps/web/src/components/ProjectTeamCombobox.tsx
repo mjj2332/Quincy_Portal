@@ -35,6 +35,7 @@ import {
 } from "./reui/combobox";
 import { AvatarStack } from "./quincy/AvatarStack";
 import { HEADER_CHIP, HEADER_CHIP_LOCK } from "./project-header/header-styles";
+import { HeaderTooltip } from "./project-header/HeaderTooltip";
 import { Avatar, AvatarFallback } from "./reui/avatar";
 import { Item, ItemContent, ItemDescription, ItemTitle } from "./reui/item";
 
@@ -619,11 +620,11 @@ function TeamPopoverView({ contentRef, triggerRef, ...props }: TeamPickerProps &
   const { value, inputRef, inputDisabled, candidatesError, messages } = props;
   const assigned = new Set(value.map((option) => option.userId)).size;
   return <Combobox {...teamPickerRootProps(props)}>
-    <ComboboxTrigger ref={triggerRef} data-testid="project-team-trigger" aria-label={teamTriggerName(value)} className={cn(HEADER_CHIP, value.length > 0 && "ps-[var(--space-2)]")}>
+    <HeaderTooltip label="Team"><ComboboxTrigger ref={triggerRef} data-testid="project-team-trigger" aria-label={teamTriggerName(value)} className={cn(HEADER_CHIP, value.length > 0 && "ps-[var(--space-2)]")}>
       {value.length
         ? <AvatarStack decorative fullLimit people={stackPeople(value)} personNoun="team member" emptyLabel="Nobody assigned" />
         : <><PlusIcon aria-hidden="true" className="size-4" />Add team</>}
-    </ComboboxTrigger>
+    </ComboboxTrigger></HeaderTooltip>
     <ComboboxContent ref={contentRef} align="end" data-testid="project-team-options" className="w-[320px] max-w-[calc(100vw-2*var(--space-4))]">
       <div className="flex items-center justify-between gap-[var(--space-2)] px-[var(--space-3)] pt-[var(--space-3)] pb-[var(--space-2)]">
         <span className={TEAM_POPOVER_LABEL}>Team</span>

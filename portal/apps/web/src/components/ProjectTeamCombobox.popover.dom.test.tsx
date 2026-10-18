@@ -106,6 +106,17 @@ afterEach(async () => {
 });
 
 describe("ProjectTeamCombobox popover presentation (#914 D3)", () => {
+  // Story 23: the chip prints no "Team" label, so it names itself in a tooltip on hover.
+  it("shows a 'Team' tooltip on hover", async () => {
+    await mount([eliMember]);
+    await act(async () => {
+      trigger().dispatchEvent(new PointerEvent("pointerenter", { bubbles: false, pointerType: "mouse" }));
+      trigger().dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
+      trigger().dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    });
+    await waitFor(() => expect(document.querySelector('[data-testid="header-tooltip"]')?.textContent).toBe("Team"), 1500);
+  });
+
   it("names the trigger from its people, shows three faces then +N, and reads 'Team: nobody assigned' with Add team when empty", async () => {
     const people = ["Ana", "Bo", "Cy", "Di"].map((name, index) => ({ ...eliMember, id: `0000000${index}-0000-4000-8000-000000000000`, userId: `1000000${index}-0000-4000-8000-000000000000`, name, email: `${name.toLowerCase()}@x.test` }));
     await mount(people);

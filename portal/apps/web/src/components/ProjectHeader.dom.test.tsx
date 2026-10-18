@@ -80,6 +80,28 @@ async function openDropbox(): Promise<HTMLElement> {
   return info.querySelector<HTMLElement>('[data-testid="project-info-dropbox"]')!;
 }
 
+/** Hovers a trigger and returns the text of the tooltip it opens (Base UI opens it after its 600ms hover delay), then leaves. */
+async function hoverTooltip(trigger: HTMLElement): Promise<string | null> {
+  await act(async () => {
+    trigger.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false, pointerType: "mouse" }));
+    trigger.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
+    trigger.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+  });
+  let text: string | null = null;
+  for (let waited = 0; waited < 1500 && text === null; waited += 50) {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+    text = document.querySelector('[data-testid="header-tooltip"]')?.textContent ?? null;
+  }
+  await act(async () => {
+    trigger.dispatchEvent(new PointerEvent("pointerleave", { bubbles: false, pointerType: "mouse" }));
+    trigger.dispatchEvent(new MouseEvent("mouseleave", { bubbles: false }));
+  });
+  for (let waited = 0; waited < 1500 && document.querySelector('[data-testid="header-tooltip"]'); waited += 50) {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+  }
+  return text;
+}
+
 describe("Project header Stage control", () => {
   beforeEach(() => {
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
@@ -455,6 +477,22 @@ describe("Project header Stage control", () => {
     expect(section.nextElementSibling?.querySelector('[role="tablist"]')).not.toBeNull();
   });
 
+  // #914 spec: the "← Dashboard" crumb goes. Every live route renders the header inside the Project sheet, whose Close returns there.
+  it("D1: draws no Dashboard link, even outside a Project sheet", () => {
+    render(<ProjectHeader {...baseProps(project())} />);
+    expect([...document.querySelectorAll("a")].filter((link) => /Dashboard/.test(link.textContent ?? ""))).toEqual([]);
+  });
+
+  // Story 23: no printed field labels, so each control names itself in a tooltip as well as its accessible name.
+  it("D1: Stage, Deadline and ⋯ each show a tooltip naming the control on hover, as Whiteboard does", async () => {
+    render(<ProjectHeader {...baseProps(project())} canEdit onOpenWhiteboard={vi.fn()} />);
+    const cluster = host.querySelector<HTMLElement>('[data-testid="project-status-cluster"]')!;
+    const button = (name: RegExp) => [...cluster.querySelectorAll<HTMLElement>("button")].find((element) => name.test(element.getAttribute("aria-label") ?? ""))!;
+    for (const [trigger, tip] of [[button(/^Stage: /), "Stage"], [button(/^Deadline: /), "Deadline"], [button(/^More actions$/), "More actions"], [button(/^Open whiteboard$/), "Open whiteboard"]] as const) {
+      expect(await hoverTooltip(trigger), String(trigger.getAttribute("aria-label"))).toBe(tip);
+    }
+  });
+
   it("D1/D2: the meta line's Production notes link shows only for notes, and opens Project info with the notes focused", async () => {
     render(<ProjectHeader {...baseProps(project({ productionNotes: "  " }))} />);
     expect(host.querySelector('[data-testid="project-header-notes"]')).toBeNull();
@@ -571,6 +609,28 @@ describe("Project header Stage control", () => {
       expect(sub().textContent).toBe("Editing");
       act(() => { root.render(<ProjectHeader {...baseProps(project({ deadlineSchedule: schedule("2026-09-18T07:00:00.000Z", "2026-09-18T17:00") }))} />); });
       expect(sub().querySelector('[data-tone="critical"]')?.textContent).toBe("Overdue");
+    });
+
+    // Story 3: a Delivered or archived Project keeps its due date on the bar, read-only and without a countdown (as the desktop chip).
+    it("keeps the due date, with no countdown, once the deadline is inactive (Delivered or archived)", () => {
+      vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-09-16T07:00:00.000Z") });
+      for (const state of ["inactive_delivered", "inactive_archived"]) {
+        act(() => { root.render(<ProjectHeader {...baseProps(project({ deadlineSchedule: { ...schedule("2026-09-18T07:00:00.000Z", "2026-09-18T17:00"), state } as ProjectDetail["deadlineSchedule"] }))} />); });
+        expect(sub().textContent, state).toMatch(/^Editing·Due .*18 Sep/);
+        expect(sub().textContent).not.toMatch(/Due in|Overdue|Today/);
+        expect(sub().querySelector('[data-tone="caution"], [data-tone="critical"]')).toBeNull();
+      }
+    });
+
+    // Story 44: the phone says a Project is archived, with the D6 badge.
+    it("marks an archived Project on the bar with the Archived badge, and a live one not", () => {
+      render(<ProjectHeader {...baseProps(project())} />);
+      expect(bar().querySelector('[data-testid="project-header-phone-archived"]')).toBeNull();
+      act(() => { root.render(<ProjectHeader {...baseProps(project({ archivedAt: Date.now() }))} />); });
+      const badge = bar().querySelector<HTMLElement>('[data-testid="project-header-phone-archived"]')!;
+      expect(badge.textContent).toBe("Archived");
+      expect(badge.getAttribute("data-slot")).toBe("badge");
+      expect(badge.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
     });
 
     it("mounts one tree: no desktop rows at 390, and no phone bars at 1440", async () => {

@@ -8,6 +8,8 @@ import type { useStages } from "../../lib/stages";
 import type { ProjectDetail } from "../../lib/project-data";
 import { cn } from "../../lib/utils";
 import { WhiteboardButton } from "./WhiteboardButton";
+import { ArchivedBadge } from "./ArchivedBadge";
+import { deadlineChipDate } from "../ProjectHeaderDeadline";
 import { twinHandOff, useScrolledOut } from "./use-scrolled-out";
 
 /** The countdown refresh: the due date reads in days and hours, so a minute is fine-grained enough. */
@@ -31,7 +33,6 @@ export type HeaderPhoneProps = {
   project: ProjectDetail;
   currentStageKey: ProjectDetail["stageKey"];
   stages: ReturnType<typeof useStages>["stages"];
-  crumb?: ReactNode;
   tabs: ReactNode;
   /** Project info, rendered beside the bars. */
   info?: ReactNode;
@@ -39,6 +40,8 @@ export type HeaderPhoneProps = {
   onOpenInfo: (opener: HTMLElement) => void;
   onOpenWhiteboard?: () => void;
   whiteboardOpen: boolean;
+  /** Story 44: the Project is archived (the detail or the #455 latch); the bar carries the D6 Archived badge. */
+  archived: boolean;
 };
 
 /**
@@ -54,7 +57,7 @@ export type HeaderPhoneProps = {
  * Exactly one Close is live at a time, and it is the header's: the sheet's own is claimed away while this tree is mounted (loading,
  * error and Collaboration-only views never mount it, so they keep the sheet's). Focus on a bar that is swapped out moves to its twin.
  */
-export function HeaderPhone({ project, currentStageKey, stages, crumb, tabs, info, infoOpen, onOpenInfo, onOpenWhiteboard, whiteboardOpen }: HeaderPhoneProps) {
+export function HeaderPhone({ project, currentStageKey, stages, tabs, info, infoOpen, onOpenInfo, onOpenWhiteboard, whiteboardOpen, archived }: HeaderPhoneProps) {
   const sheet = useProjectSheet();
   useClaimSheetClose(sheet !== null);
   const barRef = useRef<HTMLElement>(null);
@@ -71,7 +74,9 @@ export function HeaderPhone({ project, currentStageKey, stages, crumb, tabs, inf
 
   const name = `Project info, ${project.street}`;
   const stageLabel = stages.find((stage) => stage.key === currentStageKey)?.label ?? currentStageKey;
-  const due = deadlineCountdown(project.deadlineSchedule, now);
+  const deadline = project.deadlineSchedule.deadline;
+  // Story 3: an inactive deadline (Delivered or archived) keeps its date, read-only with no countdown, as the desktop's flat chip.
+  const due = deadlineCountdown(project.deadlineSchedule, now) ?? (deadline ? { tone: "neutral" as const, label: `Due ${deadlineChipDate(deadline.localCivil)}` } : null);
   const hasNotes = Boolean(project.productionNotes?.trim());
   const close = sheet ? () => sheet.close() : null;
   const openInfo = (event: { currentTarget: HTMLElement }) => onOpenInfo(event.currentTarget);
@@ -86,7 +91,6 @@ export function HeaderPhone({ project, currentStageKey, stages, crumb, tabs, inf
       {close && <CloseProject onClose={close} />}
     </div>
     <section ref={barRef} className="project-phone__bar" aria-label="Project Overview" data-testid="project-header" inert={slim}>
-      {crumb}
       <div className="flex min-w-0 items-center">
         {/* One target over the title, its chevron and the subline: the button is stretched across them, since a heading cannot
             sit inside a button. */}
@@ -94,6 +98,7 @@ export function HeaderPhone({ project, currentStageKey, stages, crumb, tabs, inf
           <div className="flex min-w-0 items-center gap-[var(--space-1)]">
             <h2 className="m-0 truncate text-foreground tracking-[var(--tracking-tight)] [font:var(--weight-regular)_var(--text-lg)/var(--leading-snug)_var(--font-display)]">{project.street}</h2>
             <ChevronDownIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+            {archived && <ArchivedBadge data-testid="project-header-phone-archived" className="ms-[var(--space-1)] shrink-0" />}
           </div>
           <p className="m-0 flex min-w-0 items-center gap-[var(--space-2)] overflow-hidden whitespace-nowrap text-foreground-secondary [font:var(--type-label)]" data-testid="project-header-phone-sub">
             {/* The Stage label gives way (an ellipsis) before the due date and the Notes marker do. */}

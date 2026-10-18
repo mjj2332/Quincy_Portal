@@ -152,6 +152,28 @@ describe("the real Workspace inside the Project sheet (#366)", () => {
     expect(document.activeElement).toBe(tab("RAW"));
   });
 
+  // #914 seam 1 (#787): the rebuilt header keeps Delivery as the Workspace's last tab, after Collaboration, in either tree.
+  it("keeps Delivery the last Workspace tab, right after Collaboration, at 1440 and at 390", async () => {
+    const fallback = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string, init?: unknown) => path === "/api/projects/p1/delivery" ? Promise.resolve({ page: null, set: null, dto: null }) : fallback(path, init));
+    for (const width of [1440, 390]) {
+      const viewport = mockViewport({ width, height: width > 400 ? 900 : 844, coarse: width < 400 });
+      try {
+        await renderSheet();
+        await flushUntil(() => tab("Delivery") !== undefined, `the Delivery tab at ${width}`);
+        const tabs = [...document.querySelectorAll<HTMLElement>('[role="tablist"][aria-label="Workspace"] [role="tab"]')].map((element) => element.textContent?.replace(/\d+\+?$/, "").trim());
+        expect(document.querySelectorAll('[role="tablist"][aria-label="Workspace"]'), String(width)).toHaveLength(1);
+        expect(tabs.at(-1), String(width)).toBe("Delivery");
+        expect(tabs.at(-2), String(width)).toBe("Collaboration");
+      } finally {
+        await act(async () => { root!.unmount(); await Promise.resolve(); });
+        root = null;
+        document.body.replaceChildren();
+        viewport.restore();
+      }
+    }
+  });
+
   it("the header carries no second 'Dashboard' leave control: the sheet's close button is the way out", async () => {
     await renderSheet();
     const header = document.querySelector('[data-testid="project-header"]')!;

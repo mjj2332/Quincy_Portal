@@ -1,6 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { InternalLink } from "./InternalLink";
-import { PROJECT_SHEET_PHONE_QUERY, useDashboardReturnLink, useInProjectSheet } from "./quincy/ProjectSheet";
+import { PROJECT_SHEET_PHONE_QUERY } from "./quincy/ProjectSheet";
 import { WorkspaceTabs } from "./project-header/WorkspaceTabs";
 import { HeaderDesktop } from "./project-header/HeaderDesktop";
 import type { ArchivedLatch } from "./project-header/StatusCluster";
@@ -17,17 +16,6 @@ import { useMediaQuery } from "../lib/use-media-query";
 
 export { WhiteboardButton } from "./project-header/WhiteboardButton";
 export type { StageMoveOutcome } from "./project-header/ProjectInfoDrawer";
-
-// #213 follow-up: prototype 2a's `.crumb` — "← Dashboard" as small secondary text above the title, outside the Project sheet only
-// (inside it, the sheet's Close returns to the Dashboard, so #914 D1 drops the crumb there). The 44px target is kept by the
-// min-height; the negative block margin gives that height back.
-const DASHBOARD_CRUMB =
-  "inline-flex items-center w-fit min-h-[44px] " /* WCAG 2.5.5 Enhanced target, not a spacing token */ +
-  "[margin-block:-12px] no-underline " +
-  "[font:var(--weight-regular)_var(--text-xs)/1.2_var(--font-sans)] text-foreground-secondary hover:text-foreground " +
-  "transition-[color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] " +
-  "focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid " +
-  "focus-visible:outline-ring focus-visible:outline-offset-2";
 
 /**
  * #914 — the Project header (prototype project-header-revamp). A thin owner: it keeps the #455 archived latch (so every surface
@@ -83,8 +71,6 @@ export function ProjectHeader({
   stageMovePending?: boolean;
   stageMoveDisabledReason?: string | null;
 }) {
-  const dashboardReturn = useDashboardReturnLink();
-  const inSheet = useInProjectSheet();
   const { presentationStageKey, stages } = useStages();
   const { can, role } = useCapabilities();
   // #870: the Social overlays picker needs `viewVideo` (an External editor sees it read-only) and the Video review gate open: see `SocialOverlaysRow`.
@@ -161,7 +147,6 @@ export function ProjectHeader({
     infoOpener.current = opener;
     setInfo({ open: true, target });
   }
-  const crumb = !inSheet && <InternalLink className={DASHBOARD_CRUMB} {...dashboardReturn}>← Dashboard</InternalLink>;
   const panel: Omit<ProjectInfoPanelProps, "target"> = {
     open: info.open,
     onClose: () => setInfo((current) => ({ ...current, open: false })),
@@ -186,15 +171,14 @@ export function ProjectHeader({
       currentStageKey, stages, canMove: canMoveStage && project.contractEnabled, pending: stageMovePending, disabledReason: stageMoveDisabledReason,
       onMove: moveStageAndLatch,
     }} />;
-    return <HeaderPhone project={project} currentStageKey={currentStageKey} stages={stages} crumb={crumb} tabs={tabs} info={drawer}
-      infoOpen={info.open} onOpenInfo={(opener) => openInfo(opener, null)} onOpenWhiteboard={onOpenWhiteboard} whiteboardOpen={whiteboardOpen} />;
+    return <HeaderPhone project={project} currentStageKey={currentStageKey} stages={stages} tabs={tabs} info={drawer}
+      infoOpen={info.open} onOpenInfo={(opener) => openInfo(opener, null)} onOpenWhiteboard={onOpenWhiteboard} whiteboardOpen={whiteboardOpen} archived={archived} />;
   }
   return <HeaderDesktop
     project={project}
     condensed={condensed}
     rowARef={rowARef}
     rowBRef={rowBRef}
-    crumb={crumb}
     tabs={tabs}
     cluster={{
       project, activeTab, archived, latch, canEdit, canAdminBackend, canMoveStage, currentStageKey, stages,

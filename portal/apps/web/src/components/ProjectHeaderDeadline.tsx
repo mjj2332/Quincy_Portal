@@ -2,6 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type Ref } from "r
 import { ChevronDown, ClockIcon } from "lucide-react";
 import type { ProjectDeadlineSchedule } from "@quincy/shared";
 import { Popover, PopoverTrigger } from "@/components/reui/popover";
+import { HeaderTooltip } from "./project-header/HeaderTooltip";
 import { Badge } from "@/components/reui/badge";
 import { ProjectDeadlineControl } from "./ProjectDeadlineControl";
 import { DateTimePopoverContent } from "./quincy/DateTimeField";
@@ -138,7 +139,7 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit, archived =
   }
 
   return <Popover open={open} onOpenChange={onOpenChange}>
-    <PopoverTrigger
+    <HeaderTooltip label="Deadline"><PopoverTrigger
       ref={triggerRef}
       type="button"
       data-testid="project-deadline-trigger"
@@ -150,7 +151,7 @@ export function ProjectHeaderDeadline({ projectId, schedule, canEdit, archived =
       {automatic && <AutomaticDeadlineMark />}
       {countdown && <Badge variant={COUNTDOWN_BADGE[countdown.tone]} data-testid="project-deadline-countdown" data-tone={countdown.tone} className="normal-case tracking-normal">{countdown.short}</Badge>}
       <ChevronDown aria-hidden="true" className={HEADER_CHEVRON} />
-    </PopoverTrigger>
+    </PopoverTrigger></HeaderTooltip>
     {/* #422: the popup is the date-time form of the shared date/time field (`quincy/DateTimeField`);
         its own footer is pinned (#325), so the content needs no scroll padding of its own. */}
     <DateTimePopoverContent label="Deadline" ref={popupRef} popupCollisionPadding={openPadding}>

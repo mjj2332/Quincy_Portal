@@ -520,8 +520,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Select raw-2.jpg",
       "Stage: RAW review",
       "Video0",
-      "[input]",
-      "← Dashboard"
+      "[input]"
     ]
   },
   "Edited": {
@@ -568,8 +567,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Stage: RAW review",
       "Video0",
       "[input:file]",
-      "[input]",
-      "← Dashboard"
+      "[input]"
     ]
   },
   "Video": {
@@ -607,8 +605,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Video0",
       "[input]",
       "[placeholder] Final walkthrough",
-      "[placeholder] https://vimeo.com/…",
-      "← Dashboard"
+      "[placeholder] https://vimeo.com/…"
     ]
   },
   "Floorplan": {
@@ -644,8 +641,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Upload floorplan",
       "Video0",
       "[input:file]",
-      "[input]",
-      "← Dashboard"
+      "[input]"
     ]
   },
   "Copy": {
@@ -681,8 +677,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Upload copy",
       "Video0",
       "[input:file]",
-      "[input]",
-      "← Dashboard"
+      "[input]"
     ]
   },
   "Collaboration": {
@@ -750,8 +745,7 @@ const FROZEN_EXTERNAL_EDITOR = {
       "Undo",
       "Video0",
       "[div]",
-      "[input]",
-      "← Dashboard"
+      "[input]"
     ]
   }
 } as const satisfies TabInventories;
@@ -816,8 +810,7 @@ const FROZEN_ADMIN = {
       "Use as project cover",
       "Video0",
       "[input:file]",
-      "[input]",
-      "← Dashboard"
+      "[input]"
     ]
   },
   "Edited": {
@@ -870,8 +863,7 @@ const FROZEN_ADMIN = {
       "Use as project cover",
       "Video0",
       "[input:file]",
-      "[input]",
-      "← Dashboard"
+      "[input]"
     ]
   },
   "Video": {
@@ -913,8 +905,7 @@ const FROZEN_ADMIN = {
       "Video0",
       "[input]",
       "[placeholder] Final walkthrough",
-      "[placeholder] https://vimeo.com/…",
-      "← Dashboard"
+      "[placeholder] https://vimeo.com/…"
     ]
   },
   "Floorplan": {
@@ -954,8 +945,7 @@ const FROZEN_ADMIN = {
       "Upload floorplan",
       "Video0",
       "[input:file]",
-      "[input]",
-      "← Dashboard"
+      "[input]"
     ]
   },
   "Copy": {
@@ -995,8 +985,7 @@ const FROZEN_ADMIN = {
       "Upload copy",
       "Video0",
       "[input:file]",
-      "[input]",
-      "← Dashboard"
+      "[input]"
     ]
   },
   "Collaboration": {
@@ -1070,8 +1059,7 @@ const FROZEN_ADMIN = {
       "Undo",
       "Video0",
       "[div]",
-      "[input]",
-      "← Dashboard"
+      "[input]"
     ]
   }
 } as const satisfies TabInventories;

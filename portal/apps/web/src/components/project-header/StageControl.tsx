@@ -2,6 +2,7 @@ import { StageDot } from "../atoms";
 import { cn } from "../../lib/utils";
 import { HEADER_CHIP } from "./header-styles";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/reui/select";
+import { HeaderTooltip } from "./HeaderTooltip";
 import type { useStages } from "../../lib/stages";
 import type { ProjectDetail } from "../../lib/project-data";
 
@@ -48,7 +49,7 @@ export function StageControl({ project, currentStageKey, stages, contractEnabled
         onMove?.(next as ProjectDetail["stageKey"]);
       }}
     >
-      <SelectTrigger
+      <HeaderTooltip label="Stage"><SelectTrigger
         id={`project-stage-${project.id}`}
         data-focus-key={`rail-stage:${project.id}`}
         aria-label={`Stage: ${labelFor(currentStageKey)}`}
@@ -60,7 +61,7 @@ export function StageControl({ project, currentStageKey, stages, contractEnabled
         className={STAGE_SELECT}
       >
         <SelectValue>{() => <StageOption stageKey={currentStageKey} label={labelFor(currentStageKey)} />}</SelectValue>
-      </SelectTrigger>
+      </SelectTrigger></HeaderTooltip>
       {/* #325: options are nowrap, so the registry's `w-(--anchor-width)` clipped a long Stage
           ("Awaiting RAW · Smoke"). Never narrower than the trigger, never wider than the viewport. */}
       <SelectContent data-testid="project-stage-options" className="w-auto min-w-(--anchor-width) max-w-(--available-width)">

@@ -1,6 +1,7 @@
 import { CalendarDaysIcon, ChartGanttIcon, LinkIcon, MoreHorizontalIcon, PencilIcon } from "lucide-react";
 import type { WorkspaceTab } from "@quincy/shared";
 import { Button } from "@/components/reui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/reui/tooltip";
 import { Menu, MenuPrimitive, MENU_ITEM } from "../quincy/menu";
 import { InternalLink } from "../InternalLink";
 import { useCopyProjectLink } from "../quincy/CopyProjectLinkButton";
@@ -9,6 +10,7 @@ import type { ShowInDestination } from "../../lib/project-show-in";
 import type { ProjectDetail } from "../../lib/project-data";
 import { cn } from "../../lib/utils";
 import { HEADER_ICON_CHIP } from "./header-styles";
+import { passEscape } from "./HeaderTooltip";
 
 const ITEM = cn(MENU_ITEM, "gap-[var(--space-2)] no-underline [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-foreground-secondary");
 const REASON = "block [font:var(--type-eyebrow)] text-foreground-secondary";
@@ -42,11 +44,12 @@ export function ProjectMoreMenu({ project, activeTab, canEdit, archived, canAdmi
   const { copy } = useCopyProjectLink(project.id, activeTab);
   const destinations = useShowInDestinations(project);
   const details = projectDetailsAction(project, { canEdit, archived, canAdminBackend });
-  return <Menu
+  // Story 23: the ⋯ names itself in a tooltip too (the menu's trigger is the tooltip's trigger, `HeaderTooltip`'s composition).
+  return <Tooltip onOpenChange={passEscape}><Menu
     triggerLabel="More actions"
     label="More actions"
     triggerTestId="project-more-actions"
-    triggerRender={<Button type="button" variant="outline" size="icon-header" className={HEADER_ICON_CHIP} />}
+    triggerRender={<TooltipTrigger render={<Button type="button" variant="outline" size="icon-header" className={HEADER_ICON_CHIP} />} />}
     trigger={<MoreHorizontalIcon aria-hidden="true" className="size-[18px]" />}
     panelClassName="w-60 p-[var(--space-1)]"
     sideOffset={6}
@@ -60,5 +63,5 @@ export function ProjectMoreMenu({ project, activeTab, canEdit, archived, canAdmi
       <ShowInItem label="Show in Calendar" icon={<CalendarDaysIcon aria-hidden="true" />} destination={destinations.calendar} />
       <ShowInItem label="Show in Timeline" icon={<ChartGanttIcon aria-hidden="true" />} destination={destinations.timeline} />
     </>}
-  </Menu>;
+  </Menu><TooltipContent side="bottom" data-testid="header-tooltip">More actions</TooltipContent></Tooltip>;
 }
