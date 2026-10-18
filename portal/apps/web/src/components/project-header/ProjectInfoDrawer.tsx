@@ -414,10 +414,10 @@ function StageView({ stage, onSaved }: { stage: ProjectInfoDrawerProps["stage"];
         value={item.key}
         disabled={!item.active}
         data-testid={`project-info-stage-${item.key}`}
-        className={cn(ROW, "aspect-auto size-auto rounded-none border-0 bg-transparent data-checked:border-0 data-checked:bg-transparent data-checked:text-foreground disabled:opacity-60")}
+        className={cn(ROW, "pe-[calc(var(--space-4)+var(--space-1))] aspect-auto size-auto rounded-none border-0 bg-transparent data-checked:border-0 data-checked:bg-transparent data-checked:text-foreground disabled:opacity-60")}
       >
         <span className="flex min-w-0 items-center gap-[calc(var(--space-2)+2px)]"><StageDot stageKey={item.key} /><span className="truncate">{item.label}</span></span>
-        {/* `.radio`: a 22px ring (no token), filled at its centre when chosen. */}
+        {/* `.radio`: a 22px ring (no token), filled at its centre when chosen. The row ends 20px in, matching the dots' left inset and the × above (owner, #917; the frame has 12px). */}
         <span aria-hidden="true" className="ms-auto grid size-[22px] shrink-0 place-items-center rounded-full border-[length:var(--border-width-mid)] border-[var(--border-hover)] group-data-checked/radio-group-item:border-foreground after:size-2.5 after:rounded-full after:bg-transparent group-data-checked/radio-group-item:after:bg-foreground" />
       </RadioGroupItem>)}
     </RadioGroup>
