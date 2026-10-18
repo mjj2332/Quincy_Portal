@@ -13,7 +13,7 @@ import { pushToast as toast } from "../lib/toast-store";
 import { ToastViewport } from "../components/quincy/ToastViewport";
 import { Button, buttonClasses } from "../components/quincy/Button";
 import { DashboardHeader } from "./DashboardHeader";
-import { DashboardViewBar, VIEW_PANEL_ID, VIEW_TAB_ID } from "./DashboardViewBar";
+import { DashboardViewBar, TOOLBAR_CONTROL_TYPE, VIEW_PANEL_ID, VIEW_TAB_ID } from "./DashboardViewBar";
 import { BoardDisplayContent, CalendarDisplayContent, TableDisplayContent, TimelineDisplayContent } from "./DashboardDisplay";
 import { DashboardTable } from "../components/DashboardTable";
 import { hideableColumnsFor } from "../lib/dashboard-table-model";
@@ -1616,8 +1616,9 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
     }
   }
 
-  // #427: the header's summary. `projects` is what Table/Board render (current scope and committed
-  // search, after overlays). None while loading or errored, never a "0".
+  // #427: the header's summary, sr-only since #923 (`DashboardHeader.tsx`). `projects` is what
+  // Table/Board render (current scope and committed search, after overlays). None while loading or
+  // errored, never a "0".
   const now = useNow();
   const summary = dashboardSummary({
     projects: isLoading || error ? null : projects,
@@ -1632,13 +1633,14 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
 
   return (
     <main className="page page--full page--fill [overflow-x:clip]">
-      <DashboardHeader summary={summary} busy={projectsQuery.isPlaceholderData} canCreateProject={canCreateProject} />
+      <DashboardHeader summary={summary} busy={projectsQuery.isPlaceholderData} />
 
       {/* #461: the Filter is one popover in the view bar's `filterTrigger` slot (the chips row is gone). */}
       <>
         <DashboardViewBar
           renderedView={renderedView}
           canViewProductionCalendar={canViewProductionCalendar}
+          canCreateProject={canCreateProject}
           disabled={movementInteractionActive || calendarInteractionBlocked}
           onSelectView={selectView}
           principalId={currentUserId}
@@ -1675,6 +1677,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
               people={dashboardPeople}
               disabled={movementInteractionActive || calendarInteractionBlocked}
               onAnnounce={announceFilter}
+              className={TOOLBAR_CONTROL_TYPE}
             />
           }
         />

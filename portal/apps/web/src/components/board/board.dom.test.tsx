@@ -1830,15 +1830,19 @@ async function act_(callback: () => Promise<void> | void): Promise<void> {
 
 // #432: the column header's count and overdue figure, and the collapsed rail.
 describe("ProjectKanbanBoard2 — column headers and collapse (#432)", () => {
-  /** The class string of the Dashboard header's "N OVERDUE" Badge, rendered by `DashboardHeader` itself. */
+  /**
+   * The class string of the Portal's overdue Badge (`destructive-light`, `sm`). Until #923 this was
+   * read from the Dashboard header's "N overdue" badge; frame 4a removed that badge, so lateness lives
+   * in the column header, which keeps the same component and variant.
+   */
   async function headerOverdueClass(): Promise<string> {
     const { act } = await import("react");
-    const { DashboardHeader } = await import("../../screens/DashboardHeader");
+    const { Badge } = await import("../reui/badge");
     const probe = document.createElement("div");
     document.body.append(probe);
     const probeRoot = createRoot(probe);
-    await act(async () => { probeRoot.render(createElement(DashboardHeader, { summary: { text: "x", overdue: 1 } as never, busy: false, canCreateProject: false })); await Promise.resolve(); });
-    const className = probe.querySelector('[data-testid="dashboard-overdue-badge"]')!.className;
+    await act(async () => { probeRoot.render(createElement(Badge, { variant: "destructive-light", size: "sm", "data-testid": "overdue-probe" } as never, "1 overdue")); await Promise.resolve(); });
+    const className = probe.querySelector('[data-testid="overdue-probe"]')!.className;
     await act(async () => probeRoot.unmount());
     probe.remove();
     return className;
@@ -1877,7 +1881,7 @@ describe("ProjectKanbanBoard2 — column headers and collapse (#432)", () => {
     expect(first.querySelector('[data-testid="board-column-count"]')?.textContent).toBe("3");
     const overdue = first.querySelector('[data-testid="board-column-overdue"]');
     expect(overdue?.textContent).toBe("2 overdue");
-    // The Dashboard header's badge: same component and variant, so the two read as one signal.
+    // The Portal's overdue Badge: same component and variant, so lateness reads as one signal.
     expect(overdue!.className).toBe(await headerOverdueClass());
     const second = column("RAW review")!;
     expect(second.querySelector('[data-testid="board-column-count"]')?.textContent).toBe("2");
