@@ -76,11 +76,14 @@ const displayButton = () => host.querySelector<HTMLButtonElement>('[data-testid=
 const picker = () => host.querySelector<HTMLButtonElement>('[data-testid="dashboard-view-picker"]');
 
 describe("viewBarLayout — which row the bar draws at its own width (4a, 4a-t, 4a-s, 4f)", () => {
-  it("is full at 1440 and down to 60rem, tablet below it, compact below 54rem", () => {
-    expect(viewBarLayout(1288, { phone: false, narrowShell: false })).toBe("full");
+  // The bar's width is the page's content box: the viewport less the 72px rail, the shell's 8px
+  // inset and the page's two 48px gutters (measured in the #923 pass: 1264 at 1440, 848 at 1024).
+  it("is full at 1440 and down to 60rem, tablet at 1024, compact below the tablet row's width", () => {
+    expect(viewBarLayout(1264, { phone: false, narrowShell: false }), "1440 with the rail: 4a").toBe("full");
     expect(viewBarLayout(960, { phone: false, narrowShell: false })).toBe("full");
-    expect(viewBarLayout(872, { phone: false, narrowShell: false }), "1024 with the rail: 4a-t").toBe("tablet");
-    expect(viewBarLayout(863, { phone: false, narrowShell: false })).toBe("compact");
+    expect(viewBarLayout(959, { phone: false, narrowShell: false })).toBe("tablet");
+    expect(viewBarLayout(848, { phone: false, narrowShell: false }), "1024 with the rail: 4a-t").toBe("tablet");
+    expect(viewBarLayout(843, { phone: false, narrowShell: false })).toBe("compact");
     expect(viewBarLayout(620, { phone: false, narrowShell: false }), "772 with the rail").toBe("compact");
   });
 
@@ -130,11 +133,21 @@ describe("the wide row (4a)", () => {
     expect(host.querySelector('[data-testid="rail-notifications"]')).toBeNull();
   });
 
-  it("narrows the search to 200px at the tablet width (4a-t)", async () => {
-    barWidth = 900;
+  it("draws the 280px search at a 1440 viewport's bar (4a)", async () => {
+    barWidth = 1264;
     await mount();
+    expect(bar().dataset.layout).toBe("full");
+    expect(host.querySelector('[data-testid="dashboard-search-field"]')!.className).toContain("w-[17.5rem]");
+  });
+
+  it("narrows the search to 200px at a 1024 viewport's bar and keeps all four tabs labelled (4a-t)", async () => {
+    barWidth = 848;
+    await mount();
+    expect(bar().dataset.layout).toBe("tablet");
     expect(host.querySelector('[data-testid="dashboard-search-field"]')!.className).toContain("w-[12.5rem]");
     expect(searchToggle()).toBeNull();
+    const labelled = tabs().map((tab) => [tab.textContent?.trim(), tab.querySelector("[data-tab-label]")?.classList.contains("sr-only")]);
+    expect(labelled).toEqual([["Table", false], ["Board", false], ["Calendar", false], ["Timeline", false]]);
   });
 });
 
@@ -163,6 +176,24 @@ describe("the compact row (4a-s)", () => {
     expect(rowHiddenAtFocus, "the row was unhidden before the focus call").toBe(false);
     expect(host.querySelector<HTMLElement>('[data-testid="dashboard-search-row"]')!.hidden).toBe(false);
     expect(searchToggle()!.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("opens and focuses the field on a touch's pointerup, inside the tap, even if iOS sends no click", async () => {
+    await mount();
+    const row = host.querySelector<HTMLElement>('[data-testid="dashboard-search-row"]')!;
+    let during: Element | null = null;
+    await act(async () => {
+      searchToggle()!.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerType: "touch" }));
+      during = document.activeElement;
+    });
+    expect(during, "focused within the pointerup, so iOS raises the keyboard on the first tap").toBe(searchField());
+    expect(row.hidden).toBe(false);
+  });
+
+  it("leaves a mouse's pointerup to the click, so a press that drags off the icon opens nothing", async () => {
+    await mount();
+    await act(async () => { searchToggle()!.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerType: "mouse" })); });
+    expect(host.querySelector<HTMLElement>('[data-testid="dashboard-search-row"]')!.hidden).toBe(true);
   });
 
   it("Escape in the empty field closes it and returns focus to the icon", async () => {
@@ -221,6 +252,11 @@ describe("the phone row (4f, 4g)", () => {
     expect(displayButton()!.compareDocumentPosition(newShoot()!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(searchToggle()).not.toBeNull();
     expect(host.querySelectorAll('[data-testid="dashboard-search"]')).toHaveLength(1);
+  });
+
+  it("types the search at 16px on a phone, so iOS does not zoom the page into it", async () => {
+    await mount();
+    expect(searchField()!.className).toContain("max-[721px]:text-[length:var(--text-base)]");
   });
 
   it("locks the picker while a board move or calendar write is in flight", async () => {

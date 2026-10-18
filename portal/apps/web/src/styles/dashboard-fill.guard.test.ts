@@ -91,7 +91,7 @@ const FILL_RULES: Array<[selector: string, declarations: Declaration[]]> = [
   [".app:has(.page--fill) .app__shell", [["min-height", "0"]]],
   [".app:has(.page--fill) .shell-header", [["flex-shrink", "0"]]],
   [".page--fill", [["display", "flex"], ["flex-direction", "column"], ["flex", "1 1 0"], ["min-height", "0"]]],
-  [".page.page--fill", [["padding-bottom", "0"]]],
+  [".page.page--fill", [["padding-top", "0"], ["padding-bottom", "0"]]],
 ];
 
 export function findFillRuleErrors(css: string): string[] {
@@ -117,7 +117,7 @@ const GOOD_FILL_CSS = `
 .app:has(.page--fill) .app__shell { min-height: 0; }
 .app:has(.page--fill) .shell-header { flex-shrink: 0; }
 .page--fill { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; }
-.page.page--fill { padding-bottom: 0; }
+.page.page--fill { padding-top: 0; padding-bottom: 0; }
 `;
 
 // ---------------------------------------------------------------------------------------------
@@ -221,7 +221,8 @@ describe("dashboard fill rules (a)", () => {
     const planted = [
       `@layer components {${GOOD_FILL_CSS}}`,
       `@media (max-width: 720px) {${GOOD_FILL_CSS}}`,
-      GOOD_FILL_CSS.replace(".page.page--fill { padding-bottom: 0; }", ".page.page--fill { }"),
+      GOOD_FILL_CSS.replace(".page.page--fill { padding-top: 0; padding-bottom: 0; }", ".page.page--fill { }"),
+      GOOD_FILL_CSS.replace(".page.page--fill { padding-top: 0; padding-bottom: 0; }", ".page.page--fill { padding-bottom: 0; }"),
       GOOD_FILL_CSS.replace("height: 100dvh; min-height: 0;", "height: 100dvh;"),
       "",
     ];

@@ -53,6 +53,9 @@ function capSearchInput(value: string): string {
   return capDashboardSearchText(stripUnsafeText(value));
 }
 
+/** The input's type at phone width: 16px (`--text-base`), so iOS does not zoom the page on focus. */
+export const PHONE_FIELD_TYPE = "max-[721px]:text-[length:var(--text-base)]";
+
 /** A ⌘K request to focus the field. `signal` numbers it, so a repeat request is still a fresh one. */
 export type DashboardSearchFocusRequest = { signal: number };
 
@@ -198,6 +201,9 @@ export function DashboardSearch({ principalId = "", focusRequest = null, onFocus
         // `handleChange` above.
         onCompositionStart={handleCompositionStart}
         onCompositionEnd={handleCompositionEnd}
+        // 16px on a phone: iOS zooms the page into any field under 16px when it takes focus, and
+        // stays zoomed and panned after the keyboard drops (#923 pass, rows 13–14).
+        className={PHONE_FIELD_TYPE}
         placeholder={narrow ? "Search…" : "Search address, suburb, client…"}
       />
       {search.draft === "" && (

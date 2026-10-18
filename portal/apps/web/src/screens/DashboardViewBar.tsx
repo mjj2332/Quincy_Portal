@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
+import { useLayoutEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import { Calendar, ChevronDown, GanttChart, Plus, Search, SlidersHorizontal, SquareKanban, Table2, type LucideIcon } from "lucide-react";
 import { InternalLink } from "../components/InternalLink";
@@ -50,7 +50,9 @@ import type { DashboardView } from "./dashboard-helpers";
  * There is ONE `DashboardSearch`. Where the search is an icon it sits in a row under the bar's rule,
  * mounted but `hidden` until the icon opens it. The icon opens it and focuses the input inside its own
  * click (`flushSync`, then `focus()`), because iOS raises the keyboard only for a focus made in the
- * tap's call stack (lesson "A phone field outside the composer needs its own keyboard layout…"). It
+ * tap's call stack (lesson "A phone field outside the composer needs its own keyboard layout…"). A
+ * touch opens it on pointerup as well, because iOS Safari can swallow the first tap's click. The
+ * input is 16px on a phone (`PHONE_FIELD_TYPE`), or iOS zooms the page into it on focus. It
  * stays open while the field holds text, so a search is never hidden behind the icon, and for a ⌘K
  * request, so the field can take the focus. Escape in the empty field, or leaving it empty, closes it.
  * Crossing between an inline and an icon layout moves the field, which remounts it; its text lives in
@@ -109,11 +111,15 @@ const SEARCH_ROW_ID = "dashboard-search-row";
 
 export type ViewBarLayout = "full" | "tablet" | "compact" | "tight" | "phone";
 
-// Bar widths, in px, measured from the built row (Apfel Grotezk 14px labels, 38px controls, a Filter
-// count badge included): the full row needs ~945, the tablet row ~865, the compact row ~545. A narrow
-// shell adds the nav trigger and the bell (2 × 44px plus their gaps).
+// Bar widths, in px, measured in the browser from the built row (Apfel Grotezk 14px labels, 38px
+// controls, New shoot shown, no Filter count): the full row needs ~940; the tablet row, with its
+// tighter `--space-3` gaps, ~844; the compact row ~545. The bar is the page's content box: the viewport
+// less the 72px rail, the shell's 8px inset and the page's two 48px gutters, so 1264 at a 1440
+// viewport (full) and 848 at 1024 (tablet: 4a-t's four labelled tabs and a 200px search). A Filter
+// count adds ~26px; at exactly 1024 the tab row then scrolls inside its fade. A narrow shell adds the
+// nav trigger and the bell (2 × 44px plus their gaps).
 const FULL_MIN = 960;
-const TABLET_MIN = 864;
+const TABLET_MIN = 844;
 const LABELLED_MIN = 548;
 const SHELL_CHROME = 104;
 /** The phone picker shows its label only where it fits beside six 44px icons. */
@@ -201,9 +207,19 @@ export function DashboardViewBar({
 
   function openSearch() {
     // Mount-free: the field is already there, only `hidden`. Unhide it synchronously, then focus it
-    // in this same click, so iOS raises the keyboard on the first tap.
+    // in this same gesture, so iOS raises the keyboard on the first tap. Idempotent: a touch runs it
+    // on pointerup and again on the click that follows (when iOS sends one).
     flushSync(() => setSearchOpen(true));
     searchRowRef.current?.querySelector("input")?.focus();
+  }
+
+  function openSearchOnTouch(event: ReactPointerEvent<HTMLButtonElement>) {
+    // iOS Safari can swallow the first tap's click (it reads a DOM change during the tap as a hover
+    // reveal and waits for a second tap; round 1 of the #923 pass). The pointerup still arrives, still
+    // inside the tap's gesture, so a touch opens and focuses the field from there. A drag that becomes
+    // a scroll ends in pointercancel, not pointerup, so it opens nothing.
+    if (event.pointerType === "mouse") return;
+    openSearch();
   }
 
   const searchField = (
@@ -239,7 +255,7 @@ export function DashboardViewBar({
         ref={rowRef}
         className={cn(
           "flex min-w-0 items-stretch",
-          layout === "phone" ? "gap-[var(--space-1)]" : "gap-[var(--space-4)]",
+          layout === "phone" ? "gap-[var(--space-1)]" : layout === "tablet" ? "gap-[var(--space-3)]" : "gap-[var(--space-4)]",
           "[border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border",
         )}
       >
@@ -278,7 +294,7 @@ export function DashboardViewBar({
                 variant="line"
                 activateOnFocus={false}
                 aria-label="Dashboard view"
-                className="h-auto gap-[var(--space-4)] self-stretch p-0 group-data-[orientation=horizontal]/tabs:h-auto"
+                className={cn("h-auto self-stretch p-0 group-data-[orientation=horizontal]/tabs:h-auto", layout === "tablet" ? "gap-[var(--space-3)]" : "gap-[var(--space-4)]")}
               >
                 {tabs.map(({ view, label, Icon }) => {
                   const iconOnly = (layout === "compact" || layout === "tight") && view !== renderedView;
@@ -321,6 +337,7 @@ export function DashboardViewBar({
               aria-label="Search projects"
               aria-expanded={searchShown}
               aria-controls={SEARCH_ROW_ID}
+              onPointerUp={openSearchOnTouch}
               onClick={openSearch}
               className={cn(TOOLBAR_CONTROL, ICON_SQUARE)}
             >
