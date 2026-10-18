@@ -113,6 +113,8 @@ describe("Dashboard Kanban sort control", () => {
 
   it("runs Delivered newest first and Awaiting RAW oldest first, undated last, under either choice (#832)", async () => {
     const delivered = (id: string, street: string, over: Record<string, unknown>) => mk(id, street, { stageKey: "delivered", ...over });
+    // #923: Delivered starts collapsed; this viewer has expanded it (a stored `[]`), so its cards are mounted.
+    window.localStorage.setItem("quincy:dashboard:board:collapsed:admin-1", "[]");
     await loadBoard([
       mk("a1", "1 Alpha Street", { shootDate: "2026-01-01", deadlineAt: 1000 }),
       mk("b1", "2 Bravo Street", { shootDate: "2026-09-01", deadlineAt: 3000 }),
@@ -229,7 +231,8 @@ describe("Dashboard Kanban sort control", () => {
     expect(document.querySelector('[data-testid="project-table-raw"] + span')?.textContent).toBe("12 of 40 RAW files received");
   });
 
-  it("renders the current overdue label on the Board card", async () => {
+  // #923: the card draws a late Deadline in the late colour with the appearance module's "N days late" chip.
+  it("renders the late chip on a late Board card", async () => {
     apiGetMock.mockImplementation((path) => path === "/api/projects" || path === "/api/projects?archived=1" ? Promise.resolve({ projects: [{
       id: "archived-project", street: "Archived Street", suburb: null, postcode: null, agencyName: null, agentName: null,
       stageKey: "awaiting_raw", shootDate: null, coverAssetId: null, receivedCount: 4, expectedCount: null, priority: null,
@@ -237,7 +240,8 @@ describe("Dashboard Kanban sort control", () => {
     }], board: { contractEnabled: true, orderedProjectIdsByStage: { awaiting_raw: ["archived-project"] } } }) : Promise.resolve({ stages: [] }));
     await act(async () => { root!.render(<Dashboard currentUserId="admin-1" />); await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(100); await Promise.resolve(); });
     await vi.waitFor(() => expect(document.querySelector('[data-testid="board-card"]')).not.toBeNull());
-    expect(document.querySelector('[data-testid="board-card-wrap"] [data-testid="board-card-deadline"]')?.textContent).toContain("Overdue Wed 1 Jan · 11:00");
+    expect(document.querySelector('[data-testid="board-card-wrap"] [data-testid="board-card-deadline"]')?.textContent).toBe("Due Wed 1 Jan · 11:00");
+    expect(document.querySelector('[data-testid="board-card-wrap"] [data-testid="late-chip"]')?.textContent).toMatch(/^\d+ days late$/);
   });
 
   // The Display menu replaced the Kanban sort `Select` (#427). The old `Select`'s ten release-blocking
