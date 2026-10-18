@@ -44,12 +44,24 @@ vi.mock("./lib/api", () => ({
 vi.mock("./lib/stages", () => ({ StagesProvider: ({ children }: { children: unknown }) => children }));
 // #427: the search field is the Dashboard toolbar's now, so the stand-in Dashboard mounts the REAL
 // `DashboardSearch`, wired to the shell's ⌘K request exactly the way the real Dashboard wires it.
+// #923 D2: by default the stand-in is a plain page that does NOT claim the shell's header, so the
+// header, breadcrumb and Sheet tests below exercise `ShellHeader` itself. With `dashboardMock.viewBar`
+// set it mounts the REAL `DashboardViewBar`, which claims the header the way the real Dashboard does.
+const dashboardMock = vi.hoisted(() => ({ viewBar: false }));
 vi.mock("./screens/Dashboard", async () => {
   const { useMemo } = await import("react");
   const { DashboardSearch } = await import("./components/quincy/DashboardSearch");
+  const { DashboardViewBar } = await import("./screens/DashboardViewBar");
   return {
     Dashboard: ({ currentUserId, searchFocusSignal = null, onSearchFocusHandled }: { currentUserId: string; searchFocusSignal?: number | null; onSearchFocusHandled?: (signal: number) => void }) => {
       const request = useMemo(() => (searchFocusSignal === null ? null : { signal: searchFocusSignal }), [searchFocusSignal]);
+      if (dashboardMock.viewBar) {
+        return (
+          <main>
+            <DashboardViewBar renderedView="board" canViewProductionCalendar canCreateProject disabled={false} onSelectView={() => undefined} principalId={currentUserId} searchFocusRequest={request} onSearchFocusHandled={onSearchFocusHandled ?? (() => undefined)} />
+          </main>
+        );
+      }
       return <main>Dashboard<DashboardSearch principalId={currentUserId} focusRequest={request} onFocusRequestHandled={onSearchFocusHandled} /></main>;
     },
   };
@@ -157,6 +169,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  dashboardMock.viewBar = false;
   if (root) await act(async () => root!.unmount());
   root = null;
   document.body.replaceChildren();
@@ -1044,5 +1057,65 @@ describe("ShellRoute's draft-from-URL sync (#217 build, step 3)", () => {
     });
 
     expect(searchInput()!.value).toBe("");
+  });
+});
+
+// #923 D2: the Dashboard's view bar is the only row above the view. While it is mounted the shell
+// draws no header; below 772px the bar hosts the nav trigger and the bell instead.
+describe("the Dashboard draws the shell's chrome in its own view bar (#923 D2)", () => {
+  beforeEach(() => { dashboardMock.viewBar = true; });
+
+  const viewBar = (host: ParentNode) => host.querySelector('[data-testid="dashboard-view-bar"]');
+
+  it("wide: no shell header and no breadcrumb on the Dashboard; the rail keeps the bell", async () => {
+    const host = await renderAt("/?view=board");
+    expect(viewBar(host)).not.toBeNull();
+    expect(host.querySelector('[data-testid="shell-header"]')).toBeNull();
+    expect(host.querySelector('[data-testid="shell-breadcrumb"]')).toBeNull();
+    expect(viewBar(host)!.querySelector('[data-testid="shell-header-sheet-trigger"]')).toBeNull();
+    expect(host.querySelectorAll('[data-testid="rail-notifications"]')).toHaveLength(1);
+    expect(viewBar(host)!.querySelector('[data-testid="rail-notifications"]')).toBeNull();
+    expect(host.querySelector('[data-shell-header]')?.getAttribute("data-shell-header")).toBe("page");
+  });
+
+  it("other screens keep the shell header and breadcrumb, and it comes back on leaving the Dashboard", async () => {
+    const host = await renderAt("/?view=board");
+    expect(host.querySelector('[data-testid="shell-header"]')).toBeNull();
+    const notices = [...host.querySelectorAll<HTMLAnchorElement>('[data-testid="navigation-rail-link"]')].find((a) => a.textContent?.trim() === "Notice board")!;
+    await click(notices);
+    await tick();
+    expect(window.location.pathname).toBe("/notices");
+    expect(host.querySelector('[data-testid="shell-breadcrumb"] [aria-current="page"]')?.textContent?.trim()).toBe("Notice board");
+    expect(host.querySelector('[data-shell-header]')?.getAttribute("data-shell-header")).toBe("shell");
+  });
+
+  it("below 772px: the nav trigger and the one bell sit in the view bar's row, and the trigger opens the navigation", async () => {
+    const host = await renderAt("/?view=board");
+    await resizeTo(390);
+    await tick();
+    expect(host.querySelector('[data-testid="shell-header"]')).toBeNull();
+    const row = host.querySelector('[data-testid="dashboard-view-row"]')!;
+    const trigger = row.querySelector<HTMLButtonElement>('[data-testid="shell-header-sheet-trigger"]');
+    expect(trigger).not.toBeNull();
+    expect(host.querySelectorAll('[data-testid="rail-notifications"]')).toHaveLength(1);
+    expect(row.querySelector('[data-testid="rail-notifications"]')).not.toBeNull();
+    // Nav first, bell last, as the shell header drew them.
+    expect(row.firstElementChild!.contains(trigger)).toBe(true);
+    expect(row.lastElementChild!.querySelector('[data-testid="rail-notifications"]')).not.toBeNull();
+
+    await click(trigger!);
+    await tick();
+    expect(document.querySelector('[data-testid="rail-sheet"]')).not.toBeNull();
+  });
+
+  it("⌘K on the narrow Dashboard opens the search behind its icon and focuses the field", async () => {
+    const host = await renderAt("/?view=board");
+    await resizeTo(390);
+    await tick();
+    expect(host.querySelector<HTMLElement>('[data-testid="dashboard-search-row"]')!.hidden).toBe(true);
+    await keydown(window, { key: "k", metaKey: true });
+    await tick();
+    expect(host.querySelector<HTMLElement>('[data-testid="dashboard-search-row"]')!.hidden).toBe(false);
+    expect(document.activeElement).toBe(searchInput());
   });
 });

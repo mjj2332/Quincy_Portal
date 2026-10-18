@@ -12,6 +12,7 @@ import {
 } from "@/components/reui/breadcrumb";
 import { SheetTrigger } from "@/components/reui/sheet";
 import { InternalLink } from "../InternalLink";
+import { cn } from "../../lib/utils";
 import { NotificationBell } from "./NotificationBell";
 import { buildStaffBreadcrumb, type StaffNavigation } from "../../lib/staff-navigation";
 import type { RailMode } from "../../lib/shell-rail";
@@ -31,6 +32,9 @@ import type { RailMode } from "../../lib/shell-rail";
  * - **Narrow** (`sheet`): the Sheet's own `SheetTrigger` in place of the toggle, the same
  *   breadcrumb, and the bell — the one thing collapse below 772px must not cost is an unread count
  *   nobody can see, and there is no rail on screen to hold it there.
+ * - **Not at all on the Dashboard** (#923 D2, ADR 0015 amendment): while a page that draws the
+ *   chrome in its own row is mounted, `RailedShell` renders no header; that page hosts
+ *   `ShellNavTrigger` and the bell itself when narrow.
  *
  * The trigger is a real `SheetTrigger`, not a plain button: `RailedShell`'s `Sheet` wraps both the
  * rail slot and this content column in one Root, so this header and `RailSheet`'s popup are
@@ -54,6 +58,24 @@ export type ShellHeaderProps = {
   navigation: StaffNavigation;
 };
 
+/**
+ * The narrow shell's navigation trigger: the Sheet's own `SheetTrigger`, 44px. Exported for the one
+ * page that draws the shell's chrome in its own top row (#923 D2: the Dashboard's view bar, see
+ * `useShellChromeInPage` in `RailedShell.tsx`). It must render inside `RailedShell`'s Sheet Root,
+ * which wraps the whole content column, so any page under the shell can host it.
+ */
+export function ShellNavTrigger({ className }: { className?: string }) {
+  return (
+    <SheetTrigger
+      data-testid="shell-header-sheet-trigger"
+      aria-label="Open navigation"
+      render={<Button variant="ghost" size="icon" className={cn("size-[44px]", className)} />}
+    >
+      <PanelLeftIcon />
+    </SheetTrigger>
+  );
+}
+
 // Tempo's `bullet-separator.tsx`: a short painted bar between crumbs instead of a chevron.
 function BulletSeparator() {
   return <span className="inline-flex h-0.5 w-2 shrink-0 rounded-full bg-foreground/30" />;
@@ -76,15 +98,7 @@ export function ShellHeader({ mode, navigation }: ShellHeaderProps) {
       className="shell-header sticky top-0 h-[var(--shell-header-height)] flex items-center gap-2 bg-background"
       data-testid="shell-header"
     >
-      {narrow && (
-        <SheetTrigger
-          data-testid="shell-header-sheet-trigger"
-          aria-label="Open navigation"
-          render={<Button variant="ghost" size="icon" className="size-[44px]" />}
-        >
-          <PanelLeftIcon />
-        </SheetTrigger>
-      )}
+      {narrow && <ShellNavTrigger />}
 
       <Breadcrumb aria-label="Breadcrumb" data-testid="shell-breadcrumb">
         <BreadcrumbList>

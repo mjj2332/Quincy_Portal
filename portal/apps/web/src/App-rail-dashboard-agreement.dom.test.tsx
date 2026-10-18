@@ -379,18 +379,21 @@ async function clickRailChild(_host: ParentNode, text: string) {
   await settle();
 }
 
-/** The rail's own claim, post-#426: the Dashboard ICON is the current destination
- * (`aria-current="page"` on the top-level link), and the view it stands for is the breadcrumb's
- * last segment. Null while the Dashboard icon is not current (another screen is showing). */
+/** The chrome's claim of the current view. Post-#426 the rail's Dashboard ICON is the current
+ * destination (`aria-current="page"` on the top-level link). Until #923 the view it stood for was
+ * the breadcrumb's last segment; since #923 D2 the shell draws no header on the Dashboard, so the
+ * only thing on screen that names the view is the view bar's selected tab, which reads the view the
+ * Dashboard RENDERS. Null while the Dashboard icon is not current (another screen is showing). */
 function activeRailChild(host: ParentNode): string | null {
   const dashboard = [...host.querySelectorAll<HTMLElement>('[data-testid="navigation-rail-link"]')]
     .find((link) => link.getAttribute("href")?.startsWith("/?") || link.getAttribute("href") === "/");
   if (dashboard?.getAttribute("aria-current") !== "page") return null;
-  return lastBreadcrumbSegment(host);
+  return dashboardViewControlActive(host);
 }
 
 /** The breadcrumb's own claim — the last crumb, which `ShellHeader`/`reui/breadcrumb.tsx` render
- * with `aria-current="page"` and no link. */
+ * with `aria-current="page"` and no link. #923 D2: never drawn while the Dashboard is mounted, so
+ * on the Dashboard there is no second claim of the view to drift from the first. */
 function lastBreadcrumbSegment(host: ParentNode): string | null {
   return host.querySelector('[data-testid="shell-breadcrumb"] [aria-current="page"]')?.textContent?.trim() ?? null;
 }
@@ -447,7 +450,7 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
 
     expect(currentUrl()).toBe("/?view=board");
     expect(activeRailChild(host)).toBe("Board");
-    expect(lastBreadcrumbSegment(host)).toBe("Board");
+    expect(lastBreadcrumbSegment(host), "no shell breadcrumb on the Dashboard (#923 D2)").toBeNull();
     expect(host.querySelector('[data-testid="dashboard-board"]')).not.toBeNull();
     expect(host.textContent).toContain("1 Active Street");
     expect(host.textContent).not.toContain("9 Archived Street");
@@ -461,7 +464,7 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
 
     expect(currentUrl().startsWith("/?view=calendar")).toBe(true);
     expect(activeRailChild(host)).toBe("Calendar");
-    expect(lastBreadcrumbSegment(host)).toBe("Calendar");
+    expect(lastBreadcrumbSegment(host), "no shell breadcrumb on the Dashboard (#923 D2)").toBeNull();
     expect(host.querySelector('[data-testid="event-calendar-body"]')).not.toBeNull();
     expect(host.textContent).not.toContain("9 Archived Street");
   });
@@ -476,7 +479,7 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
     expect(host.textContent).toContain("1 Active Street");
     expect(host.textContent).not.toContain("9 Archived Street");
     expect(activeRailChild(host)).toBe("Table");
-    expect(lastBreadcrumbSegment(host)).toBe("Table");
+    expect(lastBreadcrumbSegment(host), "no shell breadcrumb on the Dashboard (#923 D2)").toBeNull();
   });
 
   it("1d — a history arrival at an explicit Kanban URL carrying Archived: Only shows the archived Board and everything agrees", async () => {
@@ -495,7 +498,7 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
 
     expect(currentUrl()).toBe("/?view=board&archived=only");
     expect(activeRailChild(host)).toBe("Board");
-    expect(lastBreadcrumbSegment(host)).toBe("Board");
+    expect(lastBreadcrumbSegment(host), "no shell breadcrumb on the Dashboard (#923 D2)").toBeNull();
     expect(host.querySelector('[data-testid="dashboard-board"]')).not.toBeNull();
     expect(host.textContent).toContain("9 Archived Street");
     expect(host.textContent).not.toContain("1 Active Street");
@@ -512,7 +515,7 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
 
     expect(host.querySelector('[data-testid="dashboard-board"]')).not.toBeNull();
     expect(activeRailChild(host)).toBe("Board");
-    expect(lastBreadcrumbSegment(host)).toBe("Board");
+    expect(lastBreadcrumbSegment(host), "no shell breadcrumb on the Dashboard (#923 D2)").toBeNull();
 
     await clickButtonLabelled(host, "Table");
 
@@ -532,7 +535,7 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
     expect(window.localStorage.getItem("quincy:dashboard:view")).toBe("table");
     expect(host.querySelector('[data-testid="dashboard-board"]')).not.toBeNull();
     expect(activeRailChild(host)).toBe("Board");
-    expect(lastBreadcrumbSegment(host)).toBe("Board");
+    expect(lastBreadcrumbSegment(host), "no shell breadcrumb on the Dashboard (#923 D2)").toBeNull();
 
     await act(async () => { window.history.forward(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     await settle();
@@ -540,7 +543,7 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
     expect(currentUrl()).toBe("/?view=table");
     expect(host.querySelector('[data-testid="dashboard-board"]')).toBeNull();
     expect(activeRailChild(host)).toBe("Table");
-    expect(lastBreadcrumbSegment(host)).toBe("Table");
+    expect(lastBreadcrumbSegment(host), "no shell breadcrumb on the Dashboard (#923 D2)").toBeNull();
   });
 
   it("lifecycle — navigating to a project and back leaves no stale active child, and the store clears on unmount", async () => {
@@ -629,7 +632,7 @@ describe("the rail and the Dashboard agree about the current view (#119)", () =>
       // once it runs; the Dashboard has settled on a real, renderable view and the rail agrees.
       expect(currentUrl()).toBe("/");
       expect(readDashboardView()).not.toBe("none");
-      expect(activeRailChild(host)).toBe(dashboardViewControlActive(host));
+      expect(activeRailChild(host), "the rail's Dashboard icon is current and the view bar names a view").not.toBeNull();
     } finally {
       unsubscribe();
     }
@@ -675,12 +678,12 @@ describe("archive entry, Back navigation, StrictMode and unmount keep the rail a
     await act(async () => { window.history.back(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     await settle();
 
-    // Whatever the Dashboard's own reconciliation lands on here, the rail's active child and the
-    // breadcrumb's last segment must name the SAME branch that actually rendered.
+    // Whatever the Dashboard's own reconciliation lands on here, the view bar must name the SAME
+    // branch that actually rendered, and no shell breadcrumb may make a second claim (#923 D2).
     const branch = renderedDashboardBranch(host);
     const expectedLabel = branch === "table" ? "Table" : branch === "board" ? "Board" : branch === "calendar" ? "Calendar" : null;
     expect(activeRailChild(host)).toBe(expectedLabel);
-    expect(lastBreadcrumbSegment(host)).toBe(expectedLabel);
+    expect(lastBreadcrumbSegment(host), "no shell breadcrumb on the Dashboard (#923 D2)").toBeNull();
     // A real Back always lands on the pushed `/?view=board` anchor this test itself set up — the
     // URL is a fact about where Back went, not a further guess, so it is checked against that
     // literal address rather than re-derived from `branch` the way the rail/breadcrumb checks are.
@@ -741,7 +744,7 @@ describe("#152 — a route change mid-interaction releases the barriers the unmo
     expect(currentUrl()).toBe("/?view=table");
     expect(renderedDashboardBranch(host)).toBe("table");
     expect(activeRailChild(host)).toBe("Table");
-    expect(lastBreadcrumbSegment(host)).toBe("Table");
+    expect(lastBreadcrumbSegment(host), "no shell breadcrumb on the Dashboard (#923 D2)").toBeNull();
     expect(readDashboardView()).toBe("table");
     expect(apiPutMock).not.toHaveBeenCalled();
 
@@ -749,7 +752,7 @@ describe("#152 — a route change mid-interaction releases the barriers the unmo
     expect(currentUrl()).toBe("/?view=board");
     expect(renderedDashboardBranch(host)).toBe("board");
     expect(activeRailChild(host)).toBe("Board");
-    expect(lastBreadcrumbSegment(host)).toBe("Board");
+    expect(lastBreadcrumbSegment(host), "no shell breadcrumb on the Dashboard (#923 D2)").toBeNull();
 
     await enterArchived("board");
     expect(host.textContent).toContain("9 Archived Street");
@@ -775,7 +778,7 @@ describe("#152 — a route change mid-interaction releases the barriers the unmo
     expect(currentUrl()).toBe("/?view=table");
     expect(renderedDashboardBranch(host)).toBe("table");
     expect(activeRailChild(host)).toBe("Table");
-    expect(lastBreadcrumbSegment(host)).toBe("Table");
+    expect(lastBreadcrumbSegment(host), "no shell breadcrumb on the Dashboard (#923 D2)").toBeNull();
     expect(readDashboardView()).toBe("table");
     expect(tabDisabled(viewButton(host, "Table"))).toBe(false);
     expect(tabDisabled(viewButton(host, "Board"))).toBe(false);
@@ -807,7 +810,7 @@ describe("#152 — a route change mid-interaction releases the barriers the unmo
     expect(currentUrl()).toBe("/?view=table");
     expect(renderedDashboardBranch(host)).toBe("table");
     expect(activeRailChild(host)).toBe("Table");
-    expect(lastBreadcrumbSegment(host)).toBe("Table");
+    expect(lastBreadcrumbSegment(host), "no shell breadcrumb on the Dashboard (#923 D2)").toBeNull();
     expect(readDashboardView()).toBe("table");
   });
 
@@ -828,7 +831,7 @@ describe("#152 — a route change mid-interaction releases the barriers the unmo
     expect(currentUrl()).toBe("/?view=table");
     expect(renderedDashboardBranch(host)).toBe("table");
     expect(activeRailChild(host)).toBe("Table");
-    expect(lastBreadcrumbSegment(host)).toBe("Table");
+    expect(lastBreadcrumbSegment(host), "no shell breadcrumb on the Dashboard (#923 D2)").toBeNull();
     expect(readDashboardView()).toBe("table");
     expect(tabDisabled(viewButton(host, "Table"))).toBe(false);
     expect(tabDisabled(viewButton(host, "Board"))).toBe(false);

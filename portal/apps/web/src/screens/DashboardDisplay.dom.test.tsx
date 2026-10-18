@@ -44,7 +44,7 @@ function Bar({ principalId, role = "admin", view = "table", sortDisabled = false
     : view === "board" ? <BoardDisplayContent value={sort} onChange={setSort} stages={DEFAULT_STAGES} disabled={sortDisabled} /> : undefined;
   return (
     <div>
-      <DashboardViewBar renderedView={view} canViewProductionCalendar disabled={false} onSelectView={() => undefined} principalId={principalId} searchFocusRequest={null} onSearchFocusHandled={() => undefined} display={display} />
+      <DashboardViewBar renderedView={view} canViewProductionCalendar canCreateProject={false} disabled={false} onSelectView={() => undefined} principalId={principalId} searchFocusRequest={null} onSearchFocusHandled={() => undefined} display={display} />
       <output data-testid="prefs">{JSON.stringify(prefs)}</output>
       <output data-testid="sort">{sort}</output>
     </div>
@@ -171,7 +171,7 @@ describe("Display menu content and Table preferences (#431)", () => {
   });
 
   it("a view with no slot disables Display (#470)", async () => {
-    await render(<DashboardViewBar renderedView="none" canViewProductionCalendar disabled={false} onSelectView={() => undefined} principalId="u1" searchFocusRequest={null} onSearchFocusHandled={() => undefined} />);
+    await render(<DashboardViewBar renderedView="none" canViewProductionCalendar canCreateProject={false} disabled={false} onSelectView={() => undefined} principalId="u1" searchFocusRequest={null} onSearchFocusHandled={() => undefined} />);
     expect(displayTrigger()!.disabled).toBe(true);
     expect(document.getElementById(displayTrigger()!.getAttribute("aria-describedby") ?? "")?.textContent).toBe("No display options for this view");
   });
@@ -196,7 +196,7 @@ describe("Calendar and Timeline Display content (#430)", () => {
   });
 
   const bar = (display: React.ReactNode, view: "calendar" | "timeline") => (
-    <DashboardViewBar renderedView={view} canViewProductionCalendar disabled={false} onSelectView={() => undefined} principalId="u1" searchFocusRequest={null} onSearchFocusHandled={() => undefined} display={display} />
+    <DashboardViewBar renderedView={view} canViewProductionCalendar canCreateProject={false} disabled={false} onSelectView={() => undefined} principalId="u1" searchFocusRequest={null} onSearchFocusHandled={() => undefined} display={display} />
   );
   const render = async (node: React.ReactNode) => { await act(async () => { root.render(node); await Promise.resolve(); }); };
   const checked = (items: HTMLElement[]) => items.map((item) => [item.textContent, item.getAttribute("aria-checked")]);
