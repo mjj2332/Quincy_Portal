@@ -299,8 +299,13 @@ function DateTimeDraft({ label, value, clearable, reminders, seed, facts, feedba
   );
 }
 
-/** The native date picker's and the time picker's height: the prototype's 48px fields (`.m-field .box`). */
-const PHONE_FIELD = "h-[var(--space-7)] text-[length:var(--text-base)]";
+/**
+ * The native date and time pickers (`.m-field .box`): the prototype's 48px field (`--space-7`, as a fixed height and the minimum
+ * both), filling the column and never wider. iOS draws `type="date"`/`"time"` with its own intrinsic width and height unless the
+ * native appearance is off (`appearance-none`), and its value box keeps a min-height and centring of its own (reset with the
+ * `::-webkit-date-and-time-value` rules). 16px type so iOS does not zoom on focus.
+ */
+const PHONE_FIELD = "block h-[var(--space-7)] min-h-[var(--space-7)] max-[721px]:min-h-[var(--space-7)] w-full min-w-0 max-w-full appearance-none py-0 text-start text-[length:var(--text-base)] [&::-webkit-date-and-time-value]:m-0 [&::-webkit-date-and-time-value]:min-h-0 [&::-webkit-date-and-time-value]:text-start";
 
 /**
  * M5's body: Date, Time (native pickers, so iOS raises no keyboard), then the reminders, the facts and the feedback, scrolling;
@@ -328,12 +333,14 @@ function PhoneDraft({ bodyRef, zoneId, day, time, onDay, onTime, hint, gapMessag
   const dateId = useId();
   const timeId = useId();
   return <div className="flex min-h-0 flex-1 flex-col" data-testid="deadline-phone-form">
-    <div ref={bodyRef} className="grid min-h-0 flex-1 content-start gap-[var(--space-4)] overflow-y-auto overscroll-contain px-[var(--space-4)] pt-[var(--space-1)] pb-[var(--space-5)]">
-      <Field>
+    {/* One column that may shrink below its content (`minmax(0,1fr)`): an `auto` track grows to a native picker's intrinsic width,
+        pushing the fields past the drawer's right edge. */}
+    <div ref={bodyRef} className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] content-start gap-[var(--space-4)] overflow-y-auto overscroll-contain px-[var(--space-4)] pt-[var(--space-1)] pb-[var(--space-5)]">
+      <Field className="min-w-0">
         <FieldLabel htmlFor={dateId}>Date</FieldLabel>
         <Input id={dateId} type="date" className={PHONE_FIELD} value={day ?? ""} aria-describedby={zoneId} onChange={(event) => onDay(event.target.value)} />
       </Field>
-      <Field data-invalid={gapMessage ? true : undefined}>
+      <Field className="min-w-0" data-invalid={gapMessage ? true : undefined}>
         <FieldLabel htmlFor={timeId}>Time</FieldLabel>
         <Input id={timeId} type="time" step={60} className={PHONE_FIELD} value={time ?? ""} aria-invalid={gapMessage ? true : undefined} aria-describedby={zoneId} onChange={(event) => onTime(event.target.value)} />
         <FieldDescription id={zoneId} className="text-[length:var(--text-xs)]">{SYDNEY_TIME_ZONE}</FieldDescription>

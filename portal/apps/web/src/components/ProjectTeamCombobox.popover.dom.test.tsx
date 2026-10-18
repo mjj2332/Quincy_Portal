@@ -325,6 +325,58 @@ describe("ProjectTeamCombobox popover presentation (#914 D3)", () => {
   });
 });
 
+// #914 D3 (browser pass): Base UI scrolls the first selected option into view as the list opens (`useListNavigation`'s
+// `forceScrollIntoView`); measured at 129px in the 320px popup, it hid the Photographers heading under the search. The list opens at
+// its top instead. The stub stands in for the browser's scroll: happy-dom has no `scrollIntoView`.
+function stubOpenScroll() {
+  const calls: Element[] = [];
+  const original = (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  HTMLElement.prototype.scrollIntoView = function scrollIntoView(this: HTMLElement) {
+    calls.push(this);
+    for (let element: HTMLElement | null = this.parentElement; element; element = element.parentElement) element.scrollTop = 129;
+  };
+  return { calls, restore: () => { if (original) HTMLElement.prototype.scrollIntoView = original as never; else delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView; } };
+}
+async function frames(count: number) {
+  for (let index = 0; index < count; index += 1) await act(async () => { await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined))); });
+}
+
+describe("the Team list opens at its top (#914 D3, M6)", () => {
+  it("popover: the selected person is not scrolled into view on open; the first group heading shows", async () => {
+    const stub = stubOpenScroll();
+    try {
+      await mount([eliMember]);
+      await openPicker();
+      await frames(4);
+      expect(stub.calls.length, "the open-time scroll this guards against").toBeGreaterThan(0);
+      const list = document.querySelector<HTMLElement>('[data-slot="combobox-list"]')!;
+      expect(list.scrollTop).toBe(0);
+    } finally { stub.restore(); }
+  });
+
+  it("inline: the list and its scroller open at the top", async () => {
+    const stub = stubOpenScroll();
+    try {
+      await mount([eliMember], { presentation: "inline" });
+      await waitFor(() => expect(options().length).toBeGreaterThan(0));
+      await frames(4);
+      expect(stub.calls.length).toBeGreaterThan(0);
+      const list = document.querySelector<HTMLElement>('[data-slot="combobox-list"]')!;
+      for (let element: HTMLElement | null = list; element && element !== host; element = element.parentElement) expect(element.scrollTop, element.className).toBe(0);
+    } finally { stub.restore(); }
+  });
+
+  it("leaves a scroll the person makes alone", async () => {
+    await mount([eliMember]);
+    await openPicker();
+    await frames(1);
+    const list = document.querySelector<HTMLElement>('[data-slot="combobox-list"]')!;
+    await act(async () => { list.dispatchEvent(new WheelEvent("wheel", { bubbles: true })); list.scrollTop = 40; });
+    await frames(4);
+    expect(list.scrollTop).toBe(40);
+  });
+});
+
 // #914 D2 "Manage" / M6: the same grouped picker drawn in place.
 describe("ProjectTeamCombobox inline presentation (#914 D2, M6)", () => {
   it("renders the search and grouped list with no popup or trigger, and a pick still sets the role from its group", async () => {
@@ -343,6 +395,24 @@ describe("ProjectTeamCombobox inline presentation (#914 D2, M6)", () => {
     await flush(2);
     expect(apiPutMock).toHaveBeenCalledWith(`/api/projects/${projectId}/photographers/${photographer.id}`);
     expect(document.querySelector('[role="listbox"]')).not.toBeNull();
+  });
+
+  it("M6 `fill`: the helper line scrolls with the results instead of staying pinned under them", async () => {
+    await act(async () => {
+      host = document.createElement("div"); document.body.appendChild(host);
+      queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      runtime = new ProjectQueryRuntime(queryClient);
+      root = createRoot(host);
+      root.render(<ProjectQueryRuntimeProvider runtime={runtime}><QueryClientProvider client={queryClient}>
+        <ProjectTeamCombobox presentation="inline" fill projectId={projectId} members={[eliMember]} canEdit />
+      </QueryClientProvider></ProjectQueryRuntimeProvider>);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(options().length).toBeGreaterThan(0));
+    const helper = [...host.querySelectorAll("p")].find((element) => element.textContent?.startsWith("The group you pick from"))!;
+    const scroller = document.querySelector<HTMLElement>('[data-slot="combobox-list"]')!.parentElement!;
+    expect(scroller.className).toContain("overflow-y-auto");
+    expect(scroller.contains(helper)).toBe(true);
   });
 
   it("is a named read-only group with the names when archived, and asks for no candidates", async () => {

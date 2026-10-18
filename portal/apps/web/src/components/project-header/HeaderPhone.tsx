@@ -79,7 +79,7 @@ export function HeaderPhone({ project, currentStageKey, stages, crumb, tabs, inf
   return <>
     <div ref={slimRef} className="project-phone__slim" data-testid="project-header-slim" data-on={slim ? "" : undefined} inert={!slim}>
       <Button type="button" variant="ghost" aria-label={name} aria-haspopup="dialog" aria-expanded={infoOpen} data-twin="info"
-        className="h-auto min-h-[44px] min-w-0 flex-1 justify-start gap-[var(--space-2)] px-0 text-foreground [font:var(--weight-regular)_var(--text-md)/1_var(--font-display)]"
+        className="h-auto min-h-[44px] min-w-0 flex-1 justify-start gap-[var(--space-2)] px-0 normal-case tracking-normal text-foreground [font:var(--weight-regular)_var(--text-md)/1_var(--font-display)]"
         onClick={openInfo}>
         <span className="truncate">{project.street}</span><ChevronDownIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
       </Button>
@@ -96,9 +96,10 @@ export function HeaderPhone({ project, currentStageKey, stages, crumb, tabs, inf
             <ChevronDownIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
           </div>
           <p className="m-0 flex min-w-0 items-center gap-[var(--space-2)] overflow-hidden whitespace-nowrap text-foreground-secondary [font:var(--type-label)]" data-testid="project-header-phone-sub">
-            <span className="inline-flex items-center gap-[var(--space-2)]"><StageDot stageKey={currentStageKey} />{stageLabel}</span>
-            {due && <>{META_DOT}<span className={DUE_TONE[due.tone]} data-tone={due.tone}>{due.label}</span></>}
-            {hasNotes && <>{META_DOT}<span className="inline-flex items-center gap-[var(--space-1)] text-foreground"><NotebookPenIcon aria-hidden="true" className="size-3.5" />Notes</span></>}
+            {/* The Stage label gives way (an ellipsis) before the due date and the Notes marker do. */}
+            <span className="inline-flex min-w-0 items-center gap-[var(--space-2)]"><StageDot stageKey={currentStageKey} /><span className="truncate" data-testid="project-header-phone-stage">{stageLabel}</span></span>
+            {due && <>{META_DOT}<span className={cn("shrink-0", DUE_TONE[due.tone])} data-tone={due.tone}>{due.label}</span></>}
+            {hasNotes && <>{META_DOT}<span className="inline-flex shrink-0 items-center gap-[var(--space-1)] text-foreground" data-testid="project-header-phone-notes"><NotebookPenIcon aria-hidden="true" className="size-3.5" />Notes</span></>}
           </p>
           <Button type="button" variant="ghost" aria-label={name} aria-haspopup="dialog" aria-expanded={infoOpen} data-twin="info"
             className="absolute inset-0 h-auto rounded-[var(--radius-sm)] p-0 hover:bg-transparent aria-expanded:bg-transparent" onClick={openInfo} />

@@ -698,4 +698,39 @@ describe("the phone header inside the Project sheet (#914 M1, M2)", () => {
     expect(info()!.querySelector('[role="group"][aria-label^="Stage: "]')).not.toBeNull();
     expect(info()!.querySelector('[data-testid="project-info-details"]')).toBeNull();
   });
+
+  // #870 / owner decision (browser pass): on the phone Social overlays is the Status group's last row, pushing a view with the picker.
+  it("makes Social overlays the last Status row, naming the overlays, and pushes a view holding the picker", async () => {
+    authState.role = "admin";
+    const reel = { id: "22222222-2222-4222-8222-222222222222", name: "Instagram Reel", platformLabel: "Instagram", isDefault: true, archivedAt: null };
+    const fallback = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string, init?: unknown) => path.endsWith("/video-review") ? Promise.resolve({ open: true, parts: [] })
+      : path.endsWith("/social-overlays") ? Promise.resolve({ available: [reel], selected: [reel], resolved: [], revision: "0".repeat(64) })
+      : fallback(path, init));
+    await renderSheet();
+    await openInfo();
+    await flushUntil(() => row("overlays") !== null, "the Social overlays row");
+    const status = info()!.querySelector<HTMLElement>('[data-testid="project-info-status"]')!;
+    expect(status.lastElementChild).toBe(row("overlays"));
+    await flushUntil(() => row("overlays")!.getAttribute("aria-label") === "Social overlays: Instagram Reel", "the row to name the overlays");
+    expect(info()!.querySelector('[data-testid="project-social-overlays"]'), "no picker in the info view").toBeNull();
+    expect([...info()!.querySelectorAll("h3")].map((heading) => heading.textContent)).not.toContain("Social overlays");
+    await click(row("overlays")!);
+    expect(info()!.getAttribute("data-view")).toBe("overlays");
+    expect(document.activeElement).toBe(back());
+    await flushUntil(() => info()!.querySelector('[data-testid="project-social-overlays"]') !== null, "the picker in the pushed view");
+    await click(back()!);
+    expect(document.activeElement).toBe(row("overlays"));
+  });
+
+  it("gives no Social overlays row while video review is closed", async () => {
+    authState.role = "admin";
+    const fallback = apiGetMock.getMockImplementation()!;
+    apiGetMock.mockImplementation((path: string, init?: unknown) => path.endsWith("/video-review") ? Promise.resolve({ open: false, parts: [] }) : fallback(path, init));
+    await renderSheet();
+    await openInfo();
+    await flush(20);
+    expect(row("overlays")).toBeNull();
+    expect(apiGetMock.mock.calls.some(([path]) => String(path).endsWith("/social-overlays"))).toBe(false);
+  });
 });

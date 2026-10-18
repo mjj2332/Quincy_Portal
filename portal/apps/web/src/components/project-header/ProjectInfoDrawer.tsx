@@ -19,7 +19,7 @@ import { ProjectSocialOverlayPicker } from "../quincy/ProjectSocialOverlayPicker
 import { useCopyProjectLink } from "../quincy/CopyProjectLinkButton";
 import { useShowInDestinations } from "../quincy/ProjectShowIn";
 import { deadlineCountdown } from "../../lib/deadline-due-in";
-import { useVideoReviewQuery, type ProjectDetail, type ProjectMember } from "../../lib/project-data";
+import { useProjectSocialOverlaysQuery, useVideoReviewQuery, type ProjectDetail, type ProjectMember } from "../../lib/project-data";
 import type { useStages } from "../../lib/stages";
 import type { ShowInDestination } from "../../lib/project-show-in";
 import { KEYBOARD_MIN_PX, useVisualViewport } from "../../lib/use-visual-viewport";
@@ -30,7 +30,7 @@ import type { ProjectInfoPanelProps } from "./ProjectInfoPanel";
 import { noteWhiteboardOpener } from "./whiteboard-opener";
 
 /** The views Project info pushes on the phone (M3–M6). */
-export type DrawerView = "info" | "stage" | "deadline" | "team" | "dropbox";
+export type DrawerView = "info" | "stage" | "deadline" | "team" | "overlays" | "dropbox";
 
 /** What the phone Stage view's move reports (the settled plan): it returns to Project info only on `saved`. */
 export type StageMoveOutcome = "saved" | "cancelled" | "failed" | "archived";
@@ -138,8 +138,9 @@ export function ProjectInfoDrawer(props: ProjectInfoDrawerProps) {
   const teamInputRef = useRef<HTMLInputElement>(null);
   const rows = useRef<Partial<Record<DrawerView, HTMLElement | null>>>({});
   const editable = canEdit && !archived;
+  const overlays = props.overlays;
   // A view that is no longer allowed (the read-only edge, a capability gone) gives way to the info view in this very render.
-  const allowed: Record<DrawerView, boolean> = { info: true, stage: stage.canMove, deadline: editable, team: editable, dropbox: props.dropbox !== null };
+  const allowed: Record<DrawerView, boolean> = { info: true, stage: stage.canMove, deadline: editable, team: editable, overlays: overlays !== null && overlays.canEdit && !archived, dropbox: props.dropbox !== null };
   const view: DrawerView = allowed[requested] ? requested : "info";
   // Each opening starts at the info view.
   useLayoutEffect(() => { if (!props.open) setRequested("info"); }, [props.open]);
@@ -190,6 +191,18 @@ export function ProjectInfoDrawer(props: ProjectInfoDrawerProps) {
       <ViewNav title="Team" backRef={backRef} onBack={pop} />
       <ProjectTeamCombobox presentation="inline" fill projectId={project.id} members={project.members} canEdit={canEdit} archived={archived} inputRef={teamInputRef} onArchivedRefusal={() => props.latchArchived("team", false)} />
     </>;
+  } else if (view === "overlays" && overlays) {
+    content = <>
+      <ViewNav title="Social overlays" backRef={backRef} onBack={pop} />
+      <div className={cn(VIEW_BODY, "px-[var(--space-4)] pt-[var(--space-2)]")}>
+        {/* The refusal takes this view away (the latch), so focus goes to the Status row: "inside" is true. */}
+        <VideoReviewGate projectId={project.id} role={overlays.role}>
+          <div data-testid="project-header-social-overlays">
+            <ProjectSocialOverlayPicker key={project.id} projectId={project.id} role={overlays.role} canEdit={overlays.canEdit} archived={archived} onArchivedRefusal={() => props.latchArchived("social-overlays", true)} />
+          </div>
+        </VideoReviewGate>
+      </div>
+    </>;
   } else if (view === "dropbox" && props.dropbox) {
     content = <>
       <ViewNav title="Dropbox" backRef={backRef} onBack={pop} />
@@ -201,7 +214,7 @@ export function ProjectInfoDrawer(props: ProjectInfoDrawerProps) {
     content = <>
       <InfoHead street={project.street} place={props.place} />
       <div className={VIEW_BODY} data-testid="project-info-body">
-        <InfoView {...props} editable={editable} rowRef={rowRef} onPush={push} onOpenWhiteboard={props.onOpenWhiteboard ? openWhiteboard : undefined} />
+        <InfoView {...props} overlays={overlays} editable={editable} rowRef={rowRef} onPush={push} onOpenWhiteboard={props.onOpenWhiteboard ? openWhiteboard : undefined} />
       </div>
     </>;
   }
@@ -218,9 +231,10 @@ export function ProjectInfoDrawer(props: ProjectInfoDrawerProps) {
       viewportProps={{ ref: setViewport, className: "absolute z-[40]" }}
       // 96px from the top (M3), 64px with the keyboard up (M6), on the warm paper with the 14px top radius. No `height` in the
       // transition (the vendor eases it over 450ms), so the 96 -> 64 switch never lags behind the keyboard. `focus-visible:!outline-none`:
-      // initialFocus lands on the popup itself (#607, container-focus.guard).
+      // initialFocus lands on the popup itself (#607, container-focus.guard). The vendor's bleed (the 3rem it paints under the popup,
+      // seen while the keyboard drops: iOS resizes the visual viewport only once it is down) takes the popup's paper, not the popover white.
       className={cn(
-        "absolute z-[40] max-h-none transition-[transform,opacity,filter] border-border bg-background text-foreground shadow-[var(--shadow-lg)] focus-visible:!outline-none data-[swipe-direction=down]:rounded-t-[var(--radius-lg)]",
+        "absolute z-[40] max-h-none transition-[transform,opacity,filter] [--drawer-bleed-background:var(--background)] border-border bg-background text-foreground shadow-[var(--shadow-lg)] focus-visible:!outline-none data-[swipe-direction=down]:rounded-t-[var(--radius-lg)]",
         keyboard ? "h-[calc(100%-var(--space-8))]" : "h-[calc(100%-var(--space-9))]",
       )}
     >
@@ -236,7 +250,7 @@ export function ProjectInfoDrawer(props: ProjectInfoDrawerProps) {
  * shoot, Files (Dropbox), then the actions (Open whiteboard first). Rows that open a view are buttons with a chevron; read-only
  * rows are plain and focusable only by script (a refusal's focus target).
  */
-function InfoView({ project, archived, latch, canEdit, canAdminBackend, stage, stageRowRef, deadlineSectionRef, overlays, dropbox, editable, rowRef, onPush, onOpenWhiteboard, activeTab, latchArchived }: ProjectInfoDrawerProps & {
+function InfoView({ project, archived, latch, canEdit, canAdminBackend, stage, stageRowRef, deadlineSectionRef, overlaysSectionRef, overlays, dropbox, editable, rowRef, onPush, onOpenWhiteboard, activeTab }: ProjectInfoDrawerProps & {
   editable: boolean;
   rowRef: (name: DrawerView) => (element: HTMLElement | null) => void;
   onPush: (view: Exclude<DrawerView, "info">) => void;
@@ -266,10 +280,10 @@ function InfoView({ project, archived, latch, canEdit, canAdminBackend, stage, s
   return <>
     <h3 className={GROUP_LABEL}>Status</h3>
     <div className={GROUP} data-testid="project-info-status">
-      <StatusRow name="Stage" label={`Stage: ${stageLabel}`} offered={stage.canMove} rowRef={(element) => { rowRef("stage")(element); assign(stageRowRef, element); }} onPush={() => onPush("stage")} value={stageValue} />
-      <StatusRow name="Deadline" label={schedule.deadline ? `Deadline: ${deadlineChipDate(schedule.deadline.localCivil)}` : editable ? "Deadline: set deadline" : "Deadline: not set"} offered={editable} rowRef={(element) => { rowRef("deadline")(element); assign(deadlineSectionRef, element); }} onPush={() => onPush("deadline")} value={deadlineValue} />
-      <StatusRow name="Team" label={people.length ? `Team: ${people.map((member) => member.name || member.email).join(", ")}` : "Team: nobody assigned"} offered={editable} rowRef={rowRef("team")} onPush={() => onPush("team")} value={teamValue} />
-      {overlays && <OverlaysRow projectId={project.id} role={overlays.role} canEdit={overlays.canEdit} archived={archived} onArchivedRefusal={() => latchArchived("social-overlays", false)} />}
+      <StatusRow id="stage" name="Stage" label={`Stage: ${stageLabel}`} offered={stage.canMove} rowRef={(element) => { rowRef("stage")(element); assign(stageRowRef, element); }} onPush={() => onPush("stage")} value={stageValue} />
+      <StatusRow id="deadline" name="Deadline" label={schedule.deadline ? `Deadline: ${deadlineChipDate(schedule.deadline.localCivil)}` : editable ? "Deadline: set deadline" : "Deadline: not set"} offered={editable} rowRef={(element) => { rowRef("deadline")(element); assign(deadlineSectionRef, element); }} onPush={() => onPush("deadline")} value={deadlineValue} />
+      <StatusRow id="team" name="Team" label={people.length ? `Team: ${people.map((member) => member.name || member.email).join(", ")}` : "Team: nobody assigned"} offered={editable} rowRef={rowRef("team")} onPush={() => onPush("team")} value={teamValue} />
+      {overlays && <VideoReviewGate projectId={project.id} role={overlays.role}><OverlaysRow projectId={project.id} role={overlays.role} offered={overlays.canEdit && !archived} rowRef={(element) => { rowRef("overlays")(element); assign(overlaysSectionRef, element); }} onPush={() => onPush("overlays")} /></VideoReviewGate>}
     </div>
     {(latch === "deadline" || latch === "stage") && <p role="status" className={cn(ARCHIVED_HEADER_NOTICE_CLASS, "px-[calc(var(--space-4)+var(--space-1))] pt-[var(--space-2)]")}>Read-only while archived. Restore the project before changing it.</p>}
     {notes && <>
@@ -301,14 +315,15 @@ function assign<T>(ref: Ref<T> | undefined, value: T) {
   else if (ref) (ref as { current: T }).current = value;
 }
 
-function StatusRow({ name, label, offered, rowRef, onPush, value }: { name: string; label: string; offered: boolean; rowRef: (element: HTMLElement | null) => void; onPush: () => void; value: ReactNode }) {
+function StatusRow({ id, name, label, offered, rowRef, onPush, value, termClassName }: { id: string; name: string; label: string; offered: boolean; rowRef: (element: HTMLElement | null) => void; onPush: () => void; value: ReactNode; termClassName?: string }) {
+  const term = <span className={cn(ROW_TERM, termClassName)}>{name}</span>;
   if (!offered) {
-    return <div ref={rowRef} tabIndex={-1} role="group" aria-label={label} className={ROW_STATIC} data-header-value={name.toLowerCase()}>
-      <span className={ROW_TERM}>{name}</span>{value}<span aria-hidden="true" className="w-[18px] shrink-0" />
+    return <div ref={rowRef} tabIndex={-1} role="group" aria-label={label} className={ROW_STATIC} data-header-value={id}>
+      {term}{value}<span aria-hidden="true" className="w-[18px] shrink-0" />
     </div>;
   }
-  return <Button ref={rowRef} type="button" variant="ghost" className={ROW_BUTTON} aria-label={label} data-testid={`project-info-${name.toLowerCase()}-row`} onClick={onPush}>
-    <span className={ROW_TERM}>{name}</span>{value}<ChevronRightIcon aria-hidden="true" className={ROW_CHEVRON} />
+  return <Button ref={rowRef} type="button" variant="ghost" className={ROW_BUTTON} aria-label={label} data-testid={`project-info-${id}-row`} onClick={onPush}>
+    {term}{value}<ChevronRightIcon aria-hidden="true" className={ROW_CHEVRON} />
   </Button>;
 }
 
@@ -319,13 +334,26 @@ function StaticRow({ term, value }: { term: string; value: ReactNode }) {
   </div>;
 }
 
-/** #870 / settled decision: the Social overlays picker as the Status group's last row, only while the Video review gate is open. */
-function OverlaysRow({ projectId, role, canEdit, archived, onArchivedRefusal }: { projectId: string; role: Role; canEdit: boolean; archived: boolean; onArchivedRefusal: () => void }) {
-  const open = useVideoReviewQuery(projectId, true, role).data?.open === true;
-  if (!open) return null;
-  return <div className={cn(ROW, "block py-[var(--space-3)] pe-[var(--space-4)]")} data-testid="project-header-social-overlays">
-    <ProjectSocialOverlayPicker key={projectId} projectId={projectId} role={role} canEdit={canEdit} archived={archived} onArchivedRefusal={onArchivedRefusal} />
-  </div>;
+/**
+ * #870: the Social overlays row and view exist only while the Video review gate is open (its routes answer 404 when it is closed),
+ * as the desktop section. Its own component, so the gate query runs only for roles that can see Social overlays.
+ */
+function VideoReviewGate({ projectId, role, children }: { projectId: string; role: Role; children: ReactNode }) {
+  return useVideoReviewQuery(projectId, true, role).data?.open === true ? children : null;
+}
+
+/**
+ * #870 / owner decision: Social overlays as the Status group's last row (behind `VideoReviewGate`), the offered overlays as its value. It pushes a view holding the picker; read-only, it is a plain row. The term takes its
+ * own width: "Social overlays" does not fit the 92px term column.
+ */
+function OverlaysRow({ projectId, role, offered, rowRef, onPush }: { projectId: string; role: Role; offered: boolean; rowRef: (element: HTMLElement | null) => void; onPush: () => void }) {
+  const data = useProjectSocialOverlaysQuery(projectId, true, role).data;
+  // What the picker's own trigger reads: the chosen overlays (else "Default overlay") where it edits, what applies (else "None") read-only.
+  const names = !data ? null
+    : offered ? data.selected.filter((choice) => choice.archivedAt === null).map((choice) => choice.name).join(", ") || "Default overlay"
+    : data.resolved.map((overlay) => overlay.name).join(", ") || "None";
+  const value = <span className={ROW_VALUE}><span className="truncate" data-testid="project-info-overlays-value">{names ?? ""}</span></span>;
+  return <StatusRow id="overlays" name="Social overlays" termClassName="w-auto whitespace-nowrap" label={names ? `Social overlays: ${names}` : "Social overlays"} offered={offered} rowRef={rowRef} onPush={onPush} value={value} />;
 }
 
 /** `.acts`: Open whiteboard across the top, then Edit project details (or Restore or delete, #455), Copy link, Calendar, Timeline. */

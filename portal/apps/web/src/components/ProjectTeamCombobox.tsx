@@ -540,6 +540,46 @@ function teamPickerRootProps({ groups, value, onValueChange }: Pick<TeamPickerPr
 
 const TEAM_PICKER_FOOT = "The group you pick from sets the person’s role. Pick a checked person again to remove them.";
 
+/** How many frames after the list mounts `OpenAtTop` keeps it at its top: Base UI's open-time scroll lands within the first one or two. */
+const OPEN_AT_TOP_FRAMES = 6;
+const PERSON_SCROLL_EVENTS = ["pointerdown", "wheel", "touchstart", "keydown"] as const;
+
+/**
+ * #914 D3 / M6 (browser pass): the Team list opens at its top. As the list opens Base UI scrolls the first selected option into
+ * view (`useListNavigation`'s open-time `forceScrollIntoView`, no prop turns it off), which hid the first group heading and half a row
+ * under the search. For the first frames after it mounts this puts every scroller from the list up to `bound` back at the top,
+ * and stops at the person's first press, wheel, touch or key (a scroll they make, or arrowing to an option, is theirs). Typing a
+ * query resets the list to its top in Base UI already.
+ */
+function OpenAtTop({ bound }: { bound: string }) {
+  const marker = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const start = marker.current;
+    const root = start?.closest<HTMLElement>(bound) ?? start?.closest<HTMLElement>('[data-testid="project-team-control"]') ?? null;
+    if (!start || !root) return;
+    let frame = 0;
+    let left = OPEN_AT_TOP_FRAMES;
+    let touched = false;
+    const touch = () => { touched = true; };
+    for (const type of PERSON_SCROLL_EVENTS) root.addEventListener(type, touch, { capture: true, passive: true });
+    const reset = () => {
+      if (touched) return;
+      const list = root.querySelector<HTMLElement>('[data-slot="combobox-list"]');
+      for (let element: HTMLElement | null = list; element; element = element === root ? null : element.parentElement) {
+        if (element.scrollTop !== 0) element.scrollTop = 0;
+      }
+      left -= 1;
+      if (left > 0) frame = requestAnimationFrame(reset);
+    };
+    reset();
+    return () => {
+      cancelAnimationFrame(frame);
+      for (const type of PERSON_SCROLL_EVENTS) root.removeEventListener(type, touch, { capture: true });
+    };
+  }, [bound]);
+  return <span ref={marker} hidden />;
+}
+
 /** D3 / M6's grouped list: Photographers, then Editors; each row an avatar, the name, the email and role, and its own state. */
 function TeamGroupedList({ chipProps, pending, listClassName }: Pick<TeamPickerProps, "chipProps" | "pending"> & { listClassName?: string }) {
   return <>
@@ -592,6 +632,7 @@ function TeamPopoverView({ contentRef, triggerRef, ...props }: TeamPickerProps &
       {candidatesError}
       <ComboboxInput ref={inputRef} showTrigger={false} placeholder="Search people…" aria-label="Search people" disabled={inputDisabled} aria-invalid={inputDisabled ? true : undefined} />
       <TeamGroupedList {...props} />
+      <OpenAtTop bound='[data-slot="combobox-content"]' />
       {messages}
       <p className={cn(TEAM_POPOVER_META, "border-t border-border px-[var(--space-3)] pt-[var(--space-2)] pb-[var(--space-3)]")}>{TEAM_PICKER_FOOT}</p>
     </ComboboxContent>
@@ -609,9 +650,20 @@ function TeamInlineView({ fill = false, ...props }: TeamPickerProps & { fill?: b
       {candidatesError}
       {/* M6: 16px type in the search, or iOS zooms the page on focus. */}
       <ComboboxInput ref={inputRef} showTrigger={false} placeholder="Search people…" aria-label="Search people" disabled={inputDisabled} aria-invalid={inputDisabled ? true : undefined} className={fill ? "mx-[var(--space-4)] shrink-0 min-h-[44px] *:text-[length:var(--text-base)]" : undefined} />
-      <div className={fill ? "grid min-h-0 flex-1 overflow-y-auto overscroll-contain px-[var(--space-2)]" : "grid"}><TeamGroupedList {...props} listClassName={fill ? "max-h-none overflow-visible" : undefined} /></div>
-      {messages}
-      <p className={cn(TEAM_POPOVER_META, fill && "shrink-0 px-[var(--space-4)] pb-[max(var(--space-4),env(safe-area-inset-bottom))]")}>{TEAM_PICKER_FOOT}</p>
+      {/* M6 (browser pass): in the phone Team view the helper line scrolls with the results, so with the keyboard up the results
+          get the room rather than a pinned line. */}
+      {fill
+        ? <div className="grid min-h-0 flex-1 content-start overflow-y-auto overscroll-contain px-[var(--space-2)]">
+          <TeamGroupedList {...props} listClassName="max-h-none overflow-visible" />
+          {messages}
+          <p className={cn(TEAM_POPOVER_META, "px-[var(--space-2)] pt-[var(--space-3)] pb-[max(var(--space-4),env(safe-area-inset-bottom))]")}>{TEAM_PICKER_FOOT}</p>
+        </div>
+        : <>
+          <div className="grid"><TeamGroupedList {...props} /></div>
+          {messages}
+          <p className={TEAM_POPOVER_META}>{TEAM_PICKER_FOOT}</p>
+        </>}
+      <OpenAtTop bound={fill ? '[data-slot="drawer-content"]' : '[data-testid="project-team-control"]'} />
     </div>
   </Combobox>;
 }
