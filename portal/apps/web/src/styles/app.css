@@ -73,6 +73,9 @@
 /* #112's `ShellHeader`: sticky stacking and impersonation banner offset. */
 .shell-header { z-index: 75; }
 .app--impersonating .shell-header { top: var(--impersonation-banner-height); }
+/* #923 D2: while the Dashboard is mounted it draws the shell's chrome in its own view bar and the shell
+   renders no header (`RailedShell.tsx`, `data-shell-header`), so nothing below sits under one. */
+[data-shell-header="page"] { --shell-header-height: 0px; }
 /* #363: a page that fills the viewport and scrolls inside itself (the Dashboard's `page--fill`).
    Keyed on the page being MOUNTED, not on the route, so the Project sheet (#366) that floats over a
    live Dashboard keeps it. Unlayered like the rest of this block: `.app`'s min-height, the vendored

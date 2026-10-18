@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from "react";
 
 import { Sheet } from "@/components/reui/sheet";
 import { SidebarProvider } from "@/components/reui/sidebar";
@@ -52,6 +52,31 @@ import { ShellHeader } from "./ShellHeader";
  * focus the shell just gave it. Every other close restores focus to the trigger as usual.
  */
 
+/**
+ * #923 D2 (ADR 0015 amendment): a page can draw the shell's chrome in its own top row. The Dashboard
+ * does: its view bar is the only row above the view, so the shell renders no header (no breadcrumb,
+ * no 50px row) while it is mounted, and when narrow the bar hosts the nav trigger and the bell.
+ *
+ * Keyed on the page being MOUNTED, never on the route: the Dashboard stays mounted as the backdrop
+ * under the Project sheet (#366), and a route-keyed rule would bring the header back and shift the
+ * Dashboard down the moment the sheet opens (`app.css`'s `.app:has(.page--fill)` is the precedent).
+ * The claim is made in a layout effect, so the header is gone before the first paint.
+ */
+type ShellChrome = { mode: RailMode; claimHeader: () => () => void };
+const ShellChromeContext = createContext<ShellChrome | null>(null);
+
+/**
+ * Claims the shell's header for the calling page while it is mounted and returns the shell's mode
+ * (`"sheet"` when narrow: the page must then host `ShellNavTrigger` and the bell), or `null` outside a
+ * `RailedShell` (a page rendered on its own in a test), where nothing is claimed.
+ */
+export function useShellChromeInPage(): RailMode | null {
+  const chrome = useContext(ShellChromeContext);
+  const claimHeader = chrome?.claimHeader;
+  useLayoutEffect(() => claimHeader?.(), [claimHeader]);
+  return chrome?.mode ?? null;
+}
+
 export type RailedShellProps = {
   navigation: StaffNavigation;
   user: { name?: string | null; email?: string | null };
@@ -75,6 +100,15 @@ export function RailedShell({ navigation, user, shortcutsSuspended = false, onSe
   const skipSheetRestoreRef = useRef(false);
   const sheetOpenRef = useRef(false);
   sheetOpenRef.current = sheetOpen;
+
+  // How many mounted pages draw the chrome themselves (#923 D2); the header renders only at zero.
+  const [headerClaims, setHeaderClaims] = useState(0);
+  const claimHeader = useCallback(() => {
+    setHeaderClaims((count) => count + 1);
+    return () => setHeaderClaims((count) => count - 1);
+  }, []);
+  const chrome = useMemo<ShellChrome>(() => ({ mode, claimHeader }), [mode, claimHeader]);
+  const pageOwnsHeader = headerClaims > 0;
 
   useEffect(() => setSheetOpen(false), [location]);
   useEffect(() => {
@@ -127,9 +161,11 @@ export function RailedShell({ navigation, user, shortcutsSuspended = false, onSe
         "peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-[var(--space-2)]",
       )}
       data-rail-mode={mode}
+      // `styles/app.css`: with no header above the page, every header-relative offset is 0.
+      data-shell-header={pageOwnsHeader ? "page" : "shell"}
     >
-      <ShellHeader mode={mode} navigation={navigation} />
-      {children}
+      {!pageOwnsHeader && <ShellHeader mode={mode} navigation={navigation} />}
+      <ShellChromeContext value={chrome}>{children}</ShellChromeContext>
     </div>
   );
 

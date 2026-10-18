@@ -202,8 +202,16 @@ function tree() {
 async function renderTable() {
   await act(async () => { root.render(tree()); await Promise.resolve(); await Promise.resolve(); });
   await settle();
-  const tab = [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] [role="tab"]')].find((button) => button.textContent === "Table")!;
-  await act(async () => { tab.click(); await Promise.resolve(); });
+  const tab = [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Dashboard view"] [role="tab"]')].find((button) => button.textContent?.trim() === "Table");
+  if (tab) {
+    await act(async () => { tab.click(); await Promise.resolve(); });
+  } else {
+    // #923 4f / 4g: a phone chooses the view from the view bar's picker, not the tabs.
+    const picker = host.querySelector<HTMLButtonElement>('[data-testid="dashboard-view-picker"]')!;
+    await act(async () => { picker.click(); await Promise.resolve(); await Promise.resolve(); });
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((node) => node.textContent?.trim() === "Table")!;
+    await act(async () => { item.click(); await Promise.resolve(); });
+  }
   await settle();
 }
 
