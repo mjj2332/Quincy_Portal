@@ -89,8 +89,12 @@ const PROJECT: GanttProjectRowDto = {
   deadlineVersion: 1,
   editors: [],
   checklist: { completed: 1, total: ROWS.length },
-  permissions: { canEditDeadline: true, canEditChildren: true },
+  permissions: { canEditDeadline: true, canEditChildren: true, canEditTeam: false },
   children: { rows: ROWS, total: ROWS.length, returned: ROWS.length, truncated: false, nextCursor: null },
+  team: [
+    { id: ANIKA.id, name: ANIKA.name, roleLabel: "Editor", isExternal: false, active: true, roleOnProject: "editor" },
+    { id: ROB.id, name: ROB.name, roleLabel: "Photographer", isExternal: false, active: true, roleOnProject: "photographer" },
+  ],
 };
 
 function ganttResponse(projects: GanttProjectRowDto[]) {
@@ -146,6 +150,16 @@ async function choose(host: HTMLElement, value: "stage" | "people") {
 }
 
 const colourOf = (bar: HTMLElement) => bar.style.getPropertyValue("--gantt-event-color");
+
+/** The tree's People column avatars (frame 3b `.av` / `.av.pc`): each named avatar's `--person-color`, "" when neutral. */
+function treeAvatarColours(cell: Element | null): Record<string, string> {
+  if (!cell) throw new Error("no People cell");
+  return Object.fromEntries([...cell.querySelectorAll<HTMLElement>('[role="img"]')]
+    .filter((avatar) => avatar.getAttribute("aria-label"))
+    .map((avatar) => [avatar.getAttribute("aria-label")!, avatar.style.getPropertyValue("--person-color")]));
+}
+const teamCell = (host: HTMLElement) => host.querySelector('[data-testid="gantt-team"]');
+const assigneeCell = (host: HTMLElement, title: string) => host.querySelector(`[aria-label="Assignees for ${title}"]`);
 
 describe("ProductionGantt — Colour by People, frame 3b (#920)", () => {
   let host: HTMLDivElement;
@@ -234,6 +248,20 @@ describe("ProductionGantt — Colour by People, frame 3b (#920)", () => {
     const chips = [...row!.querySelectorAll<HTMLElement>('[data-testid="people-key-chip"]')].map((chip) => chip.textContent);
     expect(chips).toEqual(["ANAnika Nair2 open", "RKRob Keane1 open", "Unassigned1 open"]);
     expect(row!.querySelector("button")).toBeNull();
+  });
+
+  it("People draws the tree's People column avatars in each person's colour; a shared Subtask's stay neutral", async () => {
+    await render(root);
+    expect(treeAvatarColours(teamCell(host))).toEqual({ "Anika Nair": "", "Rob Keane": "" });
+    expect(treeAvatarColours(assigneeCell(host, "HDR blend"))).toEqual({ "Anika Nair": "" });
+    await choose(host, "people");
+    expect(treeAvatarColours(teamCell(host))).toEqual({ "Anika Nair": personColor(ANIKA.id), "Rob Keane": personColor(ROB.id) });
+    expect(treeAvatarColours(assigneeCell(host, "HDR blend"))).toEqual({ "Anika Nair": personColor(ANIKA.id) });
+    expect(treeAvatarColours(assigneeCell(host, "Cull RAWs"))).toEqual({ "Rob Keane": personColor(ROB.id) });
+    expect(treeAvatarColours(assigneeCell(host, "Client revisions"))).toEqual({ "Anika Nair": "", "Rob Keane": "" });
+    await choose(host, "stage");
+    expect(treeAvatarColours(teamCell(host))).toEqual({ "Anika Nair": "", "Rob Keane": "" });
+    expect(treeAvatarColours(assigneeCell(host, "HDR blend"))).toEqual({ "Anika Nair": "" });
   });
 
   it("Stage again restores the Stage look", async () => {

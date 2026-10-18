@@ -203,7 +203,7 @@ import {
   productionStageFilterOptions,
   type ProductionGanttFacetFilters,
 } from "../lib/production-gantt-filters";
-import { doneCount } from "../lib/dashboard-appearance";
+import { doneCount, personColor } from "../lib/dashboard-appearance";
 import { toggleStageInDashboardFilter } from "../lib/dashboard-filter-query";
 import { renderGanttBarContent, renderGanttBarTrailing } from "./ProductionGanttBarContent";
 import { PeopleKeyRow, TimelineColourBySwitch } from "./ProductionGanttColourBy";
@@ -505,6 +505,7 @@ function GanttSubtaskAssigneesCell({
   live,
   busy,
   onCommit,
+  colorFor,
 }: {
   cell: GanttAssigneeCell;
   role: Role;
@@ -512,6 +513,8 @@ function GanttSubtaskAssigneesCell({
   live: boolean;
   busy: boolean;
   onCommit: (cell: GanttAssigneeCell, ids: string[], baseline: AssigneePickerBaseline) => Promise<void>;
+  /** #920: `personColor` in Colour by People (a sole assignee's avatar takes their colour, frame 3b `.av.pc`); absent in Stage. */
+  colorFor?: (personId: string) => string | undefined;
 }) {
   const { row } = cell;
   return (
@@ -529,6 +532,7 @@ function GanttSubtaskAssigneesCell({
                 hiddenCount={row.otherAssigneeCount}
                 disabled={disabled}
                 busy={busy}
+                colorFor={colorFor}
                 onCommit={(ids, _people, baseline) => onCommit(cell, ids, baseline)}
               />
             )}
@@ -537,7 +541,7 @@ function GanttSubtaskAssigneesCell({
       ) : (
         // Read-only and empty renders nothing (the cell stays, so layout does not shift): an empty circle would promise an action the viewer cannot take.
         row.assignees.length > 0 || row.otherAssigneeCount > 0
-          ? <AvatarStack people={row.assignees} hiddenCount={row.otherAssigneeCount} personNoun="Assignee" emptyLabel="Unassigned" />
+          ? <AvatarStack people={row.assignees} hiddenCount={row.otherAssigneeCount} personNoun="Assignee" emptyLabel="Unassigned" colorFor={row.assignees.length === 1 && row.otherAssigneeCount <= 0 ? colorFor : undefined} />
           : null
       )}
     </span>
@@ -1552,6 +1556,8 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
   const resetCreateDraft = useCallback(() => setCreateDraft(EMPTY_CREATE_DRAFT), []);
   const columns = useMemo<GanttColumn[]>(() => {
     const projectFor = (resource: GanttResource) => (resource.id.startsWith("project:") ? projectById.get(resource.id.slice("project:".length)) : undefined);
+    // #920 frame 3b `.av.pc`: in Colour by People the tree's avatars take each person's colour; Stage keeps them neutral.
+    const treeColorFor = colourBy === "people" ? personColor : undefined;
     // Below 1024px: no People/Due columns at all; the row link opens the Project, where both
     // are editable.
     if (namesOnly) return [];
@@ -1562,9 +1568,9 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         width: 88,
         render: ({ resource }) => {
           const assigneeCell = assigneeCellByChecklistResourceId.get(resource.id);
-          if (assigneeCell) return <GanttSubtaskAssigneesCell cell={assigneeCell} role={identity.role} live={live} busy={assigneeBusyIds.has(assigneeCell.row.id)} onCommit={commitAssignees} />;
+          if (assigneeCell) return <GanttSubtaskAssigneesCell cell={assigneeCell} role={identity.role} live={live} busy={assigneeBusyIds.has(assigneeCell.row.id)} onCommit={commitAssignees} colorFor={treeColorFor} />;
           const project = projectFor(resource);
-          return project ? <GestureAwareCell live={live}>{(disabled) => <GanttTeamCell projectId={project.id} street={project.street} team={project.team} canEdit={project.permissions.canEditTeam === true} disabled={disabled} role={identity.role} />}</GestureAwareCell> : null;
+          return project ? <GestureAwareCell live={live}>{(disabled) => <GanttTeamCell projectId={project.id} street={project.street} team={project.team} canEdit={project.permissions.canEditTeam === true} disabled={disabled} role={identity.role} colorFor={treeColorFor} />}</GestureAwareCell> : null;
         },
         // #678: the add-task editor row's People cell, aligned under this column.
         renderCreate: ({ parentId, pending }) => <GanttCreateDraftAssignees projectId={parentId.slice("project:".length)} role={identity.role} draft={createDraft} pending={pending} onChange={changeCreateDraft} />,
@@ -1610,7 +1616,7 @@ export function ProductionGantt({ identity, q, filters: facetFilters, onFiltersC
         renderCreate: ({ parentId, pending }) => <GanttCreateDraftDue draft={createDraft} projectDefault={projectDefaultById.get(parentId.slice("project:".length)) ?? null} pending={pending} onChange={changeCreateDraft} />,
       },
     ];
-  }, [createDraft, changeCreateDraft, projectDefaultById, projectById, live, identity.role, namesOnly, deadlineActionByProjectResourceId, attentionByResourceId, assigneeCellByChecklistResourceId, assigneeBusyIds, commitAssignees, dueEditor, dueEditorSubtaskId, retainedScheduleFor, openDueEditor, commands.submitScheduleEditor, commands.cancelScheduleEditor, dismissScheduleEditor, clearScheduleStash, stashErrorFor]);
+  }, [colourBy, createDraft, changeCreateDraft, projectDefaultById, projectById, live, identity.role, namesOnly, deadlineActionByProjectResourceId, attentionByResourceId, assigneeCellByChecklistResourceId, assigneeBusyIds, commitAssignees, dueEditor, dueEditorSubtaskId, retainedScheduleFor, openDueEditor, commands.submitScheduleEditor, commands.cancelScheduleEditor, dismissScheduleEditor, clearScheduleStash, stashErrorFor]);
 
   // #678: below 1024px there are no People/Due columns to align the draft to, so the vendor stacks these under the title.
   const renderCreateStack = useCallback(({ parentId, pending }: { parentId: string; pending: boolean }) => {
