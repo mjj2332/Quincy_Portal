@@ -3,6 +3,7 @@ import type { Role } from "@quincy/shared";
 import { isCanonicalShootDate } from "../screens/dashboard-helpers";
 import type { ProjectSummary } from "./kanban-interaction";
 import type { PipelineStage } from "./stages";
+import { PHONE_VIEWPORT_QUERY } from "./use-media-query";
 
 /**
  * The Dashboard Table's pure model (#431): column ids, the client-side sort, Group by, and the
@@ -33,8 +34,8 @@ export const TABLE_COLUMN_LABELS: Record<TableColumnId, string> = {
   raw: "RAW received",
 };
 
-/** At or below this width the Table is the phone list (`TablePhoneList.tsx`, frame 4g), not the grid. */
-export const TABLE_NARROW_QUERY = "(max-width: 721px)";
+/** Below 721px (the one phone breakpoint, `PHONE_VIEWPORT_QUERY`) the Table is the phone list (`TablePhoneList.tsx`, frame 4g), not the grid. */
+export const TABLE_NARROW_QUERY = PHONE_VIEWPORT_QUERY;
 
 export type TableGroupBy = "none" | "stage" | "client";
 export const TABLE_GROUP_BY_VALUES: readonly TableGroupBy[] = ["none", "stage", "client"];

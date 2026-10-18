@@ -13,25 +13,25 @@ import { cn } from "../../lib/utils";
 export function DoneProgress({
   done,
   tone,
-  known = true,
+  known,
   className,
 }: {
   done: ProjectAppearance["done"];
   tone: StageTone;
-  /** The Project's `checklist` was present. Leave true where the caller renders only after checking. */
-  known?: boolean;
+  /** The Project's `checklist` was present. Required: a caller must say whether "no `done`" is "No tasks" or unknown. */
+  known: boolean;
   className?: string;
 }) {
   if (!done) {
     return known ? (
-      <span data-testid="done-progress" className={cn("text-xs text-muted-foreground", className)}>
+      <span data-testid="done-progress" className={cn("text-xs text-foreground-secondary", className)}>
         No tasks
       </span>
     ) : null;
   }
   return (
-    <div data-testid="done-progress" className={cn("flex min-w-0 flex-col gap-1", className)} style={{ "--progress-tone": tone.color } as CSSProperties}>
-      <span className="text-xs text-muted-foreground tabular-nums">{done.label}</span>
+    <div data-testid="done-progress" className={cn("flex min-w-0 flex-col gap-[var(--space-1)]", className)} style={{ "--progress-tone": tone.color } as CSSProperties}>
+      <span className="text-xs text-foreground-secondary tabular-nums">{done.label}</span>
       <Progress variant="tone" value={(done.done / done.total) * 100} aria-label={done.label} />
     </div>
   );

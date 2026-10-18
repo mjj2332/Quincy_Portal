@@ -3,16 +3,17 @@
  * already loads and a "now". Both views get their appearance from these two functions and never derive it
  * again (plan § Shared rules and adapters). Pure; the rules themselves live in `dashboard-appearance.ts`.
  *
- * `checklist` is typed structurally so this module does not wait on the API (#923 S0). A missing `checklist`
+ * `checklist` is typed with the shared `ProjectChecklistCounts`. A missing `checklist`
  * means unknown: `done` is `null`, never a "No tasks" count.
  */
+import type { ProjectChecklistCounts } from "@quincy/shared";
 import { doneCount, dueToday, lateLabel, projectLateness, stageTone, type Instant, type Lateness, type StageTone } from "./dashboard-appearance";
 
 export type AppearanceProject = {
   stageKey: string | null | undefined;
   deadlineAt: string | number | null;
   archivedAt?: string | null;
-  checklist?: { completed: number; total: number };
+  checklist?: ProjectChecklistCounts;
 };
 
 export type ProjectAppearance = {

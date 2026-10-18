@@ -18,6 +18,12 @@ function subscribeToMediaQuery(query: string, onStoreChange: () => void): () => 
   };
 }
 
+/**
+ * The one phone breakpoint: exactly what Tailwind's `max-[721px]:` compiles to (width < 721, so 720 is phone and 721
+ * is desktop). Not `(max-width: 721px)`, which also matches 721 and disagrees with the classes at the edge (#914, #692).
+ */
+export const PHONE_VIEWPORT_QUERY = "(width < 721px)";
+
 /** Subscribe to one media-query value with a stable SSR fallback. */
 export function useMediaQuery(query: string): boolean {
   const subscribe = useCallback((onStoreChange: () => void) => subscribeToMediaQuery(query, onStoreChange), [query]);

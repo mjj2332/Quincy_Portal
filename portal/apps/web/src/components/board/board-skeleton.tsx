@@ -1,10 +1,10 @@
 import type { StageKey } from "@quincy/shared";
 import type { PipelineStage } from "../../lib/stages";
-import { stageTone } from "../../lib/dashboard-appearance";
+import { columnLabelKey, stageTone } from "../../lib/dashboard-appearance";
 import { Skeleton } from "../reui/skeleton";
 import { StageLabel } from "../quincy/StageLabel";
 import { StageToneSwatch } from "../quincy/StageKeyRow";
-import { COLUMN_SIZE_CLASS, COLUMN_SURFACE_CLASS, RAIL_SIZE_CLASS, columnLabelKey, semanticStageKey } from "./board-layout";
+import { COLUMN_SIZE_CLASS, COLUMN_SURFACE_CLASS, RAIL_SIZE_CLASS, semanticStageKey } from "./board-layout";
 
 /**
  * Frame 4h's loading Board, which the Dashboard mounts while the one Projects query loads (#923 S5): a column

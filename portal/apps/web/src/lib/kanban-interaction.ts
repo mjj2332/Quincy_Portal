@@ -7,6 +7,7 @@ import {
   stageTransportKeyForRole,
   type MoveProjectStageRequest,
   type MoveProjectStageResponse,
+  type ProjectChecklistCounts,
   type Role,
   type StageKey,
   type StageMoveConfirmationReason,
@@ -55,7 +56,7 @@ export interface ProjectSummary {
    * non-negative with `completed <= total`; `{0,0}` is "No tasks". ABSENT means unknown (an old
    * cached snapshot, an External row, a fixture) and is never read as "No tasks".
    */
-  checklist?: { completed: number; total: number };
+  checklist?: ProjectChecklistCounts;
 }
 
 export type DroppableData =

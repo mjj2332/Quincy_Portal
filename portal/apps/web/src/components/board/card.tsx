@@ -121,9 +121,31 @@ function metaLine(project: ProjectSummary): string | null {
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
+/**
+ * A failed cover's retry (#923): the Table, the phone list and the Board card all keep the same `failed`/`token` pair
+ * and draw the same button above their row link's overlay. `className` adds the caller's spacing.
+ */
+export function useCoverRetry(className?: string) {
+  const [failed, setFailed] = useState(false);
+  const [token, setToken] = useState(0);
+  const retry = (
+    failed ? (
+      <Button
+        type="button"
+        size="xs"
+        variant="secondary"
+        className={`relative z-[1] ${className ?? "mt-[var(--space-2)]"}`}
+        onClick={(event) => { event.preventDefault(); event.stopPropagation(); setFailed(false); setToken((current) => current + 1); }}
+      >
+        Retry cover image
+      </Button>
+    ) : null
+  );
+  return { token, setFailed, retry };
+}
+
 export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisabled = false, canPrioritize = false, priorityPending = false, onPriorityChange, now, handleRef, menu }: KanbanCard2Props) {
-  const [coverFailed, setCoverFailed] = useState(false);
-  const [coverRetry, setCoverRetry] = useState(0);
+  const coverRetry = useCoverRetry("mb-[var(--space-3)]");
   // Delivered and archived Projects are never late (the module's rule), so the card and its column agree.
   const appearance = projectAppearance(project, now ?? Date.now());
   const late = appearance.lateness.late;
@@ -154,7 +176,7 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
   const today = appearance.dueToday && deadlineCivil !== null;
   // Frame 4e `.cd`: the date alone on screen; "Due" is for a screen reader. "Today · 17:00" for a Deadline later today.
   const deadline = deadlineCivil !== null && (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-wrap items-center gap-[var(--space-2)]">
       <time
         className={`inline-flex items-center gap-1.5 whitespace-nowrap text-sm tabular-nums ${late ? "text-late" : "text-foreground"}`}
         data-testid="board-card-deadline"
@@ -173,18 +195,16 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
   // Frame 4e `.cv.th`: 44x30, the 4px corner.
   const cover = (
     <div className="h-7.5 w-11 shrink-0 overflow-hidden rounded-sm bg-[var(--ink-800)]" data-testid="board-card-cover">
-      <CoverMedia project={project} retryToken={coverRetry} onFailedChange={setCoverFailed} placeholderClassName="!text-sm" />
+      <CoverMedia project={project} retryToken={coverRetry.token} onFailedChange={coverRetry.setFailed} placeholderClassName="!text-sm" />
     </div>
   );
   // #923 D1: progress only when the API sent `checklist`; `{0,0}` is "No tasks", absent is nothing.
-  const progress = project.checklist !== undefined && (
-    <DoneProgress done={appearance.done} tone={appearance.tone} known={project.checklist !== undefined} />
-  );
+  const progress = <DoneProgress done={appearance.done} tone={appearance.tone} known={project.checklist !== undefined} />;
   const avatars = hasEditors && (
     // #82: `editors` is already Editor-only, active-only and server-ordered (#79). No Editors, no avatar slot (D4).
     <div className="ml-auto flex shrink-0 items-center" data-testid="board-card-meta"><AvatarStack people={project.editors!} personNoun="Editor" emptyLabel="No Editor assigned" /></div>
   );
-  const panelClass = `flex flex-col gap-2 px-3 pt-3 pb-0 shadow-xs ${late ? LATE_PANEL_CLASS : ""}`;
+  const panelClass = `flex flex-col gap-[var(--space-2)] px-[var(--space-3)] pt-[var(--space-3)] pb-0 shadow-xs ${late ? LATE_PANEL_CLASS : ""}`;
 
   if (isOverlay) {
     // The floating overlay follows the pointer/keyboard focus but is not itself a real card: it must
@@ -194,9 +214,9 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
       <Frame variant="ghost" className="relative p-0" data-testid="board-card-wrap" data-late={late ? "true" : undefined}>
         <FramePanel className={panelClass}>
           <StageEdge tone={appearance.tone} />
-          <div className="pointer-events-none flex flex-col gap-2 pb-3" data-testid="board-card-overlay" aria-hidden="true">
+          <div className="pointer-events-none flex flex-col gap-[var(--space-2)] pb-[var(--space-3)]" data-testid="board-card-overlay" aria-hidden="true">
             {archived && <Badge variant="secondary" size="sm" className="self-start">Archived</Badge>}
-            <div className="flex min-w-0 items-center gap-2.5">
+            <div className="flex min-w-0 items-center gap-[var(--space-3)]">
               {cover}
               <div className="flex min-w-0 flex-1 flex-col gap-px">
                 <span className="truncate text-sm" data-testid="board-card-address">{project.street}</span>
@@ -236,7 +256,7 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
           {/* #428: the Archived filter's Include mode draws archived Projects beside active ones. The card is
               immovable (the Board gates it, `board.tsx`); the link still opens it. */}
           {archived && <Badge variant="secondary" size="sm" className="self-start" data-testid="board-card-archived">Archived</Badge>}
-          <div className="flex min-w-0 items-center gap-2.5" data-testid="board-card-title-row">
+          <div className="flex min-w-0 items-center gap-[var(--space-3)]" data-testid="board-card-title-row">
             {cover}
             <div className="flex min-w-0 flex-1 flex-col gap-px">
               <KanbanItemHandle
@@ -261,7 +281,7 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
               plus the avatars leaves no room for it in a working column, so it sits on its own row above. The
               interactive cells sit flush with the card's bottom edge; a read-only or stars-less row takes the
               bottom gap instead. */}
-          <div className={`relative z-[1] flex items-center gap-2 ${canPrioritize ? "" : "pb-3"}`} data-testid="board-card-footer-slot">
+          <div className={`relative z-[1] flex items-center gap-[var(--space-2)] ${canPrioritize ? "" : "pb-[var(--space-3)]"}`} data-testid="board-card-footer-slot">
             <PriorityStars
               glyph="sm"
               priority={project.priority}
@@ -272,16 +292,7 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
             />
             {avatars}
           </div>
-          {coverFailed && (
-            <Button
-              type="button"
-              variant="secondary"
-              className="relative z-[1] mb-3"
-              onClick={(event) => { event.preventDefault(); event.stopPropagation(); setCoverFailed(false); setCoverRetry((current) => current + 1); }}
-            >
-              Retry cover image
-            </Button>
-          )}
+          {coverRetry.retry}
         </FramePanel>
       </ContextMenuTrigger>
       {binding && <CardContextMenuContent binding={binding} />}

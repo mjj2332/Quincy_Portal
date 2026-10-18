@@ -11,8 +11,8 @@ import { ProjectKanbanBoard2, type ProjectKanbanBoard2Props } from "./board";
 import { BoardSkeleton } from "./board-skeleton";
 import { KanbanCard2 } from "./card";
 import { STAR_GUARD_WINDOW_MS } from "../../lib/star-click-guard";
-import { lateLabel, projectLateness, stageTone } from "../../lib/dashboard-appearance";
-import { stageGroupAppearance } from "../../lib/dashboard-project-appearance";
+import { stageTone } from "../../lib/dashboard-appearance";
+import { projectAppearance, stageGroupAppearance } from "../../lib/dashboard-project-appearance";
 import type { ProjectKanbanBoardProps, ProjectSummary } from "../../lib/kanban-interaction";
 import type { PipelineStage } from "../../lib/stages";
 import { cardMenuTrigger, closeMenus, isMenuItemDisabled, menuItem, menuItems, moveToStage, moveToTrigger, openCardMenu, openContextMenu, openMoveTo, openMoveToSubmenu, stageRadio, stageRadios } from "./board-menu-test-helpers";
@@ -988,13 +988,14 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
   it("draws a late deadline in the late colour with the module's chip, and an on-time one in ink with no chip", async () => {
     const now = Date.parse("2026-10-19T03:00:00.000Z");
     const deadlineAt = Date.parse("2026-10-15T01:00:00.000Z");
-    await renderBoard({ now, projects: [project("source", "awaiting_raw", { deadlineAt, deadlineLocalCivil: "2026-10-15T12:00", deadlineZone: "Australia/Sydney" })] });
+    const late = project("source", "awaiting_raw", { deadlineAt, deadlineLocalCivil: "2026-10-15T12:00", deadlineZone: "Australia/Sydney" });
+    await renderBoard({ now, projects: [late] });
     const time = host.querySelector('[data-testid="board-card-deadline"]')!;
     expect(time.querySelector('[data-testid="board-card-deadline-prefix"]')?.textContent).toBe("Due ");
     expect(time.textContent).toBe("Due Thu 15 Oct · 12:00");
     expect([...time.classList]).toContain("text-late");
     const chip = host.querySelector('[data-testid="board-card-wrap"] [data-testid="late-chip"]');
-    expect(chip?.textContent).toBe(lateLabel(projectLateness({ stageKey: "awaiting_raw", deadlineAt, archived: false }, now)));
+    expect(chip?.textContent).toBe(projectAppearance(late, now).lateLabel);
     expect(chip?.textContent).toBe("4 days late");
     expect(host.querySelector('[data-testid="board-card-wrap"]')!.getAttribute("data-late")).toBe("true");
 
@@ -1611,11 +1612,13 @@ describe("Board card on ReUI frame (#432)", () => {
 
   // #923 D1: progress renders only when the API sent `checklist`; `{0,0}` is "No tasks", absent is nothing.
   it("draws 'N of M done' in the Stage tone, 'No tasks' for none, and nothing when the count is unknown", async () => {
-    await renderBoard({ projects: [project("source", "raw_review", { checklist: { completed: 1, total: 4 } })] });
+    const counted = project("source", "raw_review", { checklist: { completed: 1, total: 4 } });
+    await renderBoard({ projects: [counted] });
     const progress = cardOf().querySelector<HTMLElement>('[data-testid="done-progress"]')!;
     expect(progress.querySelector(":scope > span")?.textContent).toBe("1 of 4 done");
     expect(progress.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("25");
-    expect(progress.style.getPropertyValue("--progress-tone")).toBe(stageTone("raw_review").color);
+    expect(progress.querySelector(":scope > span")?.textContent).toBe(projectAppearance(counted, Date.now()).done?.label);
+    expect(progress.style.getPropertyValue("--progress-tone")).toBe(projectAppearance(counted, Date.now()).tone.color);
     await renderBoard({ projects: [project("source", "raw_review", { checklist: { completed: 0, total: 0 } })] });
     expect(cardOf().querySelector('[data-testid="done-progress"]')?.textContent).toBe("No tasks");
     await renderBoard({ projects: [project("source", "raw_review")] });
@@ -1628,7 +1631,7 @@ describe("Board card on ReUI frame (#432)", () => {
     const edge = (id: string) => cardOf(id).querySelector<HTMLElement>('[data-testid="board-card-edge"]')!;
     expect(edge("source").getAttribute("data-treatment")).toBe("hollow-dashed");
     expect(edge("other").getAttribute("data-treatment")).toBe("solid");
-    expect(edge("other").style.getPropertyValue("--card-tone")).toBe(stageTone("raw_review").color);
+    expect(edge("other").style.getPropertyValue("--card-tone")).toBe(projectAppearance(project("other", "raw_review"), Date.now()).tone.color);
     expect(edge("other").getAttribute("aria-hidden")).toBe("true");
   });
 
@@ -1655,6 +1658,19 @@ describe("Board card on ReUI frame (#432)", () => {
     // The same Project is not late against an earlier clock.
     await renderBoard({ now: deadlineAt - 1000, projects: [project("active", "awaiting_raw", common)] });
     expect(chipOf("active")).toBeNull();
+  });
+
+  it("an Edited review card past its Deadline is late like any working Stage (the module's answer, not the ochre)", async () => {
+    const deadlineAt = Date.parse("2026-09-01T00:00:00.000Z");
+    const now = deadlineAt + 3 * 86_400_000;
+    const review = project("review", "edited_review", { deadlineAt, deadlineLocalCivil: "2026-09-01T10:00", deadlineZone: "Australia/Sydney" });
+    await renderBoard({ now, projects: [review], activeStages: [...stages, { key: "edited_review", label: "Edited review", displayOrder: 4, active: true }] });
+    const appearance = projectAppearance(review, now);
+    expect(appearance.lateness.late).toBe(true);
+    expect(appearance.lateLabel).not.toBeNull();
+    expect(cardOf("review").querySelector('[data-testid="late-chip"]')?.textContent).toBe(appearance.lateLabel);
+    expect(cardOf("review").closest('[data-testid="board-card-wrap"]')?.getAttribute("data-late")).toBe("true");
+    expect(cardOf("review").querySelector<HTMLElement>('[data-testid="board-card-edge"]')!.style.getPropertyValue("--card-tone")).toBe(appearance.tone.color);
   });
 
   it("marks an Archived card, keeps its link, and never lets it be dragged or prioritised (#428, #432)", async () => {

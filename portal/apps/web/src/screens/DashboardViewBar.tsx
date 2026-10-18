@@ -17,7 +17,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "../components/reui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../components/reui/tooltip";
 import { getDashboardSearchSnapshotForPrincipal, subscribeDashboardSearch } from "../lib/dashboard-search-store";
-import { useMediaQuery } from "../lib/use-media-query";
+import { PHONE_VIEWPORT_QUERY, useMediaQuery } from "../lib/use-media-query";
 import { SCROLL_FADE_MASK_CLASSES, useScrollFade } from "../lib/use-scroll-fade";
 import { cn } from "../lib/utils";
 import type { DashboardView } from "./dashboard-helpers";
@@ -177,7 +177,7 @@ export function DashboardViewBar({
 }: DashboardViewBarProps) {
   const shellMode = useShellChromeInPage();
   const narrowShell = shellMode === "sheet";
-  const phone = useMediaQuery("(max-width: 721px)");
+  const phone = useMediaQuery(PHONE_VIEWPORT_QUERY);
   const barRef = useRef<HTMLDivElement>(null);
   const rowRef = useRef<HTMLDivElement>(null);
   const width = useOwnWidth(barRef);

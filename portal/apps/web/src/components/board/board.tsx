@@ -27,12 +27,12 @@ import { EmptyState } from "../quincy/EmptyState";
 import { LateChip } from "../quincy/LateChip";
 import { StageLabel } from "../quincy/StageLabel";
 import { StageToneSwatch } from "../quincy/StageKeyRow";
-import { stageTone } from "../../lib/dashboard-appearance";
+import { columnLabelKey, stageTone } from "../../lib/dashboard-appearance";
 import { InternalLink } from "../InternalLink";
 import { KanbanCard2 } from "./card";
 import { cardMoveTo, moveToChoices } from "./card-actions";
 import type { CardMenuConfig } from "./card-menu";
-import { BOARD_PHONE_QUERY, COLUMN_SIZE_CLASS, COLUMN_SURFACE_CLASS, RAIL_SIZE_CLASS, columnLabelKey, semanticStageKey } from "./board-layout";
+import { BOARD_PHONE_QUERY, COLUMN_SIZE_CLASS, COLUMN_SURFACE_CLASS, RAIL_SIZE_CLASS, semanticStageKey } from "./board-layout";
 
 /**
  * Keyboard drag keys (#432): Space picks a card up, so Enter is free to open it (the card's link is
@@ -442,14 +442,22 @@ export function ProjectKanbanBoard2({
     pillScrollTimer.current = window.setTimeout(() => { pillScrollTimer.current = undefined; }, delay);
   }, []);
   useEffect(() => () => window.clearTimeout(pillScrollTimer.current), []);
-  const columnElement = (stageKey: string) => boardRef.current?.querySelector<HTMLElement>(`[data-testid="board-column"][data-stage-key="${CSS.escape(stageKey)}"]`) ?? null;
+  // Each column registers its element here through the `render` element's ref (merged with dnd-kit's own by
+  // `KanbanColumn`'s `useRender`), so the pills never search the DOM by test id.
+  const columnElements = useRef(new Map<string, HTMLElement>());
+  const columnRef = (stageKey: string) => (element: HTMLElement | null) => {
+    if (element) columnElements.current.set(stageKey, element);
+    else columnElements.current.delete(stageKey);
+  };
+  const columnElement = (stageKey: string) => columnElements.current.get(stageKey) ?? null;
   const selectPill = (stageKey: string) => {
     setPickedStage(stageKey);
     settlePillScroll(600);
     columnElement(stageKey)?.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "nearest", inline: "start" });
   };
   const syncPillToScroll = (viewport: HTMLElement) => {
-    if (dragActive) return;
+    // The pills exist on a phone only; a wide Board's horizontal scroll has nothing to sync.
+    if (!phone || dragActive) return;
     if (pillScrollTimer.current !== undefined) {
       settlePillScroll(150);
       return;
@@ -790,7 +798,7 @@ export function ProjectKanbanBoard2({
                     // but with no `KanbanColumnContent`, so its cards are unmounted while collapsed.
                     const receiving = shownProposal?.targetStageKey === stageKey;
                     return (
-                      <KanbanColumn key={stage.key} id={columnId} value={stage.key} disabled className={`${RAIL_SIZE_CLASS} ${COLUMN_SURFACE_CLASS} ${receiving ? "border-[var(--ink-900)]" : ""}`} data-testid="board-column" data-stage-key={stage.key} data-collapsed="true">
+                      <KanbanColumn key={stage.key} id={columnId} value={stage.key} render={<div ref={columnRef(stage.key)} />} disabled className={`${RAIL_SIZE_CLASS} ${COLUMN_SURFACE_CLASS} ${receiving ? "border-[var(--ink-900)]" : ""}`} data-testid="board-column" data-stage-key={stage.key} data-collapsed="true">
                         {/* Frame 4e `.kcol.rest`: the toggle, the Stage swatch, then the name and count reading upwards. */}
                         <div className="flex h-full flex-col items-center gap-[var(--space-3)] py-[var(--space-2)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] outline-offset-[-2px] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${stageKey}`} tabIndex={-1}>
                           {toggle("Expand", false)}
@@ -799,7 +807,7 @@ export function ProjectKanbanBoard2({
                             {stage.label}
                             <span className="font-mono text-xs tabular-nums text-foreground-secondary" data-testid="board-column-count">{group.count}</span>
                           </span>
-                          {group.lateCount > 0 && <LateChip data-testid="board-column-late" className="h-auto w-6 justify-center px-0 py-[var(--space-2)] [writing-mode:vertical-rl] rotate-180">{group.lateCount} late</LateChip>}
+                          {group.lateCount > 0 && <LateChip size="rail" data-testid="board-column-late">{group.lateCount} late</LateChip>}
                         </div>
                       </KanbanColumn>
                     );
@@ -818,7 +826,7 @@ export function ProjectKanbanBoard2({
                     // `focusDescriptorFor` or `canonicalStageKey`), so a presentation spelling — an Editor
                     // sees `editing` for `editing_autohdr` — would never match, and tier 2 would fall
                     // through to the Board root. The Board this replaced keyed its headings the same way.
-                    <KanbanColumn key={stage.key} id={columnId} value={stage.key} disabled className={`${COLUMN_SIZE_CLASS} ${COLUMN_SURFACE_CLASS} ${shownProposal?.targetStageKey === stageKey ? "border-[var(--ink-900)]" : ""}`} data-testid="board-column" data-stage-key={stage.key}>
+                    <KanbanColumn key={stage.key} id={columnId} value={stage.key} render={<div ref={columnRef(stage.key)} />} disabled className={`${COLUMN_SIZE_CLASS} ${COLUMN_SURFACE_CLASS} ${shownProposal?.targetStageKey === stageKey ? "border-[var(--ink-900)]" : ""}`} data-testid="board-column" data-stage-key={stage.key}>
                       {/* Frame 4e `.kh`: one 44px row, the Stage swatch and name, the count, "N late", then the toggle. */}
                       <div className="flex shrink-0 flex-col border-b border-b-border focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] outline-offset-[-2px] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${stageKey}`} tabIndex={-1}>
                         <div className="flex min-h-11 min-w-0 items-center gap-[var(--space-2)] whitespace-nowrap ps-[var(--space-3)] pe-[var(--space-2)]" data-testid="board-column-title-row">

@@ -26,8 +26,10 @@ Paths are relative to `portal/apps/web/src/` unless they say otherwise.
   - Stars keep `--star-on` / `--star-off` and their 36px (44px on touch) hit cells; only the glyph gets smaller (ADR 0003).
 - **Session defaults** (frames plus both plans):
   - The compact Board card is used everywhere. 4d is not built, and Display has no Card option.
+  - Deadline ascending is the default sort in grouped mode too: within each Stage group (and in flat mode) rows run soonest Deadline first until the viewer picks another header.
   - Table Group by defaults to Stage. A stored explicit choice, `none` included, is kept.
-  - Delivered starts collapsed on both views. `board-collapse-store`: nothing stored means `["delivered"]`; a stored `[]` stays `[]`.
+  - Delivered starts collapsed on the desktop Board and in the Table. `board-collapse-store`: nothing stored means `["delivered"]`; a stored `[]` stays `[]`.
+  - **Phone Board shows Delivered as a full column** (session decision, review 2026-10-19), so a Stage pill always lands on real cards and never on the 48px rail. The stored choice is the viewer's wide-screen preference and is left as it is.
   - The Table Display gains "Show: Delivered projects", default on. This is a viewer preference, not a Filter rule.
   - The RAW column stays as a column you can hide, hidden by default for new viewers.
   - Controls keep `CONTROL_HEIGHT` (38px, 44px on phone), not the prototype's 34px. Prototype sizes that aren't on the token scale snap to the nearest token.

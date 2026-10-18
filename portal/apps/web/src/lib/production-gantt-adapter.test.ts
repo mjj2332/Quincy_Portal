@@ -21,7 +21,6 @@ import { PRODUCTION_GANTT_DRAW_CAP } from "@quincy/shared";
 import { applyGanttAppearance, buildProductionGanttModel, ganttLandingProject, type ProductionGanttAttention, type ProductionGanttEvent, type ProductionGanttRowData } from "./production-gantt-adapter";
 import { doneCount, personColor, projectLateness, stageTone, subtaskLateness } from "./dashboard-appearance";
 import { ganttProjectBarClass, ganttTaskBarClass, type GanttProjectAppearance, type GanttTaskAppearance } from "./production-gantt-appearance-classes";
-import { STAGE_HATCH_CLASS } from "./stage-colors";
 import { endMoment, startMoment } from "@/testing/subtask-schedule";
 import { subtaskReminders } from "@/testing/subtask-schedule";
 
@@ -704,11 +703,11 @@ describe("#919: appearance", () => {
     for (const resource of [model.resources[0]!, ...model.resources[0]!.children!]) expect(resource.color).toBe("var(--stage-editing)");
   });
 
-  it("className comes from the classes module; nothing carries the old hatch", () => {
+  it("className comes from the classes module; no bar carries a striped hatch", () => {
     const task = makeTask({ schedule: rangeSchedule(startMoment("2026-03-02"), endMoment("2026-03-04")) });
     const project = projectWith("edited_review", [task]);
     const model = buildProductionGanttModel([project], { now: LATE_NOW });
-    for (const event of model.events) expect(event.className, event.id).not.toContain(STAGE_HATCH_CLASS);
+    for (const event of model.events) expect(event.className, event.id).not.toContain("repeating-linear-gradient");
     const bar = model.events.find((event) => event.id === `project-bar:${project.id}`)!;
     const appearance = dataOf(bar).appearance;
     expect(appearance && "done" in appearance).toBe(true);

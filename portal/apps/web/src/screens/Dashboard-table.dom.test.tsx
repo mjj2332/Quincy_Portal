@@ -11,13 +11,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pickPopupDay, popupButton } from "@/testing/date-time-popup";
 import { Dashboard } from "./Dashboard";
 import { DashboardTable, TableSkeleton, type DashboardTableProps } from "../components/DashboardTable";
-import { lateLabel, projectLateness, stageTone } from "../lib/dashboard-appearance";
+import { projectAppearance, stageGroupAppearance } from "../lib/dashboard-project-appearance";
 import type { ProjectSummary } from "../lib/kanban-interaction";
 import { chooseGroupBy, columnCheckboxLabels, displayTrigger, groupCheckboxes, openDisplay, toggleColumn } from "./dashboard-display-test-helpers";
 import { ApiError } from "../lib/api";
 import { confirmStore } from "../lib/confirm";
 import { __resetDashboardSearchStoreForTest } from "../lib/dashboard-search-store";
 import { tablePrefsKey } from "../lib/dashboard-table-model";
+import { PHONE_VIEWPORT_QUERY } from "../lib/use-media-query";
 import { ProjectQueryRuntime, ProjectQueryRuntimeProvider } from "../lib/project-query-sync";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -164,7 +165,7 @@ beforeEach(() => {
     },
   });
   window.matchMedia = ((query: string) => ({
-    matches: narrow && query === "(max-width: 721px)", media: query, onchange: null,
+    matches: narrow && query === PHONE_VIEWPORT_QUERY, media: query, onchange: null,
     addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false,
   })) as typeof window.matchMedia;
   window.history.replaceState(null, "", "/");
@@ -547,7 +548,7 @@ describe("narrow screens: the phone list (#923, frame 4g)", () => {
     expect(item.querySelector('[data-testid="project-table-row-link"]')!.textContent).toBe("5/11 Bank Street");
     expect(item.textContent).toContain("North Sydney");
     expect(item.querySelector('[data-testid="project-table-deadline-trigger"]')).not.toBeNull();
-    expect(item.querySelector('[data-testid="late-chip"]')!.textContent).toBe(lateLabel(projectLateness({ stageKey: "awaiting_raw", deadlineAt: PAST, archived: false }, Date.now())));
+    expect(item.querySelector('[data-testid="late-chip"]')!.textContent).toBe(projectAppearance(projects[0]!, Date.now()).lateLabel);
     expect(item.querySelector('[aria-label="Mia Chen"]')).not.toBeNull();
     expect(item.getAttribute("data-late")).toBe("true");
   });
@@ -851,11 +852,10 @@ describe("review fixes (#431)", () => {
 
 const PAST_A = Date.parse("2020-01-01T00:00:00.000Z");
 const PAST_B = Date.parse("2020-03-01T00:00:00.000Z");
-const lateText = (deadlineAt: number) => lateLabel(projectLateness({ stageKey: "awaiting_raw", deadlineAt, archived: false }, Date.now()));
-const daysLate = (deadlineAt: number) => {
-  const lateness = projectLateness({ stageKey: "awaiting_raw", deadlineAt, archived: false }, Date.now());
-  return lateness.late ? lateness.daysLate : 0;
-};
+// The views must show what the appearance module returns for the same row, never a second derivation of it.
+const fixtureRow = (id: string) => roundFourFixture().find((candidate) => candidate.id === id)!;
+const appearanceOf = (id: string) => projectAppearance(fixtureRow(id), Date.now());
+const groupAppearanceOf = (...ids: string[]) => stageGroupAppearance(ids.map(fixtureRow), Date.now());
 
 function roundFourFixture(): Row[] {
   return [
@@ -884,11 +884,14 @@ describe("a new viewer's Table (#923, frame 4b)", () => {
     projects = roundFourFixture();
     await renderTable();
     const groupRow = groupTriggers()[0]!.closest("tr")!;
-    expect(groupRow.querySelector('[data-testid="stage-key-swatch"]')!.getAttribute("data-treatment")).toBe(stageTone("awaiting_raw").treatment);
+    expect(groupRow.querySelector('[data-testid="stage-key-swatch"]')!.getAttribute("data-treatment")).toBe(appearanceOf("a1").tone.treatment);
     expect(groupRow.querySelector('[data-testid="project-table-group-count"]')!.textContent).toBe("3");
-    expect(groupRow.querySelector('[data-testid="project-table-group-late"]')!.textContent).toBe("2 late");
-    expect(groupRow.textContent).toContain(`Oldest late: ${daysLate(PAST_A)} days`);
-    expect(groupRow.textContent).toContain("3 of 6 done");
+    const group = groupAppearanceOf("a1", "a2", "a3");
+    expect(group.lateCount).toBe(2);
+    expect(groupRow.querySelector('[data-testid="project-table-group-late"]')!.textContent).toBe(`${group.lateCount} late`);
+    expect(groupRow.textContent).toContain(`Oldest late: ${group.oldestDaysLate} days`);
+    expect(group.done?.label).toBe("3 of 6 done");
+    expect(groupRow.textContent).toContain(group.done!.label);
     // Editing: no late rows, so no chip and no oldest line; its only row has no Subtasks.
     const editing = groupTriggers()[1]!.closest("tr")!;
     expect(editing.querySelector('[data-testid="project-table-group-late"]')).toBeNull();
@@ -901,20 +904,35 @@ describe("a new viewer's Table (#923, frame 4b)", () => {
     await renderTable();
     await click(groupTriggers()[2]!);
     const project = (id: string) => rowFor(id).querySelector<HTMLElement>('[data-testid="project-table-project"]')!;
-    expect(project("a1").getAttribute("data-late")).toBe("true");
-    expect(rowFor("a1").querySelector('[data-testid="late-chip"]')!.textContent).toBe(lateText(PAST_A));
-    expect(project("a3").getAttribute("data-late")).toBe("false");
+    expect(project("a1").getAttribute("data-late")).toBe(String(appearanceOf("a1").lateness.late));
+    expect(appearanceOf("a1").lateLabel).not.toBeNull();
+    expect(rowFor("a1").querySelector('[data-testid="late-chip"]')!.textContent).toBe(appearanceOf("a1").lateLabel);
+    expect(project("a3").getAttribute("data-late")).toBe(String(appearanceOf("a3").lateness.late));
     expect(rowFor("a3").querySelector('[data-testid="late-chip"]')).toBeNull();
-    expect(project("d1").getAttribute("data-late")).toBe("false");
+    expect(project("d1").getAttribute("data-late")).toBe(String(appearanceOf("d1").lateness.late));
+    expect(appearanceOf("d1").lateness.late).toBe(false);
     expect(rowFor("d1").querySelector('[data-testid="late-chip"]')).toBeNull();
+  });
+
+  it("an Edited review Project past its Deadline is late like any working Stage, drawn in its own tone", async () => {
+    storage.set(tablePrefsKey("user-1"), FLAT_ALL_COLUMNS);
+    projects = [row("r1", { stageKey: "edited_review", deadlineAt: PAST_A, deadlineLocalCivil: "2020-01-01T11:00" })];
+    await renderTable();
+    const appearance = projectAppearance(projects[0]!, Date.now());
+    expect(appearance.lateness.late).toBe(true);
+    expect(appearance.lateLabel).not.toBeNull();
+    expect(rowFor("r1").querySelector('[data-testid="project-table-project"]')!.getAttribute("data-late")).toBe("true");
+    expect(rowFor("r1").querySelector('[data-testid="late-chip"]')!.textContent).toBe(appearance.lateLabel);
+    expect(rowFor("r1").querySelector('[data-testid="stage-label"]')!.getAttribute("data-stage")).toBe(appearance.tone.stage);
   });
 
   it("the Stage cell is the module's swatch and the sentence-case name, autoHDR as a suffix", async () => {
     projects = roundFourFixture();
     await renderTable();
     const stage = rowFor("e1").querySelector<HTMLElement>('[data-testid="stage-label"]')!;
-    expect(stage.getAttribute("data-stage")).toBe(stageTone("editing_autohdr").stage);
-    expect(stage.querySelector<HTMLElement>('[data-testid="stage-key-swatch"]')!.style.getPropertyValue("--swatch-color")).toBe(stageTone("editing_autohdr").color);
+    const { tone } = appearanceOf("e1");
+    expect(stage.getAttribute("data-stage")).toBe(tone.stage);
+    expect(stage.querySelector<HTMLElement>('[data-testid="stage-key-swatch"]')!.style.getPropertyValue("--swatch-color")).toBe(tone.color);
     expect(stage.textContent).toBe("Editing· autoHDR");
     expect(rowFor("a1").querySelector('[data-testid="stage-label"]')!.textContent).toBe("Awaiting RAW");
   });

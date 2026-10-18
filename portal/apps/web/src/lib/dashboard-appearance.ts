@@ -19,6 +19,7 @@
 import type { StagePresentationKey, StageTransportKey } from "@quincy/shared";
 import { sydneyDayKey } from "./date-format";
 import { initials } from "./initials";
+import type { ProjectStageKey } from "./stages";
 import type { ColourBy } from "./timeline-colour-by";
 
 /** An instant as the Dashboard's DTOs carry it: a `Date`, epoch milliseconds, or an ISO string. */
@@ -52,6 +53,15 @@ const STAGE_TONES: Record<StagePresentationKey, StageTone> = {
   edited_review: { stage: "edited_review", color: "var(--stage-edited-review)", treatment: "solid" },
   delivered: { stage: "delivered", color: "var(--stage-delivered)", treatment: "wash" },
 };
+
+/**
+ * The key a Stage COLUMN draws its label with (#923): Editing is one Stage, and "· autoHDR" is a Project's
+ * variant (`StageLabel` adds it for `editing_autohdr`), so an Admin's `editing_autohdr` column reads "Editing".
+ * Lives here, not in `stages.tsx`: that module is the one the DOM suites mock for `useStages`.
+ */
+export function columnLabelKey(value: ProjectStageKey): ProjectStageKey {
+  return value === "editing_autohdr" ? "editing" : value;
+}
 
 /**
  * The tone of a Stage. `editing_autohdr` (the Admin-only transport key) draws as Editing; a missing or
