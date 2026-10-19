@@ -132,7 +132,7 @@ describe("VideoPlayer Social preview (#871)", () => {
     const onMark = vi.fn();
     await mount({
       social: socialOf(), onMark, markers: [{ id: "m", startFrame: 5, endFrame: null, tone: "open" } as never], pendingRange: { startFrame: 1, endFrame: 3 },
-      range: { marks: { in: 2, out: null }, locked: false, clear: () => undefined },
+      range: { marks: { in: 2, out: null }, locked: false },
       overlay: <div data-testid="markup-slot" />,
     });
     expect(byTestId("video-marker-lane")).not.toBeNull();

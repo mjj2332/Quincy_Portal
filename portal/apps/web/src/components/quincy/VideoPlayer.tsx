@@ -27,17 +27,14 @@ import { VideoPendingRangeBand, VideoRangeHandles, VideoTimelineMarkers, type Ti
 export type VideoPlayerVersion = Pick<VideoVersionDto, "streamUrl" | "fps" | "frameCount" | "width" | "height" | "tcNominalFps" | "tcDropFrame" | "startTimecodeFrames" | "hasAudio">;
 
 /**
- * The composer's in / out range as the player draws and edits it (#861): the marks to show, whether the host takes changes right now, and how to
- * clear them. Marking itself goes through `onMark`, the path I and O use, so a host's wrappers run for the button and the handles too.
- * Absent, the player has no range button and no handles.
+ * The composer's in / out range as the player draws and edits it (#861): the marks to show and whether the host takes changes right now.
+ * Marking itself goes through `onMark`, the path I and O use, so a host's wrappers run for the handles too. Since #927 the in / out button
+ * (and its clear) is the composer box's. Absent, the player has no handles.
  */
 export type VideoRangeControl = {
   marks: NoteMarks;
   /** The host takes no change to the marks right now (archived Project, a reply open, a request out, no open composer). The controls stay, disabled. */
   locked: boolean;
-  /** Why it is locked, for the disabled button's tooltip. */
-  hint?: string;
-  clear(): void;
 };
 
 /** For a host that owns the keyboard scope (the review dialog): hands it the player's shortcut handler. True when the key was the player's. */
@@ -141,8 +138,6 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   onMediaError?: () => void;
   /** Drawing: the transport, the scrubber and the player's keys are inert, so nothing moves the frame under the pen. */
   transportLocked?: boolean;
-  /** @deprecated #927 T4: the transport has no host action slot any more (Draw moved into the composer). Accepted and ignored until T6 stops passing it. */
-  transportActions?: ReactNode;
   /** Replaces the whole transport block (scrubber, controls, key legend) in place, under the picture, while the host needs the room (drawing). Never overlaid on the picture. */
   transportReplacement?: ReactNode;
   /**
