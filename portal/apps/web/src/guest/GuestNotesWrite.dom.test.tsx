@@ -1460,7 +1460,8 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     expect(document.activeElement).toBe(area());
     expect(mode()).toBe("compose");
     expect(box()!.getAttribute("data-variant")).toBe("edit");
-    expect(box()!.textContent).toContain("Client-visible");
+    // Owner decision 2026-10-20: the guest's edit shows no visibility label.
+    expect(box()!.textContent).not.toMatch(/Client-visible|Internal/);
     await typeInto(area(), "Reworded");
     await press(button("Save") ?? null);
     expect(patched).toEqual({ expectedRevision: 3, content: para("Reworded") });
