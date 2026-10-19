@@ -12,6 +12,7 @@ import { ArchivedFromCache } from "../../testing/archived-from-cache";
 import "../../testing/dom-polyfills";
 import { resetVideoUploadStore } from "../../lib/video-upload-store";
 import { installVideoElementStub, type VideoElementStub } from "../../testing/video-element";
+import { mockViewport } from "../../testing/viewport";
 import { installLocalStorageShim } from "../../testing/local-storage";
 import { resetUiPrefMemory } from "../../lib/ui-prefs";
 import { TIME_FORMAT_KEY } from "../../lib/time-format-prefs";
@@ -230,7 +231,7 @@ describe("Social preview in the staff viewer (#871, #877)", () => {
     expect(overlayImg()!.getAttribute("src")).toBe(OA.imageUrl);
   });
 
-  it("is not view-only: the composer, the marker lane and the range button stay, I marks, and the typed draft is untouched", async () => {
+  it("is not view-only: the composer, the marker lane stays, there is no range button, I marks, and the typed draft is untouched", async () => {
     await openFilm({}, 12);
     await type(composerText(), "keep me");
     await startSocial();
@@ -238,7 +239,7 @@ describe("Social preview in the staff viewer (#871, #877)", () => {
     expect(composerBox()!.closest("[inert]")).toBeNull();
     expect(tid("video-notes-social-paused")).toBeNull();
     expect(tid("video-marker-lane")).not.toBeNull();
-    expect(tid("video-range-button")).not.toBeNull();
+    expect(tid("video-range-button")).toBeNull();
     await key("i", popup());
     expect(tid("video-pending-band")).not.toBeNull();
     await click(socialToggle()); await flush(2);
@@ -362,6 +363,13 @@ describe("Drawing with Social on (#877)", () => {
     for (const [prop, value] of [["offsetWidth", 800], ["offsetHeight", 800], ["offsetLeft", 0], ["offsetTop", 0]] as const) Object.defineProperty(HTMLElement.prototype, prop, { configurable: true, get: () => value });
   });
   afterEach(() => { for (const prop of ["offsetWidth", "offsetHeight", "offsetLeft", "offsetTop"] as const) delete (HTMLElement.prototype as unknown as Record<string, unknown>)[prop]; });
+  // #927 T4: the player's transport has no Draw button; the pen is the composer's (phone) until T6 gives every width one, so these cases draw on a phone.
+  let phoneViewport: ReturnType<typeof mockViewport>;
+  beforeEach(() => { phoneViewport = mockViewport({ width: 1280 }); });
+  // The Social toggle is in the desktop header and the pen in the phone composer: each case switches between the two.
+  const asPhone = () => phoneViewport.set({ width: 390, coarse: true });
+  const asDesktop = () => phoneViewport.set({ width: 1280, coarse: false });
+  afterEach(() => { phoneViewport.restore(); });
   const drawButton = () => tid("video-markup-toolbar-draw") as HTMLButtonElement | null;
   const layer = () => tid("video-markup-layer") as unknown as SVGSVGElement;
   async function startDrawing(frame = 12) {
@@ -382,6 +390,7 @@ describe("Drawing with Social on (#877)", () => {
   it("Draw is offered, and the markup layer sits in the Social frame on the letterboxed picture, above the artwork", async () => {
     await openFilm({ parts: ["notes", "markup"] }, 12);
     await startSocial();
+    await asPhone();
     expect(drawButton()).not.toBeNull();
     const svg = await startDrawing();
     const markup = tid("video-markup")!;
@@ -395,11 +404,14 @@ describe("Drawing with Social on (#877)", () => {
 
   it("records the same normalised stroke with Social on and off, and rejects one that starts in the letterbox", async () => {
     await openFilm({ parts: ["notes", "markup"] }, 12);
+    await asPhone();
     let svg = await startDrawing();
     const offBox = tid("video-markup")!.style.cssText;
     await stroke(svg, [500, 425], [600, 500]);
     await click(tid("video-markup-done")!);
+    await asDesktop();
     await startSocial();
+    await asPhone();
     svg = await startDrawing();
     expect(tid("video-markup")!.style.cssText).toBe(offBox);
     await stroke(svg, [500, 425], [600, 500]);
@@ -413,9 +425,11 @@ describe("Drawing with Social on (#877)", () => {
 
   it("turning Social on or off while drawing keeps the drawing, the strokes and the layer node", async () => {
     await openFilm({ parts: ["notes", "markup"] }, 12);
+    await asPhone();
     const svg = await startDrawing();
     await stroke(svg, [500, 425], [600, 500]);
     expect(items()).toHaveLength(1);
+    await asDesktop();
     await startSocial();
     expect(tid("video-markup")!.dataset.drawing).toBe("true");
     expect(layer()).toBe(svg);

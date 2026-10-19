@@ -1544,8 +1544,9 @@ describe("Time format in the notes (#860)", () => {
   });
 });
 
-describe("In / Out range button and handles (#861)", () => {
+describe("In / Out range handles and keys, no player button (#861, #927)", () => {
   const rangeButton = () => tid("video-range-button", popup()) as HTMLButtonElement | null;
+  const clearMarks = () => tid("video-note-clear-marks") as HTMLButtonElement | null;
   const handle = (kind: "in" | "out") => tid(`video-range-${kind}`, popup());
   const anchor = () => tid("video-note-anchor")!.textContent ?? "";
   const trackRect = (width = 311) => { tid("video-range-handles", popup())!.getBoundingClientRect = () => ({ left: 0, top: 0, width, height: 12, right: width, bottom: 12, x: 0, y: 0, toJSON: () => ({}) }); };
@@ -1555,29 +1556,27 @@ describe("In / Out range button and handles (#861)", () => {
     await act(async () => { target.dispatchEvent(event); });
   }
 
-  it("the button cycles the composer's marks In -> Out -> cleared, and the keys and the button agree", async () => {
+  it("the I and O keys set the composer's marks, Clear marks drops them, and the player has no range button", async () => {
     await openFilm({}, 12);
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set in point");
-    await click(rangeButton()!);
+    expect(rangeButton()).toBeNull();
+    await dispatchKey(popup(), "i");
     expect(anchor()).toContain("In 01:00:00:12");
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set out point");
     await present(20);
-    await click(rangeButton()!);
+    await dispatchKey(popup(), "o");
     expect(anchor()).toContain("Out 01:00:00:20");
     expect(tid("video-pending-band")).not.toBeNull();
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Clear in and out");
-    await click(rangeButton()!);
-    expect(tid("video-note-clear-marks")).toBeNull();
+    await click(clearMarks()!);
+    expect(clearMarks()).toBeNull();
     expect(tid("video-pending-band")).toBeNull();
     await dispatchKey(popup(), "i");
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set out point");
+    expect(anchor()).toContain("In 01:00:00:20");
   });
 
   it("a handle moves its own end only, the pending band follows, and Post sends the exclusive end", async () => {
     await openFilm({}, 12);
-    await click(rangeButton()!);
+    await dispatchKey(popup(), "i");
     await present(20);
-    await click(rangeButton()!);
+    await dispatchKey(popup(), "o");
     trackRect();
     await key("ArrowRight", handle("in")!);
     expect(anchor()).toContain("In 01:00:00:13");
@@ -1599,19 +1598,21 @@ describe("In / Out range button and handles (#861)", () => {
     await openFilm({}, 20);
     await click(tid("video-notes-filter-status-all")!);
     await chooseNoteAction(threadOf(s.n4.id), "Terry", "Edit");
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Clear in and out");
-    await click(rangeButton()!);
+    expect(rangeButton()).toBeNull();
+    expect(tid("video-note-edit-anchor")!.textContent).toContain("→");
+    // With no Clear button, a mark past the other end clears it: In after Out makes the edit a point note, never frameless.
+    await present(260);
+    await dispatchKey(popup(), "i");
     expect(tid("video-note-edit-anchor")!.textContent).not.toContain("→");
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set out point");
-    api.apiPatch.mockResolvedValue(commit({ ...s.n4, endFrame: null, revision: 2 } as VideoNoteThreadDto));
+    api.apiPatch.mockResolvedValue(commit({ ...s.n4, startFrame: 260, endFrame: null, revision: 2 } as VideoNoteThreadDto));
     await click(tid("video-note-edit-save")!);
     await flush(4);
-    expect(api.apiPatch).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-notes/${s.n4.id}`, { expectedRevision: 1, startFrame: 200, endFrame: null });
+    expect(api.apiPatch).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-notes/${s.n4.id}`, { expectedRevision: 1, startFrame: 260, endFrame: null });
   });
 
-  it("is present but disabled on an archived Project, and I / O stay inert", async () => {
+  it("on an archived Project I / O stay inert, and there is no range button", async () => {
     await openFilm({ archivedProject: true }, 12);
-    expect(rangeButton()!.disabled).toBe(true);
+    expect(rangeButton()).toBeNull();
     await dispatchKey(popup(), "i");
     expect(tid("video-pending-band")).toBeNull();
   });
@@ -1620,7 +1621,8 @@ describe("In / Out range button and handles (#861)", () => {
     const s = seed();
     await openFilm({}, 12);
     await click(tid("video-note-reply-button", threadOf(s.n2.id))!);
-    expect(rangeButton()!.disabled).toBe(true);
+    await dispatchKey(popup(), "i");
+    expect(tid("video-pending-band")).toBeNull();
   });
 
   it("with the notes part off there is no range button", async () => {
