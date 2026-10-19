@@ -1,5 +1,6 @@
 import { useRef, useState, type MouseEvent } from "react";
 import {
+  Bell,
   LayoutDashboard,
   List,
   SquareKanban,
@@ -27,6 +28,7 @@ import {
 } from "@/components/reui/sidebar";
 import { InitialsAvatar } from "./InitialsAvatar";
 import { Separator } from "@/components/reui/separator";
+import { Badge } from "@/components/reui/badge";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { InternalLink } from "../InternalLink";
 import { Menu } from "./menu";
@@ -56,7 +58,9 @@ import type {
  *   preference — `SidebarProvider` is pinned closed by `RailedShell`.
  * - `sheet` (narrow, inside `RailSheet`): the labelled 288px column the hamburger opens. Rows keep
  *   their visible labels and 44px targets, and the account menu keeps a Notification preferences
- *   row (there is no settings icon here, and the header owns the bell).
+ *   row (there is no settings icon here, and the header owns the bell). On the phone Dashboard the
+ *   bar has no bell (#923, owner decision), so the shell passes `notifications` and the footer
+ *   opens with a Notifications row: the unread count, and a press that opens the page's panel.
  *
  * Neither variant renders the Dashboard view links (Table/Board/Calendar/Timeline): the Dashboard's
  * own view controls choose a view (the tabs ticket, #427, replaces them). `item.children` stays in
@@ -218,9 +222,14 @@ export type NavigationRailProps = {
    * a wide-window override is a call the shell makes, not the rail.
    */
   showBell?: boolean;
+  /**
+   * `sheet` only: a Notifications row at the top of the footer, for a page with no bell of its own
+   * (#923, the phone Dashboard). `RailedShell` decides, and owns what a press does.
+   */
+  notifications?: { unreadCount: number; onOpen: () => void };
 };
 
-export function NavigationRail({ navigation, user, variant = "rail", showBell = true }: NavigationRailProps) {
+export function NavigationRail({ navigation, user, variant = "rail", showBell = true, notifications }: NavigationRailProps) {
   const isRail = variant === "rail";
   const isSheet = variant === "sheet";
 
@@ -355,6 +364,28 @@ export function NavigationRail({ navigation, user, variant = "rail", showBell = 
             panel's right edge sits 8px off the rail's edge and its bottom lines up with this
             bell (`NotificationBell`'s `alignEndOffsetFor`, ADR 0006 as amended by 0015). */}
         {isRail && showBell && <NotificationBell placement="rail" anchorRef={railRef} />}
+        {isSheet && notifications && (
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                type="button"
+                className={cn(RAIL_ITEM, SHEET_TOUCH_TARGET)}
+                aria-label={notifications.unreadCount > 0 ? `Notifications, ${notifications.unreadCount} unread` : "Notifications"}
+                data-testid="navigation-rail-notifications"
+                data-touch-target
+                onClick={notifications.onOpen}
+              >
+                <Bell aria-hidden="true" />
+                <span>Notifications</span>
+                {notifications.unreadCount > 0 && (
+                  <Badge variant="destructive" radius="full" className="ms-auto tabular-nums" aria-hidden="true">
+                    {notifications.unreadCount > 99 ? "99+" : notifications.unreadCount}
+                  </Badge>
+                )}
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        )}
         {isRail && (
           <SidebarMenu className="items-center" data-testid="navigation-rail-settings-menu">
             <SidebarMenuItem>

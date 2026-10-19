@@ -13,7 +13,7 @@ import { Dashboard } from "./Dashboard";
 import { DashboardTable, TableSkeleton, type DashboardTableProps } from "../components/DashboardTable";
 import { projectAppearance, stageGroupAppearance } from "../lib/dashboard-project-appearance";
 import type { ProjectSummary } from "../lib/kanban-interaction";
-import { chooseGroupBy, columnCheckboxLabels, displayTrigger, groupCheckboxes, openDisplay, toggleColumn } from "./dashboard-display-test-helpers";
+import { chooseGroupBy, columnCheckboxes, columnCheckboxLabels, displayTrigger, groupCheckboxes, openDisplay, toggleColumn } from "./dashboard-display-test-helpers";
 import { ApiError } from "../lib/api";
 import { confirmStore } from "../lib/confirm";
 import { __resetDashboardSearchStoreForTest } from "../lib/dashboard-search-store";
@@ -1138,6 +1138,44 @@ describe("the Table component (#923: now, Show Delivered, footer, skeleton)", ()
       expect(storage.get(tablePrefsKey("user-1"))).toBe(before);
       await openDisplay();
       expect(columnCheckboxLabels().length, "the Display menu still offers every column").toBeGreaterThan(0);
+    });
+
+    // Owner decision (#923): a column the viewer chose but the width dropped reads as chosen, and says why it is not on screen.
+    it("notes in Display a chosen column the width dropped: checked, disabled, 'Hidden at this width'; a column the viewer hid stays unchecked and enabled", async () => {
+      width = 670;
+      storage.set(tablePrefsKey("user-1"), JSON.stringify({ groupBy: "stage", hiddenColumns: ["raw"] }));
+      await renderTable();
+      expect(headerNames()).toEqual(["Project", "Stage", "Deadline"]);
+      await openDisplay();
+      const item = (name: string) => columnCheckboxes().find((candidate) => candidate.textContent?.startsWith(name))!;
+      const disabled = (element: HTMLElement) => element.getAttribute("aria-disabled") === "true" || element.hasAttribute("data-disabled");
+
+      const client = item("Client");
+      expect(client.getAttribute("aria-checked")).toBe("true");
+      expect(disabled(client)).toBe(true);
+      const note = [...client.querySelectorAll<HTMLElement>("span")].find((span) => span.textContent === "Hidden at this width");
+      expect(note, "the secondary text").toBeDefined();
+      expect(note!.className).toContain("text-xs");
+      expect(note!.className).toContain("text-foreground-secondary");
+
+      const stage = item("Stage");
+      expect(stage.getAttribute("aria-checked")).toBe("true");
+      expect(disabled(stage)).toBe(false);
+      expect(stage.textContent).toBe("Stage");
+
+      const raw = item("RAW received");
+      expect(raw.getAttribute("aria-checked")).toBe("false");
+      expect(disabled(raw)).toBe(false);
+      expect(raw.textContent).toBe("RAW received");
+    });
+
+    it("drops the note once the width fits the column again", async () => {
+      width = 1262;
+      storage.set(tablePrefsKey("user-1"), JSON.stringify({ groupBy: "stage", hiddenColumns: ["raw"] }));
+      await renderTable();
+      expect(headerNames()).toEqual(DEFAULT_HEADERS);
+      await openDisplay();
+      expect(columnCheckboxes().filter((candidate) => candidate.textContent?.includes("Hidden at this width")).map((c) => c.textContent)).toEqual([]);
     });
   });
 

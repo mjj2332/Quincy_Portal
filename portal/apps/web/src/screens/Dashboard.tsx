@@ -16,7 +16,7 @@ import { DashboardHeader } from "./DashboardHeader";
 import { DashboardViewBar, TOOLBAR_CONTROL_TYPE, VIEW_PANEL_ID, VIEW_TAB_ID } from "./DashboardViewBar";
 import { BoardDisplayContent, CalendarDisplayContent, TableDisplayContent, TimelineDisplayContent } from "./DashboardDisplay";
 import { DashboardTable, TableSkeleton } from "../components/DashboardTable";
-import { hideableColumnsFor } from "../lib/dashboard-table-model";
+import { hideableColumnsFor, type HideableColumnId } from "../lib/dashboard-table-model";
 import { useBoardCollapse } from "../lib/use-board-collapse";
 import { useDashboardTablePrefs } from "../lib/use-dashboard-table-prefs";
 import { DashboardFilter as DashboardFilterControl } from "./DashboardFilter";
@@ -213,6 +213,8 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
   const canViewArchived = can("adminBackend");
   // #431: the Table's Group by and hidden columns, per viewer.
   const { prefs: tablePrefs, update: updateTablePrefs } = useDashboardTablePrefs(currentUserId);
+  // #923: the chosen columns the Table leaves out for width right now, so Display can say so. Never stored.
+  const [tableWidthDropped, setTableWidthDropped] = useState<readonly HideableColumnId[]>([]);
   const { collapsedStageKeys, toggleStageCollapsed } = useBoardCollapse(currentUserId);
   const canViewProductionCalendar = roleHasCapability(role, "viewProductionCalendar");
   // #366: through the location lens — the live store by default, the remembered Dashboard location
@@ -1655,6 +1657,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
                   hiddenColumns={tablePrefs.hiddenColumns}
                   hideableColumns={hideableColumnsFor(role)}
                   onColumnVisibilityChange={(column, visible) => updateTablePrefs({ hiddenColumns: visible ? tablePrefs.hiddenColumns.filter((id) => id !== column) : [...tablePrefs.hiddenColumns, column] })}
+                  widthDroppedColumns={tableWidthDropped}
                   showDelivered={tablePrefs.showDelivered}
                   onShowDeliveredChange={(showDelivered) => updateTablePrefs({ showDelivered })}
                 />
@@ -1792,6 +1795,7 @@ function DashboardContent({ currentUserId, role = "photographer", authorizationE
             now={now}
             showDelivered={tablePrefs.showDelivered}
             onShowDelivered={() => updateTablePrefs({ showDelivered: true })}
+            onWidthDroppedColumnsChange={setTableWidthDropped}
           />
         )}
 
