@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { embeddedMediaPosterUrl, embeddedMediaUrl } from "../../lib/embedded-media-core";
 import { Button, buttonVariants } from "../reui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "../reui/dialog";
-import { EMBEDDED_THUMB_TILE } from "./EmbeddedImage";
+import { EMBEDDED_THUMB_TILE, embeddedTile } from "./EmbeddedImage";
 
 type MediaUrls = { mediaUrl?: (mediaId: string) => string; posterUrl?: (mediaId: string) => string };
 
@@ -18,9 +18,10 @@ type MediaUrls = { mediaUrl?: (mediaId: string) => string; posterUrl?: (mediaId:
 /** `hasPoster` is the server's answer (#556): `false` leaves `poster` off so a posterless video never requests `/poster`; absent (an older node, the whiteboard dialog) asks for it as before. */
 /** `mediaUrl` and `posterUrl` (#835) are where the bytes and the poster are read from: the staff routes by default, a Review link's own for a guest. */
 /** `size="thumb"` (#927 T1) is a posted note's strip tile, which opens this same player in a dialog. The default is the inline player, unchanged. */
-export function EmbeddedVideo({ mediaId, hasPoster, className, videoClassName, mediaUrl = embeddedMediaUrl, posterUrl = embeddedMediaPosterUrl, size = "default" }: { mediaId: string; hasPoster?: boolean; className?: string; videoClassName?: string; size?: "default" | "thumb" } & MediaUrls) {
+/** `size="chip"` (#927 T2) is the same tile at 32px, inside a draft note's chip, with a smaller play badge. */
+export function EmbeddedVideo({ mediaId, hasPoster, className, videoClassName, mediaUrl = embeddedMediaUrl, posterUrl = embeddedMediaPosterUrl, size = "default" }: { mediaId: string; hasPoster?: boolean; className?: string; videoClassName?: string; size?: "default" | "thumb" | "chip" } & MediaUrls) {
   const [failed, setFailed] = useState(false);
-  if (size === "thumb") return <EmbeddedVideoThumb mediaId={mediaId} hasPoster={hasPoster} mediaUrl={mediaUrl} posterUrl={posterUrl} />;
+  if (size !== "default") return <EmbeddedVideoThumb mediaId={mediaId} hasPoster={hasPoster} mediaUrl={mediaUrl} posterUrl={posterUrl} size={size} />;
   const src = mediaUrl(mediaId);
   // A posterless video shows no frame until it plays; `#t=0.1` asks the browser for one. Only the player gets it: the download href stays on the bare `src`.
   const playSrc = hasPoster === false ? `${src}#t=0.1` : src;
@@ -46,16 +47,17 @@ export function EmbeddedVideo({ mediaId, hasPoster, className, videoClassName, m
  * `EmbeddedVideoDialog` URL props would let the two share one shell. The trigger is registered with the dialog, so Escape or Close
  * returns focus to the tile.
  */
-function EmbeddedVideoThumb({ mediaId, hasPoster, mediaUrl, posterUrl }: { mediaId: string; hasPoster?: boolean; mediaUrl: (mediaId: string) => string; posterUrl: (mediaId: string) => string }) {
+function EmbeddedVideoThumb({ mediaId, hasPoster, mediaUrl, posterUrl, size }: { mediaId: string; hasPoster?: boolean; mediaUrl: (mediaId: string) => string; posterUrl: (mediaId: string) => string; size: "thumb" | "chip" }) {
+  const chip = size === "chip";
   const [open, setOpen] = useState(false);
   const [posterFailed, setPosterFailed] = useState(false);
   const showPoster = hasPoster !== false && !posterFailed;
   return <Dialog open={open} onOpenChange={setOpen}>
-    <DialogTrigger render={<button type="button" data-testid="embedded-video-thumb" data-size="thumb" aria-label="Play video" className={cn(EMBEDDED_THUMB_TILE, "relative grid cursor-pointer place-items-center p-0 text-foreground-secondary transition-colors hover:border-[color:var(--border-hover)] focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2")} />}>
+    <DialogTrigger render={<button type="button" data-testid="embedded-video-thumb" data-size={size} aria-label="Play video" className={cn(embeddedTile(size) ?? EMBEDDED_THUMB_TILE, "relative grid cursor-pointer place-items-center p-0 text-foreground-secondary transition-colors hover:border-[color:var(--border-hover)] focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2")} />}>
       {showPoster
         ? <img src={posterUrl(mediaId)} alt="" loading="lazy" decoding="async" onError={() => setPosterFailed(true)} className="col-start-1 row-start-1 block size-full object-cover" />
-        : <FilmIcon aria-hidden="true" className="col-start-1 row-start-1 size-4" />}
-      {showPoster && <span aria-hidden="true" className="col-start-1 row-start-1 grid size-[var(--space-5)] place-items-center rounded-full bg-[var(--scrim-badge)] text-invert-foreground"><PlayIcon className="size-3" /></span>}
+        : <FilmIcon aria-hidden="true" className={cn("col-start-1 row-start-1", chip ? "size-3.5" : "size-4")} />}
+      {showPoster && <span aria-hidden="true" className={cn("col-start-1 row-start-1 grid place-items-center rounded-full bg-[var(--scrim-badge)] text-invert-foreground", chip ? "size-[var(--space-4)]" : "size-[var(--space-5)]")}><PlayIcon className={chip ? "size-2.5" : "size-3"} /></span>}
     </DialogTrigger>
     <DialogContent data-surface="inverse" data-testid="embedded-video-dialog" showCloseButton={false} className="max-h-[90dvh] max-w-[calc(100%-2rem)] gap-0 overflow-hidden bg-background p-0 text-foreground ring-0 sm:max-w-[min(90vw,64rem)]">
       <DialogTitle className="sr-only">Video</DialogTitle>
