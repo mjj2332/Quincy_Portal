@@ -195,6 +195,14 @@ beforeEach(() => {
 });
 afterEach(() => { restoreLayout?.(); restoreLayout = null; });
 
+// #927 T4: the player's transport has no Draw button any more; the pen lives in the composer (phone: the pen slot). Until T6 moves it for every width these cases reach drawing through the phone composer.
+let phoneViewport: ReturnType<typeof mockViewport> | null = null;
+beforeEach(() => { phoneViewport = mockViewport({ width: 390, coarse: true }); });
+afterEach(() => { phoneViewport?.restore(); phoneViewport = null; });
+/** The desktop layout (version picker, details button, key legend, frame steps), for what the phone composer lacks. */
+const phone = () => phoneViewport!.set({ width: 390, coarse: true });
+const desktop = () => phoneViewport!.set({ width: 1280, coarse: false });
+
 /** Brings the frame a seek asked for up on screen, the way the browser does. */
 const land = (frame: number) => act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, frame / 25); });
 async function startDrawing(frame = 12) {
@@ -220,9 +228,9 @@ describe("Draw control visibility (#741 6b-ui)", () => {
     await openFilm({ parts: ON }, 12);
     expect(drawButton()).not.toBeNull();
     expect(drawButton()!.getAttribute("aria-label")).toBe("Draw");
-    // The Draw button lives in the transport row (beside volume), never over the picture.
+    // The Draw button is the composer's pen: never over the picture, and no longer in the player's transport row (#927 T4).
     expect(tid("video-stage")!.contains(drawButton())).toBe(false);
-    expect(drawButton()!.parentElement).toBe(dialog()!.querySelector('button[aria-label="Mute"]')!.parentElement);
+    expect(tid("video-player")!.contains(drawButton())).toBe(false);
     expect(tid("video-markup-done")).toBeNull();
     expect(dialog()!.querySelector('[aria-label="Markup tool"]')).toBeNull();
   });
@@ -276,7 +284,8 @@ describe("Draw mode (#741 6b-ui)", () => {
     await click(drawButton()!);
     await land(12);
     await flush(2);
-    expect(drawButton()).toBeNull();
+    // The pen stays in the composer, pressed (pressing it again is Done).
+    expect(drawButton()!.getAttribute("aria-pressed")).toBe("true");
     expect(doneButton()).not.toBeNull();
     expect(dialog()!.querySelector('[aria-label="Markup tool"]')).not.toBeNull();
     expect(tid("video-markup")!.dataset.drawing).toBe("true");
@@ -356,10 +365,10 @@ describe("Draw mode (#741 6b-ui)", () => {
     expect(stub.writes).toEqual([]);
     expect(tid("video-pending-band")).toBeNull();
     // The transport is replaced in view, not just disabled: it stays mounted under the toolbar, hidden (PR 2 fix round 2, so the scrubber's thumb survives).
-    for (const label of ["Play", "Previous frame", "Next frame"]) expect(dialog()!.querySelector(`button[aria-label="${label}"]`)!.closest("[hidden]")).not.toBeNull();
+    expect(dialog()!.querySelector('button[aria-label="Play"]')!.closest("[hidden]")).not.toBeNull();
     expect((tid("video-note-set-in") as HTMLButtonElement).disabled).toBe(true);
     await click(doneButton()!);
-    for (const label of ["Play", "Previous frame", "Next frame"]) expect(dialog()!.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!.disabled).toBe(false);
+    expect(dialog()!.querySelector<HTMLButtonElement>('button[aria-label="Play"]')!.disabled).toBe(false);
     await dispatchKey(popup(), "ArrowRight");
     expect(stub.writes.length).toBeGreaterThan(0);
   });
@@ -396,6 +405,7 @@ describe("Escape order with a drawing (#741 6b-ui)", () => {
   it("a popup open over the viewer takes Escape before draw mode does", async () => {
     await openFilm({ parts: ON }, 12);
     await startDrawing();
+    await desktop();
     await click(tid("video-details-button")!);
     await flush(4);
     expect(tid("video-details-popover")).not.toBeNull();
@@ -508,6 +518,7 @@ describe("A note's saved drawing (#741 6b-ui)", () => {
   });
 
   it("hides while the film plays and when the filters exclude the note", async () => {
+    await desktop();
     const drawn = await withDrawnNote();
     await click(tid("video-note-anchor-button", threadOf(drawn.id))!);
     await land(30);
@@ -952,9 +963,11 @@ describe("Code-review fixes (#741 6b-ui)", () => {
     await click(popup().querySelector<HTMLElement>('button[aria-label="Undo"]')!);
     expect(popup().querySelector<HTMLButtonElement>('button[aria-label="Redo"]')!.disabled).toBe(false);
     await click(doneButton()!);
+    await desktop();
     await pickVersion("v1");
     await pickVersion("v2");
     await loadFilm(12);
+    await phone();
     await startDrawing(12);
     expect(popup().querySelector<HTMLButtonElement>('button[aria-label="Redo"]')!.disabled).toBe(false);
     await click(popup().querySelector<HTMLElement>('button[aria-label="Redo"]')!);
@@ -999,6 +1012,7 @@ describe("Drawing layout (#741 6b-ui design review)", () => {
   it("while drawing, the transport is replaced in place and the toolbar sits outside the picture; Done brings the transport back", async () => {
     await openFilm({ parts: ON }, 12);
     await startDrawing();
+    await desktop();
     // Replaced in view: the transport stays mounted under the toolbar, hidden (PR 2 fix round 2).
     for (const id of ["video-scrubber", "video-readout", "video-key-legend"]) expect(tid(id)!.closest("[hidden]")).not.toBeNull();
     const toolbar = tid("video-markup-toolbar")!;
@@ -1010,7 +1024,8 @@ describe("Drawing layout (#741 6b-ui design review)", () => {
     await click(doneButton()!);
     expect(tid("video-scrubber")!.closest("[hidden]")).toBeNull();
     expect(tid("video-markup-stack")).toBeNull();
-    expect(drawButton()).not.toBeNull();
+    // The desktop transport has no pen any more (#927 T4); T6 puts it in the composer.
+    expect(drawButton()).toBeNull();
   });
 
   it("a note posted with a drawing becomes the selected note, so its drawing stays on the picture", async () => {
@@ -1102,6 +1117,7 @@ describe("A Post that completes after the Version changed (#741 6b-ui)", () => {
     await click(tid("video-note-post")!);
     await land(12);
     await flush(2);
+    await desktop();
     await pickVersion("v1");
     await loadFilm(20);
     await click(tid("video-note-anchor-button", threadOf(other.id))!);

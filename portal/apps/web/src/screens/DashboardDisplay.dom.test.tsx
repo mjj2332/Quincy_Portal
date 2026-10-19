@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DashboardViewBar } from "./DashboardViewBar";
 import { DEFAULT_STAGES } from "@quincy/shared";
 import { BoardDisplayContent, CalendarDisplayContent, TableDisplayContent, TimelineDisplayContent } from "./DashboardDisplay";
-import { checkedSortLabel, chooseGroupBy, columnCheckboxLabels, columnCheckboxes, displayGroup, displayMenu, groupCheckboxes, displayTrigger, groupByRadios, openDisplay, sortHint, sortHintDescribedBy, sortRadioLabels, sortRadios, toggleColumn } from "./dashboard-display-test-helpers";
+import { checkedSortLabel, chooseGroupBy, columnCheckboxLabels, columnCheckboxes, displayGroup, displayMenu, groupCheckboxes, displayTrigger, groupByRadios, openDisplay, sortHint, sortHintDescribedBy, sortRadioLabels, sortRadios, toggleColumn, toggleGroupCheckbox } from "./dashboard-display-test-helpers";
 import type { KanbanSortMode } from "./dashboard-helpers";
 import { hideableColumnsFor, tablePrefsKey, type TableGroupBy, type HideableColumnId } from "../lib/dashboard-table-model";
 import { useDashboardTablePrefs } from "../lib/use-dashboard-table-prefs";
@@ -40,11 +40,12 @@ function Bar({ principalId, role = "admin", view = "table", sortDisabled = false
   const hideable = hideableColumnsFor(role);
   const display = view === "table"
     ? <TableDisplayContent groupBy={prefs.groupBy} onGroupByChange={(groupBy: TableGroupBy) => update({ groupBy })} hiddenColumns={prefs.hiddenColumns} hideableColumns={hideable}
-        onColumnVisibilityChange={(column: HideableColumnId, visible) => update({ hiddenColumns: visible ? prefs.hiddenColumns.filter((id) => id !== column) : [...prefs.hiddenColumns, column] })} />
+        onColumnVisibilityChange={(column: HideableColumnId, visible) => update({ hiddenColumns: visible ? prefs.hiddenColumns.filter((id) => id !== column) : [...prefs.hiddenColumns, column] })}
+        showDelivered={prefs.showDelivered} onShowDeliveredChange={(showDelivered) => update({ showDelivered })} />
     : view === "board" ? <BoardDisplayContent value={sort} onChange={setSort} stages={DEFAULT_STAGES} disabled={sortDisabled} /> : undefined;
   return (
     <div>
-      <DashboardViewBar renderedView={view} canViewProductionCalendar disabled={false} onSelectView={() => undefined} principalId={principalId} searchFocusRequest={null} onSearchFocusHandled={() => undefined} display={display} />
+      <DashboardViewBar renderedView={view} canViewProductionCalendar canCreateProject={false} disabled={false} onSelectView={() => undefined} principalId={principalId} searchFocusRequest={null} onSearchFocusHandled={() => undefined} display={display} />
       <output data-testid="prefs">{JSON.stringify(prefs)}</output>
       <output data-testid="sort">{sort}</output>
     </div>
@@ -70,15 +71,28 @@ describe("Display menu content and Table preferences (#431)", () => {
   });
 
   const render = async (node: React.ReactNode) => { await act(async () => { root.render(node); await Promise.resolve(); }); };
-  const prefsText = () => JSON.parse(host.querySelector('[data-testid="prefs"]')!.textContent!) as { groupBy: string; hiddenColumns: string[] };
+  const prefsText = () => JSON.parse(host.querySelector('[data-testid="prefs"]')!.textContent!) as { groupBy: string; hiddenColumns: string[]; showDelivered: boolean };
 
-  it("offers Group by None/Stage/Client and every column but Address, with Group by defaulting to None", async () => {
+  it("offers Group by None/Stage/Client and every column but Project; a new viewer starts on Stage with RAW received off (#923)", async () => {
     await render(<Bar principalId="u1" />);
     await openDisplay();
     expect(groupByRadios().map((radio) => radio.textContent)).toEqual(["None", "Stage", "Client"]);
-    expect(groupByRadios().find((radio) => radio.getAttribute("aria-checked") === "true")?.textContent).toBe("None");
-    expect(columnCheckboxLabels()).toEqual(["Stage", "Client", "Shoot date", "Deadline", "Editors", "Priority", "RAW received"]);
-    expect(columnCheckboxes().every((item) => item.getAttribute("aria-checked") === "true")).toBe(true);
+    expect(groupByRadios().find((radio) => radio.getAttribute("aria-checked") === "true")?.textContent).toBe("Stage");
+    expect(columnCheckboxLabels()).toEqual(["Stage", "Client", "Shoot", "Deadline", "Progress", "Editors", "Priority", "RAW received"]);
+    expect(columnCheckboxes().filter((item) => item.getAttribute("aria-checked") === "false").map((item) => item.textContent)).toEqual(["RAW received"]);
+  });
+
+  it("offers Show: Delivered Projects, off by default (#923 round 3, frame 4c), and keeps the choice per viewer (#923)", async () => {
+    await render(<Bar principalId="u1" />);
+    await openDisplay();
+    const delivered = () => groupCheckboxes("Show").find((item) => item.textContent === "Delivered Projects")!;
+    expect(groupCheckboxes("Show").map((item) => item.textContent)).toEqual(["Delivered Projects"]);
+    expect(delivered().getAttribute("aria-checked")).toBe("false");
+    await toggleGroupCheckbox("Show", "Delivered Projects");
+    expect(displayMenu()).not.toBeNull();
+    expect(delivered().getAttribute("aria-checked")).toBe("true");
+    expect(prefsText().showDelivered).toBe(true);
+    expect(JSON.parse(storageValues.get(tablePrefsKey("u1"))!).showDelivered).toBe(true);
   });
 
   it("keeps the menu open across a Group by change and several column toggles, and persists them per viewer", async () => {
@@ -88,48 +102,50 @@ describe("Display menu content and Table preferences (#431)", () => {
     await toggleColumn("Editors");
     await toggleColumn("Priority");
     expect(displayMenu()).not.toBeNull();
-    expect(prefsText()).toEqual({ groupBy: "client", hiddenColumns: ["editors", "priority"] });
-    expect(JSON.parse(storageValues.get(tablePrefsKey("u1"))!)).toEqual({ groupBy: "client", hiddenColumns: ["editors", "priority"] });
+    expect(prefsText()).toEqual({ groupBy: "client", hiddenColumns: ["editors", "priority", "raw"], showDelivered: false });
+    expect(JSON.parse(storageValues.get(tablePrefsKey("u1"))!)).toEqual({ groupBy: "client", hiddenColumns: ["editors", "priority", "raw"], showDelivered: false });
     expect(storageValues.has(tablePrefsKey("u2"))).toBe(false);
   });
 
-  it("offers an External Editor no Priority column", async () => {
+  it("offers an External Editor no Priority and no Progress column", async () => {
     await render(<Bar principalId="u1" role="external_editor" />);
     await openDisplay();
     expect(columnCheckboxLabels()).not.toContain("Priority");
+    expect(columnCheckboxLabels()).not.toContain("Progress");
+    expect(columnCheckboxLabels()).not.toContain("Project");
     expect(columnCheckboxLabels()).not.toContain("Address");
   });
 
   it("restores the stored choice for the same viewer and reads another viewer's key on an identity switch", async () => {
-    storageValues.set(tablePrefsKey("u1"), JSON.stringify({ groupBy: "stage", hiddenColumns: ["raw"] }));
+    storageValues.set(tablePrefsKey("u1"), JSON.stringify({ groupBy: "none", hiddenColumns: [] }));
     await render(<Bar principalId="u1" />);
-    expect(prefsText()).toEqual({ groupBy: "stage", hiddenColumns: ["raw"] });
+    expect(prefsText()).toEqual({ groupBy: "none", hiddenColumns: [], showDelivered: false });
     await render(<Bar principalId="u2" />);
-    expect(prefsText()).toEqual({ groupBy: "none", hiddenColumns: [] });
+    expect(prefsText()).toEqual({ groupBy: "stage", hiddenColumns: ["raw"], showDelivered: false });
     // Nothing was written for u2 by merely arriving, and u1's value is untouched.
     expect(storageValues.has(tablePrefsKey("u2"))).toBe(false);
-    expect(JSON.parse(storageValues.get(tablePrefsKey("u1"))!)).toEqual({ groupBy: "stage", hiddenColumns: ["raw"] });
+    expect(JSON.parse(storageValues.get(tablePrefsKey("u1"))!)).toEqual({ groupBy: "none", hiddenColumns: [] });
     await chooseGroupBy("Client");
-    expect(JSON.parse(storageValues.get(tablePrefsKey("u2"))!)).toEqual({ groupBy: "client", hiddenColumns: [] });
-    expect(JSON.parse(storageValues.get(tablePrefsKey("u1"))!)).toEqual({ groupBy: "stage", hiddenColumns: ["raw"] });
+    expect(JSON.parse(storageValues.get(tablePrefsKey("u2"))!)).toEqual({ groupBy: "client", hiddenColumns: ["raw"], showDelivered: false });
+    expect(JSON.parse(storageValues.get(tablePrefsKey("u1"))!)).toEqual({ groupBy: "none", hiddenColumns: [] });
   });
 
   it("reads a corrupt stored value as the defaults", async () => {
     storageValues.set(tablePrefsKey("u1"), JSON.stringify({ groupBy: "weird", hiddenColumns: ["address", "nope", "raw"] }));
     await render(<Bar principalId="u1" />);
-    expect(prefsText()).toEqual({ groupBy: "none", hiddenColumns: ["raw"] });
+    expect(prefsText()).toEqual({ groupBy: "stage", hiddenColumns: ["raw"], showDelivered: false });
     storageValues.set(tablePrefsKey("u1"), "{not json");
     await render(<Bar principalId="u9" />);
     await render(<Bar principalId="u1" />);
-    expect(prefsText()).toEqual({ groupBy: "none", hiddenColumns: [] });
+    expect(prefsText()).toEqual({ groupBy: "stage", hiddenColumns: ["raw"], showDelivered: false });
   });
 
   it("still works in memory when storage throws", async () => {
     storageBroken = true;
     await render(<Bar principalId="u1" />);
-    expect(prefsText()).toEqual({ groupBy: "none", hiddenColumns: [] });
-    await chooseGroupBy("Stage");
-    expect(prefsText().groupBy).toBe("stage");
+    expect(prefsText()).toEqual({ groupBy: "stage", hiddenColumns: ["raw"], showDelivered: false });
+    await chooseGroupBy("Client");
+    expect(prefsText().groupBy).toBe("client");
   });
 
   it.each([["admin", "u1"], ["external_editor", "u2"]] as const)("the Board slot offers Shoot date and Deadline as a Sort radio group for %s, Shoot date checked, and no explanation line (#830)", async (role, principalId) => {
@@ -171,7 +187,7 @@ describe("Display menu content and Table preferences (#431)", () => {
   });
 
   it("a view with no slot disables Display (#470)", async () => {
-    await render(<DashboardViewBar renderedView="none" canViewProductionCalendar disabled={false} onSelectView={() => undefined} principalId="u1" searchFocusRequest={null} onSearchFocusHandled={() => undefined} />);
+    await render(<DashboardViewBar renderedView="none" canViewProductionCalendar canCreateProject={false} disabled={false} onSelectView={() => undefined} principalId="u1" searchFocusRequest={null} onSearchFocusHandled={() => undefined} />);
     expect(displayTrigger()!.disabled).toBe(true);
     expect(document.getElementById(displayTrigger()!.getAttribute("aria-describedby") ?? "")?.textContent).toBe("No display options for this view");
   });
@@ -196,7 +212,7 @@ describe("Calendar and Timeline Display content (#430)", () => {
   });
 
   const bar = (display: React.ReactNode, view: "calendar" | "timeline") => (
-    <DashboardViewBar renderedView={view} canViewProductionCalendar disabled={false} onSelectView={() => undefined} principalId="u1" searchFocusRequest={null} onSearchFocusHandled={() => undefined} display={display} />
+    <DashboardViewBar renderedView={view} canViewProductionCalendar canCreateProject={false} disabled={false} onSelectView={() => undefined} principalId="u1" searchFocusRequest={null} onSearchFocusHandled={() => undefined} display={display} />
   );
   const render = async (node: React.ReactNode) => { await act(async () => { root.render(node); await Promise.resolve(); }); };
   const checked = (items: HTMLElement[]) => items.map((item) => [item.textContent, item.getAttribute("aria-checked")]);

@@ -16,6 +16,11 @@ Paths are relative to `portal/apps/web/src/` unless they say otherwise.
 - **D2 Send needs text or media.** No API change. With only a drawing, Send stays disabled with the title "Add a few words to post the drawing". This amends story 15 and frame C2. Media-only notes already pass.
 - **D3 Turn-upright stays.** `lib/immersive.ts::mustTurnUpright` (the 2026-10-16 decision) is unchanged, and story 39 is dropped.
 - **D4 Edit locks the other control.** Editing a note's range disables the pen, and editing its drawing disables in/out, using the existing lock-hint title. There is one Save and no API change. The server rejects `markup_and_frames` together.
+- **D6 Dark chrome only where Safari allows it** (decided after T5's spike, fixture screenshots in `~/quincy-wt/notes-927/t5-spike/`).
+  - Measured on iOS 27: `viewport-fit=cover` and `theme-color` change nothing. Safari takes the top strip's tint from the sticky or fixed element at the top edge at first paint, and doesn't re-sample when the review mounts.
+  - So when a review URL loads directly, the shell's cream sticky header (`quincy/ShellHeader.tsx`, `sticky top-0 … bg-background`) must not paint at the top edge. The review is the first thing there and the strips load dark. Precedent: #928's "Dashboard mounted" header rule.
+  - Opening a film from inside the Portal (an in-app navigation) keeps whatever tint the page loaded with. The owner has accepted this.
+  - Dropped: the `use-review-chrome` hook, `viewport-fit=cover` and `theme-color`, which were measured to do nothing.
 - **D5 The bubble is dark.** The formatting bubble uses the viewer's semantic popover tokens (ADR 0024), not the light bubble of C3/P2.
 
 ## Session defaults (both plans agree)
@@ -75,12 +80,11 @@ Every ticket is built test-first (`tdd` skill), starts from the integration bran
   - Owns: `quincy/VideoPlayer.tsx`, `quincy/VideoStage.tsx`, `components/video/CompareView.tsx`, `VideoPlayer*.dom.test.tsx`, a new `VideoStage.dom.test.tsx`, and `VideoCompare*.dom.test.tsx`.
   - Removes the range button, the Draw transport action slot and the phone frame step. Keeps `VideoRangeHandles` and the "I O in/out" hints. Removes the picture's timecode · frame chip in every viewer.
   - Done when those tests pass.
-- **T5 Dark chrome + iPhone Full screen.** No blockers.
-  - **Starts with a Simulator spike**, per the lesson "Safari tints its bars from the page's edges only after the document scrolls (#879 fix r9)": `theme-color`, an ink canvas and a scroll nudge were each measured to do nothing on iOS 27. The lesson's rule is to reopen this only with `viewport-fit=cover` and an owner decision, and #927's comment is that decision.
-  - The spike: toggle `viewport-fit=cover` while a review is mounted, and paint the viewer under the status bar and toolbar. Measure a fresh load, after compose and Cancel, and Full screen, on the staff and Guest screens.
-  - **If the spike leaves cream bars, stop and report with screenshots. Don't ship a no-op.**
-  - Owns: new `quincy/use-review-chrome.ts` plus a DOM test (set and restore the viewport meta, the html background from the viewer's computed token, and `theme-color` if the spike shows it helps; safe across overlapping owners and StrictMode); `quincy/use-immersive.ts` (mount the chrome hook, plus the D1 iPhone branch); `lib/video-native-player.ts` if the branch needs it; and their tests.
-  - Done when the spike screenshots show dark bands, the restore tests pass, and on iPhone the button calls the handoff while a turn still enters the in-app layer.
+- **T5 iPhone Full screen + dark chrome on direct review loads.** No blockers.
+  - Owns: `quincy/use-immersive.ts` (the D1 iPhone branch) and its tests, `lib/video-native-player.ts` if the branch needs it, and `quincy/ShellHeader.tsx` / `quincy/RailedShell.tsx` / the shell tests for the D6 header rule (#928 has merged into the integration branch, so these files are free). `styles/app.css` too, if the rule needs it.
+  - D1: on iPhone the Full screen button and F call the native handoff; a turn still enters the in-app layer.
+  - D6: on a review URL, no cream sticky header paints at the top edge from first paint. Every other screen keeps its header.
+  - Done when the DOM tests pass. The real-app Simulator check (staff and Guest review loaded directly: fresh, after compose and Cancel, Full screen) is the session's job in the browser pass.
 - **T6 Staff composer + drawing.** Blocked by T2, T3 and T4.
   - Owns: `components/video/VideoNoteComposer.tsx`, `VideoMarkupOverlay.tsx` (`useVideoMarkup` returns `{ overlay, draw }` in place of the transport actions), `VideoNotesHost.tsx`, `VideoNotesPanel.tsx`, `lib/video-note-form-store.ts` (drop `extras`; anchor freeze), and `VideoNotes*.dom.test.tsx` / `VideoNoteComposer*.dom.test.tsx`. Rewrite those tests; don't delete them.
   - Done when the `VideoNotes.dom` end-to-end cases from the spec's table pass: three-press in/out and the chip; pen → row → ‹/Esc keeping strokes; Clear dropping the pencil; visibility reset to Internal; Send and ⌘↵; D2; no in/out or pen in the player.
@@ -97,7 +101,6 @@ Every ticket is built test-first (`tdd` skill), starts from the integration bran
   - The same mounted composer floats at ~560px, centred above the controls; Add note and Esc toggle it; the draft and focus survive.
 - **T10 Phone sheet + safe areas.** Blocked by T5, T6 and T8.
   - Owns: `quincy/compose-strip.tsx` (delete the tray, `PillPlus`, `PillSend`, tray-only `STRIP_*`), `quincy/ReviewSheet.tsx` (no tray hold; a draw-with-keyboard mode, one mode source), `lib/review-pane-geometry.ts` (the two-row browse stop), `components/video/VideoReviewViewer.tsx`, `GuestVideoScreen.tsx` (taken over after T8), and their phone tests.
-  - Adds the safe-area padding on the review roots that T5's `viewport-fit=cover` needs.
   - Done when the phone DOM tests pass, ready for the Simulator rows P1–P5.
 - **T11 Docs + verify.** Blocked by T1–T10.
   - Owns: `docs/maps/*` (a notes composer entry), `docs/lessons.md` (after #928 merges, with any new lesson including T5's spike result), and `docs/plans/video-revamp-prototype-audit.md` if affected.

@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_TABLE_PREFS,
+  DEFAULT_TABLE_SORTING,
+  TABLE_COLUMN_IDS,
+  TABLE_COLUMN_LABELS,
+  columnVisibleToRole,
+  columnsDroppedToFit,
+  defaultCollapsedGroups,
   groupTableRows,
+  hideDelivered,
+  isSortableColumnId,
+  stageDisplayLabel,
+  tableCountLabel,
   hideableColumnsFor,
   normalizeTablePrefs,
   readTablePrefs,
@@ -70,13 +80,13 @@ describe("sortTableRows", () => {
     expect(ids(sortTableRows(rows, desc("client"), STAGES))).toEqual(["b2", "b1", "b0", "a1", "none"]);
   });
 
-  it("puts a missing shoot date, deadline, editor and priority last in both directions", () => {
+  it("puts a missing shoot date, deadline and priority last in both directions", () => {
     const rows = [
       project("none"),
-      project("early", { shootDate: "2026-01-02", deadlineAt: 100, priority: 2, editors: [{ id: "e1", name: "Ann" }] }),
-      project("late", { shootDate: "2026-03-04", deadlineAt: 300, priority: 5, editors: [{ id: "e2", name: "Zoe" }] }),
+      project("early", { shootDate: "2026-01-02", deadlineAt: 100, priority: 2 }),
+      project("late", { shootDate: "2026-03-04", deadlineAt: 300, priority: 5 }),
     ];
-    for (const column of ["shootDate", "deadline", "editors", "priority"]) {
+    for (const column of ["shootDate", "deadline", "priority"]) {
       expect(ids(sortTableRows(rows, asc(column), STAGES)), `${column} asc`).toEqual(["early", "late", "none"]);
       expect(ids(sortTableRows(rows, desc(column), STAGES)), `${column} desc`).toEqual(["late", "early", "none"]);
     }
@@ -141,8 +151,23 @@ describe("groupTableRows", () => {
 });
 
 describe("table preferences", () => {
+  it("defaults a new viewer to Group by Stage, RAW hidden and Delivered hidden (#923, frame 4c)", () => {
+    expect(DEFAULT_TABLE_PREFS).toEqual({ groupBy: "stage", hiddenColumns: ["raw"], showDelivered: false });
+    const store = new Map<string, string>();
+    const storage = () => ({ getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => void store.set(key, value) });
+    expect(readTablePrefs("new-viewer", storage)).toEqual({ groupBy: "stage", hiddenColumns: ["raw"], showDelivered: false });
+  });
+
+  it("keeps a stored explicit choice: Group by None, no hidden columns, Delivered shown or hidden (#923)", () => {
+    expect(normalizeTablePrefs({ groupBy: "none", hiddenColumns: [], showDelivered: true })).toEqual({ groupBy: "none", hiddenColumns: [], showDelivered: true });
+    expect(normalizeTablePrefs({ groupBy: "none", hiddenColumns: [], showDelivered: false })).toEqual({ groupBy: "none", hiddenColumns: [], showDelivered: false });
+    // A value stored before Show Delivered existed, or a junk one, takes the default: hidden.
+    expect(normalizeTablePrefs({ groupBy: "none", hiddenColumns: [] })).toEqual({ groupBy: "none", hiddenColumns: [], showDelivered: false });
+    expect(normalizeTablePrefs({ groupBy: "client", hiddenColumns: ["editors"], showDelivered: "no" })).toEqual({ groupBy: "client", hiddenColumns: ["editors"], showDelivered: false });
+  });
+
   it("normalises unknown, duplicate and non-hideable values, and never hides Address", () => {
-    expect(normalizeTablePrefs({ groupBy: "stage", hiddenColumns: ["raw", "raw", "address", "nope", 7, "stage"] })).toEqual({ groupBy: "stage", hiddenColumns: ["stage", "raw"] });
+    expect(normalizeTablePrefs({ groupBy: "stage", hiddenColumns: ["raw", "raw", "address", "nope", 7, "stage"] })).toEqual({ groupBy: "stage", hiddenColumns: ["stage", "raw"], showDelivered: false });
     expect(normalizeTablePrefs({ groupBy: "weird", hiddenColumns: "raw" })).toEqual(DEFAULT_TABLE_PREFS);
     for (const junk of [null, undefined, 3, "x", [], true]) expect(normalizeTablePrefs(junk)).toEqual(DEFAULT_TABLE_PREFS);
   });
@@ -150,9 +175,9 @@ describe("table preferences", () => {
   it("round-trips through storage under a per-viewer key", () => {
     const store = new Map<string, string>();
     const storage = () => ({ getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => void store.set(key, value) });
-    writeTablePrefs("u1", { groupBy: "client", hiddenColumns: ["editors"] }, storage);
+    writeTablePrefs("u1", { groupBy: "client", hiddenColumns: ["editors"], showDelivered: false }, storage);
     expect(store.has(tablePrefsKey("u1"))).toBe(true);
-    expect(readTablePrefs("u1", storage)).toEqual({ groupBy: "client", hiddenColumns: ["editors"] });
+    expect(readTablePrefs("u1", storage)).toEqual({ groupBy: "client", hiddenColumns: ["editors"], showDelivered: false });
     expect(readTablePrefs("u2", storage)).toEqual(DEFAULT_TABLE_PREFS);
   });
 
@@ -164,9 +189,85 @@ describe("table preferences", () => {
     expect(() => writeTablePrefs("u1", DEFAULT_TABLE_PREFS, throwing)).not.toThrow();
   });
 
-  it("offers an External Editor no Priority column", () => {
+  it("offers an External Editor no Priority and no Progress column (#923 D1: their DTO has no checklist)", () => {
     expect(hideableColumnsFor("external_editor")).not.toContain("priority");
+    expect(hideableColumnsFor("external_editor")).not.toContain("progress");
+    expect(columnVisibleToRole("progress", "external_editor")).toBe(false);
+    expect(columnVisibleToRole("progress", "editor")).toBe(true);
     expect(hideableColumnsFor("admin")).toContain("priority");
     expect(hideableColumnsFor("admin")).not.toContain("address");
+  });
+});
+
+describe("the round 4 Table (#923)", () => {
+  it("has the frame's columns in the frame's order, with Progress after Deadline and RAW last", () => {
+    expect([...TABLE_COLUMN_IDS]).toEqual(["address", "stage", "client", "shootDate", "deadline", "progress", "editors", "priority", "raw"]);
+    expect(TABLE_COLUMN_IDS.map((id) => TABLE_COLUMN_LABELS[id])).toEqual(["Project", "Stage", "Client", "Shoot", "Deadline", "Progress", "Editors", "Priority", "RAW received"]);
+  });
+
+  it("sorts by Deadline ascending by default; Progress and Editors are not sortable columns (frame 4b)", () => {
+    expect(DEFAULT_TABLE_SORTING).toEqual([{ id: "deadline", desc: false }]);
+    expect(TABLE_COLUMN_IDS.filter(isSortableColumnId)).toEqual(["address", "stage", "client", "shootDate", "deadline", "priority", "raw"]);
+    const rows = [project("late", { deadlineAt: 3, editors: [{ id: "e2", name: "Zoe" }] }), project("none"), project("early", { deadlineAt: 1, editors: [{ id: "e1", name: "Ann" }] })];
+    expect(ids(sortTableRows(rows, DEFAULT_TABLE_SORTING, STAGES))).toEqual(["early", "late", "none"]);
+    // A stale sort on a non-sortable column keeps the server's order.
+    expect(ids(sortTableRows(rows, asc("progress"), STAGES))).toEqual(["late", "none", "early"]);
+    expect(ids(sortTableRows(rows, asc("editors"), STAGES))).toEqual(["late", "none", "early"]);
+  });
+
+  it("hides Delivered Projects only when the viewer turned them off", () => {
+    const rows = [project("a"), project("d", { stageKey: "delivered" }), project("b", { stageKey: "editing_autohdr" })];
+    expect(ids(hideDelivered(rows, true))).toEqual(["a", "d", "b"]);
+    expect(ids(hideDelivered(rows, false))).toEqual(["a", "b"]);
+  });
+
+  it("words the flat footer from what is shown and what Display hid", () => {
+    expect(tableCountLabel({ shown: 11, total: 13 })).toBe("11 of 13 projects · Delivered hidden by Display");
+    expect(tableCountLabel({ shown: 13, total: 13 })).toBe("13 projects");
+    expect(tableCountLabel({ shown: 1, total: 1 })).toBe("1 project");
+    expect(tableCountLabel({ shown: 0, total: 2 })).toBe("0 of 2 projects · Delivered hidden by Display");
+  });
+
+  it("names a Stage by its definition, and the autoHDR transport key as Editing (StageLabel adds the suffix)", () => {
+    expect(stageDisplayLabel("awaiting_raw", STAGES)).toBe("Awaiting RAW");
+    expect(stageDisplayLabel("editing_autohdr", [{ key: "editing_autohdr", label: "Editing · autoHDR" }])).toBe("Editing");
+    expect(stageDisplayLabel("editing", STAGES)).toBe("Editing");
+    expect(stageDisplayLabel("mystery", STAGES)).toBe("mystery");
+  });
+
+  it("starts Delivered collapsed under Stage and nothing collapsed under Client or None", () => {
+    expect([...defaultCollapsedGroups("stage")]).toEqual(["delivered"]);
+    expect([...defaultCollapsedGroups("client")]).toEqual([]);
+    expect([...defaultCollapsedGroups("none")]).toEqual([]);
+  });
+});
+
+// #923 pass round 2, row 5: at tablet widths the Table drops lower-priority columns so Deadline always shows.
+describe("columnsDroppedToFit", () => {
+  // Frame 4b's widths as the Table sets them (padding included); RAW received is hidden by default.
+  const SIZES = { address: 212, stage: 164, client: 128, shootDate: 104, deadline: 232, progress: 120, editors: 96, priority: 204, raw: 120 } as const;
+  const DEFAULT_VISIBLE = ["address", "stage", "client", "shootDate", "deadline", "progress", "editors", "priority"] as const;
+  const dropped = (visible: readonly (keyof typeof SIZES)[], width: number) => [...columnsDroppedToFit(visible, SIZES, width)];
+
+  it("drops nothing where every column fits, or before the width is known", () => {
+    expect(dropped(DEFAULT_VISIBLE, 1262)).toEqual([]);
+    expect(dropped(DEFAULT_VISIBLE, 0)).toEqual([]);
+  });
+
+  it("at 1024 (an 845px table) drops Client, Shoot and Priority, keeping Progress and Editors beside Deadline", () => {
+    expect(dropped(DEFAULT_VISIBLE, 845)).toEqual(["client", "shootDate", "priority"]);
+  });
+
+  it("at 768 (a 670px table) keeps Project, Stage and Deadline", () => {
+    expect(dropped(DEFAULT_VISIBLE, 670)).toEqual(["client", "shootDate", "priority", "progress", "editors"]);
+  });
+
+  it("drops RAW received first, and only columns the viewer shows", () => {
+    expect(dropped([...DEFAULT_VISIBLE, "raw"], 1262)).toEqual(["raw"]);
+    expect(dropped(["address", "stage", "deadline", "editors"], 845)).toEqual([]);
+  });
+
+  it("never drops Project or Deadline, even where they alone overflow", () => {
+    expect(dropped(DEFAULT_VISIBLE, 300)).toEqual(["client", "shootDate", "priority", "progress", "editors", "stage"]);
   });
 });

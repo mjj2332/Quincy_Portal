@@ -6,6 +6,9 @@
  *   hairline-flat bar the Checklist rail calls for (#358).
  * - Indicator: `bg-primary` becomes `bg-[var(--accent)]`, so the fill is the token (`--ink-900`)
  *   and never a UA/`accent-color` green.
+ * - Scoped `variant="tone"` (#923, the Dashboard Table and Board "N of M done"): a 4px track with a 2px radius and an
+ *   indicator filled from `--progress-tone` (the Stage tone, set by `quincy/DoneProgress`). The default variant
+ *   renders as before for every other caller.
  * `ProgressLabel` / `ProgressValue` are kept as registry exports; the checklist uses neither.
  */
 import { Progress as ProgressPrimitive } from "@base-ui/react/progress"
@@ -15,8 +18,9 @@ function Progress({
   className,
   children,
   value,
+  variant = "default",
   ...props
-}: ProgressPrimitive.Root.Props) {
+}: ProgressPrimitive.Root.Props & { variant?: "default" | "tone" }) {
   return (
     <ProgressPrimitive.Root
       value={value}
@@ -25,8 +29,8 @@ function Progress({
       {...props}
     >
       {children}
-      <ProgressTrack>
-        <ProgressIndicator />
+      <ProgressTrack className={variant === "tone" ? "h-1 rounded-xs" : undefined}>
+        <ProgressIndicator className={variant === "tone" ? "bg-[var(--progress-tone,var(--accent))]" : undefined} />
       </ProgressTrack>
     </ProgressPrimitive.Root>
   )

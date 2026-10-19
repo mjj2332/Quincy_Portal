@@ -20,7 +20,7 @@ import {
   setDashboardSearchDraftDuringComposition,
   subscribeDashboardSearch,
 } from "../../lib/dashboard-search-store";
-import { useMediaQuery } from "../../lib/use-media-query";
+import { PHONE_VIEWPORT_QUERY, useMediaQuery } from "../../lib/use-media-query";
 
 /**
  * The Dashboard toolbar's project search — #217, moved out of the rail by #427 (ADR 0015). A REAL
@@ -53,6 +53,9 @@ function capSearchInput(value: string): string {
   return capDashboardSearchText(stripUnsafeText(value));
 }
 
+/** The input's type at phone width: 16px (`--text-base`), so iOS does not zoom the page on focus. */
+export const PHONE_FIELD_TYPE = "max-[721px]:text-[length:var(--text-base)]";
+
 /** A ⌘K request to focus the field. `signal` numbers it, so a repeat request is still a fresh one. */
 export type DashboardSearchFocusRequest = { signal: number };
 
@@ -70,12 +73,17 @@ export type DashboardSearchProps = {
   focusRequest?: DashboardSearchFocusRequest | null;
   /** Spends a request once the field has taken focus for it. */
   onFocusRequestHandled?: (signal: number) => void;
+  /**
+   * The caller drew the field too narrow for the long hint (the view bar's 200px `tablet` search, frame 4a-t, where
+   * it cut mid-word: #923 review round 3), so it shows "Search…" as on a phone.
+   */
+  shortPlaceholder?: boolean;
   className?: string;
 };
 
-export function DashboardSearch({ principalId = "", focusRequest = null, onFocusRequestHandled, className }: DashboardSearchProps) {
-  // The long hint does not fit the narrow bar's share of the row: "Search…" at <=721px.
-  const narrow = useMediaQuery("(max-width: 721px)");
+export function DashboardSearch({ principalId = "", focusRequest = null, onFocusRequestHandled, shortPlaceholder = false, className }: DashboardSearchProps) {
+  // The long hint does not fit the narrow bar's share of the row: "Search…" at <=721px, or where the caller says so.
+  const narrow = useMediaQuery(PHONE_VIEWPORT_QUERY) || shortPlaceholder;
   const search = useSyncExternalStore(
     subscribeDashboardSearch,
     () => getDashboardSearchSnapshotForPrincipal(principalId),
@@ -198,6 +206,9 @@ export function DashboardSearch({ principalId = "", focusRequest = null, onFocus
         // `handleChange` above.
         onCompositionStart={handleCompositionStart}
         onCompositionEnd={handleCompositionEnd}
+        // 16px on a phone: iOS zooms the page into any field under 16px when it takes focus, and
+        // stays zoomed and panned after the keyboard drops (#923 pass, rows 13–14).
+        className={PHONE_FIELD_TYPE}
         placeholder={narrow ? "Search…" : "Search address, suburb, client…"}
       />
       {search.draft === "" && (
