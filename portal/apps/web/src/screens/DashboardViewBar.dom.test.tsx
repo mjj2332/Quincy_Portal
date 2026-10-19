@@ -138,6 +138,7 @@ describe("the wide row (4a)", () => {
     await mount();
     expect(bar().dataset.layout).toBe("full");
     expect(host.querySelector('[data-testid="dashboard-search-field"]')!.className).toContain("w-[17.5rem]");
+    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search"]')!.placeholder).toBe("Search address, suburb, client…");
   });
 
   it("narrows the search to 200px at a 1024 viewport's bar and keeps all four tabs labelled (4a-t)", async () => {
@@ -145,6 +146,8 @@ describe("the wide row (4a)", () => {
     await mount();
     expect(bar().dataset.layout).toBe("tablet");
     expect(host.querySelector('[data-testid="dashboard-search-field"]')!.className).toContain("w-[12.5rem]");
+    // The long hint cut mid-word at 200px ("Search address, s", #923 review round 3): the short one, as on a phone.
+    expect(host.querySelector<HTMLInputElement>('[data-testid="dashboard-search"]')!.placeholder).toBe("Search…");
     expect(searchToggle()).toBeNull();
     const labelled = tabs().map((tab) => [tab.textContent?.trim(), tab.querySelector("[data-tab-label]")?.classList.contains("sr-only")]);
     expect(labelled).toEqual([["Table", false], ["Board", false], ["Calendar", false], ["Timeline", false]]);

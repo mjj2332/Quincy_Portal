@@ -73,12 +73,17 @@ export type DashboardSearchProps = {
   focusRequest?: DashboardSearchFocusRequest | null;
   /** Spends a request once the field has taken focus for it. */
   onFocusRequestHandled?: (signal: number) => void;
+  /**
+   * The caller drew the field too narrow for the long hint (the view bar's 200px `tablet` search, frame 4a-t, where
+   * it cut mid-word: #923 review round 3), so it shows "Search…" as on a phone.
+   */
+  shortPlaceholder?: boolean;
   className?: string;
 };
 
-export function DashboardSearch({ principalId = "", focusRequest = null, onFocusRequestHandled, className }: DashboardSearchProps) {
-  // The long hint does not fit the narrow bar's share of the row: "Search…" at <=721px.
-  const narrow = useMediaQuery(PHONE_VIEWPORT_QUERY);
+export function DashboardSearch({ principalId = "", focusRequest = null, onFocusRequestHandled, shortPlaceholder = false, className }: DashboardSearchProps) {
+  // The long hint does not fit the narrow bar's share of the row: "Search…" at <=721px, or where the caller says so.
+  const narrow = useMediaQuery(PHONE_VIEWPORT_QUERY) || shortPlaceholder;
   const search = useSyncExternalStore(
     subscribeDashboardSearch,
     () => getDashboardSearchSnapshotForPrincipal(principalId),

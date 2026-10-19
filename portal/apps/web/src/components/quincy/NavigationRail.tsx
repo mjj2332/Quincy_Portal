@@ -59,8 +59,9 @@ import type {
  * - `sheet` (narrow, inside `RailSheet`): the labelled 288px column the hamburger opens. Rows keep
  *   their visible labels and 44px targets, and the account menu keeps a Notification preferences
  *   row (there is no settings icon here, and the header owns the bell). On the phone Dashboard the
- *   bar has no bell (#923, owner decision), so the shell passes `notifications` and the footer
- *   opens with a Notifications row: the unread count, and a press that opens the page's panel.
+ *   bar has no bell (#923, owner decision), so the shell passes `notifications` and a Notifications
+ *   row sits above the footer, inset like the nav items: the unread count, and a press that opens the
+ *   page's panel.
  *
  * Neither variant renders the Dashboard view links (Table/Board/Calendar/Timeline): the Dashboard's
  * own view controls choose a view (the tabs ticket, #427, replaces them). `item.children` stays in
@@ -223,7 +224,7 @@ export type NavigationRailProps = {
    */
   showBell?: boolean;
   /**
-   * `sheet` only: a Notifications row at the top of the footer, for a page with no bell of its own
+   * `sheet` only: a Notifications row just above the footer, for a page with no bell of its own
    * (#923, the phone Dashboard). `RailedShell` decides, and owns what a press does.
    */
   notifications?: { unreadCount: number; onOpen: () => void };
@@ -349,22 +350,12 @@ export function NavigationRail({ navigation, user, variant = "rail", showBell = 
         </nav>
       </SidebarContent>
 
-      {/* The rail's foot: bell, settings, avatar — a hairline-bordered cluster, app-shell-22's
-          bordered group. `isRail` swaps the sheet's 16px side padding for the nav groups' own
-          8px inset and centres every footer item, so the bell, settings and avatar share the logo's
-          and nav icons' vertical axis; vertical padding is untouched in every variant. */}
-      <SidebarFooter
-        className={cn(
-          "gap-[var(--space-3)] py-[var(--space-4)]",
-          isRail ? "items-center border-t border-t-[var(--border-hairline)] px-[var(--space-2)]" : "px-[var(--space-4)]",
-        )}
-        data-testid="navigation-rail-footer"
-      >
-        {/* The bell's own anchor is the rail's fixed `sidebar-container` div (`railRef`), so the
-            panel's right edge sits 8px off the rail's edge and its bottom lines up with this
-            bell (`NotificationBell`'s `alignEndOffsetFor`, ADR 0006 as amended by 0015). */}
-        {isRail && showBell && <NotificationBell placement="rail" anchorRef={railRef} />}
-        {isSheet && notifications && (
+      {/* `sheet` only: the Notifications row (#923). A `SidebarGroup` of its own above the footer, not inside the
+          footer, so it takes the nav groups' 8px inset and lines up with Dashboard / Notice board / Admin; the
+          footer's 16px sides put it 8px right of them (#923 review round 3). No bottom padding: the footer's own
+          top padding is the gap to the account row. */}
+      {isSheet && notifications && (
+        <SidebarGroup className="pb-0" data-testid="navigation-rail-notifications-group">
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
@@ -385,7 +376,24 @@ export function NavigationRail({ navigation, user, variant = "rail", showBell = 
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
+        </SidebarGroup>
+      )}
+
+      {/* The rail's foot: bell, settings, avatar — a hairline-bordered cluster, app-shell-22's
+          bordered group. `isRail` swaps the sheet's 16px side padding for the nav groups' own
+          8px inset and centres every footer item, so the bell, settings and avatar share the logo's
+          and nav icons' vertical axis; vertical padding is untouched in every variant. */}
+      <SidebarFooter
+        className={cn(
+          "gap-[var(--space-3)] py-[var(--space-4)]",
+          isRail ? "items-center border-t border-t-[var(--border-hairline)] px-[var(--space-2)]" : "px-[var(--space-4)]",
         )}
+        data-testid="navigation-rail-footer"
+      >
+        {/* The bell's own anchor is the rail's fixed `sidebar-container` div (`railRef`), so the
+            panel's right edge sits 8px off the rail's edge and its bottom lines up with this
+            bell (`NotificationBell`'s `alignEndOffsetFor`, ADR 0006 as amended by 0015). */}
+        {isRail && showBell && <NotificationBell placement="rail" anchorRef={railRef} />}
         {isRail && (
           <SidebarMenu className="items-center" data-testid="navigation-rail-settings-menu">
             <SidebarMenuItem>

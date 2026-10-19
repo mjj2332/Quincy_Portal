@@ -82,17 +82,17 @@ describe("Display menu content and Table preferences (#431)", () => {
     expect(columnCheckboxes().filter((item) => item.getAttribute("aria-checked") === "false").map((item) => item.textContent)).toEqual(["RAW received"]);
   });
 
-  it("offers Show: Delivered Projects, on by default, and keeps the choice per viewer (#923)", async () => {
+  it("offers Show: Delivered Projects, off by default (#923 round 3, frame 4c), and keeps the choice per viewer (#923)", async () => {
     await render(<Bar principalId="u1" />);
     await openDisplay();
     const delivered = () => groupCheckboxes("Show").find((item) => item.textContent === "Delivered Projects")!;
     expect(groupCheckboxes("Show").map((item) => item.textContent)).toEqual(["Delivered Projects"]);
-    expect(delivered().getAttribute("aria-checked")).toBe("true");
+    expect(delivered().getAttribute("aria-checked")).toBe("false");
     await toggleGroupCheckbox("Show", "Delivered Projects");
     expect(displayMenu()).not.toBeNull();
-    expect(delivered().getAttribute("aria-checked")).toBe("false");
-    expect(prefsText().showDelivered).toBe(false);
-    expect(JSON.parse(storageValues.get(tablePrefsKey("u1"))!).showDelivered).toBe(false);
+    expect(delivered().getAttribute("aria-checked")).toBe("true");
+    expect(prefsText().showDelivered).toBe(true);
+    expect(JSON.parse(storageValues.get(tablePrefsKey("u1"))!).showDelivered).toBe(true);
   });
 
   it("keeps the menu open across a Group by change and several column toggles, and persists them per viewer", async () => {
@@ -102,8 +102,8 @@ describe("Display menu content and Table preferences (#431)", () => {
     await toggleColumn("Editors");
     await toggleColumn("Priority");
     expect(displayMenu()).not.toBeNull();
-    expect(prefsText()).toEqual({ groupBy: "client", hiddenColumns: ["editors", "priority", "raw"], showDelivered: true });
-    expect(JSON.parse(storageValues.get(tablePrefsKey("u1"))!)).toEqual({ groupBy: "client", hiddenColumns: ["editors", "priority", "raw"], showDelivered: true });
+    expect(prefsText()).toEqual({ groupBy: "client", hiddenColumns: ["editors", "priority", "raw"], showDelivered: false });
+    expect(JSON.parse(storageValues.get(tablePrefsKey("u1"))!)).toEqual({ groupBy: "client", hiddenColumns: ["editors", "priority", "raw"], showDelivered: false });
     expect(storageValues.has(tablePrefsKey("u2"))).toBe(false);
   });
 
@@ -119,31 +119,31 @@ describe("Display menu content and Table preferences (#431)", () => {
   it("restores the stored choice for the same viewer and reads another viewer's key on an identity switch", async () => {
     storageValues.set(tablePrefsKey("u1"), JSON.stringify({ groupBy: "none", hiddenColumns: [] }));
     await render(<Bar principalId="u1" />);
-    expect(prefsText()).toEqual({ groupBy: "none", hiddenColumns: [], showDelivered: true });
+    expect(prefsText()).toEqual({ groupBy: "none", hiddenColumns: [], showDelivered: false });
     await render(<Bar principalId="u2" />);
-    expect(prefsText()).toEqual({ groupBy: "stage", hiddenColumns: ["raw"], showDelivered: true });
+    expect(prefsText()).toEqual({ groupBy: "stage", hiddenColumns: ["raw"], showDelivered: false });
     // Nothing was written for u2 by merely arriving, and u1's value is untouched.
     expect(storageValues.has(tablePrefsKey("u2"))).toBe(false);
     expect(JSON.parse(storageValues.get(tablePrefsKey("u1"))!)).toEqual({ groupBy: "none", hiddenColumns: [] });
     await chooseGroupBy("Client");
-    expect(JSON.parse(storageValues.get(tablePrefsKey("u2"))!)).toEqual({ groupBy: "client", hiddenColumns: ["raw"], showDelivered: true });
+    expect(JSON.parse(storageValues.get(tablePrefsKey("u2"))!)).toEqual({ groupBy: "client", hiddenColumns: ["raw"], showDelivered: false });
     expect(JSON.parse(storageValues.get(tablePrefsKey("u1"))!)).toEqual({ groupBy: "none", hiddenColumns: [] });
   });
 
   it("reads a corrupt stored value as the defaults", async () => {
     storageValues.set(tablePrefsKey("u1"), JSON.stringify({ groupBy: "weird", hiddenColumns: ["address", "nope", "raw"] }));
     await render(<Bar principalId="u1" />);
-    expect(prefsText()).toEqual({ groupBy: "stage", hiddenColumns: ["raw"], showDelivered: true });
+    expect(prefsText()).toEqual({ groupBy: "stage", hiddenColumns: ["raw"], showDelivered: false });
     storageValues.set(tablePrefsKey("u1"), "{not json");
     await render(<Bar principalId="u9" />);
     await render(<Bar principalId="u1" />);
-    expect(prefsText()).toEqual({ groupBy: "stage", hiddenColumns: ["raw"], showDelivered: true });
+    expect(prefsText()).toEqual({ groupBy: "stage", hiddenColumns: ["raw"], showDelivered: false });
   });
 
   it("still works in memory when storage throws", async () => {
     storageBroken = true;
     await render(<Bar principalId="u1" />);
-    expect(prefsText()).toEqual({ groupBy: "stage", hiddenColumns: ["raw"], showDelivered: true });
+    expect(prefsText()).toEqual({ groupBy: "stage", hiddenColumns: ["raw"], showDelivered: false });
     await chooseGroupBy("Client");
     expect(prefsText().groupBy).toBe("client");
   });

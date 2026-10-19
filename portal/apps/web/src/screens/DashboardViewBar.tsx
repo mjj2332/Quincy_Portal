@@ -42,7 +42,7 @@ import type { DashboardView } from "./dashboard-helpers";
  *
  * ## Layout, from the bar's own width (`viewBarLayout`)
  * - `full` (4a): every tab labelled, a 280px search with its ⌘K hint.
- * - `tablet` (4a-t): the same row with a 200px search.
+ * - `tablet` (4a-t): the same row with a 200px search, whose hint is the short "Search…".
  * - `compact` (4a-s): only the current tab keeps its label, the others are icons with the name as a
  *   tooltip (and as their accessible name); the search becomes an icon.
  * - `tight`: compact, and New shoot drops its label too, for a narrow shell's 722–747px.
@@ -224,6 +224,7 @@ export function DashboardViewBar({
       principalId={principalId}
       focusRequest={searchFocusRequest}
       onFocusRequestHandled={onSearchFocusHandled}
+      shortPlaceholder={layout === "tablet"}
       className={cn(
         CONTROL_HEIGHT,
         "max-w-full",

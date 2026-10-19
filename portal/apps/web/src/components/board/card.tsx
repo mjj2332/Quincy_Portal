@@ -180,7 +180,6 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
   // The studio civil string ("2026-10-19T17:00"); `formatSydneyCivil` only covers a summary that predates `deadlineLocalCivil`.
   const deadlineCivil = project.deadlineAt === null ? null : (project.deadlineLocalCivil ?? formatSydneyCivil(project.deadlineAt));
   const archived = Boolean(project.archivedAt);
-  const hasEditors = (project.editors?.length ?? 0) > 0;
   const href = projectHref ?? `/projects/${encodeURIComponent(project.id)}`;
   const menuConfig = !archived && menu ? menu : null;
   // A chosen Stage is a MOVE: the optimistic overlay remounts this card in another column while the
@@ -228,9 +227,10 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
   );
   // #923 D1: progress only when the API sent `checklist`; `{0,0}` is "No tasks", absent is nothing.
   const progress = <DoneProgress done={appearance.done} tone={appearance.tone} known={project.checklist !== undefined} />;
-  const avatars = hasEditors && (
-    // #82: `editors` is already Editor-only, active-only and server-ordered (#79). No Editors, no avatar slot (D4).
-    <div className="ml-auto flex shrink-0 items-center" data-testid="board-card-meta"><AvatarStack people={project.editors!} personNoun="Editor" emptyLabel="No Editor assigned" /></div>
+  // #82: `editors` is already Editor-only, active-only and server-ordered (#79). No Editors draws AvatarStack's dashed
+  // "No Editor assigned" circle, the same as the Table's Editors cell (frame 4e, #923 review round 3).
+  const avatars = (
+    <div className="ml-auto flex shrink-0 items-center" data-testid="board-card-meta"><AvatarStack people={project.editors ?? []} personNoun="Editor" emptyLabel="No Editor assigned" /></div>
   );
   const panelClass = `flex flex-col gap-[var(--space-2)] px-[var(--space-3)] pt-[var(--space-3)] pb-0 shadow-xs ${late ? LATE_PANEL_CLASS : ""}`;
 
@@ -253,7 +253,7 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
             </div>
             {deadline}
             {progress}
-            {avatars && <div className="flex items-center">{avatars}</div>}
+            <div className="flex items-center">{avatars}</div>
           </div>
         </FramePanel>
       </Frame>
