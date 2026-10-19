@@ -1,0 +1,318 @@
+/**
+ * #927 T3: the one note composer box (prototype `note-composer` frames C2, C4, C5, C6, G1, R1, E1, P1). Presentational: the field and the media
+ * strip are slots (the rich editor and the strip are other tickets'), so simple fixtures stand in for them here; every state is a prop.
+ */
+import { act } from "react";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { NoteComposerBox, type NoteComposerBoxProps } from "./NoteComposerBox";
+import type { NoteDrawRowProps } from "./NoteDrawRow";
+
+let root: Root | null = null;
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+if (!Element.prototype.getAnimations) Element.prototype.getAnimations = () => [];
+afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren(); });
+
+const field = <div role="textbox" aria-multiline="true" aria-label="Add a note" contentEditable suppressContentEditableWarning data-testid="field-fixture" />;
+const strip = <div data-testid="strip-fixture">harbour-drone-ref.mov</div>;
+
+function staff(overrides: Partial<Extract<NoteComposerBoxProps, { variant: "staff" }>> = {}): NoteComposerBoxProps {
+  return {
+    variant: "staff", label: "Add a note", field,
+    chip: { kind: "point", at: "00:00:05:00", following: true },
+    range: { marks: { in: null, out: null }, onPress: vi.fn() },
+    attach: { onPick: vi.fn() },
+    pen: { onPress: vi.fn() },
+    visibility: { value: "internal", onChange: vi.fn() },
+    send: { label: "Post note", onSend: vi.fn(), disabled: false },
+    ...overrides,
+  };
+}
+function drawRow(overrides: Partial<NoteDrawRowProps> = {}): NoteDrawRowProps {
+  return { tool: "freehand", color: "#e64b3c", onToolChange: vi.fn(), onColorChange: vi.fn(), canUndo: true, canRedo: false, canClear: true, onUndo: vi.fn(), onRedo: vi.fn(), onClear: vi.fn(), onDone: vi.fn(), ...overrides };
+}
+async function mount(p: NoteComposerBoxProps) {
+  const host = document.createElement("div"); document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => { root!.render(<NoteComposerBox {...p} />); await Promise.resolve(); });
+  return host;
+}
+async function click(el: Element) { await act(async () => { (el as HTMLElement).click(); await Promise.resolve(); await Promise.resolve(); }); }
+async function key(el: Element, init: KeyboardEventInit) {
+  const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+  await act(async () => { el.dispatchEvent(event); await Promise.resolve(); });
+  return event;
+}
+const byLabel = (label: string) => document.querySelector<HTMLElement>(`[aria-label="${label}"]`);
+const q = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+const rowNames = () => [...q("note-composer-tools")!.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"));
+
+describe("NoteComposerBox, staff (C2)", () => {
+  it("is one labelled form: the chip before the field, then in/out, paperclip, pen, visibility and a round Send", async () => {
+    const host = await mount(staff());
+    const form = host.querySelector("form")!;
+    expect(form.getAttribute("aria-label")).toBe("Add a note");
+    expect(form.getAttribute("data-variant")).toBe("staff");
+    const text = q("note-composer-text")!;
+    expect(text.firstElementChild).toBe(q("note-composer-chip"));
+    expect(text.contains(q("field-fixture"))).toBe(true);
+    expect(rowNames()).toEqual(["In and out points", "Add photos or videos", "Draw on the frame", "Who can see this note: Internal", "Post note"]);
+    expect(byLabel("Post note")!.getAttribute("type")).toBe("submit");
+    expect(byLabel("Post note")!.getAttribute("title")).toBe("Post (⌘↵)");
+  });
+
+  it("the point chip follows the playhead until the note starts, then says it is stamped", async () => {
+    await mount(staff());
+    const chip = q("note-composer-chip")!;
+    expect(chip.getAttribute("title")).toBe("Follows the playhead until you start the note");
+    expect(chip.textContent).toBe("Note at 00:00:05:00");
+    expect(chip.getAttribute("aria-live")).toBe("off");
+    await act(async () => { root!.render(<NoteComposerBox {...staff({ chip: { kind: "point", at: "00:00:06:12", following: false }, drawn: true })} />); });
+    expect(chip.getAttribute("title")).toBe("The note is stamped here");
+    expect(chip.textContent).toBe("Note with a drawing at 00:00:06:12");
+    expect(chip.querySelector("svg")).not.toBeNull();
+  });
+
+  it("Send reports a press and a form submit; disabled, it says why (D2) and does nothing", async () => {
+    const p = staff();
+    await mount(p);
+    await click(byLabel("Post note")!);
+    expect((p as Extract<NoteComposerBoxProps, { variant: "staff" }>).send.onSend).toHaveBeenCalledTimes(1);
+    const onSend = vi.fn();
+    await act(async () => { root!.render(<NoteComposerBox {...staff({ send: { label: "Post note", onSend, disabled: true, reason: "Add a few words to post the drawing" } })} />); });
+    const send = byLabel("Post note")!;
+    expect(send.getAttribute("aria-disabled")).toBe("true");
+    expect(send.getAttribute("title")).toBe("Add a few words to post the drawing");
+    await click(send);
+    await act(async () => { send.closest("form")!.requestSubmit(); });
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("a pending Send shows its phase by name and keeps the field's focus on press", async () => {
+    await mount(staff({ send: { label: "Posting…", onSend: vi.fn(), disabled: true, pending: true } }));
+    const send = byLabel("Posting…")!;
+    expect(send.querySelector('[role="status"], svg')).not.toBeNull();
+    for (const type of ["pointerdown", "mousedown"]) {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      send.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    }
+  });
+
+  it("places the slots: the media strip under the text and a notice above the tools", async () => {
+    await mount(staff({ strip, notice: <p role="alert">Notes can be 10,000 characters at most.</p> }));
+    const box = q("note-composer-box")!;
+    const order = [...box.children].map((c) => c.getAttribute("data-testid") ?? c.getAttribute("role"));
+    expect(order).toEqual(["note-composer-text", "strip-fixture", "alert", "note-composer-tools"]);
+  });
+});
+
+describe("NoteComposerBox, in / out and the range chip (C4)", () => {
+  it("one button, three presses: its title and pressed state follow the marks, and a press reports the next step", async () => {
+    const onPress = vi.fn();
+    const render = (marks: { in: number | null; out: number | null }) => act(async () => { root!.render(<NoteComposerBox {...staff({ range: { marks, onPress } })} />); });
+    await mount(staff({ range: { marks: { in: null, out: null }, onPress } }));
+    const button = byLabel("In and out points")!;
+    expect([button.getAttribute("title"), button.getAttribute("aria-pressed"), button.getAttribute("aria-keyshortcuts")]).toEqual(["Set in (I)", "false", "I O"]);
+    await click(button);
+    expect(onPress).toHaveBeenLastCalledWith("in");
+    await render({ in: 120, out: null });
+    expect([button.getAttribute("title"), button.getAttribute("aria-pressed")]).toEqual(["Set out (O)", "true"]);
+    await click(button);
+    expect(onPress).toHaveBeenLastCalledWith("out");
+    await render({ in: 120, out: 212 });
+    expect(button.getAttribute("title")).toBe("Clear in / out");
+    await click(button);
+    expect(onPress).toHaveBeenLastCalledWith("clear");
+  });
+
+  it("the range chip reads In → Out with the pencil for a drawing, and its × clears the marks", async () => {
+    const onClear = vi.fn();
+    await mount(staff({ chip: { kind: "range", from: "00:00:05:00", to: "00:00:08:12", toLive: false, onClear }, drawn: true, strip }));
+    const chip = q("note-composer-chip")!;
+    expect(chip.textContent).toContain("Note from 00:00:05:00 to 00:00:08:12, with a drawing");
+    expect(chip.querySelector('[aria-hidden="true"]:not(svg)')!.textContent).toBe("00:00:05:00 → 00:00:08:12");
+    const clear = byLabel("Clear in and out")!;
+    expect(chip.contains(clear)).toBe(true);
+    expect(clear.getAttribute("title")).toBe("Clear in / out");
+    await click(clear);
+    expect(onClear).toHaveBeenCalledTimes(1);
+  });
+
+  it("while only In is marked, Out follows the playhead and is drawn quieter", async () => {
+    await mount(staff({ chip: { kind: "range", from: "00:00:05:00", to: "00:00:06:00", toLive: true, onClear: vi.fn() } }));
+    const live = q("note-composer-chip-live")!;
+    expect(live.textContent).toBe("00:00:06:00");
+    expect(live.className.split(/\s+/)).toContain("opacity-60");
+    expect(q("note-composer-chip")!.textContent).toContain("Note from 00:00:05:00, Out follows the playhead");
+  });
+});
+
+describe("NoteComposerBox, visibility (C5)", () => {
+  it("is a menu of the two options with each description; the current one is checked and a pick reports it", async () => {
+    const onChange = vi.fn();
+    await mount(staff({ visibility: { value: "public", onChange } }));
+    const trigger = byLabel("Who can see this note: Client-visible")!;
+    expect(trigger.getAttribute("title")).toBe("Who can see this note");
+    await click(trigger);
+    const items = [...document.querySelectorAll('[role="menuitemradio"]')];
+    expect(items.map((item) => item.textContent)).toEqual([
+      "InternalStudio only — never shown on the client link.",
+      "Client-visibleShown to the client on the review link.",
+    ]);
+    expect(items.map((item) => item.getAttribute("aria-checked"))).toEqual(["false", "true"]);
+    await click(items[0]!);
+    expect(onChange).toHaveBeenCalledWith("internal");
+  });
+});
+
+describe("NoteComposerBox, drawing (C6)", () => {
+  it("swaps the tool row for the drawing row; visibility and Send hide, the field stays", async () => {
+    await mount(staff({ draw: drawRow() }));
+    expect(q("note-composer-tools")).toBeNull();
+    expect(q("note-draw-row")!.getAttribute("role")).toBe("toolbar");
+    expect(byLabel("Post note")).toBeNull();
+    expect(byLabel("Who can see this note: Internal")).toBeNull();
+    expect(q("field-fixture")).not.toBeNull();
+    expect(document.querySelector("form")!.getAttribute("data-drawing")).toBe("true");
+  });
+
+  it("Escape inside the box ends drawing first, and is marked handled", async () => {
+    const draw = drawRow();
+    const onEscape = vi.fn();
+    await mount(staff({ draw, onEscape }));
+    const event = await key(q("field-fixture")!, { key: "Escape" });
+    expect(draw.onDone).toHaveBeenCalledTimes(1);
+    expect(onEscape).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("leaves an Escape alone that something inside already handled", async () => {
+    const draw = drawRow();
+    await mount(staff({ draw }));
+    const field = q("field-fixture")!;
+    field.addEventListener("keydown", (e) => { e.preventDefault(); });
+    await key(field, { key: "Escape" });
+    expect(draw.onDone).not.toHaveBeenCalled();
+  });
+});
+
+describe("NoteComposerBox, guest (G1)", () => {
+  it("has no visibility, and no pen when drawing is off for the Project", async () => {
+    await mount({ variant: "guest", label: "Add a note", field, chip: { kind: "point", at: "00:00:05:00", following: true }, range: { marks: { in: null, out: null }, onPress: vi.fn() }, attach: { onPick: vi.fn() }, send: { label: "Post note", onSend: vi.fn(), disabled: true } });
+    expect(rowNames()).toEqual(["In and out points", "Add photos or videos", "Post note"]);
+    expect(document.querySelector('[aria-haspopup="menu"]')).toBeNull();
+  });
+});
+
+describe("NoteComposerBox, reply (R1)", () => {
+  it("has no chip, no in/out and no pen: only the paperclip and Send, and no visible Cancel", async () => {
+    await mount({ variant: "reply", label: "Reply", field, attach: { onPick: vi.fn() }, send: { label: "Send reply", onSend: vi.fn(), disabled: false }, onEscape: vi.fn() });
+    expect(q("note-composer-chip")).toBeNull();
+    expect(rowNames()).toEqual(["Add photos or videos", "Send reply"]);
+    expect(byLabel("Send reply")!.getAttribute("title")).toBe("Send reply (⌘↵)");
+    expect(document.querySelector("form")!.textContent).not.toContain("Cancel");
+  });
+
+  it("Escape dismisses it through the host", async () => {
+    const onEscape = vi.fn();
+    await mount({ variant: "reply", label: "Reply", field, attach: { onPick: vi.fn() }, send: { label: "Send reply", onSend: vi.fn(), disabled: false }, onEscape });
+    const event = await key(q("field-fixture")!, { key: "Escape" });
+    expect(onEscape).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(true);
+  });
+});
+
+describe("NoteComposerBox, edit (E1)", () => {
+  function edit(overrides: Partial<Extract<NoteComposerBoxProps, { variant: "edit" }>> = {}): NoteComposerBoxProps {
+    return {
+      variant: "edit", label: "Edit note", field,
+      chip: { kind: "range", from: "00:00:18:15", to: "00:00:24:00", toLive: false, onClear: vi.fn() },
+      range: { marks: { in: 465, out: 600 }, onPress: vi.fn() },
+      attach: { onPick: vi.fn() }, pen: { onPress: vi.fn() },
+      visibility: "internal",
+      save: { onSave: vi.fn(), onCancel: vi.fn(), disabled: false },
+      ...overrides,
+    };
+  }
+
+  it("keeps in/out and the pen; visibility is a fixed label; Cancel and Save end the row", async () => {
+    const p = edit();
+    await mount(p);
+    expect(rowNames()).toEqual(["In and out points", "Add photos or videos", "Draw on the frame", null, null]);
+    const fixed = q("note-composer-visibility")!;
+    expect(fixed.tagName).not.toBe("BUTTON");
+    expect(fixed.textContent).toBe("Internal");
+    expect(fixed.getAttribute("title")).toBe("Visibility can't change once posted");
+    const buttons = [...q("note-composer-tools")!.querySelectorAll("button")];
+    expect(buttons.slice(-2).map((b) => [b.textContent, b.getAttribute("type")])).toEqual([["Cancel", "button"], ["Save", "submit"]]);
+    await click(buttons.at(-2)!);
+    await click(buttons.at(-1)!);
+    const save = (p as Extract<NoteComposerBoxProps, { variant: "edit" }>).save;
+    expect(save.onCancel).toHaveBeenCalledTimes(1);
+    expect(save.onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("D4: editing the range locks the pen, with the lock's reason as its title; the locked control does nothing", async () => {
+    const pen = { onPress: vi.fn(), disabled: true, reason: "Save or clear the in and out points to change the drawing." };
+    await mount(edit({ pen }));
+    const button = byLabel("Draw on the frame")!;
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.getAttribute("title")).toBe(pen.reason);
+    await click(button);
+    expect(pen.onPress).not.toHaveBeenCalled();
+  });
+
+  it("D4: editing the drawing locks in/out the same way", async () => {
+    const range = { marks: { in: 465, out: 600 }, onPress: vi.fn(), disabled: true, reason: "Finish the drawing to change in and out." };
+    await mount(edit({ range, draw: null }));
+    const button = byLabel("In and out points")!;
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(button.getAttribute("title")).toBe(range.reason);
+    await click(button);
+    expect(range.onPress).not.toHaveBeenCalled();
+  });
+});
+
+describe("NoteComposerBox, phone (P1) and Full screen (F1)", () => {
+  it("draws every tool, Send and the visibility trigger at 44px on a phone", async () => {
+    await mount(staff({ phone: true }));
+    for (const button of q("note-composer-tools")!.querySelectorAll("button")) {
+      const classes = button.className.split(/\s+/);
+      expect(classes.includes("size-11") || classes.includes("min-h-11"), button.getAttribute("aria-label")!).toBe(true);
+    }
+    expect(byLabel("Post note")!.className.split(/\s+/)).toContain("size-11");
+  });
+
+  it("draws 32px targets on desktop, 44px on a touch tablet", async () => {
+    await mount(staff());
+    for (const label of ["In and out points", "Add photos or videos", "Draw on the frame", "Post note"]) {
+      const classes = byLabel(label)!.className.split(/\s+/);
+      expect(classes, label).toEqual(expect.arrayContaining(["size-8", "min-[721px]:pointer-coarse:size-11"]));
+    }
+  });
+
+  it("passes the phone form to the drawing row", async () => {
+    await mount(staff({ phone: true, draw: drawRow() }));
+    expect(byLabel("Clear drawing")).toBeNull();
+    expect(byLabel("Undo")!.className.split(/\s+/)).toContain("size-11");
+  });
+
+  it("floats over the film in Full screen: no rail chrome, a raised translucent box", async () => {
+    await mount(staff({ floating: true }));
+    expect(document.querySelector("form")!.getAttribute("data-floating")).toBe("true");
+    expect(q("note-composer-box")!.className.split(/\s+/)).toEqual(expect.arrayContaining(["backdrop-blur-md", "shadow-[var(--shadow-lg)]"]));
+  });
+});
+
+describe("NoteComposerBox is Guest-safe", () => {
+  it("imports no staff store, API or router", () => {
+    for (const file of ["NoteComposerBox.tsx", "NoteDrawRow.tsx"]) {
+      const source = readFileSync(join(process.cwd(), "src/components/quincy", file), "utf8");
+      const imports = [...source.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]!);
+      expect(imports.filter((s) => /lib\/(?:api|auth|router|app-router|query-client|video-note-form-store)|InternalLink|^@tanstack\//.test(s)), file).toEqual([]);
+    }
+  });
+});
