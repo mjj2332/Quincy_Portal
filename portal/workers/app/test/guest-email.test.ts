@@ -11,6 +11,12 @@ import { clearVideoFlags, seedVideoVersion, setVideoFlags } from "./video-review
 
 /** The guest email code API (#741 13a): send a six-digit code, verify it, and the session becomes a verified guest. */
 const DAY = 86_400_000; const MINUTE = 60_000;
+/**
+ * The limit tests freeze `Date` (the fixtures and the handler share it) at 12:05:30 UTC of today: inside every window they touch (the 60-second resend, the 15-minute buckets, the day),
+ * so no run straddles a boundary, and a Retry-After is an exact number.
+ */
+const PINNED = Math.floor(Date.now() / DAY) * DAY + 12 * 60 * MINUTE + 5 * MINUTE + 30_000;
+const pinClock = () => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(PINNED); };
 type Json = Record<string, any>;
 const json = async (response: Response) => await response.json() as Json;
 const EMAIL = "gina@guest-13a.test"; const NAME = "Gina Guest";
@@ -19,7 +25,7 @@ let mail: ReturnType<typeof mockEmail>;
 beforeAll(async () => { await seedFixture(); });
 beforeEach(async () => { await clearGuestRows(); await openGuestGate(); mail = mockEmail(); });
 afterEach(async () => {
-  mail.restore(); vi.restoreAllMocks();
+  mail.restore(); vi.restoreAllMocks(); vi.useRealTimers();
   await database.DB.prepare("DELETE FROM audit_log WHERE action LIKE 'review_link.email_%'").run();
   await database.DB.prepare("DELETE FROM guest_reviewers WHERE email_normalized LIKE '%@guest-13a.test' OR email_normalized LIKE '%.invalid'").run();
   await database.DB.prepare("UPDATE projects SET archived_at = NULL WHERE id = ?").bind(ids.project).run();
@@ -62,6 +68,7 @@ async function verifiedGuest(input: { email?: string; name?: string; link?: Awai
 }
 
 describe("POST .../email/code", () => {
+  beforeEach(pinClock);
   it("answers 202 with the same bytes for a new address, a known one and an unroutable one, and sends one email each", async () => {
     const link = await seedGuestLink();
     const first = await sessionOf(link); const known = await sessionOf(link); const odd = await sessionOf(link);
@@ -109,7 +116,7 @@ describe("POST .../email/code", () => {
     const again = await sendCode(link, session.cookie);
     expect(again.status).toBe(429); expect(again.headers.get("retry-after")).toMatch(/^\d+$/);
     expect(await again.json()).toEqual({ error: "too_many_attempts", retryAfterSeconds: Number(again.headers.get("retry-after")) });
-    expect(Number(again.headers.get("retry-after"))).toBeLessThanOrEqual(60);
+    expect(again.headers.get("retry-after")).toBe("60");
     expect(mail.sent).toHaveLength(1);
     await pastResendWait(session.id);
     expect((await sendCode(link, session.cookie)).status).toBe(202); expect(mail.sent).toHaveLength(2);
@@ -130,7 +137,7 @@ describe("POST .../email/code", () => {
     expect((await sendCode(link, (await sessionOf(link)).cookie)).status).toBe(202);
     const over = await sendCode(link, (await sessionOf(link)).cookie);
     expect(over.status).toBe(429); expect(mail.sent).toHaveLength(1);
-    expect(Number(over.headers.get("retry-after"))).toBeGreaterThan(60);
+    expect(over.headers.get("retry-after")).toBe(String((DAY - (PINNED - start)) / 1000));
   });
 
   it("caps one link at 30 sends in 15 minutes", async () => {
@@ -401,11 +408,11 @@ describe("POST .../email/verify", () => {
   });
 
   it("limits verify attempts per link (100 in 15 minutes) and per address (30)", async () => {
-    const { link, session, code } = await sent();
+    pinClock(); const { link, session, code } = await sent();
     await seedBucket(`codeverify:link:${link.id}`, 99);
     expect((await verify(link, session.cookie, wrongCode(code))).status).toBe(401);
     const limited = await verify(link, session.cookie, code);
-    expect(limited.status).toBe(429); expect(limited.headers.get("retry-after")).toMatch(/^\d+$/);
+    expect(limited.status).toBe(429); expect(limited.headers.get("retry-after")).toBe(String((GUEST_WINDOW_MS - (PINNED % GUEST_WINDOW_MS)) / 1000));
     expect(await limited.json()).toMatchObject({ error: "too_many_attempts" });
     expect((await codeRows(session.id))[0]!.attempts).toBe(1);
     const ipLink = await sent(); const ip = freshIp();
