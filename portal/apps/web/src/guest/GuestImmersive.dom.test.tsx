@@ -194,7 +194,7 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     expect(document.activeElement).toBe(byId("video-fullscreen"));
   });
 
-  it("Add note again hides the box and keeps the draft; a new note has no Cancel (#927 G1)", async () => {
+  it("Add note again hides the box and keeps the draft; a new note has no Cancel (#927 G1); Add note once more puts the focus back in the draft (#927 T9)", async () => {
     await open();
     await click(byId("video-fullscreen"));
     await click(byId("video-immersive-add-note"));
@@ -203,8 +203,12 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     expect([...byId("guest-composer")!.querySelectorAll("button")].some((item) => item.textContent?.trim() === "Cancel")).toBe(false);
     await click(byId("video-immersive-add-note"));
     expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
+    // Focus moves before the pane holding it is hidden (lesson P3): to Add note on a desktop, the player on a touch device.
+    expect(document.activeElement).toBe(byId(size.coarse ? "video-player" : "video-immersive-add-note"));
     await click(byId("video-immersive-add-note"));
     expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("Trim the opening");
+    expect(byId("guest-composer")!.dataset.floating).toBe("true");
+    expect(document.activeElement).toBe(byId("guest-composer-body"));
   });
 
   it("the Full screen composer drops the notes pane's sheet chrome: no padding or side border around it, and the box draws none of its own (#880 fix round 1, item 3)", async () => {
