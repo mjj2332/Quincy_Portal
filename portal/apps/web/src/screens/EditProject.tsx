@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import type { CollectionKind, MonitoredRawFolder } from "@quincy/shared";
-import { FIELD_GRID_PROPERTY, ProjectFields, emptyProjectForm, type ProjectFieldError, type ProjectForm, type ProjectTextField, validateProjectFields } from "../components/ProjectFields";
+import { FIELD_GRID_PROPERTY, ProjectFields, SERVICES, emptyProjectForm, isOptionalServiceKind, type OptionalServiceKind, type ProjectFieldError, type ProjectForm, type ProjectSelectionField, type ProjectTextField, validateProjectFields } from "../components/ProjectFields";
 import { ApiError, apiGet, apiPatch, apiPost } from "../lib/api";
 import { useCapabilities } from "../lib/capabilities";
 import { InternalLink } from "../components/InternalLink";
@@ -38,8 +38,23 @@ function optionalValue(value: string): string | null { return value.trim() || nu
 function formFromProject(project: ProjectResponse): ProjectForm {
   return {
     ...emptyProjectForm,
-    street: project.street, suburb: fieldValue(project.suburb), postcode: fieldValue(project.postcode), agencyName: fieldValue(project.agencyName), agentName: fieldValue(project.agentName), agentEmail: fieldValue(project.agentEmail), agentPhone: fieldValue(project.agentPhone), shootDate: fieldValue(project.shootDate), timeWindow: fieldValue(project.timeWindow), orderNo: fieldValue(project.orderNo), orderId: fieldValue(project.orderId), invoiceAmount: fieldValue(project.invoiceAmount), paymentStatus: fieldValue(project.paymentStatus), notes: fieldValue(project.notes), productionNotes: fieldValue(project.productionNotes), rawFolderLink: fieldValue(project.rawFolderLink), rawFolderPath: fieldValue(project.rawFolderPath), orderedServices: project.collections.flatMap((collection) => collection.kind === "raw" ? [] : [collection.kind]),
+    street: project.street, suburb: fieldValue(project.suburb), postcode: fieldValue(project.postcode), agencyName: fieldValue(project.agencyName), agentName: fieldValue(project.agentName), agentEmail: fieldValue(project.agentEmail), agentPhone: fieldValue(project.agentPhone), shootDate: fieldValue(project.shootDate), timeWindow: fieldValue(project.timeWindow), orderNo: fieldValue(project.orderNo), orderId: fieldValue(project.orderId), invoiceAmount: fieldValue(project.invoiceAmount), paymentStatus: fieldValue(project.paymentStatus), notes: fieldValue(project.notes), productionNotes: fieldValue(project.productionNotes), rawFolderLink: fieldValue(project.rawFolderLink), rawFolderPath: fieldValue(project.rawFolderPath), orderedServices: project.collections.flatMap((collection) => isOptionalServiceKind(collection.kind) ? [collection.kind] : []),
   };
+}
+
+/** The optional kinds a `services_blocked` 409 names, in tile order; empty when the body names none (the save race). */
+function blockedServiceKinds(details: unknown): OptionalServiceKind[] {
+  if (!details || typeof details !== "object" || (details as { code?: unknown }).code !== "services_blocked") return [];
+  const blocked = (details as { blocked?: unknown }).blocked;
+  if (!Array.isArray(blocked)) return [];
+  const kinds = new Set(blocked.map((entry: unknown) => entry && typeof entry === "object" ? (entry as { kind?: unknown }).kind : undefined));
+  return SERVICES.flatMap((service) => kinds.has(service.kind) ? [service.kind] : []);
+}
+
+function blockedServicesMessage(kinds: OptionalServiceKind[]): string {
+  const labels = kinds.map((kind) => SERVICES.find((service) => service.kind === kind)?.label ?? kind);
+  const names = labels.length > 1 ? `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}` : labels[0];
+  return labels.length > 1 ? `${names} already have media, so they can't be removed.` : `${names} already has media, so it can't be removed.`;
 }
 
 export function editProjectPayload(form: ProjectForm): Record<string, unknown> {
@@ -47,6 +62,8 @@ export function editProjectPayload(form: ProjectForm): Record<string, unknown> {
     street: form.street.trim(), suburb: optionalValue(form.suburb), postcode: optionalValue(form.postcode),
     agencyName: optionalValue(form.agencyName), agentName: optionalValue(form.agentName), agentEmail: optionalValue(form.agentEmail), agentPhone: optionalValue(form.agentPhone),
     shootDate: optionalValue(form.shootDate), timeWindow: optionalValue(form.timeWindow), productionNotes: optionalValue(form.productionNotes), rawFolderLink: optionalValue(form.rawFolderLink), rawFolderPath: optionalValue(form.rawFolderPath),
+    // RAW and Video are on every Project, so only the optional Services travel; the server keeps both.
+    orderedServices: form.orderedServices,
   };
 }
 
@@ -102,6 +119,13 @@ export function EditProject({ projectId, onReturnToWorkspace, onDeleted }: { pro
     setSubmitError(undefined);
   }
 
+  // Edit details has no Team section, so Services are the only selection it toggles.
+  function toggleSelection(field: ProjectSelectionField, value: string) {
+    if (field !== "orderedServices" || !isOptionalServiceKind(value)) return;
+    setForm((current) => ({ ...current, orderedServices: current.orderedServices.includes(value) ? current.orderedServices.filter((kind) => kind !== value) : SERVICES.flatMap((service) => service.kind === value || current.orderedServices.includes(service.kind) ? [service.kind] : []) }));
+    setSubmitError(undefined);
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const nextErrors: FormErrors = { street: form.street.trim() ? undefined : "Enter the property street address.", ...validateProjectFields(form, "edit") };
@@ -125,6 +149,11 @@ export function EditProject({ projectId, onReturnToWorkspace, onDeleted }: { pro
         setLatched(true);
         void apiGet<ProjectResponse>(`/api/projects/${projectId}`).then((response) => setProject(response)).catch(() => undefined);
         if (queryClient) await invalidateProjectSurfaces(queryClient, { projectId, resources: [{ kind: "detail" }, { kind: "activity" }], dashboard: true, calendar: true, gantt: true }).catch(() => undefined);
+      } else if (reason instanceof ApiError && reason.status === 409 && blockedServiceKinds(reason.details).length) {
+        // A Service holding media stays: tick it again and keep the rest of the draft, so the next Save goes through.
+        const blocked = blockedServiceKinds(reason.details);
+        setForm((current) => ({ ...current, orderedServices: SERVICES.flatMap((service) => blocked.includes(service.kind) || current.orderedServices.includes(service.kind) ? [service.kind] : []) }));
+        setSubmitError(blockedServicesMessage(blocked));
       } else setSubmitError(reason instanceof Error ? reason.message : "The shoot details could not be saved.");
     }
     finally { setIsSubmitting(false); }
@@ -187,7 +216,7 @@ export function EditProject({ projectId, onReturnToWorkspace, onDeleted }: { pro
           <QuincyField id="project-postcode" label="Postcode" inputMode="numeric" value={form.postcode} onChange={(event) => updateField("postcode", event.target.value)} />
         </div>
       </section>
-      <ProjectFields form={form} errors={errors} existingCollections={project.collections.map((collection) => collection.kind)} mode="edit" monitoredRawFolder={project.monitoredRawFolder} onChange={updateField} onToggle={() => {}} />
+      <ProjectFields form={form} errors={errors} existingCollections={project.collections.map((collection) => collection.kind)} mode="edit" monitoredRawFolder={project.monitoredRawFolder} onChange={updateField} onToggle={toggleSelection} />
       <div className="flex flex-wrap justify-end gap-[var(--space-3)] max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full">
         <InternalLink className={buttonClasses("secondary", {})} {...cancelProps} aria-disabled={isSubmitting}>Cancel</InternalLink>
         <Button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving details…" : "Save changes"}</Button>

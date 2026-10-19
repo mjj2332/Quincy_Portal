@@ -42,6 +42,18 @@ describe("processTonomoEvent collection links", () => {
   });
 });
 
+describe("processTonomoEvent always-on collections", () => {
+  it("creates raw and video for an order that includes no video service", async () => {
+    const suffix = crypto.randomUUID(); const projectId = crypto.randomUUID(); const eventId = crypto.randomUUID(); const orderId = `order-${suffix}`; const now = Date.now();
+    await database.DB.prepare("INSERT INTO projects (id, order_id, street, stage_key, created_at, updated_at) VALUES (?, ?, ?, 'awaiting_raw', ?, ?)").bind(projectId, orderId, "Tonomo no video", now, now).run();
+    const payloadJson = JSON.stringify({ id: orderId, street: "Tonomo no video", services: [{ service: "Photos" }] });
+    await database.DB.prepare("INSERT INTO webhook_events (id, source, event_id, payload_json, status, received_at) VALUES (?, 'tonomo', ?, ?, 'received', ?)").bind(eventId, `event-${suffix}`, payloadJson, now).run();
+    await processTonomoEvent(env, { id: eventId, payloadJson });
+    const kinds = (await database.DB.prepare("SELECT kind FROM collections WHERE project_id = ? ORDER BY kind").bind(projectId).all<{ kind: string }>()).results.map((row) => row.kind);
+    expect(kinds).toEqual(["raw", "video"]);
+  });
+});
+
 describe("processTonomoEvent shootDate upgrade", () => {
   async function seedProject(overrides: { shootDate: string | null; agentName?: string | null }) {
     const suffix = crypto.randomUUID();

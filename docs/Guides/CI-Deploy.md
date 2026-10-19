@@ -266,6 +266,17 @@ Owner steps after the deploy:
 
 **Rollback.** An old Worker ignores the table, so a code rollback is safe. Dropping the table means a Time Travel restore, which loses every write since the bookmark.
 
+### Video Collection on every Project (0081, always-on video)
+
+Migration 0081 inserts a `video` Collection (empty, zero received) for every Project that lacks one, archived Projects included, with a UUIDv4 minted in SQL per row and `ON CONFLICT(project_id, kind) DO NOTHING`, so a re-run adds nothing. Data only: no ALTER, no rebuild, no PRAGMA, no trigger, no per-Project audit row. From this change on, create seeds Raw and Video, the video upload reserve route creates a missing Video Collection itself, and Edit Details can add or remove the optional Services (a Collection holding media, links, manifests or active uploads is refused with 409 `services_blocked`). The old Worker is compatible with the extra Video rows, and the reserve route's ensure covers a Project created between the apply and the deploy. Apply it with a Time Travel bookmark first (the "A PR that adds a D1 migration" flow above), then merge.
+
+Owner steps after the deploy:
+
+1. Post-check: `SELECT COUNT(*) FROM projects p WHERE NOT EXISTS (SELECT 1 FROM collections c WHERE c.project_id = p.id AND c.kind = 'video')` returns 0.
+2. Open a Project that never ordered Video: the Video tab shows a `0` badge, and a video upload or link is accepted.
+
+**Rollback.** An old Worker ignores the extra Video rows, so a code rollback is safe. Removing the rows means a Time Travel restore, which loses every write since the bookmark.
+
 ### Subtask presets (0052)
 
 0052 converts every date-only Subtask range to a 09:00 start and a 17:00 end (the presets, ADR 0016)

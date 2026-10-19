@@ -1,7 +1,7 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { boardSchemaVariant, projectColumnsForVariant, type BoardSchemaVariant, type Database } from "@quincy/db";
 import { buildAutomaticDeadlineBundle, buildAutomaticDeadlineMoveBundle, COLLECTION_RECEIVED_COUNT_SQL, collectionReceivedCountBindings, selectEffectiveDefaultEditorIds } from "@quincy/db";
-import { COLLECTION_KINDS, isCanonicalCalendarDate, isVerifiedTonomoShootDateSource, normaliseAddressKey, normalisePath, parseTonomoOrder, publishNotificationOutbox, TonomoParseError, type CollectionKind, type TonomoOrder } from "@quincy/shared";
+import { ALWAYS_ON_COLLECTION_KINDS, COLLECTION_KINDS, isCanonicalCalendarDate, isVerifiedTonomoShootDateSource, normaliseAddressKey, normalisePath, parseTonomoOrder, publishNotificationOutbox, TonomoParseError, type CollectionKind, type TonomoOrder } from "@quincy/shared";
 import { auditLog, collectionLinks, collections, projects, tonomoOrderTombstones, user, webhookEvents } from "@quincy/db/schema";
 
 import type { Env } from "../env";
@@ -48,7 +48,7 @@ export class TonomoApplyError extends Error {
 const snapshotFields = ["orderNo", "suburb", "postcode", "agencyName", "agentName", "agentEmail", "agentPhone", "shootDate", "timeWindow", "notes"] as const;
 
 function orderedKinds(order: TonomoOrder): Set<CollectionKind> {
-  const kinds = new Set<CollectionKind>(["raw"]);
+  const kinds = new Set<CollectionKind>(ALWAYS_ON_COLLECTION_KINDS);
   for (const service of order.services) {
     if ((COLLECTION_KINDS as readonly string[]).includes(service.kind)) kinds.add(service.kind);
   }

@@ -1359,7 +1359,7 @@ describe("staff app API", () => {
     });
     expect(created.status).toBe(201);
     const project = await created.json() as { id: string; collections: Array<{ kind: string }> };
-    expect(project.collections.map((collection) => collection.kind).sort()).toEqual(["edited", "raw"]);
+    expect(project.collections.map((collection) => collection.kind).sort()).toEqual(["edited", "raw", "video"]);
 
     const beforeNoOp = await Promise.all([
       database.DB.prepare("SELECT count(*) AS count FROM audit_log WHERE action = 'project.update' AND target_id = ?").bind(project.id).first(),
@@ -1379,16 +1379,16 @@ describe("staff app API", () => {
     const response = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
       method: "PATCH",
       headers: { cookie, "content-type": "application/json" },
-      body: JSON.stringify({ orderedServices: ["edited", "video"] }),
+      body: JSON.stringify({ orderedServices: ["edited", "floorplan"] }),
     });
     expect(response.status).toBe(200);
     const updated = await response.json() as { collections: Array<{ kind: string }>; members: Array<{ userId: string; roleOnProject: string }> };
     expect(updated.collections).toHaveLength(project.collections.length + 1);
-    expect(updated.collections.map((collection) => collection.kind).sort()).toEqual(["edited", "raw", "video"]);
+    expect(updated.collections.map((collection) => collection.kind).sort()).toEqual(["edited", "floorplan", "raw", "video"]);
     expect(updated.members.filter((member) => member.roleOnProject === "photographer").map((member) => member.userId)).toEqual([firstPhotographerId]);
     expect(updated.members.filter((member) => member.roleOnProject === "editor").map((member) => member.userId)).toEqual([editorId]);
     const beforeServiceRetry = await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(project.id).first();
-    const serviceRetry = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ orderedServices: ["edited", "video"] }) });
+    const serviceRetry = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ orderedServices: ["edited", "floorplan"] }) });
     expect(serviceRetry.status).toBe(200);
     expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(project.id).first()).toEqual(beforeServiceRetry);
     const rosterPatch = await SELF.fetch(`https://portal.test/api/projects/${project.id}`, {
@@ -1938,13 +1938,13 @@ describe("staff app API", () => {
 
   it("fences a service removal race before the project PATCH winner and leaves no downstream rows", async () => {
     const cookie = await sessionCookie(adminToken);
-    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: `Service race ${crypto.randomUUID()}`, orderedServices: ["edited", "video"] }) });
+    const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street: `Service race ${crypto.randomUUID()}`, orderedServices: ["edited"] }) });
     expect(created.status).toBe(201); const project = await created.json() as { id: string };
-    const video = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'video'").bind(project.id).first<{ id: string }>();
+    const edited = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'edited'").bind(project.id).first<{ id: string }>();
     const assetId = crypto.randomUUID(); const now = Date.now();
     const beforeProject = await database.DB.prepare("SELECT street FROM projects WHERE id = ?").bind(project.id).first();
     const response = await requestWithDbBatchFault(`/api/projects/${project.id}`, cookie, { street: "Must not partially save", orderedServices: [] }, async (db) => {
-      await db.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, 'race.jpg', 1, 'upload', ?, ?)").bind(assetId, video!.id, `tests/${assetId}.jpg`, now, now).run();
+      await db.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, 'race.jpg', 1, 'upload', ?, ?)").bind(assetId, edited!.id, `tests/${assetId}.jpg`, now, now).run();
     });
     expect(response.status).toBe(409);
     expect(await database.DB.prepare("SELECT street FROM projects WHERE id = ?").bind(project.id).first()).toEqual(beforeProject);
@@ -1995,6 +1995,82 @@ describe("staff app API", () => {
     await expect(response.json()).resolves.toMatchObject({ blocked: [{ kind: "edited", manifestCount: 1 }] });
     const remaining = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'edited'").bind(project.id).first();
     expect(remaining).not.toBeNull();
+  });
+
+  describe("always-on video and editable services", () => {
+    const kindsOf = async (projectId: string) => ((await database.DB.prepare("SELECT kind FROM collections WHERE project_id = ? ORDER BY kind").bind(projectId).all<{ kind: string }>()).results).map((row) => row.kind);
+    const makeProject = async (cookie: string, street: string, orderedServices: string[]) => {
+      const created = await SELF.fetch("https://portal.test/api/projects", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ street, orderedServices }) });
+      expect(created.status).toBe(201);
+      return (await created.json() as { id: string }).id;
+    };
+    const patchServices = (cookie: string, projectId: string, orderedServices: string[]) => SELF.fetch(`https://portal.test/api/projects/${projectId}`, { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ orderedServices }) });
+    const auditCount = async (projectId: string) => (await database.DB.prepare("SELECT count(*) AS n FROM audit_log WHERE action = 'project.update' AND target_id = ?").bind(projectId).first<{ n: number }>())!.n;
+
+    it("creates raw and video on every Project, and records both in the create audit", async () => {
+      const cookie = await sessionCookie(adminToken);
+      const projectId = await makeProject(cookie, "Always-on create", ["edited"]);
+      expect(await kindsOf(projectId)).toEqual(["edited", "raw", "video"]);
+      const bare = await makeProject(cookie, "Always-on create bare", []);
+      expect(await kindsOf(bare)).toEqual(["raw", "video"]);
+      const audit = await database.DB.prepare("SELECT meta_json FROM audit_log WHERE action = 'project.create' AND target_id = ?").bind(projectId).first<{ meta_json: string }>();
+      expect((JSON.parse(audit!.meta_json) as { orderedServices: string[] }).orderedServices.sort()).toEqual(["edited", "raw", "video"]);
+    });
+
+    it("keeps raw and video when the services are cleared, and treats [\"video\"] as a no-op with no audit", async () => {
+      const cookie = await sessionCookie(adminToken);
+      const projectId = await makeProject(cookie, "Always-on keep", []);
+      const before = await auditCount(projectId);
+      expect((await patchServices(cookie, projectId, [])).status).toBe(200);
+      expect((await patchServices(cookie, projectId, ["video"])).status).toBe(200);
+      expect(await kindsOf(projectId)).toEqual(["raw", "video"]);
+      expect(await auditCount(projectId)).toBe(before);
+    });
+
+    it("adds an optional service with servicesAdded in the audit and services in the activity changedFields", async () => {
+      const cookie = await sessionCookie(adminToken);
+      const projectId = await makeProject(cookie, "Always-on add", []);
+      expect((await patchServices(cookie, projectId, ["floorplan"])).status).toBe(200);
+      expect(await kindsOf(projectId)).toEqual(["floorplan", "raw", "video"]);
+      const audit = await database.DB.prepare("SELECT meta_json FROM audit_log WHERE action = 'project.update' AND target_id = ?").bind(projectId).first<{ meta_json: string }>();
+      expect(JSON.parse(audit!.meta_json)).toMatchObject({ servicesAdded: ["floorplan"], servicesRemoved: [] });
+      const activity = await database.DB.prepare("SELECT safe_payload_json FROM project_activity_events WHERE project_id = ? AND event_type = 'project.details.changed'").bind(projectId).first<{ safe_payload_json: string }>();
+      expect(JSON.parse(activity!.safe_payload_json)).toMatchObject({ changedFields: ["services"] });
+    });
+
+    it("refuses removing a populated optional service with 409 services_blocked, and keeps raw and video", async () => {
+      const cookie = await sessionCookie(adminToken);
+      const projectId = await makeProject(cookie, "Always-on blocked", ["edited"]);
+      const edited = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'edited'").bind(projectId).first<{ id: string }>();
+      const now = Date.now();
+      await database.DB.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), edited!.id, `tests/${crypto.randomUUID()}.jpg`, "blocked.jpg", 1024, "upload", now, now).run();
+      const response = await patchServices(cookie, projectId, []);
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({ code: "services_blocked", blocked: [{ kind: "edited", assetCount: 1 }] });
+      expect(await kindsOf(projectId)).toEqual(["edited", "raw", "video"]);
+    });
+
+    it("answers 409 services_blocked from the race fence too", async () => {
+      const cookie = await sessionCookie(adminToken);
+      const projectId = await makeProject(cookie, `Always-on race ${crypto.randomUUID()}`, ["edited"]);
+      const edited = await database.DB.prepare("SELECT id FROM collections WHERE project_id = ? AND kind = 'edited'").bind(projectId).first<{ id: string }>();
+      const assetId = crypto.randomUUID(); const now = Date.now();
+      const response = await requestWithDbBatchFault(`/api/projects/${projectId}`, cookie, { orderedServices: [] }, async (db) => {
+        await db.prepare("INSERT INTO assets (id, collection_id, r2_key, original_filename, bytes, source, created_at, updated_at) VALUES (?, ?, ?, 'race.jpg', 1, 'upload', ?, ?)").bind(assetId, edited!.id, `tests/${assetId}.jpg`, now, now).run();
+      });
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({ code: "services_blocked" });
+    });
+
+    it("refuses a service edit on an archived Project with details_project_archived", async () => {
+      const cookie = await sessionCookie(adminToken);
+      const projectId = await makeProject(cookie, "Always-on archived", []);
+      await database.DB.prepare("UPDATE projects SET archived_at = ? WHERE id = ?").bind(Date.now(), projectId).run();
+      const response = await patchServices(cookie, projectId, ["edited"]);
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({ code: "details_project_archived" });
+      expect(await kindsOf(projectId)).toEqual(["raw", "video"]);
+    });
   });
 
   it("allows an editor to move an assigned project backwards through the pipeline", async () => {

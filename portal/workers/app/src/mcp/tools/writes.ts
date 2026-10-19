@@ -34,7 +34,7 @@ const projectFields = {
   productionNotes: nullableText("The production notes."),
   rawFolderLink: z.string().url().nullable().optional().describe("A link to the RAW folder. Null clears it; omit to leave it as it is."),
   rawFolderPath: nullableText("The RAW folder path."),
-  orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional().describe("The Collections ordered besides Raw, which is always kept. Replaces the whole set; a Collection that already holds media cannot be removed."),
+  orderedServices: z.array(z.enum(COLLECTION_KINDS)).optional().describe("The Collections ordered besides Raw and Video, which every Project has. Replaces the whole set; a Collection that already holds media cannot be removed."),
 };
 
 const deadlineEndpoint = z.object({

@@ -5,7 +5,7 @@ import { terminalRoute } from "../lib/terminal-route";
 import type { Context } from "hono";
 import { boardContractEnabled, boardSchemaVariant, buildAutomaticDeadlineBundle, buildAutomaticDeadlineMoveBundle, buildDeadlineSuppressionBundle, buildProjectActivityStatements, buildSubtaskReminderMaterialization, buildSubtaskReminderSuppression, createDb, selectEffectiveDefaultEditorIds, dashboardProjectOrder, orderDashboardStreetTies, projectColumnsForVariant, schema, type BoardSchemaVariant } from "@quincy/db";
 import { and, asc, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, notExists, sql } from "drizzle-orm";
-import { automaticDeadlineFor, capDashboardSearchText, compareBoardCards, COLLECTION_KINDS, DASHBOARD_PROJECTS_FILTER_QUERY_NAMES, dashboardFilterArchivedMode, dashboardFilterHasArchivedLeaf, dashboardFilterHasPriorityLeaf, dashboardFilterTreeOf, dashboardProjectsFilterQuerySchema, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchema, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, PROJECT_DEADLINE_ZONE, planDeadlineOccurrences, projectActivityDeepLink, roleHasCapability, stripUnsafeText, type CollectionKind, type DashboardFilter, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectChecklistCounts, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
+import { ALWAYS_ON_COLLECTION_KINDS, automaticDeadlineFor, capDashboardSearchText, compareBoardCards, COLLECTION_KINDS, DASHBOARD_PROJECTS_FILTER_QUERY_NAMES, dashboardFilterArchivedMode, dashboardFilterHasArchivedLeaf, dashboardFilterHasPriorityLeaf, dashboardFilterTreeOf, dashboardProjectsFilterQuerySchema, DOWNLOAD_SELECTION_MAX_ASSETS, DOWNLOAD_SELECTION_MAX_BYTES, moveProjectStageRequestSchema, PHOTOGRAPHER_VISIBLE_STAGES, PROJECT_ASSIGNMENT_ELIGIBLE_ROLES, PROJECT_DEADLINE_ZONE, planDeadlineOccurrences, projectActivityDeepLink, roleHasCapability, stripUnsafeText, type CollectionKind, type DashboardFilter, type MoveProjectStageRequest, type ProjectActivityIntent, type ProjectChecklistCounts, type ProjectMemberRole, type ProjectMembershipDto, type Role, type StageKey, type StageTransportKey } from "@quincy/shared";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { hasProjectAccess, hasProjectAccessForUser, requireCapability } from "../middleware/capability";
@@ -166,11 +166,6 @@ async function validateDownloadSelection(c: Context<AppEnv>, projectId: string, 
   return { entries, collection, totalBytes, principal: { id: principal.id, role: principal.role, impersonatedBy: c.get("user").impersonatedBy, via: c.get("user").via } };
 }
 
-async function addCollections(db: ReturnType<typeof createDb>, projectId: string, orderedServices: CollectionKind[] | undefined) {
-  const services = new Set<CollectionKind>(["raw", ...(orderedServices ?? [])]);
-  for (const kind of services) await db.insert(schema.collections).values({ id: newId(), projectId, kind, status: "empty", receivedCount: 0, createdAt: new Date(), updatedAt: new Date() }).onConflictDoNothing();
-  return services;
-}
 async function abortActiveDocumentSessions(c: Context<AppEnv>, projectId: string) {
   const db = createDb(c.env.DB); const now = new Date();
   const sessions = await db.select().from(schema.documentUploads).where(and(eq(schema.documentUploads.projectId, projectId), sql`${schema.documentUploads.status} in ('pending', 'completing', 'aborting')`)).all();
@@ -322,7 +317,7 @@ function createProjectResponse(data: z.infer<typeof createProjectFields>, id: st
 async function createProjectAtomically(c: Context<AppEnv>, data: z.infer<typeof createProjectFields>, manualDeadline: ResolvedDeadlineSet | null, slots: Array<{ userId: string; roleOnProject: ProjectMemberRole }>, candidates: ProjectAssignmentCandidatesResponse) {
   const now = Date.now();
   const projectId = newId();
-  const services = [...new Set<CollectionKind>(["raw", ...(data.orderedServices ?? [])])];
+  const services = [...new Set<CollectionKind>([...ALWAYS_ON_COLLECTION_KINDS, ...(data.orderedServices ?? [])])];
   const raw = c.env.DB;
   // #135: pre-read the effective-default-editor set once. Default slots are appended below but
   // deliberately excluded from `diagnostics`/`eligibilityPredicates` — a default editor going
@@ -676,9 +671,9 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
   if (existingProject.archivedAt) return c.json(DETAILS_ARCHIVED_BODY, 409);
   const { orderedServices, ...projectUpdates } = data;
   const existing = await db.select({ id: schema.collections.id, kind: schema.collections.kind, receivedCount: schema.collections.receivedCount }).from(schema.collections).where(eq(schema.collections.projectId, id)).all();
-  const desiredServices = orderedServices === undefined ? null : new Set<CollectionKind>(["raw", ...orderedServices]);
+  const desiredServices = orderedServices === undefined ? null : new Set<CollectionKind>([...ALWAYS_ON_COLLECTION_KINDS, ...orderedServices]);
   const desiredKinds = desiredServices ? [...desiredServices] : [];
-  const removedCollections = desiredServices ? existing.filter((collection) => collection.kind !== "raw" && !desiredServices.has(collection.kind as CollectionKind)) : [];
+  const removedCollections = desiredServices ? existing.filter((collection) => !(ALWAYS_ON_COLLECTION_KINDS as readonly string[]).includes(collection.kind) && !desiredServices.has(collection.kind as CollectionKind)) : [];
   const addedKinds = desiredServices ? [...desiredServices].filter((kind) => !existing.some((collection) => collection.kind === kind)) : [];
   const countsFor = async (collectionIds: string[]) => {
     if (!collectionIds.length) return { assets: new Map<string, number>(), manifests: new Map<string, number>(), documents: new Map<string, number>(), links: new Map<string, number>(), videoUploads: new Map<string, number>() };
@@ -694,7 +689,7 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
   };
   const preCounts = await countsFor(removedCollections.map((collection) => collection.id));
   const blocked = removedCollections.filter((collection) => collection.receivedCount > 0 || (preCounts.assets.get(collection.id) ?? 0) > 0 || (preCounts.manifests.get(collection.id) ?? 0) > 0 || (preCounts.documents.get(collection.id) ?? 0) > 0 || (preCounts.links.get(collection.id) ?? 0) > 0 || (preCounts.videoUploads.get(collection.id) ?? 0) > 0);
-  if (blocked.length) return c.json({ error: "Services with received media or active uploads cannot be removed.", blocked: blocked.map((collection) => ({ kind: collection.kind, assetCount: preCounts.assets.get(collection.id) ?? 0, manifestCount: preCounts.manifests.get(collection.id) ?? 0, activeDocumentSessions: preCounts.documents.get(collection.id) ?? 0, videoUploadCount: preCounts.videoUploads.get(collection.id) ?? 0 })) }, 409);
+  if (blocked.length) return c.json({ error: "Services with received media or active uploads cannot be removed.", code: "services_blocked", blocked: blocked.map((collection) => ({ kind: collection.kind, assetCount: preCounts.assets.get(collection.id) ?? 0, manifestCount: preCounts.manifests.get(collection.id) ?? 0, activeDocumentSessions: preCounts.documents.get(collection.id) ?? 0, videoUploadCount: preCounts.videoUploads.get(collection.id) ?? 0 })) }, 409);
 
   const dbFieldMap: Record<string, string> = { street: "street", suburb: "suburb", postcode: "postcode", agencyName: "agency_name", agentName: "agent_name", agentEmail: "agent_email", agentPhone: "agent_phone", agencyId: "agency_id", agentId: "agent_id", shootDate: "shoot_date", timeWindow: "time_window", orderNo: "order_no", orderId: "order_id", invoiceAmount: "invoice_amount", paymentStatus: "payment_status", notes: "notes", productionNotes: "production_notes", rawFolderLink: "raw_folder_link", rawFolderPath: "raw_folder_path" };
   const updateParts: string[] = []; const updateBindings: unknown[] = []; const snapshotParts: string[] = []; const snapshotBindings: unknown[] = []; const changeParts: string[] = []; const changeBindings: unknown[] = [];
@@ -724,7 +719,7 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
   const activityBundle = safeChangedFields.length ? buildProjectActivityStatements({ db: c.env.DB, intent: activity, winnerAuditId: auditId }) : null;
   const removalSafe = orderedServices === undefined
     ? "1 = 1"
-    : `NOT EXISTS (SELECT 1 FROM collections doomed WHERE doomed.project_id = projects.id AND doomed.kind <> 'raw' AND doomed.kind NOT IN (${desiredKinds.map(() => "?").join(",")}) AND (doomed.received_count > 0 OR EXISTS (SELECT 1 FROM assets WHERE collection_id = doomed.id) OR EXISTS (SELECT 1 FROM collection_links WHERE collection_id = doomed.id) OR EXISTS (SELECT 1 FROM upload_manifests WHERE collection_id = doomed.id) OR EXISTS (SELECT 1 FROM document_uploads WHERE collection_id = doomed.id AND status IN ('pending', 'completing', 'aborting')) OR EXISTS (SELECT 1 FROM video_upload_reservations WHERE collection_id = doomed.id AND status IN ('pending', 'completing', 'aborting'))))`;
+    : `NOT EXISTS (SELECT 1 FROM collections doomed WHERE doomed.project_id = projects.id AND doomed.kind NOT IN ('raw','video') AND doomed.kind NOT IN (${desiredKinds.map(() => "?").join(",")}) AND (doomed.received_count > 0 OR EXISTS (SELECT 1 FROM assets WHERE collection_id = doomed.id) OR EXISTS (SELECT 1 FROM collection_links WHERE collection_id = doomed.id) OR EXISTS (SELECT 1 FROM upload_manifests WHERE collection_id = doomed.id) OR EXISTS (SELECT 1 FROM document_uploads WHERE collection_id = doomed.id AND status IN ('pending', 'completing', 'aborting')) OR EXISTS (SELECT 1 FROM video_upload_reservations WHERE collection_id = doomed.id AND status IN ('pending', 'completing', 'aborting'))))`;
   const snapshotPredicate = snapshotParts.length ? snapshotParts.join(" AND ") : "1 = 1";
   const changePredicate = changeParts.length ? changeParts.join(" OR ") : "0 = 1";
   const updateWhere = ["id = ?", "stage_key = ?", "archived_at IS NULL", `(${snapshotPredicate})`, `(${changePredicate})`, removalSafe].join(" AND ");
@@ -734,7 +729,7 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
   if (orderedServices !== undefined) { projectAuditMeta.servicesAdded = addedKinds; projectAuditMeta.servicesRemoved = removedCollections.map((collection) => collection.kind); }
   const serviceStatements: D1PreparedStatement[] = [];
   if (orderedServices !== undefined) {
-    serviceStatements.push(c.env.DB.prepare(`DELETE FROM collections WHERE project_id = ? AND kind <> 'raw' AND kind NOT IN (${desiredKinds.map(() => "?").join(",")}) AND received_count = 0 AND NOT EXISTS (SELECT 1 FROM assets WHERE collection_id = collections.id) AND NOT EXISTS (SELECT 1 FROM collection_links WHERE collection_id = collections.id) AND NOT EXISTS (SELECT 1 FROM upload_manifests WHERE collection_id = collections.id) AND NOT EXISTS (SELECT 1 FROM document_uploads WHERE collection_id = collections.id AND status IN ('pending', 'completing', 'aborting')) AND NOT EXISTS (SELECT 1 FROM video_upload_reservations WHERE collection_id = collections.id AND status IN ('pending', 'completing', 'aborting')) AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?) RETURNING id`).bind(id, ...desiredKinds, auditId));
+    serviceStatements.push(c.env.DB.prepare(`DELETE FROM collections WHERE project_id = ? AND kind NOT IN ('raw','video') AND kind NOT IN (${desiredKinds.map(() => "?").join(",")}) AND received_count = 0 AND NOT EXISTS (SELECT 1 FROM assets WHERE collection_id = collections.id) AND NOT EXISTS (SELECT 1 FROM collection_links WHERE collection_id = collections.id) AND NOT EXISTS (SELECT 1 FROM upload_manifests WHERE collection_id = collections.id) AND NOT EXISTS (SELECT 1 FROM document_uploads WHERE collection_id = collections.id AND status IN ('pending', 'completing', 'aborting')) AND NOT EXISTS (SELECT 1 FROM video_upload_reservations WHERE collection_id = collections.id AND status IN ('pending', 'completing', 'aborting')) AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?) RETURNING id`).bind(id, ...desiredKinds, auditId));
     for (const kind of desiredKinds) serviceStatements.push(c.env.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) SELECT ?, ?, ?, 'empty', 0, ?, ? WHERE EXISTS (SELECT 1 FROM audit_log WHERE id = ?) AND NOT EXISTS (SELECT 1 FROM collections WHERE project_id = ? AND kind = ?)").bind(newId(), id, kind, Date.now(), Date.now(), auditId, id, kind));
   }
   const statements: D1PreparedStatement[] = [projectUpdate, c.env.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ?, ?, 'project.update', 'project', ?, ?, ? WHERE changes() = 1 RETURNING id").bind(auditId, c.get("user").id, id, auditMeta(c.get("user"), projectAuditMeta), Date.now())];
@@ -765,7 +760,7 @@ projectsRoutes.patch("/projects/:id", terminalRoute("/projects/:id", async (c) =
     const servicesMatch = orderedServices === undefined || (currentCollections.length === desiredServices!.size && currentCollections.every((collection) => desiredServices!.has(collection.kind as CollectionKind)));
     if (projectMatches && servicesMatch) return c.json(await details(db, c.env.DB, id, c.get("user").role, variant, await boardContractEnabled(c.env.DB, variant), false, c.env));
     const currentCounts = await countsFor(removedCollections.map((collection) => collection.id));
-    return c.json({ error: "Services or project details changed while saving; reload and try again", blocked: removedCollections.filter((collection) => collection.receivedCount > 0 || (currentCounts.assets.get(collection.id) ?? 0) > 0 || (currentCounts.manifests.get(collection.id) ?? 0) > 0 || (currentCounts.documents.get(collection.id) ?? 0) > 0 || (currentCounts.links.get(collection.id) ?? 0) > 0 || (currentCounts.videoUploads.get(collection.id) ?? 0) > 0).map((collection) => ({ kind: collection.kind, assetCount: currentCounts.assets.get(collection.id) ?? 0, manifestCount: currentCounts.manifests.get(collection.id) ?? 0, activeDocumentSessions: currentCounts.documents.get(collection.id) ?? 0, videoUploadCount: currentCounts.videoUploads.get(collection.id) ?? 0 })) }, 409);
+    return c.json({ error: "Services or project details changed while saving; reload and try again", code: "services_blocked", blocked: removedCollections.filter((collection) => collection.receivedCount > 0 || (currentCounts.assets.get(collection.id) ?? 0) > 0 || (currentCounts.manifests.get(collection.id) ?? 0) > 0 || (currentCounts.documents.get(collection.id) ?? 0) > 0 || (currentCounts.links.get(collection.id) ?? 0) > 0 || (currentCounts.videoUploads.get(collection.id) ?? 0) > 0).map((collection) => ({ kind: collection.kind, assetCount: currentCounts.assets.get(collection.id) ?? 0, manifestCount: currentCounts.manifests.get(collection.id) ?? 0, activeDocumentSessions: currentCounts.documents.get(collection.id) ?? 0, videoUploadCount: currentCounts.videoUploads.get(collection.id) ?? 0 })) }, 409);
   }
   if (activityBundle) {
     const publicationIds = rowsFromD1<{ id: string }>(result[2 + serviceStatements.length + activityBundle.broadOutboxIndex]).map((row) => row.id);

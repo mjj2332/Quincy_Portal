@@ -139,13 +139,23 @@ describe("POST /video-uploads (reserve)", () => {
     expect(await count("video_upload_reservations")).toBe(before);
   });
 
-  it("answers 409 project_archived for an archived Project and 409 video_service_missing for a Project without a Video Collection", async () => {
+  it("answers 409 project_archived for an archived Project and creates no Video Collection or row for it", async () => {
     stubS3(); const body = { title: "Cut", filename: "cut.mp4", bytes: 1000, contentType: "video/mp4" }; const before = await count("video_upload_reservations");
+    const collectionsBefore = await count("collections");
     const archived = await reserve("admin", body, S3_ENV, ids.archivedProject);
     expect(archived.status).toBe(409); expect(await archived.json()).toMatchObject({ code: "project_archived" });
-    const missing = await reserve("other", body, S3_ENV, ids.otherProject);
-    expect(missing.status).toBe(409); expect(await missing.json()).toMatchObject({ code: "video_service_missing" });
-    expect(await count("video_upload_reservations")).toBe(before);
+    expect(await count("video_upload_reservations")).toBe(before); expect(await count("collections")).toBe(collectionsBefore);
+  });
+
+  it("reserves on a Project that has no Video Collection and gives it one (always-on video)", async () => {
+    stubS3(); const body = { title: "Cut", filename: "cut.mp4", bytes: 1000, contentType: "video/mp4" };
+    const has = async () => (await database.DB.prepare("SELECT count(*) AS n FROM collections WHERE project_id = ? AND kind = 'video'").bind(ids.otherProject).first<{ n: number }>())!.n;
+    expect(await has()).toBe(0);
+    const response = await reserve("other", body, S3_ENV, ids.otherProject);
+    expect(response.status).toBe(201);
+    expect(await has()).toBe(1);
+    expect((await reserve("other", { ...body, filename: "again.mp4" }, S3_ENV, ids.otherProject)).status).toBe(201);
+    expect(await has()).toBe(1);
   });
 
   it("takes exactly 2,000,000,000 bytes as 30 part URLs that live six hours, and refuses one byte more with 413 and no row", async () => {
