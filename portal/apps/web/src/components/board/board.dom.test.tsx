@@ -2320,3 +2320,71 @@ describe("BoardSkeleton (#923, frame 4h)", () => {
     expect(host.querySelector('[data-testid="stage-label"]')).toBeNull();
   });
 });
+
+// #923 browser pass, round 2 (design review): rows 3, 4, 7, 8 and 9.
+describe("ProjectKanbanBoard2 — browser pass round 2 (#923)", () => {
+  beforeEach(() => {
+    dnd.handlers.length = 0;
+    sortable.contexts.length = 0;
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    const { act } = await import("react");
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  const column = (stageKey: string) => host.querySelector<HTMLElement>(`[data-testid="board-column"][data-stage-key="${stageKey}"]`)!;
+
+  it("row 3: writes New shoot in sentence case, in the add slot and as the empty column's action", async () => {
+    await renderBoard({ canCreateProject: true, projects: [project("a", "awaiting_raw")] });
+    const slot = host.querySelector<HTMLElement>('[data-testid="board-column-new-shoot"]')!;
+    expect(slot.className).toContain("normal-case");
+    expect(slot.className).toContain("tracking-[var(--tracking-normal)]");
+
+    await renderBoard({ canCreateProject: true, projects: [project("b", "raw_review")] });
+    const action = column("awaiting_raw").querySelector<HTMLElement>('[data-testid="board-column-empty"] [data-testid="board-column-new-shoot"]')!;
+    expect(action.className).toContain("normal-case");
+  });
+
+  it("row 4: draws a failed cover as the street's initial, and a sentence-case retry sized to its words", async () => {
+    await renderBoard({ projects: [project("source", "awaiting_raw", { coverAssetId: "asset-1" })] });
+    const cover = host.querySelector<HTMLElement>('[data-testid="board-card-cover"]')!;
+    expect(cover.textContent).toBe("S");
+    expect(cover.querySelector('[aria-hidden="true"]')?.textContent, "the initial placeholder").toBe("S");
+    expect(cover.querySelector('[role="status"]'), "no failed-image status box in the 44x30 thumb").toBeNull();
+    const retry = [...host.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent === "Retry cover image")!;
+    expect(retry, "anchor: the retry").toBeDefined();
+    expect(retry.className).toContain("normal-case");
+    expect(retry.className).toContain("self-start");
+  });
+
+  it("row 7: lines the phone Stage pills up with the column's edge, with no rule of their own above its border", async () => {
+    await renderBoard();
+    const pills = host.querySelector<HTMLElement>('[data-testid="board-stage-pills"]')!;
+    const classes = [...pills.classList];
+    expect(classes.some((name) => /^px-/.test(name)), "no inline padding past the page gutter").toBe(false);
+    expect(classes.some((name) => /^border-b/.test(name)), "the column's top border is the only rule").toBe(false);
+  });
+
+  it("row 8: pulls interactive stars up by their hit cell's inset, so the glyphs sit a --space-2 under the progress", async () => {
+    await renderBoard({ canPrioritize: true, projects: [project("source", "awaiting_raw", { checklist: { completed: 1, total: 4 } })] });
+    const footer = host.querySelector<HTMLElement>('[data-testid="board-card-footer-slot"]')!;
+    expect(footer.getAttribute("data-star-inset")).toBe("pulled");
+    await renderBoard({ canPrioritize: false, projects: [project("source", "awaiting_raw", { checklist: { completed: 1, total: 4 }, priority: 3 })] });
+    expect(host.querySelector('[data-testid="board-card-footer-slot"]')!.hasAttribute("data-star-inset"), "read-only stars have no cell to pull").toBe(false);
+  });
+
+  it("row 9: gives a scrolling column's list a gutter for its scrollbar", async () => {
+    await renderBoard();
+    const list = column("awaiting_raw").querySelector<HTMLElement>('[data-testid="board-column-list"]')!;
+    expect(list.className).toContain("group-data-[has-overflow-y]/column-scroll:pe-[var(--space-5)]");
+    let scope: HTMLElement | null = list.parentElement;
+    while (scope && !scope.classList.contains("group/column-scroll")) scope = scope.parentElement;
+    expect(scope, "the column's ScrollArea is the group").not.toBeNull();
+    expect(column("awaiting_raw").contains(scope)).toBe(true);
+  });
+});

@@ -65,6 +65,18 @@ vi.mock("../lib/use-now", async (importOriginal) => {
 vi.mock("../lib/shell-chrome", () => ({ shellChromeBottom: () => shellBottom() }));
 vi.mock("../components/NoticeBoard", () => ({ NoticeBoard: () => null }));
 vi.mock("../components/board/board", () => ({ ProjectKanbanBoard2: () => <div data-testid="dashboard-board" /> }));
+// A cover whose asset id contains "broken" fails the way `LazyImage` reports a cover that exhausted its retries.
+vi.mock("../components/LazyImage", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../components/LazyImage")>();
+  const { useEffect } = await import("react");
+  return {
+    LazyImage: (props: Parameters<typeof actual.LazyImage>[0]) => {
+      const broken = "src" in props && props.src.includes("broken");
+      useEffect(() => { if (broken) props.onFailedChange?.(true); }, [broken, props.onFailedChange, props.retryToken]);
+      return broken ? null : <actual.LazyImage {...props} />;
+    },
+  };
+});
 
 type Row = {
   id: string; street: string; suburb: string | null; postcode: string | null; agencyName: string | null; agentName: string | null; stageKey: string; shootDate: string | null;
@@ -266,6 +278,7 @@ describe("the Table's structure (#431)", () => {
   });
 
   it("fills each cell from the Project", async () => {
+    clock.now = Date.parse("2026-10-19T02:00:00.000Z");
     projects = [row("p1", {
       street: "10 Oak St", suburb: "Bondi", postcode: "2026", agencyName: "Beta", agentName: "Zed", stageKey: "editing_autohdr", shootDate: "2026-03-01", deadlineAt: day(2), deadlineLocalCivil: civil(2),
       editors: [{ id: "e1", name: "Zoe Editor" }], priority: 3, receivedCount: 12, expectedCount: 40, archivedAt: null,
@@ -280,7 +293,7 @@ describe("the Table's structure (#431)", () => {
     expect(tr.textContent).toContain("Editing");
     expect(tr.textContent).toContain("Beta");
     expect(tr.textContent).toContain("Zed");
-    expect(tr.textContent).toContain("1 Mar 2026");
+    expect(tr.textContent).toContain("Sun 1 Mar");
     expect(tr.querySelector('[data-testid="project-table-deadline-trigger"]')?.getAttribute("aria-label")).toBe("Deadline for 10 Oak St: Sat 3 Jan · 09:00");
     expect(tr.querySelector('[aria-label="Zoe Editor"]')).not.toBeNull();
     expect(tr.querySelector('[data-testid="project-table-raw"]')?.textContent).toBe("12/40");
@@ -546,9 +559,19 @@ describe("one line per row, frame 4b's grid (#923 pass round 1, rows 6–8)", ()
     expect(line.querySelector('[data-testid="late-chip"]')).not.toBeNull();
     const trigger = line.querySelector<HTMLElement>('[data-testid="project-table-deadline-trigger"]')!;
     expect(trigger.querySelector("[title]")!.getAttribute("title")).toBe("Wed 1 Jan · 11:00");
-    const shoot = [...tr.querySelectorAll<HTMLElement>("td span")].find((node) => node.textContent === "Shoot date pending")!;
+    // #923 pass round 2, row 11: no date reads "Pending", which fits the column instead of truncating.
+    const shoot = [...tr.querySelectorAll<HTMLElement>("td span")].find((node) => node.textContent === "Pending")!;
+    expect(shoot, "the Shoot cell says Pending").toBeDefined();
     expect(shoot.className).toContain("truncate");
-    expect(shoot.getAttribute("title")).toBe("Shoot date pending");
+  });
+
+  it("writes the Shoot date as frame 4b does: short weekday and day, the year only outside the current one (#923 pass round 2, row 11)", async () => {
+    clock.now = Date.parse("2026-10-19T02:00:00.000Z");
+    projects = [row("p1", { shootDate: "2026-10-20" }), row("p2", { shootDate: "2025-12-31" })];
+    await renderTable();
+    const shootOf = (id: string) => rowFor(id).querySelectorAll("td")[headerNames().indexOf("Shoot")]!.textContent;
+    expect(shootOf("p1")).toBe("Tue 20 Oct");
+    expect(shootOf("p2")).toBe("Wed 31 Dec 2025");
   });
 
   it("lets the Deadline trigger reach its text's width: its 4px pull to the start is added back to its cap", async () => {
@@ -630,6 +653,20 @@ describe("narrow screens: the phone list (#923, frame 4g)", () => {
     expect(item.querySelector('[data-testid="late-chip"]')!.textContent).toBe(projectAppearance(projects[0]!, Date.now()).lateLabel);
     expect(item.querySelector('[aria-label="Mia Chen"]')).not.toBeNull();
     expect(item.getAttribute("data-late")).toBe("true");
+  });
+
+  it("draws a failed cover as the initial, and a sentence-case retry sized to its words (#923 pass round 2, row 4)", async () => {
+    narrow = true;
+    projects = [row("p1", { street: "9 Ash Lane", coverAssetId: "broken-1" })];
+    await renderTable();
+    const item = phoneRow("p1");
+    const thumb = item.querySelector<HTMLElement>('[data-testid="project-thumb"]')!;
+    expect(thumb.textContent).toBe("9");
+    expect(thumb.querySelector('[role="status"]')).toBeNull();
+    const retry = [...item.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Retry cover image")!;
+    expect(retry, "the labelled retry").toBeDefined();
+    expect(retry.className).toContain("normal-case");
+    expect(retry.className).toContain("self-start");
   });
 
   it("Group by None is one flat list with the count footer", async () => {
@@ -918,6 +955,17 @@ describe("review fixes (#431)", () => {
     expect(bounded).toBeGreaterThanOrEqual(2);
   });
 
+  it("draws a failed cover as the street's initial, never the browser's broken image, with its retry beside it (#923 pass round 2, row 4)", async () => {
+    projects = [row("p1", { street: "9 Ash Lane", coverAssetId: "broken-1" })];
+    await renderTable();
+    const cell = rowFor("p1").querySelector<HTMLElement>('[data-testid="project-table-project"]')!;
+    const thumb = cell.querySelector<HTMLElement>('[data-testid="project-thumb"]')!;
+    expect(thumb.textContent).toBe("9");
+    expect(thumb.querySelector('[aria-hidden="true"]')?.textContent, "the initial placeholder").toBe("9");
+    expect(thumb.querySelector('[role="status"]'), "no failed-image status text in the 44x30 box").toBeNull();
+    expect(cell.querySelector('button[aria-label="Retry cover image"]')).not.toBeNull();
+  });
+
   it("D4: the cover letter fallback is sized for the 44x30 thumb (#923), not the Board card", async () => {
     await renderTable();
     const letter = [...rowFor("p1").querySelectorAll<HTMLElement>('[aria-hidden="true"]')].find((node) => node.textContent === "1")!;
@@ -1048,6 +1096,50 @@ describe("the Table component (#923: now, Show Delivered, footer, skeleton)", ()
     await settle(1);
   }
   const footer = () => table().querySelector('[data-testid="project-table-footer"]')?.textContent ?? null;
+
+  // #923 pass round 2, row 5: the Table's own width decides which columns fit; Deadline always does.
+  describe("below 1440, columns drop to fit the width", () => {
+    const OriginalObserver = globalThis.ResizeObserver;
+    let width = 0;
+    beforeEach(() => {
+      globalThis.ResizeObserver = class {
+        constructor(private readonly callback: ResizeObserverCallback) {}
+        observe(target: Element) { this.callback([{ target, contentRect: { width } } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver); }
+        unobserve() {}
+        disconnect() {}
+      } as unknown as typeof ResizeObserver;
+    });
+    afterEach(() => { globalThis.ResizeObserver = OriginalObserver; });
+
+    it("at 768 shows Project, Stage and Deadline", async () => {
+      width = 670;
+      await renderDirect({ hiddenColumns: ["raw"] });
+      expect(headerNames()).toEqual(["Project", "Stage", "Deadline"]);
+    });
+
+    it("at 1024 keeps Progress and Editors, dropping Client, Shoot and Priority", async () => {
+      width = 845;
+      await renderDirect({ hiddenColumns: ["raw"] });
+      expect(headerNames()).toEqual(["Project", "Stage", "Deadline", "Progress", "Editors"]);
+    });
+
+    it("at 1440 shows every column the viewer chose", async () => {
+      width = 1262;
+      await renderDirect({ hiddenColumns: ["raw"] });
+      expect(headerNames()).toEqual(DEFAULT_HEADERS);
+    });
+
+    it("never writes the dropped columns into the viewer's saved choice", async () => {
+      width = 670;
+      storage.set(tablePrefsKey("user-1"), JSON.stringify({ groupBy: "stage", hiddenColumns: ["raw"] }));
+      const before = storage.get(tablePrefsKey("user-1"));
+      await renderTable();
+      expect(headerNames()).toEqual(["Project", "Stage", "Deadline"]);
+      expect(storage.get(tablePrefsKey("user-1"))).toBe(before);
+      await openDisplay();
+      expect(columnCheckboxLabels().length, "the Display menu still offers every column").toBeGreaterThan(0);
+    });
+  });
 
   it("flat: the footer counts the rows, and says Display hid Delivered when it did (frame 4c)", async () => {
     await renderDirect();

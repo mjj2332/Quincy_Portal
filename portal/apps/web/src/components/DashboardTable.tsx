@@ -1,6 +1,6 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useTable, type ColumnDef, type ColumnVisibilityState, type ExpandedState, type Row, type SortingState } from "@tanstack/react-table";
-import type { Role } from "@quincy/shared";
+import { formatSydneyCivil, type Role } from "@quincy/shared";
 import { Badge } from "./reui/badge";
 import { DataGrid, DataGridContainer, dataGridFeatures, type DataGridFeatures } from "./reui/data-grid/data-grid";
 import { DataGridColumnHeader } from "./reui/data-grid/data-grid-column-header";
@@ -28,6 +28,7 @@ import {
   TABLE_NARROW_QUERY,
   TABLE_COLUMN_LABELS,
   columnVisibleToRole,
+  columnsDroppedToFit,
   defaultCollapsedGroups,
   groupTableRows,
   hideDelivered,
@@ -43,6 +44,7 @@ import { rawCounts } from "../lib/raw-counts";
 import { useStages, type ProjectStageKey } from "../lib/stages";
 import { columnLabelKey } from "../lib/dashboard-appearance";
 import { useMediaQuery } from "../lib/use-media-query";
+import { useOwnWidth } from "../lib/use-own-width";
 import { cn } from "../lib/utils";
 
 /**
@@ -81,8 +83,9 @@ import { cn } from "../lib/utils";
  *
  * ## Columns
  * `hiddenColumns` is the viewer's Display choice; a column the viewer's role cannot see (Priority
- * and Progress for an External Editor) is hidden on top of it at render, never stored. Progress has
- * no header sort (4b draws none on it).
+ * and Progress for an External Editor) is hidden on top of it at render, never stored. So is a column
+ * that does not fit the panel's measured width (`columnsDroppedToFit`, #923 pass round 2): Deadline and
+ * Project always stay. Progress has no header sort (4b draws none on it).
  */
 
 type Column = ColumnDef<DataGridFeatures, TableRowData>;
@@ -107,7 +110,7 @@ function ProjectCell({ project }: { project: ProjectSummary }) {
   const place = projectPlace(project);
   return (
     <div data-testid="project-table-project" data-late={appearanceOf(project).lateness.late} className="flex min-w-0 items-center gap-[var(--space-3)]">
-      <ProjectThumb project={project} retryToken={cover.token} onFailedChange={cover.setFailed} />
+      <ProjectThumb project={project} retryToken={cover.token} failed={cover.failed} onFailedChange={cover.setFailed} />
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex min-w-0 items-center gap-[var(--space-2)]">
           <InternalLink
@@ -150,8 +153,9 @@ function ClientCell({ project }: { project: ProjectSummary }) {
 }
 
 function ShootDateCell({ project }: { project: ProjectSummary }) {
-  // One line: "Shoot date pending" truncates, with a title, rather than wrapping (#923 pass, row 7).
-  const text = formatDashboardDate(project.shootDate);
+  // Frame 4b's "Tue 20 Oct" (#923 pass round 2, row 11). One line: a long legacy value truncates, with a title.
+  const { currentYear } = useCells();
+  const text = formatDashboardDate(project.shootDate, currentYear);
   return <span className="block truncate text-sm tabular-nums" title={text}>{text}</span>;
 }
 
@@ -210,11 +214,12 @@ function RawCell({ project }: { project: ProjectSummary }) {
 /**
  * Column widths, padding included, from frame 4b's grid (#923 pass, row 6). The default columns (RAW
  * hidden) sum to 1260, inside the 1262px table at a 1440 viewport, so nothing scrolls there; below it
- * the table scrolls sideways. Priority keeps its 36px star hit cells (ADR 0003, #923 D4): five stars, its
+ * the Table drops columns in `TABLE_FIT_DROP_ORDER` until the rest fit (#923 pass round 2, row 5), so the
+ * Deadline and its late chip show at 1024 and 768 without scrolling sideways. Priority keeps its 36px star hit cells (ADR 0003, #923 D4): five stars, its
  * 8px start and the table's 16px end edge make 204, not the frame's 92, and that width comes out of
  * Project and Client, the frame's two flexible columns. Deadline holds a date and its late chip on one
  * line ("Wed 30 Sep · 09:00" and "19 days late" measure ~212px with the trigger's inset); Shoot holds
- * "30 Sep 2026" (~80px). RAW received is not in the frame.
+ * "Wed 31 Dec 2025" (~96px). RAW received is not in the frame.
  */
 const SIZES: Record<TableColumnId, number> = { address: 212, stage: 164, client: 128, shootDate: 104, deadline: 232, progress: 120, editors: 96, priority: 204, raw: 120 };
 
@@ -344,11 +349,15 @@ export function DashboardTable({ projects, role, groupBy, hiddenColumns, canPrio
   if (collapsed.groupBy !== groupBy) setCollapsed({ groupBy, keys: defaultCollapsedGroups(groupBy) });
   const collapsedKeys = collapsed.groupBy === groupBy ? collapsed.keys : defaultCollapsedGroups(groupBy);
 
+  // The panel's own width decides which of the viewer's columns fit (#923 pass round 2, row 5). Render-time
+  // only: what drops for width is never written to `hiddenColumns`, so a wider screen shows them again.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const panelWidth = useOwnWidth(panelRef);
   const visibility = useMemo<ColumnVisibilityState>(() => {
-    const state: ColumnVisibilityState = {};
-    for (const id of TABLE_COLUMN_IDS) state[id] = columnVisibleToRole(id, role) && (id === "address" || !hiddenColumns.includes(id as HideableColumnId));
-    return state;
-  }, [hiddenColumns, role]);
+    const chosen = TABLE_COLUMN_IDS.filter((id) => columnVisibleToRole(id, role) && (id === "address" || !hiddenColumns.includes(id as HideableColumnId)));
+    const dropped = columnsDroppedToFit(chosen, SIZES, panelWidth);
+    return Object.fromEntries(TABLE_COLUMN_IDS.map((id) => [id, chosen.includes(id) && !dropped.has(id)]));
+  }, [hiddenColumns, panelWidth, role]);
 
   const shown = useMemo(() => hideDelivered(projects, showDelivered), [projects, showDelivered]);
   const sorted = useMemo(() => sortTableRows(shown, sorting, stages), [shown, sorting, stages]);
@@ -374,6 +383,7 @@ export function DashboardTable({ projects, role, groupBy, hiddenColumns, canPrio
   const cells = useMemo<CellContextValue>(() => ({
     role, canPrioritize, canEditDeadline, pendingOrdering, terminal, onPriorityChange, projectHrefFor, stages,
     appearanceOf: (project) => appearances.get(project.id) ?? projectAppearance(project, now),
+    currentYear: Number(formatSydneyCivil(now).slice(0, 4)),
     isGroupOpen: (key) => !collapsedKeys.has(key),
     toggleGroup: (key) => {
       const keys = new Set(collapsedKeys);
@@ -389,7 +399,7 @@ export function DashboardTable({ projects, role, groupBy, hiddenColumns, canPrio
     <section aria-label="Projects table" data-testid="dashboard-table" className="flex min-h-0 flex-1 flex-col">
       <CellContext.Provider value={cells}>
         <Frame dense className="min-h-0 flex-1">
-          <FramePanel className="flex min-h-0 flex-col p-0">
+          <FramePanel ref={panelRef} className="flex min-h-0 flex-col p-0">
             {allHidden ? (
               <EmptyState title="Delivered projects are hidden by Display.">
                 {onShowDelivered && <Button type="button" variant="outline" size="sm" className="mt-[var(--space-4)]" onClick={onShowDelivered}>Show delivered projects</Button>}

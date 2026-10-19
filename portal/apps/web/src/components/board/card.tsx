@@ -41,19 +41,27 @@ import { CardActionsMenu, CardContextMenuContent, type CardMenuBinding, type Car
  * them can never start a drag (structural, no `stopPropagation`).
  */
 
+/**
+ * A Project's cover, or the street's initial on the placeholder ground. `failed` (from `useCoverRetry`) draws
+ * the initial too (#923 pass round 2, row 4): `LazyImage`'s own failed state is a status box with "Image
+ * unavailable" in it, which clips to nonsense inside a 44x30 thumb, and the retry beside the thumb already
+ * says the cover failed. A retry clears `failed` and remounts the image with the next `retryToken`.
+ */
 export function CoverMedia({
   project,
   retryToken,
+  failed = false,
   onFailedChange,
   placeholderClassName,
 }: {
   project: ProjectSummary;
   retryToken?: number;
+  failed?: boolean;
   onFailedChange?: (failed: boolean) => void;
   /** Extra classes for the letter placeholder (the Table sizes it for a 48px box). */
   placeholderClassName?: string;
 }) {
-  if (project.coverAssetId) {
+  if (project.coverAssetId && !failed) {
     return <LazyImage className="size-full object-cover" src={`/media/asset/${encodeURIComponent(project.coverAssetId)}/thumb`} alt={`Preview of ${project.street}`} retryToken={retryToken} onFailedChange={onFailedChange} />;
   }
   const content = project.street.trim().charAt(0).toUpperCase() || "Q";
@@ -99,6 +107,12 @@ const LINK_ATTRIBUTE_OVERRIDES = {
   "aria-disabled": undefined,
 } as const;
 
+/**
+ * The interactive stars' hit-cell inset, as a negative top margin: (cell − glyph) / 2, with `PriorityStars`'s
+ * cell sizes (`size-9`, `size-11` on a coarse pointer or at <=641px) and its `glyph="sm"` 14px star.
+ */
+const STAR_INSET_PULL = "-mt-[calc((--spacing(9)-var(--text-sm))/2)] pointer-coarse:-mt-[calc((--spacing(11)-var(--text-sm))/2)] max-[641px]:-mt-[calc((--spacing(11)-var(--text-sm))/2)]";
+
 /** Frame 4e `.card.k-late`: a late card's edge takes a share of the late colour over the hairline. */
 const LATE_PANEL_CLASS = "[--frame-panel-border-color:color-mix(in_srgb,var(--late)_35%,var(--border))]";
 
@@ -124,7 +138,9 @@ function metaLine(project: ProjectSummary): string | null {
 
 /**
  * A failed cover's retry (#923): the Table, the phone list and the Board card all keep the same `failed`/`token` pair
- * and draw the same button above their row link's overlay. `className` adds the caller's spacing.
+ * and draw the same button above their row link's overlay. `className` adds the caller's spacing. The labelled
+ * button is sentence case and as wide as its words, not the Button's full-width uppercase eyebrow (#923 pass
+ * round 2, row 4).
  * `iconOnly` draws it as a square icon button that keeps its name (accessible name and title), for the
  * Table's one-line row (#923 pass, row 7), where the labelled button would stack under the suburb.
  */
@@ -145,7 +161,7 @@ export function useCoverRetry(className?: string, { iconOnly = false }: { iconOn
           type="button"
           size="xs"
           variant="secondary"
-          className={`relative z-[1] ${className ?? "mt-[var(--space-2)]"}`}
+          className={`relative z-[1] self-start normal-case tracking-[var(--tracking-normal)] ${className ?? "mt-[var(--space-2)]"}`}
           onClick={onRetry}
         >
           {RETRY_COVER}
@@ -153,7 +169,7 @@ export function useCoverRetry(className?: string, { iconOnly = false }: { iconOn
       )
     ) : null
   );
-  return { token, setFailed, retry };
+  return { token, failed, setFailed, retry };
 }
 
 export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisabled = false, canPrioritize = false, priorityPending = false, onPriorityChange, now, handleRef, menu }: KanbanCard2Props) {
@@ -207,7 +223,7 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
   // Frame 4e `.cv.th`: 44x30, the 4px corner.
   const cover = (
     <div className="h-7.5 w-11 shrink-0 overflow-hidden rounded-sm bg-[var(--ink-800)]" data-testid="board-card-cover">
-      <CoverMedia project={project} retryToken={coverRetry.token} onFailedChange={coverRetry.setFailed} placeholderClassName="!text-sm" />
+      <CoverMedia project={project} retryToken={coverRetry.token} failed={coverRetry.failed} onFailedChange={coverRetry.setFailed} placeholderClassName="!text-sm" />
     </div>
   );
   // #923 D1: progress only when the API sent `checklist`; `{0,0}` is "No tasks", absent is nothing.
@@ -292,8 +308,14 @@ export function KanbanCard2({ project, projectHref, isOverlay = false, dragDisab
               done" in this row too, but the stars keep their 36px (44px on touch) cells (ADR 0003, #923 D4): 180px
               plus the avatars leaves no room for it in a working column, so it sits on its own row above. The
               interactive cells sit flush with the card's bottom edge; a read-only or stars-less row takes the
-              bottom gap instead. */}
-          <div className={`relative z-[1] flex items-center gap-[var(--space-2)] ${canPrioritize ? "" : "pb-[var(--space-3)]"}`} data-testid="board-card-footer-slot">
+              bottom gap instead. Interactive cells are 36px (44px on touch) round a 14px glyph, so the row is
+              pulled up by that inset and the glyphs sit the panel's --space-2 under the progress (#923 pass
+              round 2, row 8); the cells' top edges then overlap the bar's last few px, which is not interactive. */}
+          <div
+            className={`relative z-[1] flex items-center gap-[var(--space-2)] ${canPrioritize ? STAR_INSET_PULL : "pb-[var(--space-3)]"}`}
+            data-testid="board-card-footer-slot"
+            data-star-inset={canPrioritize ? "pulled" : undefined}
+          >
             <PriorityStars
               glyph="sm"
               priority={project.priority}

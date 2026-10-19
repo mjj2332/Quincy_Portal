@@ -34,6 +34,33 @@ export const TABLE_COLUMN_LABELS: Record<TableColumnId, string> = {
   raw: "RAW received",
 };
 
+/**
+ * The order the Table drops columns in where they do not all fit its width (#923 pass round 2, row 5), so the
+ * Deadline and its late chip always show without scrolling sideways at tablet widths. RAW received (not in frame
+ * 4b) goes first, then Client and Shoot, then Priority (the widest, at its 36px star cells, and on every card
+ * too), Progress, Editors and last Stage. Project and Deadline never drop. A render-time choice from the
+ * measured width, never written to the viewer's `hiddenColumns`.
+ */
+export const TABLE_FIT_DROP_ORDER: readonly HideableColumnId[] = ["raw", "client", "shootDate", "priority", "progress", "editors", "stage"];
+
+/**
+ * Which of the `visible` columns to leave out so the rest fit `width` (the Table's inner width, px), dropping
+ * in `TABLE_FIT_DROP_ORDER` until they do. `sizes` are the columns' widths, padding included. An unmeasured
+ * width (0) drops nothing.
+ */
+export function columnsDroppedToFit(visible: readonly TableColumnId[], sizes: Readonly<Record<TableColumnId, number>>, width: number): Set<TableColumnId> {
+  const dropped = new Set<TableColumnId>();
+  if (width <= 0) return dropped;
+  let total = visible.reduce((sum, id) => sum + sizes[id], 0);
+  for (const id of TABLE_FIT_DROP_ORDER) {
+    if (total <= width) break;
+    if (!visible.includes(id)) continue;
+    dropped.add(id);
+    total -= sizes[id];
+  }
+  return dropped;
+}
+
 /** Below 721px (the one phone breakpoint, `PHONE_VIEWPORT_QUERY`) the Table is the phone list (`TablePhoneList.tsx`, frame 4g), not the grid. */
 export const TABLE_NARROW_QUERY = PHONE_VIEWPORT_QUERY;
 

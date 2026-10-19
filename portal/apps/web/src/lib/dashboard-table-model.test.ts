@@ -5,6 +5,7 @@ import {
   TABLE_COLUMN_IDS,
   TABLE_COLUMN_LABELS,
   columnVisibleToRole,
+  columnsDroppedToFit,
   defaultCollapsedGroups,
   groupTableRows,
   hideDelivered,
@@ -235,5 +236,35 @@ describe("the round 4 Table (#923)", () => {
     expect([...defaultCollapsedGroups("stage")]).toEqual(["delivered"]);
     expect([...defaultCollapsedGroups("client")]).toEqual([]);
     expect([...defaultCollapsedGroups("none")]).toEqual([]);
+  });
+});
+
+// #923 pass round 2, row 5: at tablet widths the Table drops lower-priority columns so Deadline always shows.
+describe("columnsDroppedToFit", () => {
+  // Frame 4b's widths as the Table sets them (padding included); RAW received is hidden by default.
+  const SIZES = { address: 212, stage: 164, client: 128, shootDate: 104, deadline: 232, progress: 120, editors: 96, priority: 204, raw: 120 } as const;
+  const DEFAULT_VISIBLE = ["address", "stage", "client", "shootDate", "deadline", "progress", "editors", "priority"] as const;
+  const dropped = (visible: readonly (keyof typeof SIZES)[], width: number) => [...columnsDroppedToFit(visible, SIZES, width)];
+
+  it("drops nothing where every column fits, or before the width is known", () => {
+    expect(dropped(DEFAULT_VISIBLE, 1262)).toEqual([]);
+    expect(dropped(DEFAULT_VISIBLE, 0)).toEqual([]);
+  });
+
+  it("at 1024 (an 845px table) drops Client, Shoot and Priority, keeping Progress and Editors beside Deadline", () => {
+    expect(dropped(DEFAULT_VISIBLE, 845)).toEqual(["client", "shootDate", "priority"]);
+  });
+
+  it("at 768 (a 670px table) keeps Project, Stage and Deadline", () => {
+    expect(dropped(DEFAULT_VISIBLE, 670)).toEqual(["client", "shootDate", "priority", "progress", "editors"]);
+  });
+
+  it("drops RAW received first, and only columns the viewer shows", () => {
+    expect(dropped([...DEFAULT_VISIBLE, "raw"], 1262)).toEqual(["raw"]);
+    expect(dropped(["address", "stage", "deadline", "editors"], 845)).toEqual([]);
+  });
+
+  it("never drops Project or Deadline, even where they alone overflow", () => {
+    expect(dropped(DEFAULT_VISIBLE, 300)).toEqual(["client", "shootDate", "priority", "progress", "editors", "stage"]);
   });
 });
