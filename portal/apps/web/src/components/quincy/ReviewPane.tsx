@@ -93,8 +93,10 @@ export function useReviewPane(phone: boolean) {
 }
 const STEP = 16;
 const STEP_BIG = 64;
+/** A desktop width's Full screen compose has no sheet to hold. */
+const NO_HOLD = () => undefined;
 
-export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarrow, paneId, handleLabel, stacked, sheet, immersive = "off", onImmersiveCancel, rowClassName, playerClassName }: {
+export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarrow, paneId, handleLabel, stacked, sheet, immersive = "off", rowClassName, playerClassName }: {
   player: ReactNode;
   /** The slim column that stands in for a collapsed pane (`useReviewPaneControls().strip`); the row's last child while the pane is hidden on a wide screen. */
   strip?: ReactNode;
@@ -116,7 +118,7 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
    * controls with only the composer showing while a note is written. Nothing is reparented, so the film's clock and the editor are the same nodes throughout.
    */
   immersive?: "off" | "watch" | "compose";
-  /** Closes the Full screen composer (the screen's Add note close): a phone strip's Cancel calls it there (#880 fix round 1). */
+  /** Accepted and unused (#927 T9): F1's box has no Cancel, Add note and Escape close it, so nothing reads the close any more. The staff viewer still passes it; T10 drops that pass, then this prop. */
   onImmersiveCancel?: () => void;
   rowClassName?: string;
   playerClassName?: string;
@@ -208,25 +210,25 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
   useLayoutEffect(() => { if (phoneSheet) measure(); });
   useSheetTextRoom(phoneSheet && sheet.mode === "compose", rowRef, paneRef);
   const sheetStyle = phoneSheet && sheetPane.height !== undefined ? { height: sheetPane.height } : undefined;
-  // The composer reads the mode from here (#879 fix): one source for the sheet's layout and the composer's. Always provided (null off the phone sheet), so the pane's subtree never changes shape across the 721px crossing.
-  // A phone's Full screen compose (#880 S4, owner decision 1) is the sheet's compose mode too (draw while the pen is down): the composer is P6's compose strip, its holds
-  // (the + tray, a post) are the sheet's, and its give-back of an untouched stamp cannot run while it is shown. Watch, and a desktop width's Full screen, provide none.
-  const sheetMode = phoneSheet ? sheet.mode : full && immersive === "compose" && stacked && sheet !== undefined ? (sheet.mode === "draw" ? "draw" : "compose") : null;
-  const setHold = sheet?.setHold;
-  const cancelCompose = full && !phoneSheet ? onImmersiveCancel : undefined;
-  const floatingStrip = full && !phoneSheet;
-  const modeValue = useMemo<SheetModeValue | null>(() => (sheetMode !== null && setHold ? { mode: sheetMode, setHold, ...(floatingStrip ? { floating: true as const } : {}), ...(cancelCompose ? { onCancel: cancelCompose } : {}) } : null), [sheetMode, setHold, floatingStrip, cancelCompose]);
+  // The composer reads the mode from here (#879 fix): one source for the sheet's layout and the composer's. Provided on the phone sheet and in Full screen compose (null otherwise),
+  // so the pane's subtree never changes shape across the 721px crossing.
+  // Full screen compose (#927 F1) floats the box at every width: `floating` tells the composer to draw F1's surface. A phone's (#880 S4, owner decision 1) is the sheet's compose mode
+  // too (draw while the pen is down), so its holds (a post) are the sheet's and its give-back of an untouched stamp cannot run while it is shown. A desktop width has no sheet: the
+  // composer reads no mode there (its layout is the desktop form), so the mode is nominal and holds go nowhere. Watch provides none. F1's box has no Cancel: Add note and Escape close it.
+  const floating = full && immersive === "compose";
+  const sheetMode = phoneSheet ? sheet.mode : floating ? (stacked && sheet?.mode === "draw" ? "draw" : "compose") : null;
+  const setHold = sheet?.setHold ?? NO_HOLD;
+  const modeValue = useMemo<SheetModeValue | null>(() => (sheetMode !== null ? { mode: sheetMode, setHold, ...(floating ? { floating: true as const } : {}) } : null), [sheetMode, setHold, floating]);
   // The dock's scrim reaches up behind the composer (F1: the composer sits inside the bottom scrim): its height is published on the row, which the player reads.
-  const composerShown = full && immersive === "compose";
   useLayoutEffect(() => {
-    const row = rowRef.current; const floating = paneRef.current;
-    if (!composerShown || !row || !floating) return undefined;
-    const write = () => { row.style.setProperty("--immersive-composer-h", `${floating.offsetHeight}px`); };
+    const row = rowRef.current; const box = paneRef.current;
+    if (!floating || !row || !box) return undefined;
+    const write = () => { row.style.setProperty("--immersive-composer-h", `${box.offsetHeight}px`); };
     write();
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(write);
-    observer?.observe(floating);
+    observer?.observe(box);
     return () => { observer?.disconnect(); row.style.removeProperty("--immersive-composer-h"); };
-  }, [composerShown]);
+  }, [floating]);
   const onComposing = sheet?.onComposing;
   // Leaving the field ends compose mode unless the focus went somewhere inside the composer (its tray, Send, Cancel). iOS often reports no `relatedTarget` even then,
   // so with none the check waits a frame and looks at where the focus actually is. Ending it never touches the draft: the composer and its editor stay mounted.
@@ -286,10 +288,11 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
       onBlurCapture={phoneSheet ? onPaneBlur : undefined}
       style={{ ...(stacked || full ? {} : { [REVIEW_PANE_WIDTH_VAR]: `${shown}px` }), ...sheetStyle, ...(showPane ? {} : { display: "none" }) } as CSSProperties}
       className={full
-        // The composer alone, F1's (#880 fix round 1): inside the dock's scrim, inset like the dock (safe areas included), a space above the scrubber (`--immersive-controls-h` is the
-        // controls' height without the scrim's top padding, published by the player), on its own surface rounded with no border or padded panel (F1's compact `.composer`, 12px
-        // radius: the nearer of the scale's 8 and 14 is --radius-lg). Every other part of the pane is inert and hidden. Its height is bounded by the room above the controls.
-        ? "absolute right-[max(var(--space-3),env(safe-area-inset-right))] bottom-[calc(var(--immersive-controls-h,0px)+var(--space-2))] left-[max(var(--space-3),env(safe-area-inset-left))] z-10 flex max-h-[calc(100%-var(--immersive-controls-h,0px)-var(--space-2))] min-h-0 flex-col overflow-y-auto rounded-[var(--radius-lg)] bg-card px-[var(--space-3)] py-[var(--space-2)] [&_[data-sheet-part][inert]]:hidden"
+        // The composer alone, F1's box (#880 fix round 1, #927 T9): inside the dock's scrim, a space above the scrubber (`--immersive-controls-h` is the controls' height without the
+        // scrim's top padding, published by the player), centred: inset like the dock (safe areas included) and at most F1's 560px, `mx-auto` splitting what is left. 560 is on no
+        // single token, so it is spelled from the scale: the small container less --space-8 and --space-4. The box draws F1's surface (`floating`: translucent, blurred, rounded),
+        // so the pane adds none, and no padding. Every other part of the pane is inert and hidden. Its height is bounded by the room above the controls.
+        ? "absolute right-[max(var(--space-3),env(safe-area-inset-right))] bottom-[calc(var(--immersive-controls-h,0px)+var(--space-2))] left-[max(var(--space-3),env(safe-area-inset-left))] z-10 mx-auto flex max-h-[calc(100%-var(--immersive-controls-h,0px)-var(--space-2))] max-w-[calc(var(--container-sm)-var(--space-8)-var(--space-4))] min-h-0 flex-col overflow-y-auto [&_[data-sheet-part][inert]]:hidden"
         : phoneSheet
         ? "relative flex min-h-0 flex-none flex-col overflow-hidden border-t border-border bg-card motion-safe:transition-[height] motion-safe:duration-[var(--dur-base)] motion-safe:ease-[var(--ease-entrance)] data-[dragging=true]:transition-none data-[mode=compose]:max-h-full data-[mode=search]:flex-1 [&_[data-sheet-part][inert]]:hidden"
         : "flex min-h-0 flex-col max-[721px]:flex-[1_1_360px] min-[721px]:w-[var(--review-pane-w)] min-[721px]:flex-none min-[721px]:overflow-hidden"}
