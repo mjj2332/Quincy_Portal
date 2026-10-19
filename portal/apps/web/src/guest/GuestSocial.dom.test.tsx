@@ -225,7 +225,7 @@ describe("Social preview on the Review link (#872)", () => {
     await social(true);
     expect(host.querySelector("video")).toBe(before);
     expect(byId("video-marker-lane")).not.toBeNull();
-    expect(byId("video-range-button")).not.toBeNull();
+    expect(byId("video-range-button")).toBeNull();
     await atSeconds(2);
     await keyDown("i");
     expect(byId("guest-composer-anchor")?.textContent).toContain("00:00:02:00");

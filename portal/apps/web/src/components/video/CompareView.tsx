@@ -16,7 +16,7 @@ import { COARSE, type VideoPlayerControl } from "../quincy/VideoPlayer";
 import { IconTip } from "../quincy/IconTip";
 import { TimeFormatMenu } from "../quincy/TimeFormatMenu";
 import { ReviewPaneHideContext, useReviewPaneControls } from "../quincy/ReviewPane";
-import { useFrameLabeller, useTimeFormat } from "../../lib/time-format-prefs";
+import { useFrameLabeller } from "../../lib/time-format-prefs";
 import { VideoPendingRangeBand, VideoTimelineMarkers, type TimelineMarker } from "../quincy/VideoTimelineMarkers";
 import { Badge } from "../reui/badge";
 import { Button as UiButton } from "../reui/button";
@@ -261,7 +261,6 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
     phase={heard[target]}
     startsIn={startsIn(target)}
     buffering={state.stalled === target}
-    timecode={(frame) => timecodeOf(versions[target], frame)}
     onHandle={target === "a" ? onHandleA : onHandleB}
     onClockChange={slots ? slots[target].playerProps.onClockChange : undefined}
     labelCorner={wiping && target === "b" ? "top-right" : "top-left"}
@@ -410,7 +409,7 @@ function CompareBody({ video, store, startFrame, versionA, versionB, onChangeSid
 }
 
 /** One side: its stage (own `<video>`, own clock), the version and phase badges, and the buffering line. Keyed by side and Version by the body. */
-function SideStage({ side: id, version, title, label, initialFrame, phase, startsIn, buffering, timecode, onHandle, onClockChange, labelCorner, cellClassName, cellStyle, social, frameStyle }: {
+function SideStage({ side: id, version, title, label, initialFrame, phase, startsIn, buffering, onHandle, onClockChange, labelCorner, cellClassName, cellStyle, social, frameStyle }: {
   side: CompareSideId;
   version: VideoVersionDto;
   title: string;
@@ -419,7 +418,6 @@ function SideStage({ side: id, version, title, label, initialFrame, phase, start
   phase: "before" | "live" | "last" | "after";
   startsIn: number;
   buffering: boolean;
-  timecode: (frame: number) => string;
   onHandle: (handle: CompareSideHandle | null) => void;
   onClockChange?: ((clock: VideoFrameClock | null) => void) | undefined;
   labelCorner: "top-left" | "top-right";
@@ -430,7 +428,6 @@ function SideStage({ side: id, version, title, label, initialFrame, phase, start
   frameStyle?: React.CSSProperties | undefined;
 }) {
   const [element, setElement] = useState<HTMLVideoElement | null>(null);
-  const [timeFormat] = useTimeFormat();
   const clock = useVideoFrameClock(element, version, { initialFrame });
   const instance = clock.instance;
   const { fps, frameCount, hasAudio } = version;
@@ -446,7 +443,7 @@ function SideStage({ side: id, version, title, label, initialFrame, phase, start
   }, [instance, onClockChange]);
 
   return <div data-compare-cell={id} data-phase={phase} style={cellStyle} className={cn("relative flex h-full min-h-0 min-w-0 flex-col", cellClassName)}>
-    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setElement} {...(social ? { social } : {})} {...(frameStyle ? { frameStyle } : {})} overlay={(box) => <>
+    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} onVideo={setElement} {...(social ? { social } : {})} {...(frameStyle ? { frameStyle } : {})} overlay={(box) => <>
       <div data-testid="video-compare-side-labels" data-corner={labelCorner} className="pointer-events-none absolute" style={box ? { left: box.left, top: box.top, width: box.width, height: box.height } : { inset: 0 }}>
         <div className={cn("absolute top-[var(--space-2)] flex flex-wrap items-center gap-[var(--space-1)]", labelCorner === "top-right" ? "right-[var(--space-2)] justify-end" : "left-[var(--space-2)]")}>
           <Badge variant="invert">{label}</Badge>

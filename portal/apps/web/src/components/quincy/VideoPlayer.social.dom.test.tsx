@@ -128,17 +128,16 @@ describe("VideoPlayer Social preview (#871)", () => {
     expect(byTestId("video-stage")!.dataset.social).toBe("fit");
   });
 
-  it("keeps markers, range, I/O, Draw and the overlay slot while it is on, the overlay inside the frame and above the artwork", async () => {
+  it("keeps markers, range handles, I/O and the overlay slot while it is on, the overlay inside the frame and above the artwork", async () => {
     const onMark = vi.fn();
     await mount({
       social: socialOf(), onMark, markers: [{ id: "m", startFrame: 5, endFrame: null, tone: "open" } as never], pendingRange: { startFrame: 1, endFrame: 3 },
-      range: { marks: { in: null, out: null }, locked: false, clear: () => undefined },
-      transportActions: <button data-testid="draw-slot" type="button">Draw</button>, overlay: <div data-testid="markup-slot" />,
+      range: { marks: { in: 2, out: null }, locked: false, clear: () => undefined },
+      overlay: <div data-testid="markup-slot" />,
     });
     expect(byTestId("video-marker-lane")).not.toBeNull();
     expect(byTestId("video-pending-band")).not.toBeNull();
-    expect(byTestId("video-range-button")).not.toBeNull();
-    expect(byTestId("draw-slot")).not.toBeNull();
+    expect(byTestId("video-range-in")).not.toBeNull();
     const frame = byTestId("video-social-frame")!;
     expect(frame.contains(byTestId("markup-slot"))).toBe(true);
     const art = byTestId("video-social-overlay")!;

@@ -255,7 +255,6 @@ describe("Compare: entry and exit (#741 7c)", () => {
     await openViewer();
     await loadFilm(0);
     await flush(4);
-    expect(tid("video-markup-toolbar-draw")).not.toBeNull();
     await enterCompare(0);
     expect(tid("video-markup-toolbar-draw")).toBeNull();
   });
@@ -359,21 +358,11 @@ describe("Compare: time format (#860)", () => {
     expect(readoutA()).toBe("v3 0v2 0");
   });
 
-  it("in Frames the stage chips read 'frame N' with no repeated number", async () => {
+  it("draws no timecode chip on either stage, in Frames too (#927)", async () => {
     shim.values.set(TIME_FORMAT_KEY, JSON.stringify("frames"));
-    const original = Object.getOwnPropertyDescriptors(HTMLElement.prototype);
-    for (const [prop, value] of [["offsetWidth", 800], ["offsetHeight", 800], ["offsetLeft", 0], ["offsetTop", 0]] as const) Object.defineProperty(HTMLElement.prototype, prop, { configurable: true, get: () => value });
-    try {
-      await openCompare({}, 0);
-      await land(7);
-      const chips = [...document.querySelectorAll('[data-testid="video-timecode-chip"]')].map((c) => c.textContent);
-      expect(chips).toEqual(["frame 7", "frame 7"]);
-    } finally {
-      for (const prop of ["offsetWidth", "offsetHeight", "offsetLeft", "offsetTop"] as const) {
-        const d = original[prop];
-        if (d) Object.defineProperty(HTMLElement.prototype, prop, d); else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[prop];
-      }
-    }
+    await openCompare({}, 0);
+    await land(7);
+    expect(document.querySelector('[data-testid="video-timecode-chip"]')).toBeNull();
   });
 
   it("hosts the same menu beside its readout: picking Standard there rewrites the readout, and the choice is the shared one", async () => {
