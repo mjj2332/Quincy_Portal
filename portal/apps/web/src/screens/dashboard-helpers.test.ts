@@ -152,15 +152,21 @@ describe("dashboard shoot dates", () => {
     expect(isCanonicalShootDate("2025-02-29")).toBe(false);
   });
 
-  it("formats canonical calendar dates without applying a browser timezone", () => {
-    expect(formatDashboardDate("2026-01-02")).toBe("2 Jan 2026");
-    expect(formatDashboardDate("2024-02-29")).toBe("29 Feb 2024");
+  // #923 pass round 2, row 11: frame 4b's "Tue 20 Oct", the year only outside the current one.
+  it("formats canonical calendar dates as a short weekday and day, without applying a browser timezone", () => {
+    expect(formatDashboardDate("2026-10-20", 2026)).toBe("Tue 20 Oct");
+    expect(formatDashboardDate("2026-01-02", 2026)).toBe("Fri 2 Jan");
   });
 
-  it("keeps null pending and legacy invalid values visible", () => {
-    expect(formatDashboardDate(null)).toBe("Shoot date pending");
-    expect(formatDashboardDate("2025-02-29")).toBe("2025-02-29");
-    expect(formatDashboardDate("20 January 2026")).toBe("20 January 2026");
+  it("adds the year to a date outside the current year", () => {
+    expect(formatDashboardDate("2024-02-29", 2026)).toBe("Thu 29 Feb 2024");
+    expect(formatDashboardDate("2025-12-31", 2026)).toBe("Wed 31 Dec 2025");
+  });
+
+  it("says Pending for no date, short enough for the Shoot column, and keeps legacy invalid values visible", () => {
+    expect(formatDashboardDate(null, 2026)).toBe("Pending");
+    expect(formatDashboardDate("2025-02-29", 2026)).toBe("2025-02-29");
+    expect(formatDashboardDate("20 January 2026", 2026)).toBe("20 January 2026");
   });
 });
 

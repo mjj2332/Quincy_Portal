@@ -20,8 +20,8 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "../reui/dropdown-menu";
-import { StageSwatch } from "../quincy/StageSwatch";
-import { stageColorFor, stagePatternFor } from "../../lib/stage-colors";
+import { StageToneSwatch } from "../quincy/StageKeyRow";
+import { stageTone } from "../../lib/dashboard-appearance";
 import type { MoveToChoice } from "./card-actions";
 import { MENU_SURFACE_CLASS } from "../quincy/menu-surface";
 
@@ -59,14 +59,16 @@ const SUB_CONTENT_CLASS = "min-w-48 w-max max-w-[min(18rem,calc(100vw-2rem))]";
 /** 44px rows at ≤641px and on a coarse pointer: the Stage radios and the Move to sub-triggers share it. */
 export const TOUCH_ROW_CLASS = "max-[641px]:min-h-11 pointer-coarse:min-h-11";
 
+/** #923: the appearance module's Stage tone, the same swatch the column headers and the Stage key draw (no hatch, #257 retired). */
 function Swatch({ stageKey }: { stageKey: StageKey }) {
-  return <StageSwatch color={stageColorFor(stageKey)} pattern={stagePatternFor(stageKey)} />;
+  return <StageToneSwatch tone={stageTone(stageKey)} />;
 }
 
 /**
  * The ⋯ trigger and its menu. A SIBLING of the card's link (the drag handle), raised above its
  * overlay: a press on it can never start a drag. Always visible, never hover-revealed (TB8-07), 44px
- * at ≤641px and on a coarse pointer.
+ * at ≤641px and on a coarse pointer. #923 (frame 4e `.cmenu.sm`): it ends the card's first row, in flow and
+ * ghost, rather than floating over a cover photo.
  */
 export function CardActionsMenu({ projectId, street, binding }: { projectId: string; street: string; binding: CardMenuBinding }) {
   const { menu } = binding;
@@ -79,7 +81,7 @@ export function CardActionsMenu({ projectId, street, binding }: { projectId: str
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="absolute top-[var(--space-2)] right-[var(--space-2)] z-[1] max-[641px]:size-11 pointer-coarse:size-11 border-[color-mix(in_srgb,var(--ink-900)_18%,transparent)] bg-[color-mix(in_srgb,var(--paper-000)_88%,transparent)] text-foreground-secondary disabled:bg-surface-sunken"
+            className="relative z-[1] -me-1 shrink-0 max-[641px]:size-11 pointer-coarse:size-11 text-foreground-secondary"
             aria-label={`Actions for ${street}`}
             data-testid="board-card-menu"
             data-focus-key={`card-menu:${projectId}`}

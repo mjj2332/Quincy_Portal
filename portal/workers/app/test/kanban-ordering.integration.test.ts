@@ -405,4 +405,45 @@ describe("Kanban priority and Board commands", () => {
     const project = body.projects.find((row) => row.id === projectId);
     expect(project?.editors).toEqual([{ id: activeEditorId, name: "Active Editor" }]);
   });
+  it("adds a batched checklist count to the staff summary and leaves the External summary alone (#923 D1)", async () => {
+    const none = crypto.randomUUID(); const partial = crypto.randomUUID(); const all = crypto.randomUUID();
+    for (const projectId of [none, partial, all]) await seedProject(projectId, "editing_autohdr");
+    const now = Date.now();
+    const subtask = (projectId: string, position: number, done: number) => database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Task', ?, ?, 1, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)")
+      .bind(crypto.randomUUID(), projectId, done, position, adminId, now, now);
+    await database.DB.batch([subtask(partial, 0, 1), subtask(partial, 1, 0), subtask(partial, 2, 0), subtask(all, 0, 1), subtask(all, 1, 1)]);
+    await database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(crypto.randomUUID(), partial, externalEditorId, now).run();
+
+    const staff = await (await request("/api/projects", adminToken)).json() as { projects: Array<{ id: string; checklist?: { completed: number; total: number } }> };
+    const checklistOf = (projectId: string) => staff.projects.find((row) => row.id === projectId)?.checklist;
+    expect(checklistOf(none)).toEqual({ completed: 0, total: 0 });
+    expect(checklistOf(partial)).toEqual({ completed: 1, total: 3 });
+    expect(checklistOf(all)).toEqual({ completed: 2, total: 2 });
+
+    const external = await (await request("/api/projects", externalEditorToken)).json() as { projects: Array<Record<string, unknown>> };
+    expect(external.projects.some((row) => row.id === partial)).toBe(true);
+    for (const row of external.projects) expect(row).not.toHaveProperty("checklist");
+  });
+  it("counts the checklists in a batch: more Projects do not mean more D1 queries (#923 D1, no N+1)", async () => {
+    // `Server-Timing`'s `d1-queries` is the Worker's own D1 statement count for the request (#361).
+    const queryCount = async () => {
+      const response = await request("/api/projects", adminToken);
+      expect(response.status).toBe(200);
+      const count = /d1-queries;desc="(\d+)"/.exec(response.headers.get("server-timing") ?? "")?.[1];
+      expect(count, "a d1-queries entry").toBeDefined();
+      return Number(count);
+    };
+    await queryCount(); // The first request in an isolate also runs the board-schema probe.
+    const before = await queryCount();
+    const now = Date.now();
+    const extra = Array.from({ length: 15 }, () => crypto.randomUUID());
+    for (const projectId of extra) await seedProject(projectId, "editing_autohdr");
+    await database.DB.batch(extra.map((projectId) => database.DB.prepare("INSERT INTO project_subtasks (id, project_id, title, done, position, assignment_version, due_date, schedule_start_kind, schedule_start_civil, schedule_start_at, schedule_start_utc_offset_minutes, schedule_start_fold, schedule_end_kind, schedule_end_at, schedule_end_utc_offset_minutes, schedule_end_fold, schedule_zone, schedule_version, created_by, created_at, updated_at) VALUES (?, ?, 'Task', 1, 0, 1, '2099-12-31T17:00', 'timed', '2099-12-31T09:00', 4102351200000, 660, 0, 'timed', 4102380000000, 660, 0, 'Australia/Sydney', 1, ?, ?, ?)")
+      .bind(crypto.randomUUID(), projectId, adminId, now, now)));
+    const after = await queryCount();
+    // Chunking (80 ids a statement) may add a statement or two; one per Project would add 15.
+    expect(after - before).toBeLessThan(5);
+    const body = await (await request("/api/projects", adminToken)).json() as { projects: Array<{ id: string; checklist?: { completed: number; total: number } }> };
+    for (const projectId of extra) expect(body.projects.find((row) => row.id === projectId)?.checklist).toEqual({ completed: 1, total: 1 });
+  });
 });
