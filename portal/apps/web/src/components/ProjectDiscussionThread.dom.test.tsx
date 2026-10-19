@@ -15,6 +15,7 @@ const state = vi.hoisted(() => ({
   readState: { unreadCount: 0 } as { unreadCount: number },
   presentation: undefined as any,
   editors: [] as Array<Record<string, any>>,
+  realEditor: false,
 }));
 const apiGetMock = vi.hoisted(() => vi.fn());
 const apiPostMock = vi.hoisted(() => vi.fn());
@@ -51,13 +52,16 @@ vi.mock("../lib/project-comments", () => ({
   useProjectCommentsQuery: () => state.commentsQuery,
 }));
 vi.mock("./RichTextContent", () => ({ RichTextContent: ({ content }: { content: { content?: Array<{ content?: Array<{ text?: string }> }> } }) => <div data-testid="rich-content">{content.content?.flatMap((block) => block.content ?? []).map((item) => item.text ?? "").join("")}</div> }));
-vi.mock("./QuincyRichTextEditor", () => ({
-  QuincyRichTextEditor: (props: Record<string, any>) => {
+// `state.realEditor` swaps in the real editor for a case that needs the real toolbar.
+vi.mock("./QuincyRichTextEditor", async (importOriginal) => {
+  const { QuincyRichTextEditor: Real } = await importOriginal<typeof import("./QuincyRichTextEditor")>();
+  return { QuincyRichTextEditor: (props: Record<string, any>) => {
+    if (state.realEditor) return <Real {...(props as React.ComponentProps<typeof Real>)} />;
     state.editors = state.editors.filter((editor) => editor.id !== props.id);
     state.editors.push(props);
     return <div data-testid={`editor-${props.id ?? "composer"}`}><button type="button" data-testid={`mention-${props.id ?? "composer"}`} onClick={() => { props.loadMentionables("Nor").catch(() => undefined); }}>Mention</button><button type="button" data-testid={`submit-${props.id ?? "composer"}`} disabled={props.disabled || props.limit < 0} onClick={props.onSubmit}>Submit</button><span data-testid={`editor-value-${props.id ?? "composer"}`}>{JSON.stringify(props.value)}</span><div role="textbox" aria-label="Editor surface" contentEditable="true" suppressContentEditableWarning tabIndex={0} /></div>;
-  },
-}));
+  } };
+});
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const doc = (text: string) => ({ type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text }] }] });
@@ -84,6 +88,7 @@ beforeEach(() => {
   state.readState = { unreadCount: 0 };
   state.presentation = { anchorRef: () => undefined, scrollRootRef: () => undefined, readAttemptRegistrar: {}, drain: vi.fn(() => Promise.resolve()), isCurrent: () => true };
   state.editors = [];
+  state.realEditor = false;
   apiGetMock.mockReset().mockResolvedValue({ users: [{ id: "user-nora", name: "Nora" }] });
   apiPostMock.mockReset().mockResolvedValue({ ...ownComment, id: "comment-posted", content: doc("Posted") });
   apiPatchMock.mockReset().mockResolvedValue({ ...ownComment, content: doc("Edited"), editedAt: "2026-08-17T00:02:00.000Z" });
@@ -240,6 +245,17 @@ describe("ProjectDiscussionThread", () => {
     expect(post().disabled).toBe(true);
     await act(async () => { composer().onUploadingChange(false); await Promise.resolve(); });
     expect(post().disabled).toBe(false);
+  });
+
+  // #927 moved the note composers' toolbar into a tray; the discussion composer keeps its toolbar inside the field.
+  it("keeps the discussion composer's toolbar, with Insert image and Insert video, inside the field (#927)", async () => {
+    state.realEditor = true;
+    render(); await flush();
+    const composer = host.querySelector<HTMLElement>("[data-testid=discussion-composer]")!;
+    const toolbar = composer.querySelector<HTMLElement>('[role="toolbar"]');
+    expect(toolbar).not.toBeNull();
+    expect(toolbar!.querySelector('[data-testid="rich-text-media-tools"] button[aria-label="Insert image"]')).not.toBeNull();
+    expect(toolbar!.querySelector('[data-testid="rich-text-media-tools"] button[aria-label="Insert video"]')).not.toBeNull();
   });
 
   it("consumes a discussion-only 403 locally with no composer or close/purge callback", async () => {

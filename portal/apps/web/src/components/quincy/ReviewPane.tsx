@@ -287,10 +287,9 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
       style={{ ...(stacked || full ? {} : { [REVIEW_PANE_WIDTH_VAR]: `${shown}px` }), ...sheetStyle, ...(showPane ? {} : { display: "none" }) } as CSSProperties}
       className={full
         // The composer alone, F1's box (#880 fix round 1, #927 T9): inside the dock's scrim, a space above the scrubber (`--immersive-controls-h` is the controls' height without the
-        // scrim's top padding, published by the player), centred: inset like the dock (safe areas included) and at most F1's 560px, `mx-auto` splitting what is left. 560 is on no
-        // single token, so it is spelled from the scale: the small container less --space-8 and --space-4. The box draws F1's surface (`floating`: translucent, blurred, rounded),
+        // scrim's top padding, published by the player), centred: inset like the dock (safe areas included) and at most F1's 560px (`--note-float-width`), `mx-auto` splitting what is left. The box draws F1's surface (`floating`: translucent, blurred, rounded),
         // so the pane adds none, and no padding. Every other part of the pane is inert and hidden. Its height is bounded by the room above the controls.
-        ? "absolute right-[max(var(--space-3),env(safe-area-inset-right))] bottom-[calc(var(--immersive-controls-h,0px)+var(--space-2))] left-[max(var(--space-3),env(safe-area-inset-left))] z-10 mx-auto flex max-h-[calc(100%-var(--immersive-controls-h,0px)-var(--space-2))] max-w-[calc(var(--container-sm)-var(--space-8)-var(--space-4))] min-h-0 flex-col overflow-y-auto [&_[data-sheet-part][inert]]:hidden"
+        ? "absolute right-[max(var(--space-3),env(safe-area-inset-right))] bottom-[calc(var(--immersive-controls-h,0px)+var(--space-2))] left-[max(var(--space-3),env(safe-area-inset-left))] z-10 mx-auto flex max-h-[calc(100%-var(--immersive-controls-h,0px)-var(--space-2))] max-w-[var(--note-float-width)] min-h-0 flex-col overflow-y-auto [&_[data-sheet-part][inert]]:hidden"
         : phoneSheet
         ? "relative flex min-h-0 flex-none flex-col overflow-hidden border-t border-border bg-card motion-safe:transition-[height] motion-safe:duration-[var(--dur-base)] motion-safe:ease-[var(--ease-entrance)] data-[dragging=true]:transition-none data-[mode=compose]:max-h-full data-[mode=search]:flex-1 [&_[data-sheet-part][inert]]:hidden"
         : "flex min-h-0 flex-col max-[721px]:flex-[1_1_360px] min-[721px]:w-[var(--review-pane-w)] min-[721px]:flex-none min-[721px]:overflow-hidden"}

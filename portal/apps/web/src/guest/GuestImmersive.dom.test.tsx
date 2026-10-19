@@ -221,8 +221,9 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     const inner = byId("guest-notes-aside-body")!.className.split(/\s+/);
     expect(inner).toContain("max-[721px]:in-data-[immersive=compose]:p-0");
     const form = byId("guest-composer")!.className.split(/\s+/);
-    expect(form).toContain("p-0");
-    expect(form).not.toContain("border-t");
+    // #927 review: the box's foot chrome is opt-in and never drawn while floating, so there is no padding to undo.
+    expect(form.filter((c) => /^p-\[var\(--space-/.test(c))).toEqual([]);
+    expect(form).not.toContain("border-t"); expect(form).not.toContain("bg-card");
   });
 
   it("Tab is held inside the layer: the focus manager's guards exist only while in Full screen, and the page's header is inert", async () => {

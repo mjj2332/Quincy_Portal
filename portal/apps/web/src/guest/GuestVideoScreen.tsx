@@ -17,11 +17,10 @@ import { useMediaQuery } from "../lib/use-media-query";
 import type { VideoFrameClock } from "../lib/video-frame-clock";
 import { Button } from "../components/reui/button";
 import { Badge } from "../components/reui/badge";
-import { STRIP_TEXT_BUTTON } from "../components/quincy/compose-strip";
 import { Toggle } from "../components/reui/toggle";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/reui/select";
 import { Tabs, TabsList, TabsTrigger } from "../components/reui/tabs";
-import { ReviewPhoneBar, VersionChip } from "../components/quincy/ReviewPhoneBar";
+import { PHONE_BAR_TEXT_BUTTON, ReviewPhoneBar, VersionChip } from "../components/quincy/ReviewPhoneBar";
 import { ActionRow, ActionSeparator, ReviewActionSheet } from "../components/quincy/ReviewActionSheet";
 import { blurComposerField, isComposerField, useReviewSheet, useSheetMode } from "../components/quincy/ReviewSheet";
 import { PHONE_QUERY } from "../lib/review-pane-geometry";
@@ -703,7 +702,7 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
       title={<h1 data-testid="guest-video-title" title={video.title} className="m-0 w-full min-w-[6rem] truncate [font:var(--type-body)]">{video.title}</h1>}
       chip={<VersionChip buttonRef={chipRef} label={latestLabel} onClick={() => { setVersionsOpen(true); }} />}
       // A recorded decision takes the Approve slot as its badge (P2), whether or not the link still lets the guest decide.
-      approve={version.decision !== null ? <DecisionBadge decision={version.decision} icon /> : canDecide ? <Button type="button" size="sm" variant="outline" data-testid="guest-approve" className={STRIP_TEXT_BUTTON} onClick={() => { startDecision("approved"); }}>Approve</Button> : undefined}
+      approve={version.decision !== null ? <DecisionBadge decision={version.decision} icon /> : canDecide ? <Button type="button" size="sm" variant="outline" data-testid="guest-approve" className={PHONE_BAR_TEXT_BUTTON} onClick={() => { startDecision("approved"); }}>Approve</Button> : undefined}
       actions={<ReviewActionSheet container={slot}>
         {(close) => <>
           {socialOverlays.length > 0 && <ActionRow testId="guest-social-toggle" icon={<Smartphone aria-hidden="true" />} pressed={socialOn} onSelect={() => { setSocial(!socialOn); close(); }}>Social preview</ActionRow>}

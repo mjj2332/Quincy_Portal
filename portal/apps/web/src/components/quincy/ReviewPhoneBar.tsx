@@ -8,8 +8,11 @@ import type { StatusTone } from "./StatusPill";
  * The phone review header (#879, D3, P1): back, the title with the Version chip under it, the approve button and ⋯, and nothing else. Staff and Guest reviewers compose the same bar;
  * what goes in each slot is the screen's (role gating stays there). The title slot keeps a floor so a crowded bar truncates it last.
  * #879 PR 3a: P1's 56pt bar (`HEADER_H`): `--space-7 + --space-2` tall with no vertical padding, `--space-1` gutters and gaps. The controls in it are drawn smaller than 44px
- * (the chip, Approve) and reach 44px with a transparent pseudo-element (the strip's `PILL_ICON` / `STRIP_TEXT_BUTTON` pattern), all inside the bar.
+ * (the chip, Approve) and reach 44px with a transparent pseudo-element (`PHONE_BAR_TEXT_BUTTON`), all inside the bar.
  */
+/** A text control in the bar (kit.jsx `ibtn sm`: the staff and Guest Approve): drawn 32px tall, with a 44px hit area from a transparent pseudo-element. */
+export const PHONE_BAR_TEXT_BUTTON = "relative min-h-8 px-[var(--space-2)] after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-['']";
+
 export function ReviewPhoneBar({ back, title, chip, approve, actions }: { back: ReactNode; title: ReactNode; chip: ReactNode; approve?: ReactNode; actions?: ReactNode }) {
   return <header data-testid="review-phone-bar" className="flex h-[calc(var(--space-7)+var(--space-2))] flex-none flex-nowrap items-center gap-x-[var(--space-1)] border-b border-border bg-card px-[var(--space-1)] text-card-foreground">
     {back}

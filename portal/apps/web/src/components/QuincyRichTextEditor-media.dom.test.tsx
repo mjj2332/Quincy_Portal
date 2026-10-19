@@ -370,9 +370,9 @@ describe("design review fixes (#493)", () => {
     const dialog = document.querySelector<HTMLElement>('[data-testid="embedded-image-dialog"]')!;
     expect(dialog.getAttribute("data-surface")).toBe("inverse");
     expect(dialog.querySelector('[data-testid="embedded-image-scrim"]')).not.toBeNull();
-    expect(imageSource).toMatch(/data-testid="embedded-image-dialog"/);
-    expect(imageSource).toMatch(/p-0/); expect(imageSource).toMatch(/bg-background/); expect(imageSource).toMatch(/embedded-image-scrim[^>]*scrim-overlay/);
-    expect(imageSource).toMatch(/max-w-\[calc\(100%-2rem\)\]/);
+    // The stage and the close chip are shared with the video dialogs (`MEDIA_STAGE`, `MediaStageClose`, #927 review): read from the render.
+    for (const name of ["p-0", "bg-background", "max-w-[calc(100%-2rem)]"]) expect(dialog.className.split(" ")).toContain(name);
+    expect(dialog.querySelector<HTMLElement>('[data-testid="embedded-image-scrim"]')!.className).toContain("bg-[var(--scrim-overlay)]");
   });
 
   it("never upscales: the dialog fits the image and the image is capped at its natural size (#553)", async () => {
@@ -420,9 +420,14 @@ describe("design review fixes (#493)", () => {
     expect(dialog().className).toContain("p-[var(--space-7)]");
   });
 
-  it("draws the close focus ring inside the chip and keeps the chip's ring legible on ink (#553)", () => {
-    expect(imageSource).toMatch(/embedded-image-close[^>]*outline-offset-\[-4px\][^>]*focus-visible:!outline-offset-\[-4px\]/);
-    expect(imageSource).toMatch(/embedded-image-scrim[^>]*ring-\[color:var\(--border-hover\)\]/);
+  it("draws the close focus ring inside the chip and keeps the chip's ring legible on ink (#553)", async () => {
+    const host = mount(<RichTextContent content={withImages(A)} />);
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="embedded-image"]')!.click(); });
+    await settle();
+    // `--space-1` (4px) in, at rest and on focus: the global unlayered `:focus-visible` offset needs the `!` to lose.
+    const close = document.querySelector<HTMLElement>('[data-testid="embedded-image-close"]')!.className.split(" ");
+    expect(close).toContain("outline-offset-[calc(var(--space-1)*-1)]"); expect(close).toContain("focus-visible:!outline-offset-[calc(var(--space-1)*-1)]");
+    expect(document.querySelector<HTMLElement>('[data-testid="embedded-image-scrim"]')!.className).toContain("ring-[color:var(--border-hover)]");
   });
 
   it("makes the close button the drawn 48px chip, with the dialog's radius and a hairline ring on the scrim (#553)", async () => {
@@ -433,7 +438,7 @@ describe("design review fixes (#493)", () => {
     const close = dialog.querySelector<HTMLElement>('[data-testid="embedded-image-close"]')!;
     const scrim = dialog.querySelector<HTMLElement>('[data-testid="embedded-image-scrim"]')!;
     expect(close.textContent).toBe("Close");
-    for (const element of [close, scrim]) { expect(element.className).toContain("size-[var(--space-7)]"); expect(element.className).toContain("top-0"); expect(element.className).toContain("right-0"); expect(element.className).toContain("rounded-xl"); }
+    for (const element of [close, scrim]) { expect(element.className).toContain("size-[var(--space-7)]"); expect(element.className).toContain("top-0"); expect(element.className).toContain("right-0"); expect(element.className).toContain("rounded-[var(--radius-lg)]"); }
     expect(scrim.className).toContain("ring-[length:var(--border-width-hair)]");
     expect(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../styles/tokens/spacing.css"), "utf8")).toMatch(/--space-7:\s*48px/);
     // Only one close control: the dialog's built-in 28px one is off.

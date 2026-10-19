@@ -71,9 +71,9 @@ describe("link preview card design (#497)", () => {
   });
   it("6d: the fallback panel carries the shared box class, the --unavailable modifier and videoClassName, inside the player's own wrapper (#592)", () => {
     const src = readFileSync(join(here, "../components/quincy/EmbeddedVideo.tsx"), "utf8");
-    expect(src).toContain('cn("rich-text__embedded-video rich-text__embedded-video--unavailable", videoClassName)');
-    expect(src).toContain('cn("my-[var(--space-2)]", className)');
-    expect(src.indexOf("embedded-video--unavailable")).toBeGreaterThan(src.indexOf('cn("my-[var(--space-2)]", className)'));
+    expect(src).toContain('cn("rich-text__embedded-video rich-text__embedded-video--unavailable", stage && "rich-text__embedded-video--stage", videoClassName)');
+    expect(src).toContain('cn(stage ? "w-full" : "my-[var(--space-2)]", className)');
+    expect(src.indexOf("embedded-video--unavailable")).toBeGreaterThan(src.indexOf('cn(stage ? "w-full" : "my-[var(--space-2)]", className)'));
     const node = readFileSync(join(here, "../components/quincy/EmbeddedVideoEditorNode.tsx"), "utf8");
     expect(node).toContain("rich-text__embedded-video rich-text__embedded-video--unavailable");
   });
@@ -88,8 +88,11 @@ describe("link preview card design (#497)", () => {
     expect(sel).toMatch(/background:\s*transparent/); expect(sel).toMatch(/color:\s*var\(--foreground-secondary\)/);
   });
   it("6b: the whiteboard dialog player keeps its full width: no 682px cap, no fixed 16/9 box (#556)", () => {
+    // #927 review: the dialog asks for size="stage" instead of !-important overrides; the stage modifier carries the full width.
     const dialog = readFileSync(join(here, "../components/quincy/EmbeddedVideoDialog.tsx"), "utf8");
-    expect(dialog).toContain("!max-w-none"); expect(dialog).toContain("!aspect-auto");
+    expect(dialog).toContain('size="stage"'); expect(dialog).not.toContain("!max-w-none");
+    const stage = ruleBody(".rich-text__embedded-video.rich-text__embedded-video--stage");
+    expect(stage).toMatch(/max-width:\s*none/); expect(stage).toMatch(/aspect-ratio:\s*auto/); expect(stage).toMatch(/width:\s*100%/);
   });
   it("3b: Remove is inset --space-2 from the card edge so its focus ring clears the border (#557)", () => {
     expect(node).toContain("top-[var(--space-2)] right-[var(--space-2)]");

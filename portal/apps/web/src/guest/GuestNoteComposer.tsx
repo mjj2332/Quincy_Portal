@@ -2,10 +2,9 @@ import { useContext, useEffect, useId, useRef, useState } from "react";
 import type { EditorMediaTransport } from "../lib/embedded-media-core";
 import { useFrameClockSelector, type VideoFrameClock } from "../lib/video-frame-clock";
 import type { RichTextEditorHandle } from "../components/QuincyRichTextEditorBase";
-import { Button } from "../components/reui/button";
-import { SheetModeContext } from "../components/quincy/ReviewSheet";
-import { SHEET_TEXT } from "../components/quincy/compose-strip";
-import { NoteComposerBox, type NoteAnchorChip } from "../components/quincy/NoteComposerBox";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
+import { SHEET_TEXT, SheetModeContext, usePostHold } from "../components/quincy/ReviewSheet";
+import { DRAWING_NEEDS_WORDS, NoteComposerBox, rangeChip, type NoteAnchorChip } from "../components/quincy/NoteComposerBox";
 import { GuestNoteField } from "./GuestNoteField";
 import type { GuestStrip } from "./use-guest-compose";
 
@@ -16,7 +15,7 @@ const PHONE_TEXT_ATTRS: Record<`data-${string}`, string> = { ...SHEET_TEXT };
 
 /**
  * The guest's note composer (#927 G1 / E1, P1–P5 on a phone): the one note box (`quincy/NoteComposerBox`), `guest` for a new note (no visibility: a guest's note is always
- * public; the pen only where the link allows drawing) and `edit` for the guest's own root note (the fixed Client-visible label, Cancel and Save, the D4 lock). It renders the
+ * public; the pen only where the link allows drawing) and `edit` for the guest's own root note (Cancel and Save, the D4 lock, and no visibility: owner decision 2026-10-20). It renders the
  * guest's own draft (`useGuestCompose`'s `strip`), since the staff composer is bound to the staff form store and `lib/api` (`guest-boundary.guard.test.ts`).
  *
  * - The same box at every width: the rail's foot on a desktop, the review sheet's foot on a phone, floating over the film in Full screen (`floating`).
@@ -51,9 +50,7 @@ export function GuestNoteComposer({ strip, clock, timecode, media, verified, onS
   const fromCompose = useRef(false);
   useEffect(() => { if (!strip.pending) fromCompose.current = false; }, [strip.pending]);
   const postHold = strip.pending && fromCompose.current;
-  const setHold = inSheet ? sheet.setHold : undefined;
-  useEffect(() => { setHold?.("post", postHold); }, [setHold, postHold]);
-  useEffect(() => () => { setHold?.("post", false); }, [setHold]);
+  usePostHold(inSheet ? sheet.setHold : undefined, postHold);
   // A draft that closes (a post landed, an unchanged edit, another Version) gives the focus up, so a phone's compose mode ends the ordinary way.
   const wasOpen = useRef(strip.open);
   useEffect(() => { if (wasOpen.current && !strip.open && phone) blurInBox(); wasOpen.current = strip.open; });
@@ -75,9 +72,8 @@ export function GuestNoteComposer({ strip, clock, timecode, media, verified, onS
   const cancel = () => { if (phone) blurInBox(); strip.cancel(); };
 
   const { frames, rangeMarks } = strip;
-  const chip: NoteAnchorChip = rangeMarks.in !== null
-    ? { kind: "range", from: timecode(rangeMarks.in), to: timecode(rangeMarks.out ?? Math.max(liveFrame, rangeMarks.in)), toLive: rangeMarks.out === null, onClear: strip.clearRange, clearDisabled: strip.pending || strip.marksLocked }
-    : { kind: "point", at: timecode(strip.following || frames === null ? liveFrame : frames.startFrame), following: strip.following };
+  const chip: NoteAnchorChip = rangeChip(rangeMarks, liveFrame, timecode, { onClear: strip.clearRange, disabled: strip.pending || strip.marksLocked })
+    ?? { kind: "point", at: timecode(strip.following || frames === null ? liveFrame : frames.startFrame), following: strip.following };
   const busy = strip.pending || !strip.clockReady;
   const range = {
     marks: rangeMarks, onPress: (step: "in" | "out" | "clear") => { if (step === "clear") strip.clearRange(); else strip.mark(step); },
@@ -87,14 +83,15 @@ export function GuestNoteComposer({ strip, clock, timecode, media, verified, onS
   const pen = strip.canDraw ? { onPress: strip.pen, disabled: !verified || (strip.penDisabled && !strip.penDown), ...(strip.penDisabled && strip.lockHint ? { reason: strip.lockHint } : {}) } : undefined;
   const attach = { onPick: () => { editor.current?.pickMedia(); }, disabled: strip.pending || !verified };
   // D2: a drawing alone is not a note.
-  const reason = strip.empty && strip.strokes > 0 ? "Add a few words to post the drawing" : strip.uploading ? "Wait for the upload to finish" : undefined;
+  const reason = strip.empty && strip.strokes > 0 ? DRAWING_NEEDS_WORDS : strip.uploading ? "Wait for the upload to finish" : undefined;
   const blocked = busy || strip.uploading || strip.empty;
 
   const placeholder = phone ? "Add a note…" : "Add a note at this frame…";
   const shell = (loading: boolean) => <span data-testid="guest-compose-shell" aria-busy={loading || undefined} className="relative block min-h-[var(--space-5)]">
     <span aria-hidden="true" className="text-muted-foreground">{placeholder}</span>
     {loading && <span className="sr-only">Loading the note field…</span>}
-    {!loading && <Button type="button" variant="ghost" data-testid="guest-compose-shell-open" aria-label="Add a note" className="absolute inset-0 h-auto min-h-0 max-[721px]:min-h-0 hover:bg-transparent" onClick={onShellPress} />}
+    {/* Only a hit area over the placeholder, so Base UI's unstyled button rather than a styled Button whose height and hover it would undo. */}
+    {!loading && <ButtonPrimitive type="button" data-testid="guest-compose-shell-open" aria-label="Add a note" className="absolute inset-0 cursor-text" onClick={onShellPress} />}
   </span>;
   const field = <div
     ref={strip.fieldHost} data-testid="guest-composer-field" className="min-w-0"
@@ -119,13 +116,13 @@ export function GuestNoteComposer({ strip, clock, timecode, media, verified, onS
     : null;
 
   const common = {
-    field, strip: <div ref={setStripHost} className="empty:hidden" />, notice, attach, phone, floating, chip, drawn: strip.strokes > 0 || strip.keptDrawing, range, ...(pen ? { pen } : {}), draw: strip.draw,
+    field, strip: <div ref={setStripHost} className="empty:hidden" />, notice, attach, phone, floating, foot: true, chip, drawn: strip.strokes > 0 || strip.keptDrawing, range, ...(pen ? { pen } : {}), draw: strip.draw,
     testId: "guest-composer", formAttributes: { "data-open": strip.open ? "true" : "false" } as Record<`data-${string}`, string>,
     ...(phone ? { textClassName: PHONE_TEXT_ROOM, textAttributes: PHONE_TEXT_ATTRS } : {}),
   };
   return <div ref={boxRef} className="contents">
     {strip.editing
-      ? <NoteComposerBox {...common} variant="edit" label="Edit note" visibility="public" save={{ onSave: send, onCancel: cancel, disabled: blocked, ...(reason ? { reason } : {}), pending: strip.pending }} />
+      ? <NoteComposerBox {...common} variant="edit" label="Edit note" save={{ onSave: send, onCancel: cancel, disabled: blocked, ...(reason ? { reason } : {}), pending: strip.pending }} />
       : <NoteComposerBox {...common} variant="guest" label="Add a note" send={{ label: "Post note", onSend: send, disabled: blocked, ...(reason ? { reason } : {}), pending: strip.pending }} />}
   </div>;
 }

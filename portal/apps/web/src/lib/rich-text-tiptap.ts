@@ -296,8 +296,6 @@ const NoteTaskList = TaskList.extend({
 });
 const noteTaskItem = (content: string) => TaskItem.extend({ content, parseHTML() { return []; }, addInputRules() { return []; } }).configure({ nested: true });
 
-/** Marks the transaction that removes a note's photo or video on purpose (its chip's ×); every other removal is put back. */
-export const NOTE_MEDIA_REMOVE_META = "quincyNoteMediaRemove";
 const isMediaNode = (node: ProseMirrorNode) => node.type.name === "image" || node.type.name === "video";
 const mediaIdOf = (node: ProseMirrorNode) => String(node.attrs.mediaId ?? "");
 /** Where the run of media that ends the note starts (the document's size when it does not end with media). */
@@ -313,13 +311,11 @@ export function noteMediaTailStart(doc: ProseMirrorNode): number {
 
 /**
  * A note's photos and videos are a strip after its text (#927, frame C4), drawn outside the text (`QuincyRichTextEditorBase`), so the
- * text holds them as invisible atoms. Two rules keep that honest:
- * - A photo or video new to the note that is not in the run that ends it is moved to the end. The editor's own upload already lands it
- *   there; this is the backstop for anything else that inserts one.
- * - One the author did not remove with its × (a selection deleted over it, a forward Delete at the end of the text) is put back at the
- *   end, since nothing in the text showed it would go.
- * Neither touches the host replacing the content (`preventUpdate`) or an undo / redo, and a photo an old note holds between paragraphs
- * stays where it is: the stored order is never rewritten.
+ * text holds them as invisible atoms. A photo or video new to the note that is not in the run that ends it is moved to the end: the
+ * editor's own upload already lands it there, and this is the backstop for anything else that inserts one (a paste, a drop).
+ * Removing one is the author's call (owner decision 2026-10-20, "Allow delete"): its chip's ×, a selection deleted over it, Backspace
+ * or Delete all remove it, and undo brings it back. Nothing here touches the host replacing the content (`preventUpdate`) or an undo /
+ * redo, and a photo an old note holds between paragraphs stays where it is: the stored order is never rewritten.
  */
 export const NoteMediaTail = Extension.create({
   name: "noteMediaTail",
@@ -327,38 +323,17 @@ export const NoteMediaTail = Extension.create({
     return [new Plugin({
       appendTransaction(transactions, oldState, newState) {
         if (!transactions.some((tr) => tr.docChanged)) return null;
-        if (transactions.some((tr) => tr.getMeta("preventUpdate") || tr.getMeta("history$") || tr.getMeta(NOTE_MEDIA_REMOVE_META))) return null;
-        // The note's media before and after, and which of it sat in (or now sits in) the run that ends the note.
-        const oldTail = noteMediaTailStart(oldState.doc);
-        const before: { id: string; node: ProseMirrorNode; inTail: boolean }[] = [];
-        oldState.doc.forEach((child, offset) => { if (isMediaNode(child)) before.push({ id: mediaIdOf(child), node: child, inTail: offset >= oldTail }); });
-        const known = new Set(before.map(({ id }) => id));
+        if (transactions.some((tr) => tr.getMeta("preventUpdate") || tr.getMeta("history$"))) return null;
+        const known = new Set<string>();
+        oldState.doc.forEach((child) => { if (isMediaNode(child)) known.add(mediaIdOf(child)); });
+        // What is new to the note and landed before the run that ends it, in document order.
         const tail = noteMediaTailStart(newState.doc);
-        const now = new Map<string, ProseMirrorNode>();
-        const tailNow: string[] = [];
-        const stray: { id: string; node: ProseMirrorNode; pos: number }[] = [];
-        newState.doc.forEach((child, offset) => {
-          if (!isMediaNode(child)) return;
-          const id = mediaIdOf(child);
-          now.set(id, child);
-          if (offset >= tail) tailNow.push(id);
-          else if (!known.has(id)) stray.push({ id, node: child, pos: offset });
-        });
-        const lost = before.filter(({ id }) => !now.has(id));
-        if (stray.length === 0 && lost.length === 0) return null;
-        // The run that ends the note is rebuilt in the order it had: an old note's photo lost from between paragraphs first, then the run
-        // as it was (with what was lost back in its place), then what is new to it.
-        const nodeOf = new Map<string, ProseMirrorNode>([...now, ...lost.map(({ id, node }) => [id, node] as const)]);
-        const order = [...new Set([
-          ...lost.filter(({ inTail }) => !inTail).map(({ id }) => id),
-          ...before.filter(({ id, inTail }) => inTail && nodeOf.has(id)).map(({ id }) => id),
-          ...tailNow,
-          ...stray.map(({ id }) => id),
-        ])];
+        const stray: { node: ProseMirrorNode; pos: number }[] = [];
+        newState.doc.forEach((child, offset) => { if (isMediaNode(child) && offset < tail && !known.has(mediaIdOf(child))) stray.push({ node: child, pos: offset }); });
+        if (stray.length === 0) return null;
         const tr = newState.tr;
-        tr.delete(tail, newState.doc.content.size);
         for (const { node, pos } of [...stray].reverse()) tr.delete(pos, pos + node.nodeSize);
-        tr.insert(tr.doc.content.size, order.map((id) => nodeOf.get(id)!));
+        tr.insert(tr.doc.content.size, stray.map(({ node }) => node));
         return tr;
       },
     })];

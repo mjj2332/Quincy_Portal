@@ -750,13 +750,13 @@ describe("the phone play badge on the paused film (#879 PR 3a, P1 PlayBadge, own
     } finally { viewport.restore(); }
   });
 
-  it("is hidden while composing (the transport hidden) and while drawing (the transport replaced or locked)", async () => {
+  it("is hidden while composing (the transport hidden) and while drawing (the transport locked)", async () => {
     const viewport = mockViewport({ width: 390 });
     try {
       await mount(versionOf(), { transportHidden: true }); await load();
       expect(badge()).toBeNull();
       await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren();
-      await mount(versionOf(), { transportReplacement: <div>Drawing</div>, transportLocked: true }); await load();
+      await mount(versionOf(), { transportLocked: true }); await load();
       expect(badge()).toBeNull();
     } finally { viewport.restore(); }
   });

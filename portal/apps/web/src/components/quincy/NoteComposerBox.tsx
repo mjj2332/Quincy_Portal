@@ -15,15 +15,18 @@ import { NOTE_TARGET, NOTE_TARGET_PHONE, NOTE_TOOL, NoteDrawRow, keepFocus, type
  * row (`NoteDrawRow`) takes the tool row's place, and visibility and Send hide until ‹.
  *
  * Variants: `staff` (visibility menu), `guest` (no visibility: a guest's note is always public), `reply` (paperclip and Send only: a reply
- * inherits its note's anchor and visibility; no visible Cancel, Esc and the reply toggle dismiss it), `edit` (a fixed visibility label,
- * Cancel and Save). `phone` gives every target 44px; `floating` is Full screen's box over the film.
+ * inherits its note's anchor and visibility; no visible Cancel, Esc and the reply toggle dismiss it), `edit` (Cancel and Save, and a fixed
+ * visibility label when the host gives one: staff do, a guest's edit shows none, owner decision 2026-10-20). `phone` gives every target
+ * 44px; `floating` is Full screen's box over the film; `foot` draws the composer's own foot (a hairline above, the card ground and the
+ * gutter, prototype `.cmp-wrap`) for a host that has none of its own. Without it the form draws nothing around the box.
  *
  * Presentational and Guest-safe: no `lib/api`, no form store. The field (the rich editor) and the strip are slots; every state is a prop.
  * The box's text region is the scroller (seven 24px lines, then it scrolls), so the field inside should not scroll on its own, and the chip
  * floats so the first line of text runs beside it.
  *
  * Escape inside the box (not in a portaled popup: those close themselves) ends drawing first, else goes to `onEscape`; a handled one is
- * `preventDefault`ed, so the screen's own Escape (Full screen) can skip it. A press on in/out, the chip's ×, Send, Cancel and Save keeps the
+ * `preventDefault`ed, so the screen's own Escape (Full screen) can skip it, and one already handled (the staff viewer's Escape ladder
+ * ended drawing in its capture listener) is left alone, so one Escape never ends drawing twice. A press on in/out, the chip's ×, Send, Cancel and Save keeps the
  * focus in the field, so a phone keeps its keyboard (#879 fix). The pen does not: it lowers the keyboard on purpose (P4).
  */
 
@@ -49,6 +52,8 @@ interface BaseProps {
   attach: { onPick: () => void } & NoteControl;
   phone?: boolean;
   floating?: boolean;
+  /** Draw the composer's own foot around the box (the hairline above, the card ground, the gutter). Off: the host draws it. */
+  foot?: boolean;
   onEscape?: () => void;
   testId?: string;
   className?: string;
@@ -71,18 +76,28 @@ export type NoteComposerBoxProps =
   | (BaseProps & AnchoredProps & { variant: "staff"; visibility: { value: VideoNoteVisibility; onChange: (value: VideoNoteVisibility) => void; disabled?: boolean }; send: NoteSendControl })
   | (BaseProps & AnchoredProps & { variant: "guest"; send: NoteSendControl })
   | (BaseProps & { variant: "reply"; send: NoteSendControl })
-  | (BaseProps & AnchoredProps & { variant: "edit"; visibility: VideoNoteVisibility; save: NoteSaveControl });
+  | (BaseProps & AnchoredProps & { variant: "edit"; /** Absent: no visibility shown (a guest's edit). */ visibility?: VideoNoteVisibility; save: NoteSaveControl });
+
+/** D2's Send reason: a drawing alone is not a note. */
+export const DRAWING_NEEDS_WORDS = "Add a few words to post the drawing";
+
+/**
+ * The range chip once In is marked (In → Out; Out follows the playhead until it is marked, so it reads the live frame), else null and the
+ * host shows its own point. One builder for the composer, the Guest composer and the edit box.
+ */
+export function rangeChip(marks: NoteMarks, liveFrame: number, timecode: (frame: number) => string, clear: { onClear: () => void; disabled: boolean }): Extract<NoteAnchorChip, { kind: "range" }> | null {
+  if (marks.in === null) return null;
+  return { kind: "range", from: timecode(marks.in), to: timecode(marks.out ?? Math.max(liveFrame, marks.in)), toLive: marks.out === null, onClear: clear.onClear, clearDisabled: clear.disabled };
+}
 
 const VISIBILITY: Record<VideoNoteVisibility, { label: string; Icon: LucideIcon; description: string }> = {
   internal: { label: "Internal", Icon: LockIcon, description: "Studio only — never shown on the client link." },
   public: { label: "Client-visible", Icon: GlobeIcon, description: "Shown to the client on the review link." },
 };
 const RANGE_TITLE = { in: "Set in (I)", out: "Set out (O)", clear: "Clear in / out" } as const;
-/** Marks a control whose press keeps the field's focus; the box applies it in the capture phase, ahead of the control's own handlers (Base UI drops a locked button's `onMouseDown`). */
-const KEEP_FOCUS = { "data-keep-focus": "" } as const;
+/** The attribute that marks a control whose press keeps the field's focus; the box applies `keepFocus` in the capture phase, ahead of the control's own handlers (Base UI drops a locked button's `onMouseDown`). (The drawing row spreads handlers instead: `KEEP_FOCUS_HANDLERS`.) */
+const KEEP_FOCUS_MARKER = { "data-keep-focus": "" } as const;
 const keepFocusOnPress = (event: { target: EventTarget; preventDefault: () => void }) => { if (event.target instanceof Element && event.target.closest("[data-keep-focus]")) keepFocus(event); };
-/** A hairline at the prototype's softened border (`color-mix(--border 60%)`). */
-const SOFT_BORDER = "border-[color-mix(in_srgb,var(--border)_60%,transparent)]";
 /** The anchor chip (prototype `.cmp-chip`, quincy.css `.tc-chip`): small mono in the caution tint, floated before the first line and centred on its 24px. */
 const CHIP = "float-start me-[var(--space-2)] mt-0.5 inline-flex items-center gap-[var(--space-1)] rounded-[var(--radius-sm)] bg-[color-mix(in_oklch,var(--warning-foreground)_18%,transparent)] px-[var(--space-2)] py-[var(--space-1)] text-warning-foreground [font:var(--weight-regular)_var(--text-xs)/1_var(--font-mono)] tabular-nums whitespace-nowrap select-none";
 /** A text control in the row (Cancel, Save): sentence case in the label type, 32px; 44px on a phone. */
@@ -103,7 +118,7 @@ function AnchorChip({ chip, drawn, phone }: { chip: NoteAnchorChip; drawn: boole
     {pencil}<span className="sr-only">{spoken}</span>
     <span aria-hidden="true">{chip.from} → <span data-testid={chip.toLive ? "note-composer-chip-live" : undefined} className={chip.toLive ? "opacity-60" : undefined}>{chip.to}</span></span>
     <Button
-      type="button" variant="ghost" size="icon-xs" aria-label="Clear in and out" title="Clear in / out" disabled={chip.clearDisabled === true} {...KEEP_FOCUS} onClick={chip.onClear}
+      type="button" variant="ghost" size="icon-xs" aria-label="Clear in and out" title="Clear in / out" disabled={chip.clearDisabled === true} {...KEEP_FOCUS_MARKER} onClick={chip.onClear}
       // 16px in the chip; a phone's hit area grows to 40px around it with a transparent pseudo-element.
       className={cn("-me-1 size-4 rounded-[var(--radius-xs)] border-0 !text-warning-foreground hover:bg-[color-mix(in_oklch,var(--warning-foreground)_25%,transparent)] hover:!text-warning-foreground transition-colors [&_svg:not([class*='size-'])]:size-3", phone && "relative after:absolute after:-inset-[var(--space-3)] after:content-['']")}
     ><XIcon aria-hidden="true" strokeWidth={2.25} /></Button>
@@ -111,7 +126,7 @@ function AnchorChip({ chip, drawn, phone }: { chip: NoteAnchorChip; drawn: boole
 }
 
 export function NoteComposerBox(props: NoteComposerBoxProps) {
-  const { variant, label, field, strip, notice, attach, phone = false, floating = false, onEscape, testId = "note-composer", className, textClassName, textAttributes, formAttributes } = props;
+  const { variant, label, field, strip, notice, attach, phone = false, floating = false, foot = false, onEscape, testId = "note-composer", className, textClassName, textAttributes, formAttributes } = props;
   const anchored = variant === "reply" ? null : props;
   const draw = anchored?.draw ?? null;
   const target = phone ? NOTE_TARGET_PHONE : NOTE_TARGET;
@@ -126,6 +141,7 @@ export function NoteComposerBox(props: NoteComposerBoxProps) {
     if (send) send.onSend(); else save!.onSave();
   };
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    // Already handled: a screen's Escape ladder that ended drawing itself (the staff viewer) marks the key, and nothing here runs it again.
     if (event.key !== "Escape" || event.defaultPrevented) return;
     // A portaled popup (the colour palette, the visibility menu) bubbles its keys here through React; it closes itself.
     if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
@@ -139,7 +155,7 @@ export function NoteComposerBox(props: NoteComposerBoxProps) {
     {anchored && <Button
       type="button" variant="ghost" size="icon" aria-label="In and out points" aria-pressed={marked} aria-keyshortcuts="I O"
       title={anchored.range.disabled && anchored.range.reason ? anchored.range.reason : RANGE_TITLE[step]}
-      className={tool} {...lockProps(anchored.range)} {...KEEP_FOCUS} onClick={() => { anchored.range.onPress(step); }}
+      className={tool} {...lockProps(anchored.range)} {...KEEP_FOCUS_MARKER} onClick={() => { anchored.range.onPress(step); }}
     ><ArrowRightFromLineIcon aria-hidden="true" /></Button>}
     <Button type="button" variant="ghost" size="icon" aria-label="Add photos or videos" title={attach.disabled && attach.reason ? attach.reason : "Add photos or videos"} className={tool} {...lockProps(attach)} onClick={attach.onPick}>
       <PaperclipIcon aria-hidden="true" />
@@ -149,16 +165,16 @@ export function NoteComposerBox(props: NoteComposerBoxProps) {
     </Button>}
     <span className="min-w-0 flex-1" />
     {variant === "staff" && <VisibilityMenu value={props.visibility.value} onChange={props.visibility.onChange} disabled={props.visibility.disabled === true} phone={phone} />}
-    {variant === "edit" && <FixedVisibility value={props.visibility} phone={phone} />}
+    {variant === "edit" && props.visibility !== undefined && <FixedVisibility value={props.visibility} phone={phone} />}
     {send && <Button
       type="submit" size="icon-round" aria-label={send.label} title={send.disabled && send.reason ? send.reason : variant === "reply" ? "Send reply (⌘↵)" : "Post (⌘↵)"} aria-keyshortcuts="Meta+Enter Control+Enter"
       // icon-round is the 44px circle (dimming only its glyph when disabled); off a phone it is the prototype's 32px, 44px on a touch tablet. A lock with a reason is aria-disabled, so it dims the same way.
       className={cn("ms-[var(--space-1)] aria-disabled:[&_svg]:opacity-50", phone ? "size-11" : NOTE_TARGET)}
-      {...(send.disabled ? { disabled: true, focusableWhenDisabled: true } : {})} {...KEEP_FOCUS}
+      {...(send.disabled ? { disabled: true, focusableWhenDisabled: true } : {})} {...KEEP_FOCUS_MARKER}
     >{send.pending ? <Spinner aria-hidden="true" role={undefined} aria-label={undefined} /> : <SendIcon aria-hidden="true" className={phone ? "size-4.5" : "size-4"} />}</Button>}
     {save && <>
-      <Button type="button" variant="ghost" className={cn(TEXT_CONTROL, "ms-[var(--space-1)] px-[var(--space-2)] text-foreground-secondary hover:bg-[color-mix(in_oklch,var(--surface-sunken),var(--foreground)_10%)]", phone ? "min-h-11" : "min-h-8")} disabled={save.pending === true} {...KEEP_FOCUS} onClick={save.onCancel}>Cancel</Button>
-      <Button type="submit" title={save.disabled && save.reason ? save.reason : undefined} className={cn(TEXT_CONTROL, "rounded-[var(--radius-pill)] px-[var(--space-3)]", phone ? "min-h-11" : "min-h-8")} {...lockProps(save)} {...KEEP_FOCUS}>{save.pending ? "Saving…" : save.saveLabel ?? "Save"}</Button>
+      <Button type="button" variant="ghost" className={cn(TEXT_CONTROL, "ms-[var(--space-1)] px-[var(--space-2)] text-foreground-secondary hover:bg-note-lift", phone ? "min-h-11" : "min-h-8")} disabled={save.pending === true} {...KEEP_FOCUS_MARKER} onClick={save.onCancel}>Cancel</Button>
+      <Button type="submit" title={save.disabled && save.reason ? save.reason : undefined} className={cn(TEXT_CONTROL, "rounded-[var(--radius-pill)] px-[var(--space-3)]", phone ? "min-h-11" : "min-h-8")} {...lockProps(save)} {...KEEP_FOCUS_MARKER}>{save.pending ? "Saving…" : save.saveLabel ?? "Save"}</Button>
     </>}
   </div>;
 
@@ -166,7 +182,7 @@ export function NoteComposerBox(props: NoteComposerBoxProps) {
     aria-label={label} data-testid={testId} data-variant={variant} data-drawing={draw ? "true" : "false"} data-floating={floating ? "true" : undefined} {...formAttributes}
     className={cn(
       "relative",
-      floating ? "p-0" : variant === "reply" ? "ps-[var(--space-3)] pe-[var(--space-3)] pt-[var(--space-1)] pb-[var(--space-3)]" : cn("border-t border-border bg-card", phone ? "p-[var(--space-2)]" : "p-[var(--space-3)]"),
+      foot && !floating && cn("border-t border-border bg-card", phone ? "p-[var(--space-2)]" : "p-[var(--space-3)]"),
       className,
     )}
     onSubmit={submit}
@@ -174,8 +190,7 @@ export function NoteComposerBox(props: NoteComposerBoxProps) {
     <div
       data-testid="note-composer-box" onKeyDown={onKeyDown} onPointerDownCapture={keepFocusOnPress} onMouseDownCapture={keepFocusOnPress}
       className={cn(
-        "relative flex flex-col gap-[var(--space-2)] rounded-[var(--radius-lg)] border border-solid border-[length:var(--border-width-hair)] pt-[var(--space-2)] pe-[var(--space-2)] pb-[var(--space-1)] ps-[var(--space-3)] transition-colors focus-within:border-border-hover",
-        SOFT_BORDER,
+        "relative flex flex-col gap-[var(--space-2)] rounded-[var(--radius-lg)] border border-solid border-[length:var(--border-width-hair)] border-border-faint pt-[var(--space-2)] pe-[var(--space-2)] pb-[var(--space-1)] ps-[var(--space-3)] transition-colors focus-within:border-border-hover",
         floating ? "bg-[color-mix(in_srgb,var(--card)_92%,transparent)] shadow-[var(--shadow-lg)] backdrop-blur-md" : "bg-surface-sunken",
       )}
     >
@@ -196,7 +211,7 @@ function VisibilityMenu({ value, onChange, disabled, phone }: { value: VideoNote
     <DropdownMenuTrigger
       disabled={disabled}
       render={<Button type="button" variant="ghost" aria-label={`Who can see this note: ${current.label}`} title="Who can see this note"
-        className={cn(TEXT_CONTROL, "gap-[var(--space-2)] rounded-[var(--radius-pill)] border-[color-mix(in_srgb,var(--border)_70%,transparent)] ps-[var(--space-3)] pe-[var(--space-2)] text-foreground hover:bg-[color-mix(in_oklch,var(--surface-sunken),var(--foreground)_10%)] aria-expanded:bg-[color-mix(in_oklch,var(--surface-sunken),var(--foreground)_10%)]", phone ? "min-h-11" : "min-h-8 min-[721px]:pointer-coarse:min-h-11")} />}
+        className={cn(TEXT_CONTROL, "gap-[var(--space-2)] rounded-[var(--radius-pill)] border-border-soft ps-[var(--space-3)] pe-[var(--space-2)] text-foreground hover:bg-note-lift aria-expanded:bg-note-lift", phone ? "min-h-11" : "min-h-8 min-[721px]:pointer-coarse:min-h-11")} />}
     >
       <current.Icon aria-hidden="true" className="size-3.5" />{current.label}<ChevronDownIcon aria-hidden="true" className="size-3" />
     </DropdownMenuTrigger>
@@ -222,7 +237,7 @@ function VisibilityMenu({ value, onChange, disabled, phone }: { value: VideoNote
 /** Edit (E1): visibility can't change once posted, so it is a label, dashed so it does not read as a control. */
 function FixedVisibility({ value, phone }: { value: VideoNoteVisibility; phone: boolean }) {
   const current = VISIBILITY[value];
-  return <span data-testid="note-composer-visibility" title="Visibility can't change once posted" className={cn("inline-flex items-center gap-[var(--space-2)] rounded-[var(--radius-pill)] border border-dashed border-[color-mix(in_srgb,var(--border)_70%,transparent)] px-[var(--space-3)] text-foreground-secondary [font:var(--type-label)]", phone ? "min-h-11" : "min-h-8")}>
+  return <span data-testid="note-composer-visibility" title="Visibility can't change once posted" className={cn("inline-flex items-center gap-[var(--space-2)] rounded-[var(--radius-pill)] border border-dashed border-border-soft px-[var(--space-3)] text-foreground-secondary [font:var(--type-label)]", phone ? "min-h-11" : "min-h-8")}>
     <current.Icon aria-hidden="true" className="size-3.5" />{current.label}
   </span>;
 }

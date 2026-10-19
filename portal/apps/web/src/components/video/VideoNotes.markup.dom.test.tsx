@@ -428,6 +428,29 @@ describe("Escape order with a drawing (#741 6b-ui)", () => {
     expect(dialog()).toBeNull();
   });
 
+  it("one Escape inside the box (on ‹, which drawing focuses) ends drawing once: the viewer's ladder takes it, and the box does not run ‹ as well (#927 review)", async () => {
+    await openFilm({ parts: ON }, 12);
+    const svg = await startDrawing();
+    await stroke(svg, [200, 300], [400, 400]);
+    const store = stores.made.at(-1)!;
+    const exitDraw = vi.spyOn(store, "exitDraw");
+    const escapeLadder = vi.spyOn(store, "escape");
+    const done = doneButton()!;
+    // Through the row's own ancestors (happy-dom's child lists can go stale, as below).
+    expect(done.closest('[data-testid="note-composer-box"]')).not.toBeNull();
+    await escape(done);
+    await flush(2);
+    expect(escapeLadder).toHaveBeenCalledTimes(1);
+    expect(exitDraw).not.toHaveBeenCalled();
+    expect(store.slot(ids.asset2).draw).toBeNull();
+    expect(store.slot(ids.asset2).markup.items).toHaveLength(1);
+    expect(dialog()).not.toBeNull();
+    // Nothing more: the next Escape is still the dirty-form hold, so the viewer stays open.
+    await escape(popup());
+    await flush(2);
+    expect(dialog()).not.toBeNull();
+  });
+
   it("a popup open over the viewer takes Escape before draw mode does", async () => {
     await openFilm({ parts: ON }, 12);
     await startDrawing();

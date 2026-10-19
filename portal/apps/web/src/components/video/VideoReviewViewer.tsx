@@ -300,6 +300,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         const formAsset = modeRef.current === "compare" && pair ? pair[formSide] : assetId;
         const result = forms.escape(formAsset, { focusInForm: inForm });
         consumed = result.consumed;
+        // The ladder has ended drawing: the box's own Escape (its ‹) must not run it again (#927 review), so the key is marked handled for it.
+        if (result.focus === "draw") event.preventDefault();
         if (result.focus === "dialog") popup.focus({ preventScroll: true });
         // focus === "draw": the pill is still expanded here, so the overlay returns focus to its Draw button itself once drawing has ended.
         else if (result.focus === "textarea") (popup.querySelector<HTMLElement>('[data-notes-form="edit"] :is(textarea, [contenteditable="true"]), [data-notes-form="reply"] :is(textarea, [contenteditable="true"])') ?? popup.querySelector<HTMLElement>("#video-note-body"))?.focus({ preventScroll: true });

@@ -746,6 +746,15 @@ describe("own notes", () => {
     await submit("guest-composer");
     expect(requests("PATCH").at(-1)!.body).toEqual({ expectedRevision: 5, content: para("My draft") });
   });
+  it("shows no visibility in the edit box: a guest's note is always public (owner decision 2026-10-20, E1)", async () => {
+    notes = { [asset(10)]: [mine(2, { revision: 3, startFrame: 50 })] };
+    await open();
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Edit"));
+    expect(box()!.getAttribute("data-variant")).toBe("edit");
+    expect(box()!.querySelector('[data-testid="note-composer-visibility"]')).toBeNull();
+    expect(box()!.textContent).not.toMatch(/Client-visible|Internal/);
+  });
   it("re-marks the frames of a note without a drawing, sending only the frames", async () => {
     notes = { [asset(10)]: [mine(2, { revision: 3, startFrame: 50 })] };
     extra = (url, init) => (url === `${BASE}/notes/${noteId(2)}` && init?.method === "PATCH" ? json(mine(2, { revision: 4, startFrame: 100, endFrame: 151 })) : undefined);
@@ -1451,7 +1460,8 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     expect(document.activeElement).toBe(area());
     expect(mode()).toBe("compose");
     expect(box()!.getAttribute("data-variant")).toBe("edit");
-    expect(box()!.textContent).toContain("Client-visible");
+    // Owner decision 2026-10-20: the guest's edit shows no visibility label.
+    expect(box()!.textContent).not.toMatch(/Client-visible|Internal/);
     await typeInto(area(), "Reworded");
     await press(button("Save") ?? null);
     expect(patched).toEqual({ expectedRevision: 3, content: para("Reworded") });

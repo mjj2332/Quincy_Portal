@@ -8,18 +8,13 @@ import { PHONE_QUERY } from "../../lib/review-pane-geometry";
 import { useMediaQuery } from "../../lib/use-media-query";
 import type { RichTextEditorHandle } from "../QuincyRichTextEditorBase";
 import { Button } from "../quincy/Button";
-import { NoteComposerBox, type NoteAnchorChip } from "../quincy/NoteComposerBox";
-import { SHEET_TEXT_ATTR, SheetModeContext } from "../quincy/ReviewSheet";
+import { DRAWING_NEEDS_WORDS, NoteComposerBox, rangeChip, type NoteAnchorChip } from "../quincy/NoteComposerBox";
+import { SHEET_TEXT, SheetModeContext, usePostHold } from "../quincy/ReviewSheet";
 import { MARKUP_FULL_TEXT, type NoteDrawControls } from "./VideoMarkupOverlay";
 import { VideoNoteEditor } from "./VideoNoteEditor";
 
-/** The anchor chip of a posted note's edit form (still the thread's own until #927 T7 moves the edit onto the box). */
-export const ANCHOR_CHIP_ROW = "@max-[280px]:basis-full";
-export const ANCHOR_CHIP = "rounded-md bg-muted px-[var(--space-2)] py-[var(--space-1)] text-foreground [font:var(--type-mono)] tabular-nums";
-
 /** A line in the box above its tools (a lock, a problem). Label type: the box is quiet, so these are text, not cards. */
 const LINE = "m-0 [font:var(--type-label)]";
-const SHEET_TEXT = { [SHEET_TEXT_ATTR]: "" } as const;
 /** The phone box at rest shows one line of the draft (P1: two rows); in compose mode the sheet publishes the room left above the keyboard (`--sheet-text-room`), at most the box's seven lines. */
 const REST_TEXT = "max-h-[var(--space-5)] overflow-hidden";
 const COMPOSE_TEXT = "max-h-[clamp(var(--space-5),var(--sheet-text-room,calc(var(--space-5)*7)),calc(var(--space-5)*7))]";
@@ -78,14 +73,13 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
   const mark = (kind: "in" | "out") => { if (clock) store.mark(assetId, kind, frameOnScreen(clock.getState()), clock); };
 
   // The chip: In → Out (Out follows the playhead until it is marked), else the anchor. A drawing puts the pencil on it; it never has a chip of its own.
-  const chip: NoteAnchorChip = marks.in !== null
-    ? { kind: "range", from: timecode(marks.in), to: timecode(marks.out ?? Math.max(liveFrame, marks.in)), toLive: marks.out === null, onClear: () => { store.clearMarks(assetId); }, clearDisabled: frozen || drawingNow }
-    : marks.out !== null
+  const chip: NoteAnchorChip = rangeChip(marks, liveFrame, timecode, { onClear: () => { store.clearMarks(assetId); }, disabled: frozen || drawingNow })
+    ?? (marks.out !== null
       ? { kind: "point", at: timecode(marks.out), following: false }
-      : { kind: "point", at: timecode(drawn?.drawingFrame ?? composer.anchorFrame ?? liveFrame), following: composer.anchorFrame === null && drawn === null };
+      : { kind: "point", at: timecode(drawn?.drawingFrame ?? composer.anchorFrame ?? liveFrame), following: composer.anchorFrame === null && drawn === null });
   const label = phase === "confirming" ? "Confirming…" : phase === "posting" ? "Posting…" : problem?.retry ? "Retry" : "Post note";
   const lock = clock === null ? "Loading the film…" : otherForm !== null ? `Finish or cancel the open ${otherForm} first.` : null;
-  const sendReason = lock ?? (uploading ? "Wait for the uploads to finish." : tooLong ? `Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.` : !hasText && drawn ? "Add a few words to post the drawing" : undefined);
+  const sendReason = lock ?? (uploading ? "Wait for the uploads to finish." : tooLong ? `Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.` : !hasText && drawn ? DRAWING_NEEDS_WORDS : undefined);
 
   // The phone layout follows the sheet's mode and nothing else (#879 fix). Outside a phone sheet (a composer rendered on its own) the field's focus stands in for it.
   const composing = phone && (sheet ? sheet.mode === "compose" : focused);
@@ -94,9 +88,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
   const posting = op?.form === "composer";
   const postHold = posting && fromCompose.current;
   const send = () => { fromCompose.current = composing; submit(); };
-  const setHold = sheet?.setHold;
-  useEffect(() => { setHold?.("post", postHold); }, [setHold, postHold]);
-  useEffect(() => () => { setHold?.("post", false); }, [setHold]);
+  usePostHold(sheet?.setHold, postHold);
   const wasPosting = useRef(false);
   useEffect(() => {
     if (posting) { wasPosting.current = true; return; }
@@ -140,8 +132,8 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
 
   return <NoteComposerBox
     variant="staff" label="Add a note" testId="video-note-composer" phone={phone} floating={sheet?.floating === true}
-    // The panel's foot draws the hairline and the gutter (it follows the phone's notes head), so the box drops its own.
-    className={cn("border-t-0 bg-transparent p-0", otherForm !== null && "opacity-60")}
+    // The panel's foot draws the hairline and the gutter (it follows the phone's notes head), so the box draws no foot of its own.
+    className={cn(otherForm !== null && "opacity-60")}
     formAttributes={{ "data-notes-form": "composer", "data-locked": otherForm !== null ? "true" : "false", ...(phone ? { "data-compose": composing ? "true" : "false" } : {}) }}
     {...(phone ? { textClassName: composing ? COMPOSE_TEXT : REST_TEXT, textAttributes: SHEET_TEXT } : {})}
     field={field}
