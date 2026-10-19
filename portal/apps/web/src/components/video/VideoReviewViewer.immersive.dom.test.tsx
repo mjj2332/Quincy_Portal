@@ -606,3 +606,76 @@ describe("the system player row (#880, D15)", () => {
     expect(document.getElementById(described!)!.textContent).toBe("Only available in Safari on iPhone or iPad.");
   });
 });
+
+describe("the Full screen box at a desktop width (#927 F1, T9)", () => {
+  beforeEach(() => { viewport = mockViewport({ width: 1200, height: 800, coarse: false }); });
+  const body = () => document.getElementById("video-note-body") as HTMLTextAreaElement;
+
+  it("Add note floats F1's box (the same composer node, no Cancel); Add note closes it with the draft and anchor kept; Add note again puts the focus back in the draft", async () => {
+    await mount();
+    const composerBefore = tid("video-note-composer");
+    await click(tid("video-fullscreen")!);
+    await click(tid("video-immersive-add-note")!);
+    const composer = tid("video-note-composer")!;
+    expect(composer).toBe(composerBefore);
+    expect(composer.closest('[data-immersive="compose"]')).toBe(tid("video-review-pane"));
+    expect(composer.dataset.floating).toBe("true");
+    expect(tid("video-note-cancel")).toBeNull();
+    expect(document.activeElement).toBe(body());
+    await act(async () => { forms.setBody(ids.asset2, "Lift the shadows", 0); });
+    const anchor = forms.slot(ids.asset2).composer.anchorFrame;
+    expect(anchor).not.toBeNull();
+    await click(tid("video-immersive-add-note")!);
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
+    expect(document.activeElement).toBe(tid("video-immersive-add-note"));
+    // The film moves on while the box is away; the draft's anchor does not.
+    await act(async () => { stub.presentFrame(film(), 120); });
+    await click(tid("video-immersive-add-note")!);
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    expect(document.activeElement).toBe(body());
+    expect(body().value).toBe("Lift the shadows");
+    expect(forms.slot(ids.asset2).composer.anchorFrame).toBe(anchor);
+  });
+
+  it("leaving Full screen gives the rail its own box back: not floating, with the draft", async () => {
+    await mount();
+    await click(tid("video-fullscreen")!);
+    await click(tid("video-immersive-add-note")!);
+    await act(async () => { forms.setBody(ids.asset2, "Lift the shadows", 0); });
+    await click(tid("video-exit-fullscreen")!);
+    expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(false);
+    expect(tid("video-note-composer")!.dataset.floating).toBeUndefined();
+    expect(body().value).toBe("Lift the shadows");
+  });
+
+  it("Escape goes the colour popover, then drawing, then the box (the draft kept), then Full screen (plan: Esc order)", async () => {
+    await mount({ markup: true });
+    await click(tid("video-fullscreen")!);
+    await click(tid("video-immersive-add-note")!);
+    await act(async () => { forms.setBody(ids.asset2, "Lift the shadows", 0); });
+    const composer = tid("video-note-composer")!;
+    await click(composer.querySelector<HTMLElement>('button[aria-label="Draw on the frame"]')!);
+    expect(tid("note-draw-row")).not.toBeNull();
+    await click(composer.querySelector<HTMLElement>('button[aria-label="Pen colour"]')!);
+    expect(tid("note-draw-palette")).not.toBeNull();
+    await escape();
+    expect(tid("note-draw-palette")).toBeNull();
+    expect(tid("note-draw-row")).not.toBeNull();
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    await escape();
+    expect(tid("note-draw-row")).toBeNull();
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    // Out of drawing the focus is on the pen. A draft with text holds the next Escape as it does anywhere (the form store's dirty hold): the focus goes back to the field, the box stays.
+    expect(document.activeElement).toBe(composer.querySelector('button[aria-label="Draw on the frame"]'));
+    await escape();
+    expect(document.activeElement).toBe(body());
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    await escape();
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
+    expect(forms.slot(ids.asset2).composer.body).toBe("Lift the shadows");
+    await escapeOutOfTooltip();
+    await escape();
+    expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(false);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});
