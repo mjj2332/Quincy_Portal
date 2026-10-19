@@ -1,7 +1,12 @@
 import { useState } from "react";
+import { FilmIcon, PlayIcon, XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { embeddedMediaPosterUrl, embeddedMediaUrl } from "../../lib/embedded-media-core";
-import { buttonVariants } from "../reui/button";
+import { Button, buttonVariants } from "../reui/button";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "../reui/dialog";
+import { EMBEDDED_THUMB_TILE } from "./EmbeddedImage";
+
+type MediaUrls = { mediaUrl?: (mediaId: string) => string; posterUrl?: (mediaId: string) => string };
 
 /**
  * A posted embedded video (#494): the browser's own player with its controls (keyboard-operable, with fullscreen and
@@ -12,8 +17,10 @@ import { buttonVariants } from "../reui/button";
  */
 /** `hasPoster` is the server's answer (#556): `false` leaves `poster` off so a posterless video never requests `/poster`; absent (an older node, the whiteboard dialog) asks for it as before. */
 /** `mediaUrl` and `posterUrl` (#835) are where the bytes and the poster are read from: the staff routes by default, a Review link's own for a guest. */
-export function EmbeddedVideo({ mediaId, hasPoster, className, videoClassName, mediaUrl = embeddedMediaUrl, posterUrl = embeddedMediaPosterUrl }: { mediaId: string; hasPoster?: boolean; className?: string; videoClassName?: string; mediaUrl?: (mediaId: string) => string; posterUrl?: (mediaId: string) => string }) {
+/** `size="thumb"` (#927 T1) is a posted note's strip tile, which opens this same player in a dialog. The default is the inline player, unchanged. */
+export function EmbeddedVideo({ mediaId, hasPoster, className, videoClassName, mediaUrl = embeddedMediaUrl, posterUrl = embeddedMediaPosterUrl, size = "default" }: { mediaId: string; hasPoster?: boolean; className?: string; videoClassName?: string; size?: "default" | "thumb" } & MediaUrls) {
   const [failed, setFailed] = useState(false);
+  if (size === "thumb") return <EmbeddedVideoThumb mediaId={mediaId} hasPoster={hasPoster} mediaUrl={mediaUrl} posterUrl={posterUrl} />;
   const src = mediaUrl(mediaId);
   // A posterless video shows no frame until it plays; `#t=0.1` asks the browser for one. Only the player gets it: the download href stays on the bare `src`.
   const playSrc = hasPoster === false ? `${src}#t=0.1` : src;
@@ -25,4 +32,36 @@ export function EmbeddedVideo({ mediaId, hasPoster, className, videoClassName, m
       </div>
       : <video controls preload="metadata" playsInline poster={hasPoster === false ? undefined : posterUrl(mediaId)} src={playSrc} aria-label="Embedded video" onError={() => setFailed(true)} className={cn("rich-text__embedded-video", videoClassName)} />}
   </div>;
+}
+
+/**
+ * The strip tile (#927 T1): the poster frame under a play badge, and no player until one is asked for, so a note with several videos
+ * loads no video bytes. A posterless video, or a poster that fails, is the plain tile with a film glyph. The dialog is the whiteboard's
+ * player stage (`EmbeddedVideoDialog`: inverse, the player edge to edge) with `EmbeddedImage`'s 48px close chip (#553). It is built here
+ * rather than reusing `EmbeddedVideoDialog` because that dialog reads only the staff routes, and a Review link's tile must play from its own.
+ * The trigger is registered with the dialog, so Escape or Close returns focus to the tile.
+ */
+function EmbeddedVideoThumb({ mediaId, hasPoster, mediaUrl, posterUrl }: { mediaId: string; hasPoster?: boolean; mediaUrl: (mediaId: string) => string; posterUrl: (mediaId: string) => string }) {
+  const [open, setOpen] = useState(false);
+  const [posterFailed, setPosterFailed] = useState(false);
+  const showPoster = hasPoster !== false && !posterFailed;
+  return <Dialog open={open} onOpenChange={setOpen}>
+    <DialogTrigger render={<button type="button" data-testid="embedded-video-thumb" data-size="thumb" aria-label="Play video" className={cn(EMBEDDED_THUMB_TILE, "relative grid cursor-pointer place-items-center p-0 text-foreground-secondary transition-colors hover:border-[color:var(--border-hover)] focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2")} />}>
+      {showPoster
+        ? <img src={posterUrl(mediaId)} alt="" loading="lazy" decoding="async" onError={() => setPosterFailed(true)} className="col-start-1 row-start-1 block size-full object-cover" />
+        : <FilmIcon aria-hidden="true" className="col-start-1 row-start-1 size-4" />}
+      {showPoster && <span aria-hidden="true" className="col-start-1 row-start-1 grid size-[var(--space-5)] place-items-center rounded-full bg-[var(--scrim-badge)] text-invert-foreground"><PlayIcon className="size-3" /></span>}
+    </DialogTrigger>
+    <DialogContent data-surface="inverse" data-testid="embedded-video-dialog" showCloseButton={false} className="max-h-[90dvh] max-w-[calc(100%-2rem)] gap-0 overflow-hidden bg-background p-0 text-foreground ring-0 sm:max-w-[min(90vw,64rem)]">
+      <DialogTitle className="sr-only">Video</DialogTitle>
+      <DialogDescription className="sr-only">The video as posted.</DialogDescription>
+      <div className="grid place-items-center"><EmbeddedVideo mediaId={mediaId} hasPoster={hasPoster} mediaUrl={mediaUrl} posterUrl={posterUrl} className="!my-0 w-full" videoClassName="!max-h-[90dvh] !w-full !max-w-none !aspect-auto !rounded-none !border-0 object-contain" /></div>
+      {/* The close chip is the drawn 48px (--space-7) square and the button fills it, as in EmbeddedImage's larger view, so bright footage never hides it. */}
+      <div aria-hidden="true" className="pointer-events-none absolute top-0 right-0 size-[var(--space-7)] rounded-xl bg-[var(--scrim-overlay)] ring-[length:var(--border-width-hair)] ring-[color:var(--border-hover)]" />
+      <DialogClose render={<Button type="button" variant="ghost" size="icon" data-testid="embedded-video-close" className="absolute top-0 right-0 size-[var(--space-7)] rounded-xl outline-offset-[-4px] focus-visible:!outline-offset-[-4px]" />}>
+        <XIcon aria-hidden="true" />
+        <span className="sr-only">Close</span>
+      </DialogClose>
+    </DialogContent>
+  </Dialog>;
 }
