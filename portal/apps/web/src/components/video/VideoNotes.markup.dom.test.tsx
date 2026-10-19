@@ -794,10 +794,10 @@ describe("Code-review fixes (#741 6b-ui)", () => {
     expect(editItems()).toEqual([]);
   });
 
-  // #927 T7: once an edit's saved drawing is removed its "Add drawing" button hides, and the player pen that used to reopen drawing is gone (T6). The edit box's own pen
+  // Parked for #927 T7 (unskipping it is part of T7's done): once an edit's saved drawing is removed its "Add drawing" button hides, and the player pen that used to reopen drawing is gone (T6). The edit box's own pen
   // is T7's (VideoNoteThread); re-enable this then, drawing through that pen. The store side is covered meanwhile in video-note-form-store.markup.test.ts,
   // "strokes drawn after the old drawing was removed freeze their own confirmed frame, and Save sends it".
-  it.skip("new strokes after the saved drawing was removed save on their own frame", async () => {
+  it.skip("T7: new strokes after the saved drawing was removed save on their own frame", async () => {
     const target = await editingSaved({ endFrame: 60 });
     await click(tid("video-note-edit-remove-drawing")!);
     await click(tid("video-note-edit-draw")!);

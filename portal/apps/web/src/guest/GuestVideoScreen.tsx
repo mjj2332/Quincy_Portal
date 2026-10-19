@@ -403,7 +403,7 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
   // The range handles (#861) exist where the link allows comments; they take the open draft's marks and are disabled with no draft, an archived Project, or marks the draft has locked (a drawing).
   // In/out itself is the note box's button (#927).
   const rangeProps = session.link.allow.comments ? {
-    range: { marks: compose.isOpen ? compose.marks : EMPTY_MARKS, locked: archived || !compose.isOpen || !compose.onMark, clear: compose.clearMarks },
+    range: { marks: compose.isOpen ? compose.marks : EMPTY_MARKS, locked: archived || !compose.isOpen || !compose.onMark },
     pendingRange: compose.isOpen ? marksToFrames(compose.marks, version.frameCount) : null,
   } : {};
   // A draft belongs to the Version it was made on; an archived Project takes it away.
