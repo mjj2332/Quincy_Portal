@@ -123,7 +123,9 @@ export function ProjectDeadline({ project, appearance, canEditDeadline, terminal
           <span className="sr-only">Due today</span>
         </span>
       )}
-      <div className={cn("min-w-0", canEdit && project.deadlineAt !== null && "relative z-[1]")}>
+      {/* On the phone line the wrapper is a 20px flex box: as a block, its inherited 24px line box made the line
+          24px whatever the 20px trigger or chip measured (#923 polish, measured on the served build). */}
+      <div className={cn("min-w-0", wrap && "flex leading-5", canEdit && project.deadlineAt !== null && "relative z-[1]")}>
         <ProjectDeadlineCell
           projectId={project.id}
           street={project.street}

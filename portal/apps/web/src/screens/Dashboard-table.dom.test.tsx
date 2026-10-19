@@ -668,6 +668,18 @@ describe("narrow screens: the phone list (#923, frame 4g)", () => {
     expect(classes).not.toContain("h-6");
   });
 
+  it("holds the Deadline wrapper to the 20px line: a block wrapper's inherited 24px line box kept the row at 93pt (#923 polish)", async () => {
+    narrow = true;
+    storage.set(tablePrefsKey("user-1"), JSON.stringify({ groupBy: "none", hiddenColumns: [] }));
+    projects = [row("p1", { deadlineAt: PAST, deadlineLocalCivil: "2020-01-01T11:00" }), row("p2", { deadlineAt: null, deadlineLocalCivil: null })];
+    await renderTable();
+    for (const id of ["p1", "p2"]) {
+      const line = phoneRow(id).querySelector<HTMLElement>('[data-testid="project-table-deadline-line"]')!;
+      const wrapper = [...line.children].find((child) => child.tagName === "DIV")!;
+      expect(wrapper.className.split(/\s+/)).toEqual(expect.arrayContaining(["flex", "leading-5"]));
+    }
+  });
+
   it("is a list grouped by Stage, not a grid, and leaves the saved choice untouched; the Display menu says why", async () => {
     storage.set(tablePrefsKey("user-1"), JSON.stringify({ groupBy: "stage", hiddenColumns: ["deadline"], showDelivered: true }));
     const before = storage.get(tablePrefsKey("user-1"));
