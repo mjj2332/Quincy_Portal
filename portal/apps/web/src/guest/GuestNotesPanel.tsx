@@ -8,10 +8,10 @@ import { GuestThreadItem, type Writing } from "./GuestNoteItem";
 
 /**
  * The notes list of the guest page (#741 12b, 13c): the public threads of the Version on screen, in the server's order. A guest can read them and press a timecode to seek, and (13c) add,
- * reply to, edit and delete notes through `writing`; `top` is the "Add a note" entry or the open composer. It reads no staff store and no staff DTO: `VideoNoteThread` is coupled to the
+ * reply to, edit and delete notes through `writing`; `top` is the note box (#927 G1), the panel's foot at every width. It reads no staff store and no staff DTO: `VideoNoteThread` is coupled to the
  * form store and the staff person, so this is built from the installed `item`, `badge` and `scroll-area`. `threads` is null while the first read is out.
  *
- * On a phone (#879 PR 2) `top` is the pill strip at the sheet's foot, with the staff strip's wrapper (a top border at rest; in compose mode the strip itself, which may shrink).
+ * On a phone (#879 PR 2, #927 P1) `top` is the box at the sheet's foot; it draws its own top border and padding, and in compose mode it may shrink.
  * Everything else is one list that scrolls above it (the prototype's P2: the tab body scrolls, the tab row and the composer stay), as the staff panel holds its header and filters
  * in its list on a phone: the delivery row (`header`), the notes in whatever state they are (loading, failed, none, the cards), then the footer rows (who is reviewing,
  * email updates). The panel clips, so no state can overflow under the pill (fix round 1: with no notes the rows sat behind it and could not be scrolled to).
@@ -26,7 +26,7 @@ export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect
   timecode: (frame: number) => string;
   /** The panel's heading row; the desktop column and the phone drawer each supply their own. */
   header?: ReactNode;
-  /** Above the list: the "Add a note" entry, or the composer while one is open. */
+  /** The note box, under the list (G1). */
   top?: ReactNode;
   /** A quiet row below the list, outside the scroll area (the email-updates switch); on a phone, the end of the list. */
   footer?: ReactNode;
@@ -45,9 +45,9 @@ export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect
     ? <p className="m-0 text-foreground-secondary [font:var(--type-body-sm)]">Loading notes…</p>
     : threads.length === 0 ? filteredEmpty ?? <EmptyState size="compact" title="No notes yet" /> : null;
 
-  // Browse mode's composer band is P2's (#879 PR 3a): no gap above it, its own border, `--space-2` above and below the pill; the list's own padding keeps its first and last rows clear.
+  // Browse mode's composer band (#927 P1): no gap above it; the box draws its own border and padding; the list's own padding keeps its first and last rows clear.
   if (phone) return <section data-testid="guest-notes-panel" aria-label="Notes" tabIndex={-1} className="flex min-h-0 min-w-0 flex-1 flex-col gap-[var(--space-3)] overflow-clip in-data-[mode=browse]:gap-0">
-    {top && <div data-sheet-part="composer" className="order-last shrink-0 border-t border-border pt-[var(--space-3)] in-data-[mode=browse]:py-[var(--space-2)] in-data-[mode=compose]:flex in-data-[mode=compose]:min-h-0 in-data-[mode=compose]:shrink in-data-[mode=compose]:flex-col in-data-[mode=compose]:border-t-0 in-data-[mode=compose]:pt-0 in-data-[immersive=compose]:flex in-data-[immersive=compose]:min-h-0 in-data-[immersive=compose]:shrink in-data-[immersive=compose]:flex-col in-data-[immersive=compose]:border-t-0 in-data-[immersive=compose]:pt-0">{top}</div>}
+    {top && <div data-sheet-part="composer" className="order-last shrink-0 in-data-[mode=compose]:flex in-data-[mode=compose]:min-h-0 in-data-[mode=compose]:shrink in-data-[mode=compose]:flex-col in-data-[immersive=compose]:flex in-data-[immersive=compose]:min-h-0 in-data-[immersive=compose]:shrink in-data-[immersive=compose]:flex-col">{top}</div>}
     <div data-sheet-part="body" className="flex min-h-0 flex-1 flex-col">
       <ScrollArea className="min-h-0 flex-1" data-testid="guest-notes-list" viewportProps={{ tabIndex: -1 }}>
         {/* The end gutter holds the overlay scrollbar (`w-2.5`) clear of the cards' right border (fix round 4); the start stays flush. */}
@@ -63,10 +63,11 @@ export function GuestNotesPanel({ threads, failed, onRetry, selectedId, onSelect
 
   return <section data-testid="guest-notes-panel" aria-label="Notes" tabIndex={-1} className="flex min-h-0 min-w-0 flex-1 flex-col gap-[var(--space-3)]">
     {header && <div data-sheet-part="body" className="shrink-0">{header}</div>}
-    {top && <div data-sheet-part="composer" className="-m-1 max-h-[60%] min-h-0 shrink-0 overflow-y-auto p-1 max-[721px]:order-last max-[721px]:max-h-none">{top}</div>}
     <div data-sheet-part="body" className="flex min-h-0 flex-1 flex-col">
       {state ?? <ScrollArea className="min-h-0 flex-1">{threads && items(threads)}</ScrollArea>}
     </div>
     {footer && <div data-sheet-part="body" className="shrink-0">{footer}</div>}
+    {/* G1: the box is the rail's foot, edge to edge under its top hairline (the aside's padding is bled off); Full screen's floating box has no padding to bleed. */}
+    {top && <div data-sheet-part="composer" className="-mx-[var(--space-5)] -mb-[var(--space-5)] shrink-0 in-data-[immersive=compose]:m-0">{top}</div>}
   </section>;
 }

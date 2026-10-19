@@ -67,6 +67,8 @@ let root: Root | null = null;
 let host: HTMLElement;
 const flush = async (times = 6) => { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); };
 const byId = (id: string) => document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+/** The box's Post note is off: `disabled`, or locked with a reason (`aria-disabled`, #927). */
+const postOff = () => { const send = document.body.querySelector<HTMLButtonElement>('[data-testid="guest-composer"] button[aria-label="Post note"]')!; return send.disabled || send.getAttribute("aria-disabled") === "true"; };
 const area = () => byId("guest-composer-body") as HTMLTextAreaElement | null;
 const click = async (element: HTMLElement | null | undefined) => { expect(element).toBeTruthy(); await act(async () => { element!.click(); }); await flush(2); };
 const typeInto = async (value: string) => {
@@ -108,7 +110,7 @@ describe("an attachment going up when the guest changes Version (#879 PR 2 fix r
     await typeInto("On v11");
     await click(byId("stub-attach"));
     expect(uploads).toHaveLength(1);
-    expect((byId("guest-composer-post") as HTMLButtonElement).disabled).toBe(true); // the picture is still going up
+    expect(postOff()).toBe(true); // the picture is still going up
 
     await act(async () => { (document.activeElement as HTMLElement | null)?.blur(); });
     await flush(2);
@@ -121,7 +123,7 @@ describe("an attachment going up when the guest changes Version (#879 PR 2 fix r
     await flush(2);
     expect(area()!.value).toBe("On v10");
     expect(area()!.getAttribute("data-images")).toBe("0");
-    expect((byId("guest-composer-post") as HTMLButtonElement).disabled).toBe(false);
+    expect(postOff()).toBe(false);
     expect(aborted).toBe(1);
   });
 });

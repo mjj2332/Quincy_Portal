@@ -110,7 +110,7 @@ describe("the guest phone page and the keyboard (#879 PR 2)", () => {
     expect(byId("guest-video-screen")!.className).not.toContain("min-h-dvh");
   });
 
-  it("the keyboard going away without a blur ends compose mode, unless the open tray holds it", async () => {
+  it("the keyboard going away without a blur ends compose mode, every time", async () => {
     await openVideo();
     await act(async () => { area()!.focus(); });
     await act(async () => { fake.height = window.innerHeight - 320; fake.dispatchEvent(new Event("resize")); });
@@ -119,12 +119,13 @@ describe("the guest phone page and the keyboard (#879 PR 2)", () => {
     await flush(4);
     expect(document.activeElement).not.toBe(area());
     expect(mode()).toBe("browse");
+    // The box has no tray to hold compose open (#927): the next keyboard-gone ends it again.
     await act(async () => { area()!.focus(); });
-    await act(async () => { byId("guest-composer-extras")!.click(); });
     await act(async () => { fake.height = window.innerHeight - 320; fake.dispatchEvent(new Event("resize")); });
+    expect(mode()).toBe("compose");
     await act(async () => { fake.height = window.innerHeight; fake.dispatchEvent(new Event("resize")); });
     await flush(4);
-    expect(mode()).toBe("compose");
+    expect(mode()).toBe("browse");
   });
 
   it("paints the document canvas ink while the phone video screen is up, and clears both the canvas and the box when it crosses to a desktop", async () => {
@@ -176,16 +177,16 @@ describe("the guest phone chrome (#879 PR 3a, P2)", () => {
     expect(count.textContent).toBe("0");
   });
 
-  it("the composer band is tight in browse mode: no wrapper padding above or below, the composer owns one border and --space-2 around the pill", async () => {
+  it("the composer band is tight in browse mode: no wrapper padding, the box owns its one top border and --space-2 around it (P1)", async () => {
     await openVideo();
     const composer = byId("guest-notes-panel")!.querySelector<HTMLElement>('[data-sheet-part="composer"]')!;
-    expect(composer.className).toContain("in-data-[mode=browse]:py-[var(--space-2)]");
+    expect(composer.className).not.toMatch(/(?:^|\s)(?:in-data-\[mode=browse\]:)?(?:py|pt|pb|p)-/);
+    expect(composer.className).not.toContain("border-t");
     expect(byId("guest-notes-panel")!.className).toContain("in-data-[mode=browse]:gap-0");
     expect(byId("guest-notes-panel")!.parentElement!.className).toContain("in-data-[mode=browse]:py-0");
-    // The strip's empty rows add no gap around the pill at rest (#879 PR 3a round 2: 85pt band on the Simulator, P1/P2's is 61).
-    const strip = byId("guest-compose-strip")!;
-    expect(strip.dataset.compose).toBe("false");
-    expect(strip.className).toContain("data-[compose=false]:gap-y-0");
+    const box = byId("guest-composer")!.className.split(/\s+/);
+    expect(box).toContain("border-t");
+    expect(box).toContain("p-[var(--space-2)]");
   });
 
   it("the phone transport has no frame step, for a guest who can write or not (#927 T4)", async () => {
@@ -268,7 +269,7 @@ describe("the guest phone notes head (#879 PR 3b, P2)", () => {
     // Typing is search mode, never compose (#879 PR 3b, F1): the head, the field and the results stay; the pill goes until the keyboard does.
     expect(mode()).toBe("search");
     expect(byId("guest-notes-list")!.closest("[inert]")).toBeNull();
-    expect(byId("guest-compose-strip")!.closest("[inert]")).not.toBeNull();
+    expect(byId("guest-composer")!.closest("[inert]")).not.toBeNull();
     await act(async () => { byId("notes-search-field")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
     await flush(2);
     expect(byId("notes-search-field")).toBeNull();

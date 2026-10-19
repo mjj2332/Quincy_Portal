@@ -391,7 +391,7 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
     remove: async (root, note, expectedRevision) => settle(await writer.run(root.id, () => api.deleteNote(note.id, expectedRevision)), note.id === root.id ? root.id : null),
   }), [api, writer, settle]);
 
-  const compose = useGuestCompose({ phone, clock, frameCount: version.frameCount, timecode, markupAllowed: session.link.allow.markup, media: api.media, post, edit: editRoot, latestOf });
+  const compose = useGuestCompose({ clock, frameCount: version.frameCount, markupAllowed: session.link.allow.markup, post, edit: editRoot, latestOf });
   // Social preview (#872): in memory, shared by every Video and Version of this screen, off again after All videos. Nothing else changes (#877): notes, marks and drawing work with it on, and turning it on or off touches no draft or drawing.
   const preview = useSocialPreview();
   const socialOn = preview.on && socialOverlays.length > 0;
@@ -400,9 +400,10 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
     overlays: socialOverlays, currentId: currentOverlay(socialOverlays, preview.overlayId)?.id ?? null, onOverlay: preview.setOverlayId,
     status: "ready", onRetry: () => undefined,
   } : undefined;
-  // The range button and handles (#861) exist where the link allows comments; they take the open draft's marks and are disabled with no draft (the hint says how to start one), an archived Project, or marks the draft has locked (a drawing).
+  // The range handles (#861) exist where the link allows comments; they take the open draft's marks and are disabled with no draft, an archived Project, or marks the draft has locked (a drawing).
+  // In/out itself is the note box's button (#927).
   const rangeProps = session.link.allow.comments ? {
-    range: { marks: compose.isOpen ? compose.marks : EMPTY_MARKS, locked: archived || !compose.onMark, ...(!compose.isOpen && !archived ? { hint: "Add a note to mark a range" } : {}), clear: compose.clearMarks },
+    range: { marks: compose.isOpen ? compose.marks : EMPTY_MARKS, locked: archived || !compose.isOpen || !compose.onMark, clear: compose.clearMarks },
     pendingRange: compose.isOpen ? marksToFrames(compose.marks, version.frameCount) : null,
   } : {};
   // A draft belongs to the Version it was made on; an archived Project takes it away.
@@ -509,14 +510,14 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
   };
   const changePasteOpen = (next: boolean) => { setPasteOpen(next); };
   const pasteStatus = pasted !== null ? <p role="status" data-testid="guest-paste-status" className="m-0 text-foreground-secondary [font:var(--type-label)]">{pasted}</p> : null;
-  // On a phone the sheet ends in the pill at every stop (#879 PR 2, P2); Copy my notes is a row of the ⋯ sheet there, and its status a line in the notes body.
-  const addNote = !canWrite ? null : phone
-    ? <GuestNoteComposer strip={compose.strip} clock={clock} timecode={timecode} media={api.media} verified={session.verified} onShellPress={() => { preloadGuestNoteEditor(); requestVerify("compose"); }} />
-    : <>{compose.isOpen ? compose.form : <div className="flex flex-col items-start gap-[var(--space-2)]">
-      <Button type="button" variant="outline" data-testid="guest-add-note" className={TOUCH} onClick={() => { if (session.verified) startDraft(compose.begin); else requestVerify("compose"); }}>Add a note</Button>
-      {canPaste && <Button type="button" variant="ghost" data-testid="guest-paste-open" className={TOUCH} onClick={openPaste}>Copy my notes from another version</Button>}
+  // The note box (#927 G1) is the panel's foot at every width: the rail on a desktop, the sheet at every stop on a phone (P1), floating over the film in Full screen. Copy my notes is a
+  // row of the ⋯ sheet on a phone, and its status a line in the notes body; on a desktop both sit on one quiet line above the box.
+  const composer = <GuestNoteComposer strip={compose.strip} clock={clock} timecode={timecode} media={api.media} verified={session.verified || compose.isOpen} phone={phone} floating={imm && composeShown} onShellPress={() => { preloadGuestNoteEditor(); requestVerify("compose"); }} />;
+  const addNote = !canWrite ? null : phone ? composer
+    : <>{!imm && (canPaste || pasteStatus !== null) && <div className="flex flex-wrap items-center gap-[var(--space-2)] px-[var(--space-5)] pb-[var(--space-2)]">
+      {canPaste && <Button type="button" variant="ghost" size="sm" data-testid="guest-paste-open" className={TOUCH} onClick={openPaste}>Copy my notes from another version</Button>}
       {pasteStatus}
-    </div>}</>;
+    </div>}{composer}</>;
 
   // Approve / Request changes (#741 14-ui-guest). The note draft is in `drafts` and the write is the writer's, so both outlive this screen; the dialog is per Version and decision.
   const [decideFor, setDecideFor] = useState<DecisionValue | null>(null);
@@ -579,7 +580,8 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
       flushSync(() => { if (!compose.isOpen) compose.begin(); setComposeShown(true); });
       if (phone && keyboardField(document.activeElement)) focusField(); else focusInImmersive(document, "video-immersive-add-note");
     }
-    else if (then === "compose") { if (!phone) startDraft(compose.begin); else if (keyboardField(document.activeElement)) focusField(); }
+    // A desktop's box is always there: the code lands the guest in its field, the chip still following the film until the note starts.
+    else if (then === "compose") { if (!phone || keyboardField(document.activeElement)) focusField(); }
     else if (then === "download") setDownloadHint(true);
     else openDecision(then);
   };
@@ -775,7 +777,7 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
       immersive={imm ? (composeShown ? "compose" : "watch") : "off"}
       {...(sheet ? { sheet } : {})}
       strip={paneControls.strip}
-      player={<OverlayContainerContext.Provider value={slot}><VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" phoneFrameStep={!canWrite} version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { revealPane(); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportReplacement={compose.transportReplacement} transportHidden={phone && (sheetControl.mode === "search" || (sheetControl.mode === "compose" && !compose.penDown))} immersive={immersiveHost} /></OverlayContainerContext.Provider>}
+      player={<OverlayContainerContext.Provider value={slot}><VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(canWrite && session.verified && compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { revealPane(); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportLocked={compose.penDown} transportHidden={phone && (sheetControl.mode === "search" || (sheetControl.mode === "compose" && !compose.penDown))} immersive={immersiveHost} /></OverlayContainerContext.Provider>}
       // The pane's popups (a note's ⋯ menu) portal into the same slot as the player's, inside the inverse scope (fix round 1: they drew light on the dark viewer).
       pane={<OverlayContainerContext.Provider value={slot}><aside data-testid="guest-notes-aside" className="flex min-h-0 flex-1 flex-col bg-card text-card-foreground min-[721px]:overflow-hidden min-[721px]:border-l min-[721px]:border-border min-[721px]:p-[var(--space-5)] min-[721px]:in-data-[immersive=compose]:border-l-0 min-[721px]:in-data-[immersive=compose]:p-0"><div data-sheet-part="head" className="flex shrink-0 items-center border-b border-border bg-card px-[var(--space-3)] min-[721px]:hidden" onClick={openSheet}>{phone && <Tabs value="notes" className="w-full"><TabsList variant="line" className="w-full justify-start rounded-none bg-card px-0 max-[721px]:!h-11 max-[721px]:!p-0"><TabsTrigger value="notes" data-testid="guest-notes-heading" className="max-[721px]:!h-11 max-[721px]:flex-none max-[721px]:px-[var(--space-3)] max-[721px]:after:!bottom-0">{tabContent}</TabsTrigger></TabsList></Tabs>}</div><div data-testid="guest-notes-aside-body" className="flex min-h-0 flex-1 flex-col max-[721px]:p-[var(--space-4)] max-[721px]:in-data-[mode=browse]:py-0 max-[721px]:in-data-[mode=compose]:py-[var(--space-2)] max-[721px]:in-data-[immersive=compose]:p-0">{panel}</div></aside></OverlayContainerContext.Provider>}
     />
