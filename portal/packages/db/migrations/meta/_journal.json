@@ -568,6 +568,13 @@
       "when": 1791400000000,
       "tag": "0080_project_social_overlays",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "6",
+      "when": 1791500000000,
+      "tag": "0081_video_collection_on_every_project",
+      "breakpoints": true
     }
   ]
 }

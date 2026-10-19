@@ -26,12 +26,12 @@ const form: ProjectForm = {
 
 describe("project field policies", () => {
   it("keeps create fields editable and validates invoice values", () => {
-    expect(projectFieldsPolicy("create")).toEqual({ servicesReadOnly: false, orderReadOnly: false, notesReadOnly: false, showInvoiceAndPayment: true });
+    expect(projectFieldsPolicy("create")).toEqual({ orderReadOnly: false, notesReadOnly: false, showInvoiceAndPayment: true });
     expect(validateProjectFields(form)).toMatchObject({ invoiceAmount: "Enter a numeric invoice amount." });
   });
 
-  it("makes the protected edit sections read-only without validating historical invoice text", () => {
-    expect(projectFieldsPolicy("edit")).toEqual({ servicesReadOnly: true, orderReadOnly: true, notesReadOnly: true, showInvoiceAndPayment: false });
+  it("makes the protected edit sections read-only, leaves Services editable, and skips historical invoice text", () => {
+    expect(projectFieldsPolicy("edit")).toEqual({ orderReadOnly: true, notesReadOnly: true, showInvoiceAndPayment: false });
     expect(validateProjectFields(form, "edit").invoiceAmount).toBeUndefined();
   });
 
@@ -51,13 +51,13 @@ describe("project field policies", () => {
     expect(editProjectPayload(whitespaceOnly)).toMatchObject({ agencyName: null, agentName: null, agentEmail: null, agentPhone: null });
   });
 
-  it("omits protected order values and roster fields from the Edit payload", () => {
+  it("sends the optional Services and omits protected order values and roster fields from the Edit payload", () => {
     const payload = editProjectPayload(form);
-    expect(payload).toMatchObject({ street: "12 Test Street", suburb: "Sydney" });
-    for (const key of ["orderedServices", "photographerUserIds", "editorUserIds", "orderNo", "orderId", "invoiceAmount", "paymentStatus", "notes"]) expect(payload).not.toHaveProperty(key);
+    expect(payload).toMatchObject({ street: "12 Test Street", suburb: "Sydney", orderedServices: ["edited"] });
+    for (const key of ["photographerUserIds", "editorUserIds", "orderNo", "orderId", "invoiceAmount", "paymentStatus", "notes"]) expect(payload).not.toHaveProperty(key);
   });
 
-  it("renders protected edit controls as read-only without invoice or payment fields", () => {
+  it("renders protected edit controls as read-only, the optional Services as editable, and no invoice or payment fields", () => {
     const markup = renderToStaticMarkup(createElement(ProjectFields, {
       form,
       errors: {},
@@ -69,16 +69,24 @@ describe("project field policies", () => {
     expect(markup).toMatch(/for="project-order-number"[^>]*>Order number<\/label><input[^>]*id="project-order-number"[^>]*(?:readOnly|readonly)=""/);
     expect(markup).toMatch(/for="project-order-id"[^>]*>Order ID<\/label><input[^>]*id="project-order-id"[^>]*(?:readOnly|readonly)=""/);
     expect(markup).toMatch(/<textarea[^>]*(?:readOnly|readonly)=""/);
-    const serviceInputs = [...markup.matchAll(/<input type="checkbox"[^>]*><span[^>]*>(?:<strong[^>]*>RAW<\/strong><small[^>]*>Always included<\/small>|Edited photography|Video|Floorplan|Copywriting)<\/span>/g)];
-    expect(serviceInputs).toHaveLength(5);
-    expect(serviceInputs.every(([input]) => input.includes("disabled=\"\""))).toBe(true);
+    // RAW, Edited photography, Video, Floorplan, Copywriting: Video keeps its slot as a fixed tile like RAW.
+    const serviceInputs = [...markup.matchAll(/<input type="checkbox"([^>]*)><span[^>]*>(<strong[^>]*>(?:RAW|Video)<\/strong><small[^>]*>Always included<\/small>|Edited photography|Floorplan|Copywriting)<\/span>/g)]
+      .map(([, attributes, label]) => ({ label: (label ?? "").replace(/<[^>]+>/g, " ").trim().replace(/\s+/g, " "), disabled: / disabled=""/.test(attributes ?? ""), checked: / checked=""/.test(attributes ?? "") }));
+    expect(serviceInputs).toEqual([
+      { label: "RAW Always included", disabled: true, checked: true },
+      { label: "Edited photography", disabled: false, checked: true },
+      { label: "Video Always included", disabled: true, checked: true },
+      { label: "Floorplan", disabled: false, checked: false },
+      { label: "Copywriting", disabled: false, checked: false },
+    ]);
     expect(markup).not.toContain("Invoice amount");
     expect(markup).not.toContain("Payment status");
     // #487: Edit details has no Team section, so it has no team combobox to adopt.
     expect(markup).not.toContain("team-heading");
     expect(markup).not.toContain("Add team member");
     expect(markup).toContain("Order details are managed by the order system and are available here to copy.");
-    expect(markup).toContain("Services are fixed after a project is created.");
+    expect(markup).toContain("A service that already holds media can&#x27;t be removed.");
+    expect(markup).not.toContain("Services are fixed after a project is created.");
     expect(markup).toContain("Notes are retained from the original order.");
   });
 
@@ -142,5 +150,9 @@ describe("project field policies", () => {
     const editedService = markup.match(/<input type="checkbox"([^>]*)><span[^>]*>Edited photography<\/span>/)?.[1];
     expect(editedService).toBeDefined();
     expect(editedService).not.toMatch(/\sdisabled=""/);
+    const videoService = markup.match(/<input type="checkbox"([^>]*)><span[^>]*><strong[^>]*>Video<\/strong><small[^>]*>Always included<\/small><\/span>/)?.[1];
+    expect(videoService).toMatch(/\schecked=""/);
+    expect(videoService).toMatch(/\sdisabled=""/);
+    expect(markup).not.toContain("A service that already holds media");
   });
 });

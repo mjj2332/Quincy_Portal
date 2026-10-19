@@ -12,20 +12,34 @@ import { ProjectTeamCollectCombobox } from "./ProjectTeamCombobox";
 export type ProjectForm = {
   street: string; suburb: string; postcode: string; agencyName: string; agentName: string; agentEmail: string; agentPhone: string;
   shootDate: string; timeWindow: string; orderNo: string; orderId: string; invoiceAmount: string; paymentStatus: string; notes: string; productionNotes: string;
-  rawFolderLink: string; rawFolderPath: string; orderedServices: Exclude<CollectionKind, "raw">[]; photographerUserIds: string[]; editorUserIds: string[];
+  rawFolderLink: string; rawFolderPath: string; orderedServices: OptionalServiceKind[]; photographerUserIds: string[]; editorUserIds: string[];
 };
 export type ProjectTextField = Exclude<keyof ProjectForm, "orderedServices" | "photographerUserIds" | "editorUserIds">;
 export type ProjectSelectionField = "orderedServices" | "photographerUserIds" | "editorUserIds";
 export type ProjectFieldError = "agentEmail" | "rawFolderLink" | "invoiceAmount";
 export type ProjectFieldsMode = "create" | "edit";
 
-type Service = { kind: Exclude<CollectionKind, "raw">; label: string };
+/** RAW and Video are Collections on every Project; these are the Services staff choose. */
+export type OptionalServiceKind = Exclude<CollectionKind, "raw" | "video">;
+type Service = { kind: OptionalServiceKind; label: string };
 
 export const SERVICES: Service[] = [
   { kind: "edited", label: "Edited photography" },
-  { kind: "video", label: "Video" },
   { kind: "floorplan", label: "Floorplan" },
   { kind: "copy", label: "Copywriting" },
+];
+
+export function isOptionalServiceKind(kind: unknown): kind is OptionalServiceKind {
+  return SERVICES.some((service) => service.kind === kind);
+}
+
+/** A fixed tile: always checked, never toggled. Video sits after Edited photography, its slot from before it was always on. */
+type FixedTile = { kind: "raw" | "video"; label: string };
+const RAW_TILE: FixedTile = { kind: "raw", label: "RAW" };
+const VIDEO_TILE: FixedTile = { kind: "video", label: "Video" };
+const SERVICE_TILES: Array<{ fixed: FixedTile } | { service: Service }> = [
+  { fixed: RAW_TILE },
+  ...SERVICES.flatMap((service) => service.kind === "edited" ? [{ service }, { fixed: VIDEO_TILE }] : [{ service }]),
 ];
 
 export const emptyProjectForm: ProjectForm = {
@@ -53,7 +67,7 @@ const CHECK_TILE =
   "min-h-[var(--space-7)] p-[12px] bg-card text-foreground-secondary " +
   "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] " +
   "transition-[background-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] " +
-  "hover:bg-secondary has-[:checked]:bg-surface-sunken " +
+  "hover:bg-secondary " +
   "has-[:focus-visible]:outline-[length:var(--border-width-bold)] has-[:focus-visible]:outline-solid " +
   "has-[:focus-visible]:outline-ring -outline-offset-2 has-[:focus-visible]:-outline-offset-2 " +
   "has-[:disabled]:cursor-default has-[:disabled]:text-foreground-secondary " +
@@ -83,7 +97,7 @@ function isUrl(value: string): boolean {
 
 export function projectFieldsPolicy(mode: ProjectFieldsMode = "create") {
   const readOnly = mode === "edit";
-  return { servicesReadOnly: readOnly, orderReadOnly: readOnly, notesReadOnly: readOnly, showInvoiceAndPayment: !readOnly };
+  return { orderReadOnly: readOnly, notesReadOnly: readOnly, showInvoiceAndPayment: !readOnly };
 }
 
 export function validateProjectFields(form: ProjectForm, mode: ProjectFieldsMode = "create"): Partial<Record<ProjectFieldError, string>> {
@@ -95,10 +109,9 @@ export function validateProjectFields(form: ProjectForm, mode: ProjectFieldsMode
   };
 }
 
-export function ProjectFields({ form, errors, existingCollections = [], mode = "create", monitoredRawFolder, shootExtras, onChange, onToggle }: {
+export function ProjectFields({ form, errors, mode = "create", monitoredRawFolder, shootExtras, onChange, onToggle }: {
   form: ProjectForm;
   errors: Partial<Record<ProjectFieldError, string>>;
-  existingCollections?: CollectionKind[];
   mode?: ProjectFieldsMode;
   /** Set when a ready Editor folder mapping already monitors this project's RAW intake — the
    * Tonomo fields below stay fully editable (they still drive Tonomo change detection, RAW
@@ -109,7 +122,6 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
   onChange: (field: ProjectTextField, value: string) => void;
   onToggle: (field: ProjectSelectionField, value: string) => void;
 }) {
-  const collectionExists = (kind: CollectionKind) => existingCollections.includes(kind);
   const policy = projectFieldsPolicy(mode);
 
   return <>
@@ -144,14 +156,15 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
     </section>
     <section className="create-project__section" aria-labelledby="services-heading">
       <SectionHead eyebrow="Services" id="services-heading">What is being delivered?</SectionHead>
-      {policy.servicesReadOnly && <p className={SECTION_NOTE}>Services are fixed after a project is created.</p>}
+      {mode === "edit" && <p className={SECTION_NOTE}>A service that already holds media can&apos;t be removed.</p>}
       <div role="group" aria-labelledby="services-heading"
            className="grid gap-[1px] bg-border border-solid border-[length:var(--border-width-hair)] border-border grid-cols-1 min-[721px]:grid-cols-3 min-[1081px]:grid-cols-5">
-        <label className={CHECK_TILE}>
-          <input type="checkbox" checked disabled className={CHECKBOX_INPUT} />
-          <span className={TILE_SPAN}><strong className={TILE_LABEL}>RAW</strong><small className={TILE_HINT}>{collectionExists("raw") ? "Already created" : "Always included"}</small></span>
-        </label>
-        {SERVICES.map((service) => <label className={CHECK_TILE} key={service.kind}><input type="checkbox" checked={form.orderedServices.includes(service.kind)} disabled={policy.servicesReadOnly} onChange={policy.servicesReadOnly ? undefined : () => onToggle("orderedServices", service.kind)} className={CHECKBOX_INPUT} /><span className={TILE_SPAN}>{service.label}</span></label>)}
+        {SERVICE_TILES.map((tile) => "fixed" in tile
+          ? <label className={CHECK_TILE} key={tile.fixed.kind}>
+            <input type="checkbox" checked disabled className={CHECKBOX_INPUT} />
+            <span className={TILE_SPAN}><strong className={TILE_LABEL}>{tile.fixed.label}</strong><small className={TILE_HINT}>Always included</small></span>
+          </label>
+          : <label className={CHECK_TILE} key={tile.service.kind}><input type="checkbox" checked={form.orderedServices.includes(tile.service.kind)} onChange={() => onToggle("orderedServices", tile.service.kind)} className={CHECKBOX_INPUT} /><span className={TILE_SPAN}>{tile.service.label}</span></label>)}
       </div>
     </section>
     <section className="create-project__section" aria-labelledby="dropbox-heading">

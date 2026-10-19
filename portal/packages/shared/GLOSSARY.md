@@ -18,8 +18,16 @@ _Avoid_: Image, photo, file, frame
 
 **Collection**:
 One of a Project's five Asset buckets: Raw, Edited, Video, Floorplan, Copy. Holds Assets
-(or links) and nothing else.
+(or links) and nothing else. Raw and Video exist on every Project; Edited, Floorplan and Copy exist
+when their Service is ordered.
 _Avoid_: Folder, gallery, tab
+
+**Service**:
+An optional Collection a Project orders: Edited, Floorplan or Copy. Raw and Video are not Services,
+because every Project has them. Staff can add a Service after the Project is created, and remove one
+only while its Collection holds no media, links, manifests or active uploads. A Tonomo order that
+lists a Service staff removed adds it back when the order is re-sent.
+_Avoid_: Package, product, ordered service (for Raw or Video)
 
 **Project collaboration**:
 A Project's discussion, subtasks and activity history. Not a Collection: it holds no Assets.

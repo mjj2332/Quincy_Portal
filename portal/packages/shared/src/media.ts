@@ -4,6 +4,11 @@
 
 export const COLLECTION_KINDS = ["raw", "edited", "video", "floorplan", "copy"] as const;
 export type CollectionKind = (typeof COLLECTION_KINDS)[number];
+/** Collections every Project has, whatever was ordered: Raw, and Video (staff can upload video and add video links on any Project). */
+export const ALWAYS_ON_COLLECTION_KINDS = ["raw", "video"] as const satisfies readonly CollectionKind[];
+/** The Services that can be ordered or removed after creation. A Service that already holds media cannot be removed. */
+export const OPTIONAL_SERVICE_KINDS = ["edited", "floorplan", "copy"] as const satisfies readonly CollectionKind[];
+export type ServiceKind = (typeof OPTIONAL_SERVICE_KINDS)[number];
 
 export const ASSET_SOURCES = ["upload", "dropbox", "tonomo"] as const;
 export type AssetSource = (typeof ASSET_SOURCES)[number];
