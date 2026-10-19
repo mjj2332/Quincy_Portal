@@ -5,9 +5,12 @@ import { cn } from "../../lib/utils";
 import { useNoteCardSeek } from "../../lib/note-card-seek";
 import { isOwnNote, noteAnchorLabel } from "../../lib/video-note-view";
 import { MarkupRevisionMismatch, useVideoNoteMarkupQuery } from "../../lib/video-notes-data";
-import { draftDoc, effectiveMarks, frameOnScreen, preloadSavedDrawing, writeFailure, type NoteFormStore, type Problem } from "../../lib/video-note-form-store";
-import type { VideoFrameClock } from "../../lib/video-frame-clock";
-import type { NoteMarks } from "../../lib/video-note-marks";
+import { draftDoc, effectiveMarks, frameOnScreen, writeFailure, type NoteFormStore, type Problem } from "../../lib/video-note-form-store";
+import { useFrameClockSelector, type VideoFrameClock } from "../../lib/video-frame-clock";
+import { EMPTY_MARKS, type NoteMarks } from "../../lib/video-note-marks";
+import { PHONE_QUERY } from "../../lib/review-pane-geometry";
+import { useMediaQuery } from "../../lib/use-media-query";
+import type { RichTextEditorHandle } from "../QuincyRichTextEditorBase";
 import { META_TEXT } from "../quincy/Eyebrow";
 import { Button } from "../quincy/Button";
 import { CollaborationTimestamp } from "../quincy/CollaborationTimestamp";
@@ -20,12 +23,12 @@ import { StatusPill } from "../quincy/StatusPill";
 import { Badge } from "../reui/badge";
 import { Button as ReuiButton } from "../reui/button";
 import { Item } from "../reui/item";
-import { Kbd } from "../reui/kbd";
 import { NoteBody } from "../quincy/NoteMediaStrip";
+import { NoteComposerBox, type NoteAnchorChip } from "../quincy/NoteComposerBox";
 import { VideoNoteEditor } from "./VideoNoteEditor";
+import { MARKUP_FULL_TEXT, type NoteDrawControls } from "./VideoMarkupOverlay";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../reui/tooltip";
 import { IconTip } from "../quincy/IconTip";
-import { ANCHOR_CHIP, ANCHOR_CHIP_ROW } from "./VideoNoteComposer";
 
 /** What a thread asks of the panel. Every write rejects with the original error, which the thread classifies. */
 export type ThreadActions = {
@@ -37,7 +40,6 @@ export type ThreadActions = {
 };
 
 const MONO = "[font:var(--type-mono)] tabular-nums";
-const SMALL = "min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11";
 const LINK_BUTTON = "min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11";
 
 /** Shown, never chosen: the paste dialog renders it too, so a copy's visibility is visibly the source's. */
@@ -90,7 +92,7 @@ function focusField(host: HTMLElement | null) {
   requestAnimationFrame(() => { find()?.focus(); });
 }
 
-export function VideoNoteThread({ thread, selected, userId, readOnly, now, timecode, frameCount, actions, onSeek, store, assetId, clock, pinned = false, drawings, rich }: {
+export function VideoNoteThread({ thread, selected, userId, readOnly, now, timecode, frameCount, actions, onSeek, store, assetId, clock, pinned = false, drawings, draw, rich }: {
   thread: VideoNoteThreadDto;
   selected: boolean;
   userId: string | null;
@@ -107,10 +109,16 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
   pinned?: boolean;
   /** Drawings on notes (#741 6b-ui): whether the Project's `markup` part is on, whether this person may draw, and what the lazy read needs. Absent = 5b's thread. */
   drawings?: { on: boolean; canAnnotate: boolean; projectId: string; role: Role };
+  /** The open edit's pen and drawing row (#927, `useVideoMarkup`'s `draw.edit`): absent, or with no pen, where this edit takes no drawing. */
+  draw?: NoteDrawControls;
   /** The rich fields (#835): the Project and the person's role, which the @ list and the upload routes need. */
   rich: { projectId: string; role: Role };
 }) {
+  const phone = useMediaQuery(PHONE_QUERY);
   const [uploading, setUploading] = useState(false);
+  const replyEditor = useRef<RichTextEditorHandle>(null);
+  const replyField = useRef<HTMLDivElement>(null);
+  const [replyStrip, setReplyStrip] = useState<HTMLDivElement | null>(null);
   const openKey = useSyncExternalStore(store.subscribe, () => store.slot(assetId).open?.noteId ?? null);
   // A form that closes (Cancel, Save, a conflict) takes its in-flight uploads with it; the next one starts clean.
   useEffect(() => { setUploading(false); }, [openKey]);
@@ -212,34 +220,28 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
     </div>
   </header>;
 
-  const editForm = (note: VideoNoteDto) => editing && editing.noteId === note.id && (() => {
-    const showDrawControls = Boolean(drawings?.on && drawings.canAnnotate && note.id === thread.id && thread.startFrame !== null);
-    return <form
-    data-notes-form="edit"
-    data-size-container="true"
-    className="@container grid gap-[var(--space-2)]"
-    onSubmit={(event) => { event.preventDefault(); void store.save(assetId, { clock, frameCount, send: actions.edit, markup: drawings?.on ?? false }); }}
-  >
-    <label className="sr-only" htmlFor={`video-note-edit-${note.id}`}>Edit note</label>
-    <div data-testid="video-note-edit-body"><VideoNoteEditor id={`video-note-edit-${note.id}`} projectId={rich.projectId} role={rich.role} value={draftDoc(editing.content, editing.text)} disabled={busy} placeholder="Edit note… Use @ to mention a colleague."
-        onChange={(doc) => { if (!busy) store.setOpenContent(assetId, doc); }} onSubmit={() => { void store.save(assetId, { clock, frameCount, send: actions.edit, markup: drawings?.on ?? false }); }} onUploadingChange={setUploading} /></div>
-    {(editing.frames || showDrawControls) && <div className="flex flex-wrap items-center gap-[var(--space-2)]">
-      {showDrawControls && (!editing.frames || editing.drawing.touched) && <span data-testid="video-note-edit-frames-follow" className="text-foreground-secondary [font:var(--type-label)]">Frames follow the drawing.</span>}
-      {editing.frames && !editing.drawing.touched && <>
-        <span data-testid="video-note-edit-anchor" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}>{editAnchorLabel(marks, timecode)}</span>
-        <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-in" disabled={busy || !clock} onClick={() => { if (clock) store.mark(assetId, "in", frameOnScreen(clock.getState()), clock); }}>Set in <Kbd>I</Kbd></Button>
-        <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-set-out" disabled={busy || !clock} onClick={() => { if (clock) store.mark(assetId, "out", frameOnScreen(clock.getState()), clock); }}>Set out <Kbd>O</Kbd></Button>
-        <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-edit-make-point" disabled={busy || !clock} onClick={() => { if (clock) store.makePoint(assetId, clock); }}>Make point</Button>
-      </>}
-      {showDrawControls && drawings && <EditDrawingControls store={store} assetId={assetId} note={thread} editing={editing} clock={clock} frameCount={frameCount} busy={busy} timecode={timecode} projectId={drawings.projectId} role={drawings.role} />}
-    </div>}
-    {editing.conflict && <Notice tone="caution" data-testid="video-note-conflict" className="grid gap-[var(--space-1)]"><span>Current note on the server:</span><span data-testid="video-note-conflict-body" className="whitespace-pre-wrap [overflow-wrap:anywhere] text-foreground">{editing.conflict.body}</span></Notice>}
-    <div className="flex justify-end gap-[var(--space-2)]">
-      <Button type="button" variant="secondary" data-testid="video-note-edit-cancel" disabled={busy} onClick={() => { store.close(assetId); }}>Cancel</Button>
-      <Button type="submit" data-testid="video-note-edit-save" disabled={busy || uploading || editing.text.trim() === "" || editing.text.length > VIDEO_NOTE_BODY_MAX}>{busy ? "Saving…" : editing.conflict ? "Save anyway" : "Save"}</Button>
-    </div>
-  </form>;
-  })();
+  const saveEdit = () => { void store.save(assetId, { clock, frameCount, send: actions.edit, markup: drawings?.on ?? false }); };
+  const editBlocked = (open: { text: string }) => busy || uploading || open.text.trim() === "" || open.text.length > VIDEO_NOTE_BODY_MAX;
+  // The root's edit is the note composer box (E1). A reply's edit (it has no anchor of its own) is the field with Cancel and Save only, as the guest's is.
+  const editForm = (note: VideoNoteDto) => editing && editing.noteId === note.id && (note.id === thread.id && editing.base.startFrame !== null
+    ? <NoteEditBox
+      thread={thread} editing={editing} store={store} assetId={assetId} clock={clock} timecode={timecode} busy={busy} saving={sending} uploading={uploading} onUploadingChange={setUploading}
+      onSave={saveEdit} blocked={editBlocked(editing)} phone={phone} rich={rich} {...(drawings ? { drawings } : {})} {...(draw ? { draw } : {})}
+    />
+    : <form data-notes-form="edit" className="grid gap-[var(--space-2)]" onSubmit={(event) => { event.preventDefault(); saveEdit(); }}>
+      <label className="sr-only" htmlFor={`video-note-edit-${note.id}`}>Edit note</label>
+      <div data-testid="video-note-edit-body" className={FIELD_SHELL}><VideoNoteEditor id={`video-note-edit-${note.id}`} projectId={rich.projectId} role={rich.role} value={draftDoc(editing.content, editing.text)} disabled={busy} placeholder="Edit note… Use @ to mention a colleague."
+        onChange={(doc) => { if (!busy) store.setOpenContent(assetId, doc); }} onSubmit={saveEdit} onUploadingChange={setUploading} /></div>
+      {editing.conflict && <ConflictNotice body={editing.conflict.body} />}
+      <div className="flex justify-end gap-[var(--space-2)]">
+        <Button type="button" variant="secondary" data-testid="video-note-edit-cancel" disabled={busy} onClick={() => { store.close(assetId); }}>Cancel</Button>
+        <Button type="submit" data-testid="video-note-edit-save" disabled={editBlocked(editing)}>{busy ? "Saving…" : editing.conflict ? "Save anyway" : "Save"}</Button>
+      </div>
+    </form>);
+
+  const sendReply = () => { void store.reply(assetId, { send: actions.reply }); };
+  const replyTooLong = form?.kind === "reply" && form.text.length > VIDEO_NOTE_BODY_MAX;
+  const replyReason = uploading ? "Wait for the uploads to finish." : replyTooLong ? `Replies can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.` : undefined;
 
   const label = noteAnchorLabel(thread, timecode);
   const resolvedLine = thread.resolved ? `Resolved by ${thread.resolved.by.name}` : null;
@@ -265,24 +267,33 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
         </div>)}
       </div>}
       {notice && <Notice tone="critical" role="alert" data-testid="video-note-notice" className="flex flex-wrap items-center justify-between gap-[var(--space-2)]"><span>{notice.text}</span>{notice.refresh && <Button type="button" variant="text" data-testid="video-note-notice-refresh" onClick={actions.refresh}>Refresh notes</Button>}</Notice>}
-      {form?.kind === "reply" && <form data-notes-form="reply" className="grid gap-[var(--space-2)]" onSubmit={(event) => { event.preventDefault(); void store.reply(assetId, { send: actions.reply }); }}>
-        <span className="flex items-center gap-[var(--space-2)] text-foreground-secondary [font:var(--type-label)]">{`Reply · ${thread.visibility === "internal" ? "Internal" : "Client-visible"}`}<VisibilityBadge visibility={thread.visibility} /></span>
-        <label className="sr-only" htmlFor={`video-note-reply-${thread.id}`}>Write a reply</label>
-        <div data-testid="video-note-reply-body"><VideoNoteEditor id={`video-note-reply-${thread.id}`} projectId={rich.projectId} role={rich.role} value={draftDoc(form.content, form.text)} disabled={busy} placeholder="Write a reply… Use @ to mention a colleague."
-            onChange={(doc) => { if (!busy) store.setOpenContent(assetId, doc); }} onSubmit={() => { void store.reply(assetId, { send: actions.reply }); }} onUploadingChange={setUploading} /></div>
-        <div className="flex justify-end gap-[var(--space-2)]">
-          <Button type="button" variant="secondary" data-testid="video-note-reply-cancel" disabled={busy} onClick={() => { store.close(assetId); }}>Cancel</Button>
-          <Button type="submit" data-testid="video-note-reply-post" disabled={busy || uploading || form.text.trim() === "" || form.text.length > VIDEO_NOTE_BODY_MAX}>{busy ? "Posting…" : "Post"}</Button>
-        </div>
-      </form>}
-      {!readOnly && !replying && editing === null && <div className="flex flex-wrap items-center gap-[var(--space-3)]">
-        {!thread.deleted && <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-reply-button" disabled={busy || blocked} onClick={() => { setResolveNotice(null); store.openReply(assetId, thread.id); }}>Reply</Button>}
-        <span className="ms-auto"><IconTip label={thread.resolved ? "Reopen" : "Mark as complete"}>
+      {/* The Reply toggle opens the reply box and, open, dismisses it with its draft (R1: no visible Cancel); Esc goes through the viewer's form order. */}
+      {!readOnly && editing === null && <div className="flex flex-wrap items-center gap-[var(--space-3)]">
+        {!thread.deleted && <Button
+          type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-reply-button" disabled={busy || (!replying && blocked)} aria-expanded={replying}
+          {...(replying ? { "aria-label": "Close reply", title: "Close reply (Esc)", "aria-keyshortcuts": "Escape" } : {})}
+          onClick={() => { if (replying) { store.close(assetId); return; } setResolveNotice(null); store.openReply(assetId, thread.id); }}
+        >Reply</Button>}
+        {!replying && <span className="ms-auto"><IconTip label={thread.resolved ? "Reopen" : "Mark as complete"}>
           <ReuiButton type="button" variant="ghost" size="icon" className={TICK_SIZE} data-testid="video-note-resolve" aria-label={thread.resolved ? "Reopen" : "Mark as complete"} aria-pressed={thread.resolved !== null} disabled={busy} onClick={() => { void toggleResolved(); }}>
             <CircleCheck aria-hidden="true" className={cn("size-5", thread.resolved ? RESOLVED_TICK : "text-muted-foreground")} />
           </ReuiButton>
-        </IconTip></span>
+        </IconTip></span>}
       </div>}
+      {form?.kind === "reply" && <NoteComposerBox
+        variant="reply" label="Reply" testId="video-note-reply-form" phone={phone} className="p-0" formAttributes={{ "data-notes-form": "reply" }}
+        field={<div ref={replyField} data-testid="video-note-reply-body" className="min-w-0">
+          <label className="sr-only" htmlFor={`video-note-reply-${thread.id}`}>Write a reply</label>
+          <VideoNoteEditor
+            ref={replyEditor} id={`video-note-reply-${thread.id}`} projectId={rich.projectId} role={rich.role} value={draftDoc(form.content, form.text)} disabled={busy} placeholder="Reply…"
+            onChange={(doc) => { if (!busy) store.setOpenContent(assetId, doc); }} onSubmit={sendReply} onUploadingChange={setUploading}
+            stripContainer={replyStrip} bubbleDocked={phone} bubbleDockTo={() => replyField.current?.closest('[data-testid="note-composer-box"]') ?? null}
+          />
+        </div>}
+        strip={<div ref={setReplyStrip} className="empty:hidden" />}
+        attach={{ onPick: () => { replyEditor.current?.pickMedia(); }, disabled: busy }}
+        send={{ label: "Send reply", onSend: sendReply, disabled: busy || uploading || form.text.trim() === "" || replyTooLong, pending: sending, ...(replyReason ? { reason: replyReason } : {}) }}
+      />}
       {thread.resolved && (readOnly || replying || editing !== null) && <div className="flex justify-end"><ResolvedTick data-testid="video-note-resolved-status" /></div>}
     </div>
   </Item>;
@@ -300,53 +311,108 @@ function revealInList(form: HTMLElement | null) {
 
 function q(scope: ParentNode | null, selector: string): HTMLElement | null { return scope?.querySelector<HTMLElement>(selector) ?? null; }
 
-function editAnchorLabel(marks: NoteMarks, timecode: (frame: number) => string): string {
-  if (marks.in !== null && marks.out !== null) return `${timecode(marks.in)} → ${timecode(marks.out)}`;
-  const only = marks.in ?? marks.out;
-  return only === null ? "No frames" : timecode(only);
+/** A reply's edit field: the box's hairline and well, since the note preset draws no chrome of its own (#927). */
+const FIELD_SHELL = "min-w-0 rounded-[var(--radius-lg)] border border-solid border-[length:var(--border-width-hair)] border-[color-mix(in_srgb,var(--border)_60%,transparent)] bg-surface-sunken px-[var(--space-3)] py-[var(--space-2)] text-[length:var(--text-sm)] leading-[var(--space-5)] text-foreground transition-colors focus-within:border-border-hover";
+/** A line in the edit box above its tools (a load state, the stroke cap). Label type, as the composer's lines. */
+const LINE = "m-0 [font:var(--type-label)]";
+/** D4: a note's frames and its drawing change one at a time. While the note has a drawing (or a new one), its frames follow it. */
+const FRAMES_FOLLOW = "Frames follow the drawing.";
+
+function ConflictNotice({ body }: { body: string }) {
+  return <Notice tone="caution" data-testid="video-note-conflict" className="grid gap-[var(--space-1)]"><span>Current note on the server:</span><span data-testid="video-note-conflict-body" className="whitespace-pre-wrap [overflow-wrap:anywhere] text-foreground">{body}</span></Notice>;
+}
+
+type OpenEdit = NonNullable<ReturnType<NoteFormStore["slot"]>["open"]>;
+
+/**
+ * The edit of a root note (#927 E1): the note composer box in its `edit` variant. The chip is the note's anchor; in/out is the composer's three-press button over the form's
+ * marks, except that its third press (and the chip's ×) keeps a frame, as a point at In: an edited note keeps an anchor. The pen and the drawing row are `useVideoMarkup`'s
+ * (`draw`). D4: changing the frames locks the pen (the hook's reason), and a drawing locks the frames (`FRAMES_FOLLOW`); one Save sends either. Visibility is a fixed label.
+ * It is its own component so only the open edit follows the frame clock (the chip's live Out).
+ */
+function NoteEditBox({ thread, editing, store, assetId, clock, timecode, busy, saving, uploading, onUploadingChange, onSave, blocked, phone, rich, drawings, draw }: {
+  thread: VideoNoteThreadDto; editing: OpenEdit; store: NoteFormStore; assetId: string; clock: VideoFrameClock | null; timecode: (frame: number) => string;
+  busy: boolean; saving: boolean; uploading: boolean; onUploadingChange: (uploading: boolean) => void; onSave: () => void; blocked: boolean; phone: boolean;
+  rich: { projectId: string; role: Role }; drawings?: { on: boolean; canAnnotate: boolean; projectId: string; role: Role }; draw?: NoteDrawControls;
+}) {
+  const editor = useRef<RichTextEditorHandle>(null);
+  const fieldRef = useRef<HTMLDivElement>(null);
+  const [strip, setStrip] = useState<HTMLDivElement | null>(null);
+  const held = useSyncExternalStore(store.subscribe, () => store.slot(assetId).marks);
+  const drawingNow = useSyncExternalStore(store.subscribe, () => store.slot(assetId).draw !== null);
+  const liveFrame = useFrameClockSelector(clock, (state) => state.targetFrame ?? state.frame, 0);
+  // The marks a third press left as a point: they read as a point (not In with a live Out) until the next mark.
+  const [pointed, setPointed] = useState<NoteMarks | null>(null);
+  const drawing = editing.drawing;
+  const marks = effectiveMarks(held, clock);
+  // A note with a drawing keeps its own frames (they follow the drawing); a plain one shows the form's marks.
+  const value: NoteMarks = editing.frames ? marks.value : { in: editing.base.startFrame, out: editing.base.endFrame === null ? null : editing.base.endFrame - 1 };
+  const ranging = editing.frames && marks.touched && value.in !== null && value.out === null && held.value !== pointed;
+  const shown: NoteMarks = (value.in !== null && value.out !== null) || ranging ? value : EMPTY_MARKS;
+  const point = value.in ?? value.out;
+  const framesLocked = !editing.frames || drawing.touched;
+  const hasDrawing = drawing.items === null ? drawing.hadDrawing && !drawing.remove : drawing.items.length > 0;
+
+  const toPoint = () => { if (!clock) return; store.makePoint(assetId, clock); setPointed(store.slot(assetId).marks.value); };
+  const chip: NoteAnchorChip = shown.in !== null
+    ? { kind: "range", from: timecode(shown.in), to: timecode(shown.out ?? Math.max(liveFrame, shown.in)), toLive: shown.out === null, onClear: toPoint, clearDisabled: busy || framesLocked || drawingNow || !clock }
+    : { kind: "point", at: point === null ? "" : timecode(point), following: false };
+  const rangeOff = busy || !clock || framesLocked || drawingNow;
+  const rangeReason = framesLocked ? FRAMES_FOLLOW : !clock ? "Loading the film…" : null;
+
+  // New strokes on a plain note that were all cleared again are no drawing: the frames unlock (Clear on a saved drawing is a removal, and stays one until Save).
+  const clearedNew = !drawing.hadDrawing && drawing.touched && drawing.items !== null && drawing.items.length === 0;
+  useEffect(() => { if (clearedNew && !drawingNow) store.removeDrawing(assetId); }, [clearedNew, drawingNow, store, assetId]);
+
+  const tooLong = editing.text.length > VIDEO_NOTE_BODY_MAX;
+  const saveReason = uploading ? "Wait for the uploads to finish." : tooLong ? `Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.` : undefined;
+  const notice = <>
+    {drawings?.on && drawings.canAnnotate && <SavedDrawingStatus store={store} assetId={assetId} note={thread} editing={editing} projectId={drawings.projectId} role={drawings.role} />}
+    {draw?.full && <p role="status" data-testid="video-note-edit-markup-full" className={cn(LINE, "text-warning-foreground")}>{MARKUP_FULL_TEXT}</p>}
+    {editing.conflict && <ConflictNotice body={editing.conflict.body} />}
+  </>;
+
+  return <NoteComposerBox
+    variant="edit" label="Edit note" testId="video-note-edit-form" phone={phone} className="p-0" formAttributes={{ "data-notes-form": "edit" }}
+    visibility={thread.visibility}
+    field={<div ref={fieldRef} data-testid="video-note-edit-body" className="min-w-0">
+      <label className="sr-only" htmlFor={`video-note-edit-${thread.id}`}>Edit note</label>
+      <VideoNoteEditor
+        ref={editor} id={`video-note-edit-${thread.id}`} projectId={rich.projectId} role={rich.role} value={draftDoc(editing.content, editing.text)} disabled={busy} placeholder="Edit note… Use @ to mention a colleague."
+        onChange={(doc) => { if (!busy) store.setOpenContent(assetId, doc); }} onSubmit={onSave} onUploadingChange={onUploadingChange}
+        stripContainer={strip} bubbleDocked={phone} bubbleDockTo={() => fieldRef.current?.closest('[data-testid="note-composer-box"]') ?? null}
+      />
+    </div>}
+    strip={<div ref={setStrip} className="empty:hidden" />}
+    notice={notice}
+    chip={chip} drawn={hasDrawing}
+    range={{
+      marks: shown,
+      onPress: (step) => { if (!clock) return; if (step === "clear") toPoint(); else store.mark(assetId, step, frameOnScreen(clock.getState()), clock); },
+      ...(rangeOff ? { disabled: true, ...(rangeReason ? { reason: rangeReason } : {}) } : {}),
+    }}
+    attach={{ onPick: () => { editor.current?.pickMedia(); }, disabled: busy }}
+    {...(draw?.pen ? { pen: draw.pen } : {})}
+    draw={draw?.row ?? null}
+    save={{ onSave, onCancel: () => { store.close(assetId); }, disabled: blocked, pending: saving, saveLabel: editing.conflict ? "Save anyway" : "Save", ...(saveReason ? { reason: saveReason } : {}) }}
+  />;
 }
 
 /**
- * The drawing part of an edit form (#741 6b-ui): add a drawing to a plain note, edit or replace the one it has, or remove it. The saved drawing is fetched lazily, keyed by note and
- * revision, and the editor is only opened once it has loaded: it is never seeded with an empty list. A removal is a pending change until Save; "Keep drawing" takes it back.
+ * The saved drawing's read for an open edit (#741 6b-ui), keyed by note and revision: the same entry `useVideoMarkup` reads, so this adds no fetch. It says while it loads,
+ * offers Retry when it fails, and names a drawing this build cannot read. A read refused because the list moved on (another session saved) makes the edit follow the newer note,
+ * or ask, as a 409 does.
  */
-function EditDrawingControls({ store, assetId, note, editing, clock, frameCount, busy, timecode, projectId, role }: {
-  store: NoteFormStore; assetId: string; note: VideoNoteThreadDto; editing: NonNullable<ReturnType<NoteFormStore["slot"]>["open"]>;
-  clock: VideoFrameClock | null; frameCount: number; busy: boolean; timecode: (frame: number) => string; projectId: string; role: Role;
-}) {
+function SavedDrawingStatus({ store, assetId, note, editing, projectId, role }: { store: NoteFormStore; assetId: string; note: VideoNoteThreadDto; editing: OpenEdit; projectId: string; role: Role }) {
   const drawing = editing.drawing;
   const saved = drawing.hadDrawing && !drawing.remove && drawing.items === null;
   const query = useVideoNoteMarkupQuery(projectId, assetId, note.id, editing.base.revision, saved, role);
-  // The read was refused because the list moved on (another session saved): once the list shows the newer note, the edit follows it, or asks, as a 409 does.
   const moved = query.error instanceof MarkupRevisionMismatch && note.revision !== editing.base.revision;
   useEffect(() => { if (moved) store.adoptCurrentNote(assetId, note); }, [moved, store, assetId, note]);
-  const framesChosen = useSyncExternalStore(store.subscribe, () => store.slot(assetId).marks.touched);
-  const drawingNow = useSyncExternalStore(store.subscribe, () => store.slot(assetId).draw !== null);
-  const loaded = query.data?.markup ?? null;
-  const ready = !saved || loaded !== null;
-  const hasItems = drawing.items === null ? drawing.hadDrawing && !drawing.remove : drawing.items.length > 0;
-  const frame = drawing.drawingFrame ?? drawing.baseFrame;
-  const enter = () => {
-    if (!clock) return;
-    preloadSavedDrawing(store, assetId, query.data);
-    void store.enterDraw(assetId, { clock, form: "edit", frameCount });
-  };
-  // A drawing with an item this build cannot read is kept as it is: Edit and Remove would save back a copy without that item.
   const unsupported = saved && query.data?.unsupported === true;
-  const disabled = busy || !clock || framesChosen || drawingNow || !ready || unsupported;
-  const why = unsupported ? `video-note-edit-drawing-unsupported-${note.id}` : undefined;
-  // The header's anchor button already reads the note's frame: the chip only earns its place when the drawing is on another frame.
-  // Frame numbers, not labels: two frames can share a Standard label.
-  const chipShown = hasItems && frame !== null && !(note.endFrame === null && note.startFrame === frame);
-  return <div data-testid="video-note-edit-drawing" className="contents">
-    {chipShown && frame !== null && <span data-testid="video-note-edit-drawing-chip" className={cn(ANCHOR_CHIP, ANCHOR_CHIP_ROW)}><PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" /><span className="sr-only">Drawing on </span>{timecode(frame)}</span>}
-    {drawing.remove && <span data-testid="video-note-edit-drawing-removed" className="text-foreground-secondary [font:var(--type-label)]">The drawing is removed when you save.</span>}
-    {!drawing.remove && <Button type="button" variant="secondary" className={SMALL} data-testid="video-note-edit-draw" aria-describedby={why} disabled={disabled} onClick={enter}>{hasItems ? "Edit drawing" : "Add drawing"}</Button>}
-    {!drawing.remove && hasItems && <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-edit-remove-drawing" aria-describedby={why} disabled={busy || drawingNow || unsupported || !ready} onClick={() => { store.removeDrawing(assetId); }}>Remove drawing</Button>}
-    {drawing.remove && <Button type="button" variant="text" className={LINK_BUTTON} data-testid="video-note-edit-keep-drawing" disabled={busy} onClick={() => { store.keepDrawing(assetId); }}>Keep drawing</Button>}
-    {unsupported && <span id={why} data-testid="video-note-edit-drawing-unsupported" className="text-foreground-secondary [font:var(--type-label)]">Some markup can't be shown, so this drawing can't be edited or removed here. You can still change the text.</span>}
-    {saved && query.isError && <span role="alert" className="text-destructive [font:var(--type-label)]">The drawing could not be loaded. <Button type="button" variant="text" onClick={() => { void query.refetch(); }}>Retry</Button></span>}
-    {saved && query.isPending && <span role="status" className="text-foreground-secondary [font:var(--type-label)]">Loading the drawing…</span>}
-    {framesChosen && !drawing.touched && <span className="text-foreground-secondary [font:var(--type-label)]">Save the new frames before changing the drawing.</span>}
-  </div>;
+  return <>
+    {unsupported && <p data-testid="video-note-edit-drawing-unsupported" className={cn(LINE, "text-foreground-secondary")}>Some markup can't be shown, so this drawing can't be edited here. You can still change the text.</p>}
+    {saved && query.isError && <p role="alert" className={cn(LINE, "flex flex-wrap items-center gap-x-[var(--space-2)] text-destructive")}>The drawing could not be loaded.<Button type="button" variant="text" className="min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11" onClick={() => { void query.refetch(); }}>Retry</Button></p>}
+    {saved && query.isPending && <p role="status" className={cn(LINE, "text-foreground-secondary")}>Loading the drawing…</p>}
+  </>;
 }

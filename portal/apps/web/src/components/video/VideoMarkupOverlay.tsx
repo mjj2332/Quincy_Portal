@@ -5,12 +5,9 @@ import { useMediaQuery } from "../../lib/use-media-query";
 import { useMarkup, type PointerSample } from "../../lib/use-markup";
 import { useVideoNoteMarkupQuery } from "../../lib/video-notes-data";
 import { preloadSavedDrawing, type DrawForm } from "../../lib/video-note-form-store";
-import { Button } from "../reui/button";
-import { MarkupToolbar } from "../quincy/markup-toolbar";
 import type { NoteDrawRowProps } from "../quincy/NoteDrawRow";
 import type { NoteControl } from "../quincy/NoteComposerBox";
 import { MarkupLayer, StrokeVisible } from "../quincy/freehand-strokes";
-import { Notice } from "../quincy/Notice";
 import type { VideoNotesSession } from "./use-video-notes";
 
 const LIMITS = { items: STROKE_LIMITS.strokes, bytes: VIDEO_MARKUP_MAX_BYTES };
@@ -54,9 +51,9 @@ const FRAMES_FIRST = "Save the new frames first; a note's frames and its drawing
  * only by the drawing SVG, which sits exactly on the picture box (so a stroke never starts in a letterbox band and a point is a fraction of the picture, whatever the stage's shape),
  * takes input only while drawing, and shows a drawing only while the film is paused on the frame it was drawn on. Everything a draft is (strokes, frozen frame, phase, pen) lives in
  * the Video tab's form store; the only thing held here is the stroke being drawn, in `useMarkup`. The pen pauses, confirms the frame, then swaps the box's tools for the drawing row.
- * With the part off every slot is empty. Until the edit form carries the box (#927 T7), an edit's drawing keeps the old stack in place of the transport (`transportReplacement`).
+ * With the part off every slot is empty. The composer and a root note's edit (#927 T7) each render their own pen and row, in their own box.
  */
-export function useVideoMarkup(session: VideoNotesSession): { overlay: ((box: Box | null) => ReactNode) | undefined; draw: { composer: NoteDrawControls; edit: NoteDrawControls }; transportReplacement: ReactNode } {
+export function useVideoMarkup(session: VideoNotesSession): { overlay: ((box: Box | null) => ReactNode) | undefined; draw: { composer: NoteDrawControls; edit: NoteDrawControls } } {
   const { forms, assetId, clock, role, projectId, canAnnotate } = session;
   const on = session.markup;
   const selectedThread = on ? session.selectedThread : null;
@@ -153,8 +150,8 @@ export function useVideoMarkup(session: VideoNotesSession): { overlay: ((box: Bo
     if (!drawing && wasDrawing.current !== null) {
       const ended = wasDrawing.current;
       const active = document.activeElement;
-      if (active === null || active === document.body || (active instanceof Element && active.closest('[data-testid="note-draw-row"], [data-testid="video-markup-toolbar"]'))) {
-        document.querySelector<HTMLElement>(ended === "edit" ? `[data-notes-form="edit"] :is(${PEN}, [data-testid="video-note-edit-draw"])` : `[data-notes-form="composer"] ${PEN}`)?.focus({ preventScroll: true });
+      if (active === null || active === document.body || (active instanceof Element && active.closest('[data-testid="note-draw-row"]'))) {
+        document.querySelector<HTMLElement>(`[data-notes-form="${ended}"] ${PEN}`)?.focus({ preventScroll: true });
       }
     }
     wasDrawing.current = drawing ? draw.form : null;
@@ -206,7 +203,7 @@ export function useVideoMarkup(session: VideoNotesSession): { overlay: ((box: Bo
     row: draw?.form === "composer" ? row : null,
     full: form === "composer" && refused,
   };
-  // An edit's pen (#927 T7 renders it): a root with frames only; D4 locks it while the range has changed, and it waits for the saved drawing.
+  // An edit's pen (the edit box, #927 T7): a root with frames only; D4 locks it while the range has changed, and it waits for the saved drawing.
   const editable = allowed && editing !== null && editing.noteId === editing.rootId && editing.base.startFrame !== null;
   const editLock = savedBlocked ? "Some markup can't be shown, so this drawing can't be edited here." : slot.marks.touched ? FRAMES_FIRST : editingSaved && !editedQuery.data ? "The saved drawing is loading." : clock === null ? "Loading the film…" : null;
   const edit: NoteDrawControls = !editable ? NO_DRAW : {
@@ -215,23 +212,7 @@ export function useVideoMarkup(session: VideoNotesSession): { overlay: ((box: Bo
     full: form === "edit" && refused,
   };
 
-  // Interim (#927 T6 → T7): the edit form has no drawing row yet, so its drawing keeps the stack under the picture. T7 renders `draw.edit.row` in the edit box and drops this.
-  const transportReplacement = drawing && form === "edit" && row
-    ? <div className="flex min-w-0 flex-col items-center gap-[var(--space-1)]" data-testid="video-markup-stack">
-      {refused && <Notice tone="caution" role="status">{MARKUP_FULL_TEXT}</Notice>}
-      <MarkupToolbar
-        label={compact ? null : "Editing drawing"}
-        tool={pen} compact={compact} testId="video-markup-toolbar"
-        onToolChange={row.onToolChange} onColorChange={row.onColorChange}
-        onWidthChange={(width) => { forms.setTool(assetId, { width }); }}
-        canUndo={row.canUndo} canRedo={row.canRedo} canClear={row.canClear}
-        onUndo={row.onUndo} onRedo={row.onRedo} onClear={row.onClear}
-        trailing={<Button ref={doneButton} type="button" data-testid="video-markup-done" className="max-[721px]:min-h-11 min-[721px]:pointer-coarse:min-h-11" onClick={done}>Done</Button>}
-      />
-    </div>
-    : null;
-
-  return { overlay, draw: { composer, edit }, transportReplacement };
+  return { overlay, draw: { composer, edit } };
 }
 
 /** The SVG on the picture box. A gesture never outlives draw mode or the picture it started on: leaving, or a resize, drops the stroke in progress and keeps the finished ones. */

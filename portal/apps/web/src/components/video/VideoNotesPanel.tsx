@@ -244,6 +244,7 @@ export function VideoNotesPanel({ session, detailsRows, exp, clipboard, draw, ph
             clock={session.clock}
             drawings={{ on: session.markup, canAnnotate: session.canAnnotate, projectId: session.projectId, role: session.role }}
             rich={{ projectId: session.projectId, role: session.role }}
+            {...(draw ? { draw: draw.edit } : {})}
           />)}
         </div>
       </ScrollArea>
