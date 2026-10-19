@@ -7,9 +7,12 @@ import { createElement, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KeyboardSensor, MeasuringStrategy, MouseSensor, TouchSensor, type DragEndEvent } from "@dnd-kit/core";
-import { ProjectKanbanBoard2 } from "./board";
+import { ProjectKanbanBoard2, type ProjectKanbanBoard2Props } from "./board";
+import { BoardSkeleton } from "./board-skeleton";
 import { KanbanCard2 } from "./card";
 import { STAR_GUARD_WINDOW_MS } from "../../lib/star-click-guard";
+import { stageTone } from "../../lib/dashboard-appearance";
+import { projectAppearance, stageGroupAppearance } from "../../lib/dashboard-project-appearance";
 import type { ProjectKanbanBoardProps, ProjectSummary } from "../../lib/kanban-interaction";
 import type { PipelineStage } from "../../lib/stages";
 import { cardMenuTrigger, closeMenus, isMenuItemDisabled, menuItem, menuItems, moveToStage, moveToTrigger, openCardMenu, openContextMenu, openMoveTo, openMoveToSubmenu, stageRadio, stageRadios } from "./board-menu-test-helpers";
@@ -137,7 +140,7 @@ function project(id: string, stageKey: ProjectSummary["stageKey"], overrides: Pa
   };
 }
 
-function baseProps(overrides: Partial<ProjectKanbanBoardProps> = {}): ProjectKanbanBoardProps {
+function baseProps(overrides: Partial<ProjectKanbanBoard2Props> = {}): ProjectKanbanBoard2Props {
   return {
     projects: [project("source", "awaiting_raw"), project("other", "raw_review")],
     activeStages: stages,
@@ -166,7 +169,7 @@ function isLocked(element: Element): boolean {
   return element.hasAttribute("disabled") || element.getAttribute("data-disabled") === "true";
 }
 
-async function renderBoard(overrides: Partial<ProjectKanbanBoardProps> = {}) {
+async function renderBoard(overrides: Partial<ProjectKanbanBoard2Props> = {}) {
   const props = baseProps(overrides);
   const { act } = await import("react");
   await act(async () => { root.render(createElement(ProjectKanbanBoard2, props)); await Promise.resolve(); });
@@ -266,14 +269,13 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     expect(root!.getAttribute("aria-label")).toBe("Project pipeline board");
   });
 
-  // Tempo layout (ReUI `tempo-tasks` Kanban board): every expanded column is one fixed 280px track
-  // (`w-[17.5rem] shrink-0` on a flex row since #432, so a collapsed rail can be 48px beside them;
-  // no minmax and no mobile/coarse variants), columns are separate
-  // bordered surfaces with a `--space-4` gap between them (not a joined `bg-border` grid), and the
-  // grid is a `w-max min-w-full` content box inside a Base UI scroll area (tempo's
-  // `BoardScrollArea`), so it sits left-aligned and spare width is page background. The scroll area's
-  // Viewport scrolls, not the grid.
-  it("lays the Board out as fixed 280px, separated, bordered columns in a full-width scroll area", async () => {
+  // Frame 4e (#923): the working columns are fluid (`flex-1`) over a 280px floor, so four of them fill a
+  // 1440 screen beside the resting Delivered rail. `[contain:inline-size]` keeps a long street from widening
+  // a column (its intrinsic width is the floor), so the `w-max min-w-full` row is exactly the screen until
+  // the floors overflow it, and then it scrolls. Columns are separate bordered surfaces with a `--space-4`
+  // gap (not a joined `bg-border` grid), inside a Base UI scroll area (tempo's `BoardScrollArea`). On a
+  // phone each column is the viewport's width (`100cqw` of the `@container` viewport) and snaps.
+  it("lays the Board out as fluid columns over a 280px floor, separated and bordered, in a full-width scroll area", async () => {
     await renderBoard();
     const root = host.querySelector('[data-focus-key="board"]');
     expect(root, "no Board root rendered — the assertions below would be vacuous").not.toBeNull();
@@ -292,8 +294,25 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     const columns = [...host.querySelectorAll('[data-testid="board-column"]')];
     expect(columns.length, "no columns rendered — the per-column assertion would be vacuous").toBeGreaterThan(0);
     for (const column of columns) expect([...column.classList]).toContain("border-border");
-    // The fixed 280px lives on each expanded column, and never shrinks.
-    for (const column of columns) for (const token of ["w-[17.5rem]", "shrink-0"]) expect([...column.classList]).toContain(token);
+    // Fluid over a 280px floor, its intrinsic width contained; a phone column is the viewport's width.
+    for (const column of columns) {
+      for (const token of ["flex-1", "min-w-[17.5rem]", "[contain:inline-size]", "max-[721px]:w-[100cqw]", "max-[721px]:flex-none", "snap-start"]) expect([...column.classList]).toContain(token);
+      expect([...column.classList]).not.toContain("w-[17.5rem]");
+    }
+    for (const token of ["@container", "max-[721px]:snap-x", "max-[721px]:snap-mandatory"]) expect([...viewport!.classList]).toContain(token);
+  });
+
+  // A phone snap would fight dnd-kit's auto-scroll, which steps the viewport a few pixels at a time; the
+  // snap is off for the whole of a drag. Scroll-snap is not layout, so nothing in-flow changes.
+  it("turns the phone column snap off for the whole of a drag", async () => {
+    await renderBoard();
+    const viewport = host.querySelector<HTMLElement>('[data-testid="board-scroll-viewport"]')!;
+    expect(viewport.getAttribute("data-dragging")).toBeNull();
+    expect([...viewport.classList]).toContain("data-[dragging=true]:snap-none");
+    await fireDnd("onDragStart", { active: { id: "source" } });
+    expect(viewport.getAttribute("data-dragging")).toBe("true");
+    await fireDnd("onDragCancel", { active: { id: "source" } });
+    expect(viewport.getAttribute("data-dragging")).toBeNull();
   });
 
   it("each column scrolls on its own with its Stage heading pinned (#363)", async () => {
@@ -363,6 +382,16 @@ describe("ProjectKanbanBoard2 (#80)", () => {
     const [project, value] = (props.onPriorityChange as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(project.id).toBe("source");
     expect(value).toBe(2);
+  });
+
+  // #923 D4: the compact card draws PriorityStars' small glyph; the hit cells are PriorityStars' own (its tests).
+  it("draws the compact card's stars with the small glyph, editable and read-only alike (#923 D4)", async () => {
+    await renderBoard({ canPrioritize: true, projects: [project("source", "awaiting_raw")] });
+    const radios = [...host.querySelectorAll<HTMLElement>('[role="radio"]')];
+    expect(radios.length, "anchor: the editable stars").toBe(5);
+    expect(radios.every((radio) => radio.classList.contains("text-sm"))).toBe(true);
+    await renderBoard({ canPrioritize: false, projects: [project("source", "awaiting_raw", { priority: 3 })] });
+    expect(host.querySelector<HTMLElement>('[role="img"][aria-label="Priority 3 of 5 stars"]')?.classList.contains("text-sm")).toBe(true);
   });
 
   it("gives a non-Admin no priority control, and no ghost row where none is set (#81)", async () => {
@@ -948,28 +977,46 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
       // expected Sydney civil string below is deterministic regardless of when this test runs.
       await renderCard({ deadlineAt, deadlineLocalCivil: null, deadlineZone: "Australia/Sydney" });
       const time = host.querySelector('[data-testid="board-card-deadline"]')!;
-      expect(time.textContent).toBe("Overdue Thu 27 Aug · 09:15");
+      expect(time.textContent).toBe("Due Thu 27 Aug · 09:15");
     } finally {
       process.env.TZ = originalTz;
     }
   });
 
-  it("renders the literal word 'Overdue' and the critical colour token for an overdue deadline", async () => {
-    const deadlineAt = Date.now() - 60 * 60 * 1000;
-    await renderCard({ deadlineAt, deadlineLocalCivil: "2020-01-01T00:00", deadlineZone: "Australia/Sydney" });
-    expect(host.querySelector('[data-testid="board-card-address"]')).not.toBeNull();
+  // Frame 4e `.cd`: the date alone on screen ("Due" is for a screen reader), in the late colour with the
+  // appearance module's "N days late" chip beside it once late. The chip's words are `lateLabel`'s.
+  it("draws a late deadline in the late colour with the module's chip, and an on-time one in ink with no chip", async () => {
+    const now = Date.parse("2026-10-19T03:00:00.000Z");
+    const deadlineAt = Date.parse("2026-10-15T01:00:00.000Z");
+    const late = project("source", "awaiting_raw", { deadlineAt, deadlineLocalCivil: "2026-10-15T12:00", deadlineZone: "Australia/Sydney" });
+    await renderBoard({ now, projects: [late] });
     const time = host.querySelector('[data-testid="board-card-deadline"]')!;
-    expect(time.textContent).toContain("Overdue");
-    expect(time.className).toContain("text-signal-critical");
+    expect(time.querySelector('[data-testid="board-card-deadline-prefix"]')?.textContent).toBe("Due ");
+    expect(time.textContent).toBe("Due Thu 15 Oct · 12:00");
+    expect([...time.classList]).toContain("text-late");
+    const chip = host.querySelector('[data-testid="board-card-wrap"] [data-testid="late-chip"]');
+    expect(chip?.textContent).toBe(projectAppearance(late, now).lateLabel);
+    expect(chip?.textContent).toBe("4 days late");
+    expect(host.querySelector('[data-testid="board-card-wrap"]')!.getAttribute("data-late")).toBe("true");
+
+    await renderBoard({ now, projects: [project("source", "awaiting_raw", { deadlineAt: now + 3 * 86_400_000, deadlineLocalCivil: "2026-10-22T14:00", deadlineZone: "Australia/Sydney" })] });
+    const onTime = host.querySelector('[data-testid="board-card-deadline"]')!;
+    expect(onTime.textContent).toBe("Due Thu 22 Oct · 14:00");
+    expect([...onTime.classList]).not.toContain("text-late");
+    expect(host.querySelector('[data-testid="board-card-wrap"] [data-testid="late-chip"]')).toBeNull();
+    expect(host.querySelector('[data-testid="board-card-wrap"]')!.getAttribute("data-late")).toBeNull();
   });
 
-  it("renders 'Due', not 'Overdue', for a future deadline", async () => {
-    const deadlineAt = Date.now() + 60 * 60 * 1000;
-    await renderCard({ deadlineAt, deadlineLocalCivil: "2999-01-01T00:00", deadlineZone: "Australia/Sydney" });
+  // Frame 4e `.due.is-today`: a Deadline later today reads "Today · 17:00" behind an ink dot.
+  it("reads a Deadline later today as 'Today · HH:MM' with the dot, never late", async () => {
+    const now = Date.parse("2026-10-19T01:00:00.000Z"); // 12:00 Sydney
+    const deadlineAt = Date.parse("2026-10-19T06:00:00.000Z"); // 17:00 Sydney
+    await renderBoard({ now, projects: [project("source", "editing", { deadlineAt, deadlineLocalCivil: "2026-10-19T17:00", deadlineZone: "Australia/Sydney" })], activeStages: [{ key: "editing", label: "Editing", displayOrder: 3, active: true }] });
     const time = host.querySelector('[data-testid="board-card-deadline"]')!;
-    expect(time.textContent).toContain("Due");
-    expect(time.textContent).not.toContain("Overdue");
-    expect(time.className).not.toContain("text-signal-critical");
+    expect(time.textContent).toBe("Due Today · 17:00");
+    expect(time.getAttribute("data-today")).toBe("true");
+    expect(time.querySelector('[data-testid="board-card-today-dot"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="board-card-wrap"] [data-testid="late-chip"]')).toBeNull();
   });
 
   it("renders no Deadline element at all when the Project has none", async () => {
@@ -1025,16 +1072,16 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
     expect(meta.querySelector('[aria-label*="more Editor"]')).toBeNull();
   });
 
-  it("renders no avatar slot at all for an empty Editors array", async () => {
-    await renderCard({ editors: [] });
-    expect(host.querySelector('[data-testid="board-card-meta"]')).toBeNull();
-    expect(host.querySelector('[aria-label="No Editor assigned"]')).toBeNull();
-  });
-
-  it("renders no avatar slot at all when Editors is absent", async () => {
-    await renderCard({ editors: undefined });
-    expect(host.querySelector('[data-testid="board-card-meta"]')).toBeNull();
-    expect(host.querySelector('[aria-label="No Editor assigned"]')).toBeNull();
+  // #923 review round 3 (owner decision, frame 4e): no Editors draws the Table's dashed "No Editor assigned" circle.
+  it.each([["an empty Editors array", []], ["no Editors field", undefined]] as const)("draws the dashed No Editor circle in the footer for %s", async (_label, editors) => {
+    await renderCard({ editors: editors as [] | undefined });
+    const meta = host.querySelector('[data-testid="board-card-meta"]')!;
+    expect(meta).not.toBeNull();
+    expect(meta.closest('[data-testid="board-card-footer-slot"]')).not.toBeNull();
+    const empty = meta.querySelector<HTMLElement>('[role="img"][aria-label="No Editor assigned"]')!;
+    expect(empty).not.toBeNull();
+    expect(empty.className).toContain("border-dashed");
+    expect(meta.querySelectorAll('[role="img"]')).toHaveLength(1);
   });
 
   it("puts the Editor avatars in the footer row with the stars: stars first, avatars last, outside the link", async () => {
@@ -1511,7 +1558,9 @@ describe("Board card on ReUI frame (#432)", () => {
 
   const cardOf = (id = "source") => host.querySelector<HTMLElement>(`[data-focus-key="card:${id}"]`)!.closest<HTMLElement>('[data-testid="board-card-wrap"]')!;
 
-  it("shows exactly: cover, street (no suburb), Shoot date, Deadline, stars and avatars — no RAW", async () => {
+  // Frame 4e `cardCompact`: row 1 is a 44x30 thumb, the street and "Suburb · Shoot Tue 20 Oct", and the ⋯;
+  // row 2 the Deadline; the footer the task progress, stars and avatars. No large cover, no RAW count.
+  it("shows exactly: thumb, street, suburb and Shoot day, Deadline, progress, stars and avatars — no RAW", async () => {
     const future = Date.now() + 3 * 24 * 60 * 60 * 1000;
     await renderBoard({
       canPrioritize: true,
@@ -1526,32 +1575,71 @@ describe("Board card on ReUI frame (#432)", () => {
         expectedCount: 40,
         priority: 3,
         editors: [{ id: "e1", name: "Jane Doe" }],
+        checklist: { completed: 2, total: 5 },
       })],
     });
     const card = cardOf();
     expect(card.querySelector('[data-testid="board-card-address"]')?.textContent).toBe("12 Example St");
     expect(card.querySelector('[data-testid="board-card"]')?.textContent).toBe("12 Example St");
-    expect(card.querySelector('[data-testid="board-card-shoot"]')?.textContent).toBe("Shoot 12 Mar 2027");
+    expect(card.querySelector('[data-testid="board-card-shoot"]')?.textContent).toBe("Bondi · Shoot Fri 12 Mar");
     expect(card.querySelector('[data-testid="board-card-deadline"]')?.textContent).toBe("Due Tue 1 Jan · 09:15");
+    // Base UI's Progress root adds a visually hidden "x", so the label is read from its own span.
+    expect(card.querySelector('[data-testid="done-progress"] > span')?.textContent).toBe("2 of 5 done");
+    expect(card.querySelector('[data-testid="board-card-footer-slot"] [data-testid="done-progress"]'), "progress has its own row (D4's star cells)").toBeNull();
     expect(card.querySelector('[role="radiogroup"][aria-label="Priority for 12 Example St"]')).not.toBeNull();
     expect(card.querySelector('[data-testid="board-card-meta"] [role="img"][aria-label="Jane Doe"]')).not.toBeNull();
-    expect(card.querySelector('[data-testid="board-card-cover"]')?.textContent, "no cover rendered").toBe("1");
-    expect(card.textContent).not.toContain("Bondi");
+    const cover = card.querySelector<HTMLElement>('[data-testid="board-card-cover"]');
+    expect(cover?.textContent, "no thumb rendered").toBe("1");
+    for (const token of ["w-11", "h-7.5", "shrink-0", "rounded-sm"]) expect([...cover!.classList]).toContain(token);
+    expect(cover!.className).not.toContain("aspect-video");
+    // The thumb, the street block and the ⋯ share row 1.
+    const row = card.querySelector('[data-testid="board-card-title-row"]')!;
+    expect(row.contains(cover)).toBe(true);
+    expect(row.contains(card.querySelector('[data-testid="board-card"]'))).toBe(true);
+    expect(row.contains(card.querySelector('[data-testid="board-card-menu"]'))).toBe(true);
     expect(card.textContent).not.toMatch(/RAW|12\/40|⠿|↑|↓/);
     expect(card.querySelector('[data-testid="board-card-raw"]')).toBeNull();
   });
 
-  it("omits the Shoot line when there is no Shoot date", async () => {
-    await renderBoard({ projects: [project("source", "awaiting_raw", { shootDate: null })] });
+  it("puts the suburb alone on the meta line when there is no Shoot date, and omits the line with neither", async () => {
+    await renderBoard({ projects: [project("source", "awaiting_raw", { shootDate: null, suburb: "Glebe" })] });
+    expect(cardOf().querySelector('[data-testid="board-card-shoot"]')?.textContent).toBe("Glebe");
+    expect(cardOf().textContent).not.toContain("Shoot");
+    await renderBoard({ projects: [project("source", "awaiting_raw", { shootDate: null, suburb: null })] });
     expect(cardOf().querySelector('[data-testid="board-card-address"]')).not.toBeNull();
     expect(cardOf().querySelector('[data-testid="board-card-shoot"]')).toBeNull();
-    expect(cardOf().textContent).not.toContain("Shoot");
   });
 
-  it("is red and says Overdue only for an active Project past its Deadline, judged against the `now` it is given", async () => {
+  // #923 D1: progress renders only when the API sent `checklist`; `{0,0}` is "No tasks", absent is nothing.
+  it("draws 'N of M done' in the Stage tone, 'No tasks' for none, and nothing when the count is unknown", async () => {
+    const counted = project("source", "raw_review", { checklist: { completed: 1, total: 4 } });
+    await renderBoard({ projects: [counted] });
+    const progress = cardOf().querySelector<HTMLElement>('[data-testid="done-progress"]')!;
+    expect(progress.querySelector(":scope > span")?.textContent).toBe("1 of 4 done");
+    expect(progress.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("25");
+    expect(progress.querySelector(":scope > span")?.textContent).toBe(projectAppearance(counted, Date.now()).done?.label);
+    expect(progress.style.getPropertyValue("--progress-tone")).toBe(projectAppearance(counted, Date.now()).tone.color);
+    await renderBoard({ projects: [project("source", "raw_review", { checklist: { completed: 0, total: 0 } })] });
+    expect(cardOf().querySelector('[data-testid="done-progress"]')?.textContent).toBe("No tasks");
+    await renderBoard({ projects: [project("source", "raw_review")] });
+    expect(cardOf().querySelector('[data-testid="done-progress"]')).toBeNull();
+  });
+
+  // Frame 4e `.card::before`: a 3px edge in the Stage tone ties the card to its column; Awaiting RAW's is dashed.
+  it("tops each card with its Stage tone, dashed for Awaiting RAW", async () => {
+    await renderBoard({ projects: [project("source", "awaiting_raw"), project("other", "raw_review")] });
+    const edge = (id: string) => cardOf(id).querySelector<HTMLElement>('[data-testid="board-card-edge"]')!;
+    expect(edge("source").getAttribute("data-treatment")).toBe("hollow-dashed");
+    expect(edge("other").getAttribute("data-treatment")).toBe("solid");
+    expect(edge("other").style.getPropertyValue("--card-tone")).toBe(projectAppearance(project("other", "raw_review"), Date.now()).tone.color);
+    expect(edge("other").getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("is late only for an active Project past its Deadline, judged against the `now` it is given", async () => {
     const deadlineAt = Date.parse("2026-09-01T00:00:00.000Z");
     const common = { deadlineAt, deadlineLocalCivil: "2026-09-01T10:00", deadlineZone: "Australia/Sydney" as const };
     const deadlineOf = (id: string) => cardOf(id).querySelector('[data-testid="board-card-deadline"]')!;
+    const chipOf = (id: string) => cardOf(id).querySelector('[data-testid="late-chip"]');
     await renderBoard({
       now: deadlineAt + 1000,
       projects: [
@@ -1561,15 +1649,28 @@ describe("Board card on ReUI frame (#432)", () => {
       ],
       activeStages: [...stages, { key: "delivered", label: "Delivered", displayOrder: 3, active: true }],
     });
-    expect(deadlineOf("active").textContent).toContain("Overdue");
-    expect(deadlineOf("active").className).toContain("text-signal-critical");
+    expect(chipOf("active")?.textContent).toBe("Late today");
+    expect(deadlineOf("active").className).toContain("text-late");
     for (const id of ["delivered", "archived"]) {
-      expect(deadlineOf(id).textContent, `${id} must not read Overdue`).toContain("Due");
-      expect(deadlineOf(id).className, `${id} must not be red`).not.toContain("text-signal-critical");
+      expect(chipOf(id), `${id} must not be late`).toBeNull();
+      expect(deadlineOf(id).className, `${id} must not be in the late colour`).not.toContain("text-late");
     }
-    // The same Project is not overdue against an earlier clock.
+    // The same Project is not late against an earlier clock.
     await renderBoard({ now: deadlineAt - 1000, projects: [project("active", "awaiting_raw", common)] });
-    expect(deadlineOf("active").textContent).toContain("Due");
+    expect(chipOf("active")).toBeNull();
+  });
+
+  it("an Edited review card past its Deadline is late like any working Stage (the module's answer, not the ochre)", async () => {
+    const deadlineAt = Date.parse("2026-09-01T00:00:00.000Z");
+    const now = deadlineAt + 3 * 86_400_000;
+    const review = project("review", "edited_review", { deadlineAt, deadlineLocalCivil: "2026-09-01T10:00", deadlineZone: "Australia/Sydney" });
+    await renderBoard({ now, projects: [review], activeStages: [...stages, { key: "edited_review", label: "Edited review", displayOrder: 4, active: true }] });
+    const appearance = projectAppearance(review, now);
+    expect(appearance.lateness.late).toBe(true);
+    expect(appearance.lateLabel).not.toBeNull();
+    expect(cardOf("review").querySelector('[data-testid="late-chip"]')?.textContent).toBe(appearance.lateLabel);
+    expect(cardOf("review").closest('[data-testid="board-card-wrap"]')?.getAttribute("data-late")).toBe("true");
+    expect(cardOf("review").querySelector<HTMLElement>('[data-testid="board-card-edge"]')!.style.getPropertyValue("--card-tone")).toBe(appearance.tone.color);
   });
 
   it("marks an Archived card, keeps its link, and never lets it be dragged or prioritised (#428, #432)", async () => {
@@ -1828,22 +1929,8 @@ async function act_(callback: () => Promise<void> | void): Promise<void> {
   await act(async () => { await callback(); await Promise.resolve(); });
 }
 
-// #432: the column header's count and overdue figure, and the collapsed rail.
-describe("ProjectKanbanBoard2 — column headers and collapse (#432)", () => {
-  /** The class string of the Dashboard header's "N OVERDUE" Badge, rendered by `DashboardHeader` itself. */
-  async function headerOverdueClass(): Promise<string> {
-    const { act } = await import("react");
-    const { DashboardHeader } = await import("../../screens/DashboardHeader");
-    const probe = document.createElement("div");
-    document.body.append(probe);
-    const probeRoot = createRoot(probe);
-    await act(async () => { probeRoot.render(createElement(DashboardHeader, { summary: { text: "x", overdue: 1 } as never, busy: false, canCreateProject: false })); await Promise.resolve(); });
-    const className = probe.querySelector('[data-testid="dashboard-overdue-badge"]')!.className;
-    await act(async () => probeRoot.unmount());
-    probe.remove();
-    return className;
-  }
-
+// #432: the column header's count and late figure, and the collapsed rail (#923: from the appearance module).
+describe("ProjectKanbanBoard2 — column headers and collapse (#432, #923)", () => {
   const NOW = Date.UTC(2026, 8, 10);
   const PAST = NOW - 86_400_000;
   const FUTURE = NOW + 86_400_000;
@@ -1866,54 +1953,64 @@ describe("ProjectKanbanBoard2 — column headers and collapse (#432)", () => {
     project("late", "awaiting_raw", { deadlineAt: PAST }),
     project("later", "awaiting_raw", { deadlineAt: PAST - 1000 }),
     project("ontime", "awaiting_raw", { deadlineAt: FUTURE }),
-    // Archived Projects are never overdue (`isOverdueProject`), however late their deadline.
+    // Archived Projects are never late (`projectLateness`), however late their deadline.
     project("archived-late", "raw_review", { deadlineAt: PAST, archivedAt: "2026-09-02T00:00:00.000Z" }),
     project("review-late", "raw_review", { deadlineAt: PAST }),
   ];
 
-  it("shows each column's project count and 'N overdue' only when N > 0, in the red signal token", async () => {
-    await renderBoard({ projects: mixed(), now: NOW });
+  // Frame 4e `colHead`: the column's count and "N late" come from the appearance module's group summary.
+  it("shows each column's project count and 'N late' only when N > 0, from stageGroupAppearance", async () => {
+    const projects = mixed();
+    await renderBoard({ projects, now: NOW });
     const first = column("Awaiting RAW")!;
-    expect(first.querySelector('[data-testid="board-column-count"]')?.textContent).toBe("3");
-    const overdue = first.querySelector('[data-testid="board-column-overdue"]');
-    expect(overdue?.textContent).toBe("2 overdue");
-    // The Dashboard header's badge: same component and variant, so the two read as one signal.
-    expect(overdue!.className).toBe(await headerOverdueClass());
+    const firstGroup = stageGroupAppearance(projects.filter((item) => item.stageKey === "awaiting_raw"), NOW);
+    expect(first.querySelector('[data-testid="board-column-count"]')?.textContent).toBe(String(firstGroup.count));
+    const late = first.querySelector('[data-testid="board-column-late"]');
+    expect(late?.textContent).toBe(`${firstGroup.lateCount} late`);
+    expect(late?.textContent).toBe("2 late");
+    expect([...late!.classList]).toEqual(expect.arrayContaining(["text-late", "border-late"]));
     const second = column("RAW review")!;
     expect(second.querySelector('[data-testid="board-column-count"]')?.textContent).toBe("2");
-    expect(second.querySelector('[data-testid="board-column-overdue"]')?.textContent, "an archived late Project counted as overdue").toBe("1 overdue");
+    expect(second.querySelector('[data-testid="board-column-late"]')?.textContent, "an archived late Project counted as late").toBe("1 late");
 
     await renderBoard({ projects: [project("ontime", "awaiting_raw", { deadlineAt: FUTURE })], now: NOW });
-    expect(column("Awaiting RAW")!.querySelector('[data-testid="board-column-overdue"]')).toBeNull();
+    expect(column("Awaiting RAW")!.querySelector('[data-testid="board-column-late"]')).toBeNull();
   });
 
-  it("lays each header out as two rows: index and full stage name, then count, overdue and the toggle", async () => {
+  // One 44px row: the Stage swatch and sentence-case name, the count, the late chip, then the toggle.
+  it("lays each header out as one row: Stage label, count, late chip, then the toggle at the end", async () => {
     await renderBoard({ projects: mixed(), now: NOW, collapsedStageKeys: [], onToggleStageCollapsed: vi.fn() });
     const headers = [...host.querySelectorAll<HTMLElement>('[data-testid="board-column"] [data-focus-key^="stage-heading:"]')];
     expect(headers.length).toBeGreaterThan(1);
     for (const header of headers) {
-      const titleRow = header.querySelector<HTMLElement>('[data-testid="board-column-title-row"]')!;
-      const statsRow = header.querySelector<HTMLElement>('[data-testid="board-column-stats-row"]')!;
-      expect(titleRow.firstElementChild!.textContent, "the index leads row 1").toMatch(/^\d\d$/);
-      expect(titleRow.querySelector('[title]'), "the full stage name stays available on hover").not.toBeNull();
-      expect(titleRow.querySelector('[data-testid="board-column-count"]')).toBeNull();
-      expect(titleRow.querySelector("button")).toBeNull();
-      expect(statsRow.querySelector('[data-testid="board-column-count"]')).not.toBeNull();
-      expect(statsRow.lastElementChild!.querySelector('[aria-label^="Collapse "]'), "the toggle ends row 2").not.toBeNull();
-      expect(statsRow.textContent).not.toContain(titleRow.querySelector('[title]')!.textContent!);
+      const row = header.querySelector<HTMLElement>('[data-testid="board-column-title-row"]')!;
+      const label = row.querySelector<HTMLElement>('[data-testid="stage-label"]')!;
+      expect(row.firstElementChild, "the Stage label leads the row").toBe(label);
+      expect(row.querySelector('[data-testid="board-column-count"]')).not.toBeNull();
+      expect(row.lastElementChild!.querySelector('[aria-label^="Collapse "]'), "the toggle ends the row").not.toBeNull();
+      expect(header.querySelector('[data-testid="board-column-stats-row"]'), "no second row").toBeNull();
+      expect(row.textContent).not.toMatch(/\b0\d\b/);
     }
-    const lateStats = column("Awaiting RAW")!.querySelector('[data-testid="board-column-stats-row"]')!;
-    expect(lateStats.querySelector('[data-testid="board-column-overdue"]'), "the overdue badge sits on row 2").not.toBeNull();
+    const awaiting = column("Awaiting RAW")!.querySelector<HTMLElement>('[data-testid="stage-label"]')!;
+    expect(awaiting.getAttribute("data-stage")).toBe("awaiting_raw");
+    const swatch = awaiting.querySelector<HTMLElement>('[data-testid="stage-key-swatch"]')!;
+    expect(swatch.getAttribute("data-treatment")).toBe(stageTone("awaiting_raw").treatment);
+    expect(swatch.style.getPropertyValue("--swatch-color")).toBe(stageTone("awaiting_raw").color);
+    expect(column("Awaiting RAW")!.querySelector('[data-testid="board-column-title-row"] [data-testid="board-column-late"]'), "the late chip sits on the row").not.toBeNull();
   });
 
-  it("column overdue figures sum to the Dashboard header's figure under the same clock", async () => {
-    const { dashboardSummary } = await import("../../lib/dashboard-summary");
+  it("names Editing without the autoHDR suffix on its column, which is a Project's variant, not the Stage's", async () => {
+    await renderBoard({ projects: [project("hdr", "editing_autohdr")], activeStages: [{ key: "editing_autohdr", label: "Editing", displayOrder: 3, active: true }] });
+    const label = host.querySelector('[data-testid="board-column"] [data-testid="stage-label"]')!;
+    expect(label.textContent).toBe("Editing");
+  });
+
+  it("column late figures sum to the module's late count over the same rows and clock", async () => {
     const projects = mixed();
     await renderBoard({ projects, now: NOW });
-    const total = [...host.querySelectorAll('[data-testid="board-column-overdue"]')].reduce((sum, node) => sum + Number.parseInt(node.textContent ?? "0", 10), 0);
-    const summary = dashboardSummary({ projects: projects as never, archived: "hide", searchActive: false, searchTotal: null, shown: projects.length, now: NOW });
-    expect(total, "anchor: something is overdue").toBeGreaterThan(0);
-    expect(total).toBe(summary!.overdue);
+    const total = [...host.querySelectorAll('[data-testid="board-column-late"]')].reduce((sum, node) => sum + Number.parseInt(node.textContent ?? "0", 10), 0);
+    expect(total, "anchor: something is late").toBeGreaterThan(0);
+    expect(total).toBe(stageGroupAppearance(projects, NOW).lateCount);
   });
 
   it("collapses to a rail that is still a column, with no cards, a vertical label, and the Stage heading focus key", async () => {
@@ -1923,9 +2020,11 @@ describe("ProjectKanbanBoard2 — column headers and collapse (#432)", () => {
     expect(rail.getAttribute("data-collapsed")).toBe("true");
     expect(rail.querySelector('[data-testid="board-card"]'), "a collapsed Stage still mounts its cards").toBeNull();
     expect(rail.querySelector('[data-testid="board-column-count"]')?.textContent).toBe("3");
-    expect(rail.querySelector('[data-testid="board-column-overdue"]')?.textContent).toContain("2");
+    expect(rail.querySelector('[data-testid="board-column-late"]')?.textContent).toBe("2 late");
     expect(rail.querySelector('[data-focus-key="stage-heading:awaiting_raw"]')?.getAttribute("tabindex")).toBe("-1");
+    expect(rail.querySelector('[data-testid="stage-key-swatch"]'), "the rail carries the Stage swatch").not.toBeNull();
     expect([...rail.classList]).toContain("w-12");
+    expect(rail.textContent).not.toMatch(/overdue/i);
     expect(column("RAW review")!.getAttribute("data-collapsed"), "the other column stays expanded").toBeNull();
 
     const { act } = await import("react");
@@ -1978,5 +2077,314 @@ describe("ProjectKanbanBoard2 — column headers and collapse (#432)", () => {
     await fireDnd("onDragCancel", { active: { id: "late" } });
     expect(collapse().disabled).toBe(false);
     expect(expand().disabled).toBe(false);
+  });
+});
+
+describe("ProjectKanbanBoard2 — column actions, empty columns and Stage menu swatches (#923)", () => {
+  beforeEach(() => {
+    dnd.handlers.length = 0;
+    sortable.contexts.length = 0;
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    const { act } = await import("react");
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  const column = (stageKey: string) => host.querySelector<HTMLElement>(`[data-testid="board-column"][data-stage-key="${stageKey}"]`)!;
+  const allStages: readonly PipelineStage[] = [
+    ...stages,
+    { key: "editing", label: "Editing", displayOrder: 3, active: true },
+    { key: "edited_review", label: "Edited review", displayOrder: 4, active: true },
+    { key: "delivered", label: "Delivered", displayOrder: 5, active: true },
+  ];
+
+  // #923 D3: "+ New shoot" only in Awaiting RAW, only with `createProject`, to /projects/new with no Stage preset.
+  it("offers '+ New shoot' at the end of Awaiting RAW only, for a viewer who can create a Project", async () => {
+    await renderBoard({ canCreateProject: true, activeStages: allStages, projects: [project("a", "awaiting_raw"), project("b", "raw_review")] });
+    const links = [...host.querySelectorAll<HTMLAnchorElement>('[data-testid="board-column-new-shoot"]')];
+    expect(links).toHaveLength(1);
+    expect(column("awaiting_raw").contains(links[0]!)).toBe(true);
+    expect(links[0]!.tagName).toBe("A");
+    expect(links[0]!.getAttribute("href")).toBe("/projects/new");
+    expect(links[0]!.textContent).toBe("New shoot");
+    // Outside the SortableContext's list, so it never sits between the cards and the end drop indicator.
+    const list = column("awaiting_raw").querySelector('[data-testid="board-column-list"]');
+    expect(list, "anchor: the list").not.toBeNull();
+    expect(list!.contains(links[0]!)).toBe(false);
+
+    await renderBoard({ canCreateProject: false, activeStages: allStages, projects: [project("a", "awaiting_raw")] });
+    expect(host.querySelector('[data-testid="board-column-new-shoot"]')).toBeNull();
+    await renderBoard({ activeStages: allStages, projects: [project("a", "awaiting_raw")] });
+    expect(host.querySelector('[data-testid="board-column-new-shoot"]')).toBeNull();
+  });
+
+  // Frame 4h "empty": each empty column says so in its own words; Awaiting RAW's carries New shoot as its action.
+  it("gives each empty column its own copy, with New shoot as Awaiting RAW's action", async () => {
+    await renderBoard({ canCreateProject: true, activeStages: allStages, projects: [project("b", "raw_review")], collapsedStageKeys: [] });
+    const empty = (stageKey: string) => column(stageKey).querySelector('[data-testid="board-column-empty"]');
+    expect(empty("awaiting_raw")?.textContent).toContain("No shoots waiting for RAW.");
+    expect(empty("awaiting_raw")?.querySelector('[data-testid="board-column-new-shoot"]')).not.toBeNull();
+    expect(host.querySelectorAll('[data-testid="board-column-new-shoot"]'), "one New shoot, not a slot as well").toHaveLength(1);
+    expect(empty("raw_review"), "a column with a card is not empty").toBeNull();
+    expect(empty("editing")?.textContent).toBe("Nothing in editing.");
+    expect(empty("edited_review")?.textContent).toBe("Nothing waiting for review.");
+    expect(empty("delivered")?.textContent).toBe("Nothing delivered yet.");
+    expect(host.textContent).not.toContain("—");
+  });
+
+  // card-menu's swatches are the appearance module's tones, not the retired caution + hatch pair (#257).
+  it("draws each Move to Stage with its tone swatch and no hatch", async () => {
+    await renderBoard({ activeStages: allStages, projects: [project("a", "awaiting_raw")], canMoveStages: true, role: "admin" });
+    await openCardMenu(host, "a");
+    await openMoveToSubmenu();
+    expect(stageRadios().length, "anchor: Stage radios").toBe(allStages.length);
+    for (const radio of stageRadios()) {
+      const key = allStages.find((stage) => stage.label === radio.textContent)!.key;
+      const swatch = radio.querySelector<HTMLElement>('[data-testid="stage-key-swatch"]');
+      expect(swatch, `${key} has a tone swatch`).not.toBeNull();
+      expect(swatch!.style.getPropertyValue("--swatch-color")).toBe(stageTone(key).color);
+    }
+    expect(document.querySelector('[data-pattern="hatch"]')).toBeNull();
+    await closeMenus();
+  });
+});
+
+describe("ProjectKanbanBoard2 — phone Stage pills (#923, frame 4f)", () => {
+  let scrolled: Element[] = [];
+  const original = Element.prototype.scrollIntoView;
+
+  beforeEach(() => {
+    dnd.handlers.length = 0;
+    sortable.contexts.length = 0;
+    scrolled = [];
+    Element.prototype.scrollIntoView = function scrollIntoView(this: Element) { scrolled.push(this); };
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    Element.prototype.scrollIntoView = original;
+    const { act } = await import("react");
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  const pills = () => [...host.querySelectorAll<HTMLButtonElement>('[data-testid="board-stage-pills"] [data-stage-key]')];
+
+  it("draws one pill per Stage with its swatch and count, shown on a phone only, as one labelled group", async () => {
+    await renderBoard({ projects: [project("a", "awaiting_raw"), project("b", "raw_review"), project("c", "raw_review")] });
+    const group = host.querySelector<HTMLElement>('[data-testid="board-stage-pills"]')!;
+    expect(group.getAttribute("aria-label")).toBe("Stages");
+    expect([...group.classList]).toEqual(expect.arrayContaining(["hidden", "max-[721px]:flex"]));
+    expect(pills().map((pill) => pill.getAttribute("data-stage-key"))).toEqual(["awaiting_raw", "raw_review"]);
+    expect(pills().map((pill) => pill.textContent)).toEqual(["Awaiting RAW1", "RAW review2"]);
+    for (const pill of pills()) expect(pill.querySelector('[data-testid="stage-key-swatch"]')).not.toBeNull();
+    expect(pills()[0]!.getAttribute("aria-pressed"), "the first Stage shows first").toBe("true");
+    expect(pills()[1]!.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  // Every column stays mounted: a pill scrolls the strip, it never swaps which droppables exist.
+  it("scrolls the strip to the pill's column without mounting or unmounting a column", async () => {
+    await renderBoard({ projects: [project("a", "awaiting_raw"), project("b", "raw_review")] });
+    const columnsBefore = [...host.querySelectorAll('[data-testid="board-column"]')];
+    const { act } = await import("react");
+    await act(async () => { pills()[1]!.click(); await Promise.resolve(); });
+    const target = host.querySelector('[data-testid="board-column"][data-stage-key="raw_review"]');
+    expect(target, "anchor: the target column").not.toBeNull();
+    expect(scrolled).toContain(target);
+    expect(pills()[1]!.getAttribute("aria-pressed")).toBe("true");
+    expect(pills()[0]!.getAttribute("aria-pressed")).toBe("false");
+    const columnsAfter = [...host.querySelectorAll('[data-testid="board-column"]')];
+    expect(columnsAfter).toHaveLength(columnsBefore.length);
+    columnsAfter.forEach((node, index) => expect(node, "a column was remounted").toBe(columnsBefore[index]));
+  });
+
+  it("keeps the active pill when it is pressed again, rather than showing no Stage", async () => {
+    await renderBoard();
+    const { act } = await import("react");
+    await act(async () => { pills()[0]!.click(); await Promise.resolve(); });
+    expect(pills()[0]!.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  // #923 S5: a pill must land on real cards, so a phone never draws the 48px rail. The stored choice is the viewer's
+  // wide-screen preference and stays as it is: no toggle is offered on a phone, and nothing writes it.
+  describe("Delivered on a phone", () => {
+    const withDelivered = [...stages, { key: "delivered", label: "Delivered", displayOrder: 5, active: true }] as const;
+    let media: { set(phone: boolean): void; restore(): void };
+
+    function phoneMedia(initial: boolean) {
+      const original = window.matchMedia;
+      const listeners = new Set<() => void>();
+      let phone = initial;
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: (query: string) => ({
+          get matches() { return phone && query === "(width < 721px)"; },
+          media: query,
+          onchange: null,
+          addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+          removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+          addListener: (listener: () => void) => listeners.add(listener),
+          removeListener: (listener: () => void) => listeners.delete(listener),
+          dispatchEvent: () => false,
+        }),
+      });
+      return {
+        set(next: boolean) { phone = next; for (const listener of [...listeners]) listener(); },
+        restore() { Object.defineProperty(window, "matchMedia", { configurable: true, value: original }); },
+      };
+    }
+
+    afterEach(() => media.restore());
+
+    const delivered = () => host.querySelector<HTMLElement>('[data-testid="board-column"][data-stage-key="delivered"]')!;
+    const toggles = () => host.querySelectorAll('[data-testid="board-column-collapse"], [data-testid="board-column-expand"]');
+
+    it("is a full column with its cards, though the viewer keeps it collapsed, and offers no collapse control", async () => {
+      media = phoneMedia(true);
+      const onToggleStageCollapsed = vi.fn();
+      await renderBoard({ activeStages: withDelivered, projects: [project("a", "awaiting_raw"), project("d", "delivered")], collapsedStageKeys: ["delivered"], onToggleStageCollapsed });
+      expect(delivered().hasAttribute("data-collapsed")).toBe(false);
+      expect(delivered().querySelector('[data-testid="board-card"]')?.textContent).toContain("d Street");
+      expect(toggles()).toHaveLength(0);
+
+      const { act } = await import("react");
+      await act(async () => { media.set(false); await Promise.resolve(); });
+      expect(delivered().getAttribute("data-collapsed"), "wide again: the stored choice still holds").toBe("true");
+      expect(toggles().length).toBeGreaterThan(0);
+      expect(onToggleStageCollapsed).not.toHaveBeenCalled();
+    });
+
+    it("keeps the columns it had for the whole of a drag when the width crosses the phone breakpoint", async () => {
+      media = phoneMedia(true);
+      await renderBoard({ activeStages: withDelivered, projects: [project("source", "awaiting_raw"), project("d", "delivered")], collapsedStageKeys: ["delivered"], onToggleStageCollapsed: vi.fn() });
+      await fireDnd("onDragStart", { active: { id: "source" } });
+      const { act } = await import("react");
+      await act(async () => { media.set(false); await Promise.resolve(); });
+      expect(delivered().hasAttribute("data-collapsed"), "no droppable changes mid-drag").toBe(false);
+      await fireDnd("onDragCancel", { active: { id: "source" } });
+      expect(delivered().getAttribute("data-collapsed")).toBe("true");
+    });
+  });
+
+  it("disables the pills for the whole of a drag, then gives them back", async () => {
+    await renderBoard();
+    expect(pills().length, "anchor: pills").toBeGreaterThan(0);
+    expect(pills().every((pill) => !pill.disabled), "anchor: enabled").toBe(true);
+    await fireDnd("onDragStart", { active: { id: "source" } });
+    expect(pills().every((pill) => pill.disabled)).toBe(true);
+    await fireDnd("onDragCancel", { active: { id: "source" } });
+    expect(pills().every((pill) => !pill.disabled)).toBe(true);
+  });
+});
+
+describe("BoardSkeleton (#923, frame 4h)", () => {
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    const { act } = await import("react");
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  it("draws one column shell per Stage with its label, and two skeleton compact cards in each", async () => {
+    const { act } = await import("react");
+    await act(async () => { root.render(createElement(BoardSkeleton, { stages })); await Promise.resolve(); });
+    const skeleton = host.querySelector<HTMLElement>('[data-testid="board-skeleton"]')!;
+    expect(skeleton.getAttribute("aria-busy")).toBe("true");
+    expect(skeleton.textContent).toContain("Loading projects");
+    const columns = [...skeleton.querySelectorAll<HTMLElement>('[data-testid="board-skeleton-column"]')];
+    expect(columns).toHaveLength(stages.length);
+    expect(columns.map((node) => node.querySelector('[data-testid="stage-label"]')?.textContent)).toEqual(["Awaiting RAW", "RAW review"]);
+    for (const node of columns) {
+      expect(node.querySelectorAll('[data-testid="board-skeleton-card"]')).toHaveLength(2);
+      for (const card of node.querySelectorAll('[data-testid="board-skeleton-card"]')) expect(card.querySelector('[data-testid="board-skeleton-thumb"]'), "the 44x30 thumb's skeleton").not.toBeNull();
+    }
+    expect(skeleton.querySelector("a, button, [tabindex]")).toBeNull();
+  });
+
+  it("draws unlabelled column shells when the Stages are not known yet", async () => {
+    const { act } = await import("react");
+    await act(async () => { root.render(createElement(BoardSkeleton, {})); await Promise.resolve(); });
+    expect(host.querySelectorAll('[data-testid="board-skeleton-column"]')).toHaveLength(4);
+    expect(host.querySelector('[data-testid="stage-label"]')).toBeNull();
+  });
+});
+
+// #923 browser pass, round 2 (design review): rows 3, 4, 7, 8 and 9.
+describe("ProjectKanbanBoard2 — browser pass round 2 (#923)", () => {
+  beforeEach(() => {
+    dnd.handlers.length = 0;
+    sortable.contexts.length = 0;
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(async () => {
+    const { act } = await import("react");
+    await act(async () => root.unmount());
+    host.remove();
+  });
+
+  const column = (stageKey: string) => host.querySelector<HTMLElement>(`[data-testid="board-column"][data-stage-key="${stageKey}"]`)!;
+
+  it("row 3: writes New shoot in sentence case, in the add slot and as the empty column's action", async () => {
+    await renderBoard({ canCreateProject: true, projects: [project("a", "awaiting_raw")] });
+    const slot = host.querySelector<HTMLElement>('[data-testid="board-column-new-shoot"]')!;
+    expect(slot.className).toContain("normal-case");
+    expect(slot.className).toContain("tracking-[var(--tracking-normal)]");
+
+    await renderBoard({ canCreateProject: true, projects: [project("b", "raw_review")] });
+    const action = column("awaiting_raw").querySelector<HTMLElement>('[data-testid="board-column-empty"] [data-testid="board-column-new-shoot"]')!;
+    expect(action.className).toContain("normal-case");
+  });
+
+  it("row 4: draws a failed cover as the street's initial, and a sentence-case retry sized to its words", async () => {
+    await renderBoard({ projects: [project("source", "awaiting_raw", { coverAssetId: "asset-1" })] });
+    const cover = host.querySelector<HTMLElement>('[data-testid="board-card-cover"]')!;
+    expect(cover.textContent).toBe("S");
+    expect(cover.querySelector('[aria-hidden="true"]')?.textContent, "the initial placeholder").toBe("S");
+    expect(cover.querySelector('[role="status"]'), "no failed-image status box in the 44x30 thumb").toBeNull();
+    const retry = [...host.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent === "Retry cover image")!;
+    expect(retry, "anchor: the retry").toBeDefined();
+    expect(retry.className).toContain("normal-case");
+    expect(retry.className).toContain("self-start");
+  });
+
+  it("row 7: lines the phone Stage pills up with the column's edge, with no rule of their own above its border", async () => {
+    await renderBoard();
+    const pills = host.querySelector<HTMLElement>('[data-testid="board-stage-pills"]')!;
+    const classes = [...pills.classList];
+    expect(classes.some((name) => /^px-/.test(name)), "no inline padding past the page gutter").toBe(false);
+    expect(classes.some((name) => /^border-b/.test(name)), "the column's top border is the only rule").toBe(false);
+  });
+
+  it("row 8: pulls interactive stars up by their hit cell's inset, so the glyphs sit a --space-2 under the progress", async () => {
+    await renderBoard({ canPrioritize: true, projects: [project("source", "awaiting_raw", { checklist: { completed: 1, total: 4 } })] });
+    const footer = host.querySelector<HTMLElement>('[data-testid="board-card-footer-slot"]')!;
+    expect(footer.getAttribute("data-star-inset")).toBe("pulled");
+    await renderBoard({ canPrioritize: false, projects: [project("source", "awaiting_raw", { checklist: { completed: 1, total: 4 }, priority: 3 })] });
+    expect(host.querySelector('[data-testid="board-card-footer-slot"]')!.hasAttribute("data-star-inset"), "read-only stars have no cell to pull").toBe(false);
+  });
+
+  it("row 9: gives a scrolling column's list a gutter for its scrollbar", async () => {
+    await renderBoard();
+    const list = column("awaiting_raw").querySelector<HTMLElement>('[data-testid="board-column-list"]')!;
+    expect(list.className).toContain("group-data-[has-overflow-y]/column-scroll:pe-[var(--space-5)]");
+    let scope: HTMLElement | null = list.parentElement;
+    while (scope && !scope.classList.contains("group/column-scroll")) scope = scope.parentElement;
+    expect(scope, "the column's ScrollArea is the group").not.toBeNull();
+    expect(column("awaiting_raw").contains(scope)).toBe(true);
   });
 });

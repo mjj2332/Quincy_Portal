@@ -353,6 +353,15 @@ describe("Dashboard shared Filter (#428)", () => {
     expect(boardProps.value?.canMoveStages).toBe(true);
   });
 
+  // #923 D3: Awaiting RAW's "+ New shoot" is the createProject capability, never the role.
+  it("hands the Board the createProject capability, so only a viewer who can create a shoot is offered one", async () => {
+    await renderAt("/?view=board");
+    expect(boardProps.value?.canCreateProject).toBe(true);
+    await renderAt("/?view=board", "editor");
+    expect(boardProps.value?.role, "anchor: the Board rendered for the Editor").toBe("editor");
+    expect(boardProps.value?.canCreateProject).toBe(false);
+  });
+
   describe("People, Shoot date, Deadline, Overdue and My tasks (#429)", () => {
     const BEA = "0b000000-0000-4000-8000-000000000002";
     const STALE = "0c000000-0000-4000-8000-000000000003";

@@ -30,3 +30,20 @@ opens the Dashboard and focuses the search there.
 - The scrim behind the wide account menu (ADR 0006, decision 4) is kept for the avatar menu.
 - A sign-out icon standing on its own, as in the block, was rejected so that one stray click
   cannot sign someone out.
+
+## Amendment (#923 D2): the Dashboard draws the shell's chrome in its own row
+
+The Dashboard's view bar is the only row above its view (frames 4a, 4a-t, 4a-s, 4f and 4g of the
+Table and Board revamp), so while the Dashboard is mounted the shell renders no header: no 50px row
+and no breadcrumb, at every width. Below 772px the bar hosts what that header held, the nav Sheet
+trigger first and the bell last. Every other screen keeps its shell header and breadcrumb as before.
+
+- The rule is keyed on the Dashboard being mounted, not on the route, so the Dashboard keeps it
+  while it is the backdrop under the Project sheet (the `.app:has(.page--fill)` precedent, #363). A
+  page claims the header through `useShellChromeInPage` (`RailedShell.tsx`), which sets
+  `data-shell-header="page"` and zeroes `--shell-header-height` beneath it (`styles/app.css`).
+- The 771px breakpoint is unchanged. ADR 0006's one-bell rule holds: on the narrow Dashboard the
+  bell anchors under the view bar's row, the same `header` placement it had under the shell header.
+- The breadcrumb's last crumb was the shell's only display of the current Dashboard view. With it
+  gone from the Dashboard, the view bar's tabs, or the phone picker, are the one place that names
+  the view, and both read the view the Dashboard renders (#119).

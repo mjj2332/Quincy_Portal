@@ -1,8 +1,7 @@
 import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { StageKey } from "@quincy/shared";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area";
-import { StatusBadge } from "../atoms";
 import type { DragEndEvent, DragOverEvent, DragStartEvent } from "@dnd-kit/core";
 import { Kanban, KanbanColumn, KanbanColumnContent, KanbanItem, KanbanOverlay, type KanbanMoveEvent } from "../reui/kanban";
 import {
@@ -18,15 +17,22 @@ import {
 import { boardAnimateLayoutChanges, flipDeltas, playFlip, type FlipSnapshot } from "../../lib/kanban-flip";
 import type { KanbanSortMode } from "../../screens/dashboard-helpers";
 import { useStarClickGuard } from "../../lib/star-click-guard";
-import type { ProjectStageKey } from "../../lib/stages";
-import { usePrefersReducedMotion } from "../../lib/use-media-query";
+import type { PipelineStage, ProjectStageKey } from "../../lib/stages";
+import { useMediaQuery, usePrefersReducedMotion } from "../../lib/use-media-query";
+import { stageGroupAppearance } from "../../lib/dashboard-project-appearance";
 import { ScrollArea, ScrollBar } from "../reui/scroll-area";
 import { Button } from "../reui/button";
-import { Badge } from "../reui/badge";
-import { isOverdueProject } from "../../lib/dashboard-summary";
+import { Toggle } from "../reui/toggle";
+import { EmptyState } from "../quincy/EmptyState";
+import { LateChip } from "../quincy/LateChip";
+import { StageLabel } from "../quincy/StageLabel";
+import { StageToneSwatch } from "../quincy/StageKeyRow";
+import { columnLabelKey, stageTone } from "../../lib/dashboard-appearance";
+import { InternalLink } from "../InternalLink";
 import { KanbanCard2 } from "./card";
 import { cardMoveTo, moveToChoices } from "./card-actions";
 import type { CardMenuConfig } from "./card-menu";
+import { BOARD_PHONE_QUERY, COLUMN_SIZE_CLASS, COLUMN_SURFACE_CLASS, RAIL_SIZE_CLASS, semanticStageKey } from "./board-layout";
 
 /**
  * Keyboard drag keys (#432): Space picks a card up, so Enter is free to open it (the card's link is
@@ -42,9 +48,79 @@ const boardKeyboardCodes = { start: ["Space"], cancel: ["Escape"], end: ["Space"
  */
 const boardNoShiftStrategy = () => null;
 
-/** `editing` is the role-safe presentation of `editing_autohdr`. */
-function semanticStageKey(value: ProjectStageKey): StageKey {
-  return value === "editing" ? "editing_autohdr" : value;
+/** Frame 4h "empty": each empty column says so in its own words (Awaiting RAW's carries New shoot). */
+const EMPTY_COLUMN_COPY: Record<StageKey, string> = {
+  awaiting_raw: "No shoots waiting for RAW.",
+  raw_review: "No RAW to review.",
+  editing_autohdr: "Nothing in editing.",
+  edited_review: "Nothing waiting for review.",
+  delivered: "Nothing delivered yet.",
+};
+
+/**
+ * #923 D3: "+ New shoot" in Awaiting RAW only, for a viewer with `createProject`, to `/projects/new` with no
+ * Stage preset. `slot` is frame 4e's `.addc`, the dashed full-width row at the column's end; otherwise it is
+ * the empty column's action (frame 4h). Outside the column's `SortableContext` list either way. Control height
+ * (38px, 44px on a phone), not the frame's 34px (#923 session defaults). Sentence case, as both frames write it,
+ * not the Button's uppercase eyebrow (#923 pass round 2, row 3).
+ */
+function NewShootLink({ slot }: { slot: boolean }) {
+  return (
+    <Button
+      variant="outline"
+      nativeButton={false}
+      render={<InternalLink to="/projects/new" data-testid="board-column-new-shoot" />}
+      className={`normal-case tracking-[var(--tracking-normal)] ${slot ? "w-full border-dashed bg-transparent text-xs text-foreground-secondary" : "mt-[var(--space-2)]"}`}
+    >
+      <Plus aria-hidden="true" />
+      New shoot
+    </Button>
+  );
+}
+
+/**
+ * Frame 4f: the phone Board's Stage pills (`reui/toggle` chip), one per column with its swatch and count. A pill
+ * SCROLLS the strip to its column; every column stays mounted, so no droppable mounts or unmounts, and the pills
+ * are disabled for the whole of a drag. Swiping the strip moves the pressed pill (`onScroll` in the Board).
+ * No inline padding and no rule of its own (#923 pass round 2, row 7): the first pill starts on the column's
+ * edge, and the column's top border is the one line between them.
+ */
+function StagePills({ stages, counts, active, disabled, onSelect }: {
+  stages: readonly PipelineStage[];
+  counts: Record<string, number>;
+  active: string | null;
+  disabled: boolean;
+  onSelect: (stageKey: string) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Stages"
+      data-testid="board-stage-pills"
+      className="hidden max-[721px]:flex shrink-0 gap-[var(--space-2)] overflow-x-auto py-[var(--space-3)] [scrollbar-width:none]"
+    >
+      {stages.map((stage) => {
+        const pressed = stage.key === active;
+        return (
+          <Toggle
+            key={stage.key}
+            variant="chip"
+            size="chip"
+            pressed={pressed}
+            disabled={disabled}
+            data-stage-key={stage.key}
+            data-picked={pressed ? "" : undefined}
+            className="shrink-0"
+            // Pressing the shown Stage again keeps it: a pill always names the column in view.
+            onPressedChange={(next) => { if (next) onSelect(stage.key); }}
+          >
+            <StageLabel stageKey={columnLabelKey(stage.key)} label={stage.label} />
+            <span className="font-mono text-xs tabular-nums text-foreground-secondary">{counts[stage.key] ?? 0}</span>
+          </Toggle>
+        );
+      })}
+    </div>
+  );
 }
 
 /**
@@ -161,13 +237,17 @@ class FlipScope extends Component<FlipScopeProps> {
  * `onInteractionStateChange` and `onAnnounce` as of #98, and `sameStageReorderEnabled`,
  * `onBoardPosition` (the arrows), `onMoveStage` and `onMoveToProposalChange` (Move to…) as of #99.
  *
- * Layout follows ReUI's `tempo-tasks` Kanban board: every column is one fixed 280px track
- * (`auto-cols-[17.5rem]`) at every viewport and pointer type, each column is its own bordered
- * surface separated by a `--space-4` gap, and the Board sits left-aligned in a full-width
- * horizontal scroll area — spare width is page background. 280px also clears #81's touch
- * constraint: five 44px star targets need 220px, and a 280px track leaves a 254px card (two 1px
- * column borders, two 12px content paddings).
+ * Layout follows ReUI's `tempo-tasks` Kanban board, sized to frame 4e since #923 (`COLUMN_SIZE_CLASS`): each
+ * column is its own bordered surface separated by a `--space-4` gap, fluid over a 280px floor inside a
+ * full-width horizontal scroll area, with a collapsed Stage (Delivered, by default) resting as a 48px rail. On a
+ * phone (frame 4f) a column is the viewport's width and snaps, the Stage pills above scroll the strip, and no
+ * Stage rests as a rail (#923 S5).
  */
+export type ProjectKanbanBoard2Props = ProjectKanbanBoardProps & {
+  /** The viewer holds `createProject`: Awaiting RAW offers "+ New shoot" (#923 D3). */
+  canCreateProject?: boolean;
+};
+
 export function ProjectKanbanBoard2({
   projects,
   activeStages,
@@ -190,7 +270,8 @@ export function ProjectKanbanBoard2({
   now,
   collapsedStageKeys,
   onToggleStageCollapsed,
-}: ProjectKanbanBoardProps) {
+  canCreateProject = false,
+}: ProjectKanbanBoard2Props) {
   const columns = useMemo(() => {
     const record: Record<string, ProjectSummary[]> = {};
     for (const stage of activeStages) {
@@ -343,6 +424,57 @@ export function ProjectKanbanBoard2({
   // from under A's drag. A Board-side lock, not a Dashboard guard — the Dashboard still sees the drag
   // as active while the drop's own `onMove` runs, so a guard there would refuse every real drop.
   const [dragActive, setDragActive] = useState(false);
+
+  // #923 S5: on a phone (frame 4f) every column is drawn in full, Delivered included, so a Stage pill always lands
+  // on real cards and never on the 48px rail; the phone column header has no collapse control. The stored choice
+  // (`collapsedStageKeys`) is the viewer's wide-screen preference and is left exactly as it is. A width that
+  // crosses the breakpoint mid-drag waits for the drop: swapping a rail for a column would mount droppables under
+  // `MeasuringStrategy.Always`, the loop lessons.md bans.
+  const phoneNow = useMediaQuery(BOARD_PHONE_QUERY);
+  const [phone, setPhone] = useState(phoneNow);
+  if (!dragActive && phone !== phoneNow) setPhone(phoneNow);
+
+  // Frame 4f's phone pills (#923). The pressed pill names the column at the strip's start: a press scrolls there,
+  // a swipe moves the pill. While a press's own smooth scroll runs, the swipe sync stands down, or the pill would
+  // step through every column the scroll passes.
+  const [pickedStage, setPickedStage] = useState<string | null>(null);
+  const activePill = pickedStage !== null && activeStages.some((stage) => stage.key === pickedStage) ? pickedStage : (activeStages[0]?.key ?? null);
+  const pillScrollTimer = useRef<number | undefined>(undefined);
+  const settlePillScroll = useCallback((delay: number) => {
+    window.clearTimeout(pillScrollTimer.current);
+    pillScrollTimer.current = window.setTimeout(() => { pillScrollTimer.current = undefined; }, delay);
+  }, []);
+  useEffect(() => () => window.clearTimeout(pillScrollTimer.current), []);
+  // Each column registers its element here through the `render` element's ref (merged with dnd-kit's own by
+  // `KanbanColumn`'s `useRender`), so the pills never search the DOM by test id.
+  const columnElements = useRef(new Map<string, HTMLElement>());
+  const columnRef = (stageKey: string) => (element: HTMLElement | null) => {
+    if (element) columnElements.current.set(stageKey, element);
+    else columnElements.current.delete(stageKey);
+  };
+  const columnElement = (stageKey: string) => columnElements.current.get(stageKey) ?? null;
+  const selectPill = (stageKey: string) => {
+    setPickedStage(stageKey);
+    settlePillScroll(600);
+    columnElement(stageKey)?.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "nearest", inline: "start" });
+  };
+  const syncPillToScroll = (viewport: HTMLElement) => {
+    // The pills exist on a phone only; a wide Board's horizontal scroll has nothing to sync.
+    if (!phone || dragActive) return;
+    if (pillScrollTimer.current !== undefined) {
+      settlePillScroll(150);
+      return;
+    }
+    const start = viewport.getBoundingClientRect().left;
+    let nearest: { key: string; distance: number } | null = null;
+    for (const stage of activeStages) {
+      const element = columnElement(stage.key);
+      if (!element) continue;
+      const distance = Math.abs(element.getBoundingClientRect().left - start);
+      if (!nearest || distance < nearest.distance) nearest = { key: stage.key, distance };
+    }
+    if (nearest) setPickedStage(nearest.key);
+  };
 
   // The misclick guard (#304): wraps `onPriorityChange`, armed by the FLIP below.
   const starClickGuard = useStarClickGuard(onPriorityChange);
@@ -590,6 +722,13 @@ export function ProjectKanbanBoard2({
       keyboardCodes={boardKeyboardCodes}
       className="flex min-h-0 min-w-0 w-full flex-1 flex-col"
     >
+      <StagePills
+        stages={activeStages}
+        counts={Object.fromEntries(activeStages.map((stage) => [stage.key, (columns[stage.key] ?? []).length]))}
+        active={activePill}
+        disabled={dragActive}
+        onSelect={selectPill}
+      />
       {/* Horizontal scroll, composed as ReUI `tempo-tasks`' `BoardScrollArea`: Base UI's ScrollArea
           primitives (the same pattern as `reui/gantt/gantt-view.tsx`) with the installed
           `reui/scroll-area.tsx` `ScrollBar`. The installed `ScrollArea` wrapper cannot be used: it
@@ -609,7 +748,11 @@ export function ProjectKanbanBoard2({
         <ScrollAreaPrimitive.Viewport
           data-slot="scroll-area-viewport"
           data-testid="board-scroll-viewport"
-          className="min-h-0 w-full flex-1 focus-visible:!outline-none"
+          // #923 frame 4f: on a phone each column snaps to the strip's start. The snap is off for the whole of a drag,
+          // or it would fight dnd-kit's auto-scroll; scroll-snap is not layout, so nothing in-flow changes.
+          data-dragging={dragActive ? "true" : undefined}
+          onScroll={(event) => syncPillToScroll(event.currentTarget)}
+          className="@container min-h-0 w-full flex-1 focus-visible:!outline-none max-[721px]:snap-x max-[721px]:snap-mandatory data-[dragging=true]:snap-none"
         >
           <ScrollAreaPrimitive.Content data-slot="scroll-area-content" className="h-full w-max min-w-full">
             <FlipScope orderKey={orderKey} sortMode={sortMode} enabled={!dragActive} animate={!reducedMotion} rootRef={boardRef} onMoved={starClickGuard.onCardsMoved}>
@@ -625,15 +768,18 @@ export function ProjectKanbanBoard2({
                 data-focus-key="board"
                 tabIndex={-1}
               >
-                {activeStages.map((stage, stageIndex) => {
+                {activeStages.map((stage) => {
                   const stageProjects = columns[stage.key] ?? [];
                   const stageKey = semanticStageKey(stage.key);
-                  const collapsed = collapsedStageKeys?.includes(stageKey) ?? false;
-                  const overdueCount = stageProjects.filter((project) => isOverdueProject(project, now ?? Date.now())).length;
+                  const collapsed = !phone && (collapsedStageKeys?.includes(stageKey) ?? false);
+                  // #923: the column's count and "N late" are the appearance module's group summary, so they agree
+                  // with the cards (Delivered and archived Projects are never late).
+                  const group = stageGroupAppearance(stageProjects, now ?? Date.now());
                   const columnId = `board-column-${stageKey}`;
+                  const offersNewShoot = canCreateProject && stageKey === "awaiting_raw";
                   // The collapse control: a ghost icon button, disabled for the whole of a drag (toggling
                   // droppables mid-drag under `MeasuringStrategy.Always` is the loop lessons.md bans).
-                  const toggle = (label: string, expanded: boolean) => onToggleStageCollapsed && (
+                  const toggle = (label: string, expanded: boolean) => onToggleStageCollapsed && !phone && (
                     <Button
                       type="button"
                       variant="ghost"
@@ -655,12 +801,16 @@ export function ProjectKanbanBoard2({
                     // but with no `KanbanColumnContent`, so its cards are unmounted while collapsed.
                     const receiving = shownProposal?.targetStageKey === stageKey;
                     return (
-                      <KanbanColumn key={stage.key} id={columnId} value={stage.key} disabled className={`w-12 shrink-0 bg-[var(--paper-050)] min-h-0 border border-[length:var(--border-width-hair)] border-border opacity-100 ${receiving ? "border-[var(--ink-900)]" : ""}`} data-testid="board-column" data-collapsed="true">
-                        <div className="flex h-full flex-col items-center gap-[var(--space-3)] py-[var(--space-3)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] outline-offset-[-2px] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${stageKey}`} tabIndex={-1}>
+                      <KanbanColumn key={stage.key} id={columnId} value={stage.key} render={<div ref={columnRef(stage.key)} />} disabled className={`${RAIL_SIZE_CLASS} ${COLUMN_SURFACE_CLASS} ${receiving ? "border-[var(--ink-900)]" : ""}`} data-testid="board-column" data-stage-key={stage.key} data-collapsed="true">
+                        {/* Frame 4e `.kcol.rest`: the toggle, the Stage swatch, then the name and count reading upwards. */}
+                        <div className="flex h-full flex-col items-center gap-[var(--space-3)] py-[var(--space-2)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] outline-offset-[-2px] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${stageKey}`} tabIndex={-1}>
                           {toggle("Expand", false)}
-                          <span className="tabular-nums text-sm text-foreground-secondary" data-testid="board-column-count">{stageProjects.length}</span>
-                          {overdueCount > 0 && <span className="tabular-nums text-xs text-signal-critical" data-testid="board-column-overdue">{overdueCount}<span className="sr-only"> overdue</span></span>}
-                          <span className="[writing-mode:vertical-rl] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary">{stage.label}</span>
+                          <StageToneSwatch tone={stageTone(stage.key)} />
+                          <span className="flex rotate-180 items-center gap-[var(--space-2)] whitespace-nowrap text-sm text-foreground [writing-mode:vertical-rl]">
+                            {stage.label}
+                            <span className="font-mono text-xs tabular-nums text-foreground-secondary" data-testid="board-column-count">{group.count}</span>
+                          </span>
+                          {group.lateCount > 0 && <LateChip size="rail" data-testid="board-column-late">{group.lateCount} late</LateChip>}
                         </div>
                       </KanbanColumn>
                     );
@@ -679,23 +829,25 @@ export function ProjectKanbanBoard2({
                     // `focusDescriptorFor` or `canonicalStageKey`), so a presentation spelling — an Editor
                     // sees `editing` for `editing_autohdr` — would never match, and tier 2 would fall
                     // through to the Board root. The Board this replaced keyed its headings the same way.
-                    <KanbanColumn key={stage.key} id={columnId} value={stage.key} disabled className={`w-[17.5rem] shrink-0 bg-[var(--paper-050)] min-h-0 min-w-0 border border-[length:var(--border-width-hair)] border-border opacity-100 ${shownProposal?.targetStageKey === stageKey ? "border-[var(--ink-900)]" : ""}`} data-testid="board-column">
-                      <div className="flex shrink-0 flex-col gap-[var(--space-2)] p-[var(--space-4)] border-b border-b-border bg-[var(--bg-canvas)] focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] outline-offset-[-2px] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${stageKey}`} tabIndex={-1}>
-                        <div className="flex min-w-0 items-center gap-[var(--space-3)]" data-testid="board-column-title-row">
-                          <span className="flex-none [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] tabular-nums text-foreground-secondary" aria-hidden="true">{String(stageIndex + 1).padStart(2, "0")}</span>
-                          {/* Full width for the name; `truncate` + `title` only catch an unusually long one. */}
-                          <StatusBadge stageKey={stage.key} className="min-w-0 flex-1" labelClassName="min-w-0 truncate whitespace-nowrap" />
-                        </div>
-                        {/* The toggle is on this row in every column, so headers match whether or not a badge shows. */}
-                        <div className="flex items-center gap-[var(--space-2)] whitespace-nowrap" data-testid="board-column-stats-row">
-                          <span className="tabular-nums text-sm text-foreground-secondary" data-testid="board-column-count">{stageProjects.length}</span>
-                          {overdueCount > 0 && <Badge variant="destructive-light" size="sm" data-testid="board-column-overdue">{overdueCount} overdue</Badge>}
-                          <span className="ml-auto flex-none">{toggle("Collapse", true)}</span>
+                    <KanbanColumn key={stage.key} id={columnId} value={stage.key} render={<div ref={columnRef(stage.key)} />} disabled className={`${COLUMN_SIZE_CLASS} ${COLUMN_SURFACE_CLASS} ${shownProposal?.targetStageKey === stageKey ? "border-[var(--ink-900)]" : ""}`} data-testid="board-column" data-stage-key={stage.key}>
+                      {/* Frame 4e `.kh`: one 44px row, the Stage swatch and name, the count, "N late", then the toggle. */}
+                      <div className="flex shrink-0 flex-col border-b border-b-border focus-visible:!outline focus-visible:!outline-[length:var(--border-width-bold)] focus-visible:!outline-[var(--focus-ring)] outline-offset-[-2px] focus-visible:!outline-offset-[-2px]" data-focus-key={`stage-heading:${stageKey}`} tabIndex={-1}>
+                        <div className="flex min-h-11 min-w-0 items-center gap-[var(--space-2)] whitespace-nowrap ps-[var(--space-3)] pe-[var(--space-2)]" data-testid="board-column-title-row">
+                          <StageLabel stageKey={columnLabelKey(stage.key)} label={stage.label} className="min-w-0 shrink" />
+                          <span className="shrink-0 font-mono text-xs tabular-nums text-foreground-secondary" data-testid="board-column-count">{group.count}</span>
+                          {group.lateCount > 0 && <LateChip data-testid="board-column-late" className="shrink-0">{group.lateCount} late</LateChip>}
+                          <span className="ms-auto flex-none">{toggle("Collapse", true)}</span>
                         </div>
                       </div>
-                      <ScrollArea className="min-h-0 flex-1">
-                        <KanbanColumnContent value={stage.key} strategy={boardNoShiftStrategy} className="relative flex flex-col gap-[var(--space-3)] p-[var(--space-3)] min-h-[120px]">
-                          {stageProjects.length === 0 && <div className="py-[var(--space-5)] [font-family:var(--font-display)] text-lg text-center text-foreground-secondary">—</div>}
+                      {/* #923 pass round 2, row 9: Base UI's scrollbar overlays the list's end edge, so a column that
+                          scrolls (`data-has-overflow-y` on the Root) widens the list's end padding into a gutter for it. */}
+                      <ScrollArea className="group/column-scroll min-h-0 flex-1">
+                        <KanbanColumnContent value={stage.key} strategy={boardNoShiftStrategy} className="relative flex flex-col gap-[var(--space-3)] p-[var(--space-3)] group-data-[has-overflow-y]/column-scroll:pe-[var(--space-5)] min-h-[120px]" data-testid="board-column-list">
+                          {stageProjects.length === 0 && (
+                            <EmptyState size="compact" title={EMPTY_COLUMN_COPY[stageKey]} data-testid="board-column-empty" className="px-[var(--space-1)]">
+                              {offersNewShoot ? <NewShootLink slot={false} /> : null}
+                            </EmptyState>
+                          )}
                           {stageProjects.map((project) => (
                             // Same `opacity-50` defect as the column above, but now on every OTHER card too
                             // once the pending-write lock (above) disables movement board-wide during a
@@ -726,6 +878,7 @@ export function ProjectKanbanBoard2({
                             <DropIndicator className="bottom-[calc(var(--space-3)/2)] translate-y-1/2" />
                           )}
                         </KanbanColumnContent>
+                        {offersNewShoot && stageProjects.length > 0 && <div className="px-[var(--space-3)] pb-[var(--space-3)] group-data-[has-overflow-y]/column-scroll:pe-[var(--space-5)]"><NewShootLink slot /></div>}
                       </ScrollArea>
                     </KanbanColumn>
                   );

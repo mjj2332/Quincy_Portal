@@ -44,12 +44,24 @@ vi.mock("./lib/api", () => ({
 vi.mock("./lib/stages", () => ({ StagesProvider: ({ children }: { children: unknown }) => children }));
 // #427: the search field is the Dashboard toolbar's now, so the stand-in Dashboard mounts the REAL
 // `DashboardSearch`, wired to the shell's ⌘K request exactly the way the real Dashboard wires it.
+// #923 D2: by default the stand-in is a plain page that does NOT claim the shell's header, so the
+// header, breadcrumb and Sheet tests below exercise `ShellHeader` itself. With `dashboardMock.viewBar`
+// set it mounts the REAL `DashboardViewBar`, which claims the header the way the real Dashboard does.
+const dashboardMock = vi.hoisted(() => ({ viewBar: false }));
 vi.mock("./screens/Dashboard", async () => {
   const { useMemo } = await import("react");
   const { DashboardSearch } = await import("./components/quincy/DashboardSearch");
+  const { DashboardViewBar } = await import("./screens/DashboardViewBar");
   return {
     Dashboard: ({ currentUserId, searchFocusSignal = null, onSearchFocusHandled }: { currentUserId: string; searchFocusSignal?: number | null; onSearchFocusHandled?: (signal: number) => void }) => {
       const request = useMemo(() => (searchFocusSignal === null ? null : { signal: searchFocusSignal }), [searchFocusSignal]);
+      if (dashboardMock.viewBar) {
+        return (
+          <main>
+            <DashboardViewBar renderedView="board" canViewProductionCalendar canCreateProject disabled={false} onSelectView={() => undefined} principalId={currentUserId} searchFocusRequest={request} onSearchFocusHandled={onSearchFocusHandled ?? (() => undefined)} />
+          </main>
+        );
+      }
       return <main>Dashboard<DashboardSearch principalId={currentUserId} focusRequest={request} onFocusRequestHandled={onSearchFocusHandled} /></main>;
     },
   };
@@ -157,6 +169,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  dashboardMock.viewBar = false;
   if (root) await act(async () => root!.unmount());
   root = null;
   document.body.replaceChildren();
@@ -1044,5 +1057,157 @@ describe("ShellRoute's draft-from-URL sync (#217 build, step 3)", () => {
     });
 
     expect(searchInput()!.value).toBe("");
+  });
+});
+
+// #923 D2: the Dashboard's view bar is the only row above the view. While it is mounted the shell
+// draws no header; below 772px the bar hosts the nav trigger and the bell instead.
+describe("the Dashboard draws the shell's chrome in its own view bar (#923 D2)", () => {
+  beforeEach(() => { dashboardMock.viewBar = true; });
+
+  const viewBar = (host: ParentNode) => host.querySelector('[data-testid="dashboard-view-bar"]');
+
+  it("wide: no shell header and no breadcrumb on the Dashboard; the rail keeps the bell", async () => {
+    const host = await renderAt("/?view=board");
+    expect(viewBar(host)).not.toBeNull();
+    expect(host.querySelector('[data-testid="shell-header"]')).toBeNull();
+    expect(host.querySelector('[data-testid="shell-breadcrumb"]')).toBeNull();
+    expect(viewBar(host)!.querySelector('[data-testid="shell-header-sheet-trigger"]')).toBeNull();
+    expect(host.querySelectorAll('[data-testid="rail-notifications"]')).toHaveLength(1);
+    expect(viewBar(host)!.querySelector('[data-testid="rail-notifications"]')).toBeNull();
+    expect(host.querySelector('[data-shell-header]')?.getAttribute("data-shell-header")).toBe("page");
+  });
+
+  it("the Project sheet open over the Dashboard keeps the header away: the Dashboard is still mounted behind it", async () => {
+    const host = await renderAt("/projects/123e4567-e89b-42d3-a456-426614174000");
+    expect(document.querySelector('[data-testid="project-sheet-body"]')?.textContent).toContain("Project");
+    expect(viewBar(host)).not.toBeNull();
+    expect(host.querySelector('[data-testid="shell-header"]')).toBeNull();
+    expect(host.querySelector('[data-testid="shell-breadcrumb"]')).toBeNull();
+    expect(host.querySelector('[data-shell-header]')?.getAttribute("data-shell-header")).toBe("page");
+  });
+
+  it("other screens keep the shell header and breadcrumb, and it comes back on leaving the Dashboard", async () => {
+    const host = await renderAt("/?view=board");
+    expect(host.querySelector('[data-testid="shell-header"]')).toBeNull();
+    const notices = [...host.querySelectorAll<HTMLAnchorElement>('[data-testid="navigation-rail-link"]')].find((a) => a.textContent?.trim() === "Notice board")!;
+    await click(notices);
+    await tick();
+    expect(window.location.pathname).toBe("/notices");
+    expect(host.querySelector('[data-testid="shell-breadcrumb"] [aria-current="page"]')?.textContent?.trim()).toBe("Notice board");
+    expect(host.querySelector('[data-shell-header]')?.getAttribute("data-shell-header")).toBe("shell");
+  });
+
+  it("722–771px: the nav trigger and the one bell sit in the view bar's row, and the trigger opens the navigation", async () => {
+    const host = await renderAt("/?view=board");
+    await resizeTo(740);
+    await tick();
+    expect(host.querySelector('[data-testid="shell-header"]')).toBeNull();
+    const row = host.querySelector('[data-testid="dashboard-view-row"]')!;
+    const trigger = row.querySelector<HTMLButtonElement>('[data-testid="shell-header-sheet-trigger"]');
+    expect(trigger).not.toBeNull();
+    expect(host.querySelectorAll('[data-testid="rail-notifications"]')).toHaveLength(1);
+    expect(row.querySelector('[data-testid="rail-notifications"]')).not.toBeNull();
+    // Nav first, bell last, as the shell header drew them.
+    expect(row.firstElementChild!.contains(trigger)).toBe(true);
+    expect(row.lastElementChild!.querySelector('[data-testid="rail-notifications"]')).not.toBeNull();
+
+    await click(trigger!);
+    await tick();
+    expect(document.querySelector('[data-testid="rail-sheet"]')).not.toBeNull();
+  });
+
+  // Owner decision (#923): on a phone the bell leaves the bar for the nav Sheet, so the view picker keeps its label.
+  describe("on a phone (<=721px) the bell moves into the nav Sheet", () => {
+    const row = (host: ParentNode) => host.querySelector('[data-testid="dashboard-view-row"]')!;
+    const sheetRow = () => document.querySelector<HTMLButtonElement>('[data-testid="rail-sheet"] [data-testid="navigation-rail-notifications"]');
+    const panel = () => document.querySelector<HTMLElement>('[data-testid="rail-notifications-panel"]');
+
+    it("draws no bell in the bar; the menu button carries the unread count and says so in its name", async () => {
+      vi.mocked(apiGet).mockResolvedValue({ notifications: [], unreadCount: 5 });
+      const host = await renderAt("/?view=board");
+      await resizeTo(390);
+      await tick();
+      expect(row(host).querySelector('[data-testid="rail-notification-trigger"]')).toBeNull();
+      expect(document.querySelectorAll('[data-testid="rail-notification-trigger"]')).toHaveLength(0);
+      const trigger = sheetTrigger(row(host))!;
+      await waitFor(() => expect(trigger.getAttribute("aria-label")).toBe("Open navigation, 5 unread notifications"));
+      expect(trigger.querySelector('[data-testid="shell-nav-unread-badge"]')?.textContent).toBe("5");
+    });
+
+    it("names the menu button plainly and draws no badge with nothing unread", async () => {
+      const host = await renderAt("/?view=board");
+      await resizeTo(390);
+      await tick();
+      const trigger = sheetTrigger(row(host))!;
+      expect(trigger.getAttribute("aria-label")).toBe("Open navigation");
+      expect(trigger.querySelector('[data-testid="shell-nav-unread-badge"]')).toBeNull();
+    });
+
+    it("the Sheet's Notifications row shows the count and opens the bell's panel under the bar; closing it returns focus to the menu button", async () => {
+      vi.mocked(apiGet).mockResolvedValue({ notifications: [], unreadCount: 5 });
+      const host = await renderAt("/?view=board");
+      await resizeTo(390);
+      await tick();
+      const trigger = sheetTrigger(row(host))!;
+      await waitFor(() => expect(trigger.getAttribute("aria-label")).toBe("Open navigation, 5 unread notifications"));
+
+      await click(trigger);
+      await tick();
+      const entry = sheetRow()!;
+      expect(entry).not.toBeNull();
+      expect(entry.textContent).toContain("Notifications");
+      expect(entry.getAttribute("aria-label")).toBe("Notifications, 5 unread");
+
+      await click(entry);
+      await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull());
+      await waitFor(() => expect(panel()).not.toBeNull());
+      expect(panel()!.getAttribute("role")).toBe("dialog");
+      await waitFor(() => expect(panel()!.contains(document.activeElement)).toBe(true));
+
+      await keydown(panel()!, { key: "Escape" });
+      await waitFor(() => expect(panel()).toBeNull());
+      expect(document.activeElement).toBe(sheetTrigger(row(host)));
+    });
+
+    it("insets the Notifications row like Dashboard / Notice board / Admin: a nav group of its own, not the footer's 16px (#923 review round 3)", async () => {
+      const host = await renderAt("/?view=board");
+      await resizeTo(390);
+      await tick();
+      await click(sheetTrigger(row(host))!);
+      await tick();
+      const entry = sheetRow()!;
+      const sheet = document.querySelector<HTMLElement>('[data-testid="rail-sheet"]')!;
+      const navGroup = sheet.querySelector<HTMLElement>('[data-testid="navigation-rail-group"]')!;
+      const group = entry.closest<HTMLElement>('[data-testid="navigation-rail-notifications-group"]');
+      expect(group).not.toBeNull();
+      expect(entry.closest('[data-testid="navigation-rail-footer"]')).toBeNull();
+      // The same horizontal inset as the nav items' group.
+      const inlinePadding = (element: HTMLElement) => element.className.split(/\s+/).filter((name) => /^(p|px|ps|pe)-/.test(name));
+      expect(inlinePadding(navGroup).length).toBeGreaterThan(0);
+      expect(inlinePadding(group!)).toEqual(inlinePadding(navGroup));
+    });
+
+    it("has no Notifications row in the Sheet off the Dashboard, where the shell header keeps its bell", async () => {
+      dashboardMock.viewBar = false;
+      const host = await renderAt("/?view=board");
+      await resizeTo(390);
+      await tick();
+      expect(host.querySelector('[data-testid="shell-header"] [data-testid="rail-notification-trigger"]')).not.toBeNull();
+      await click(sheetTrigger(host)!);
+      await tick();
+      expect(sheetRow()).toBeNull();
+    });
+  });
+
+  it("⌘K on the narrow Dashboard opens the search behind its icon and focuses the field", async () => {
+    const host = await renderAt("/?view=board");
+    await resizeTo(390);
+    await tick();
+    expect(host.querySelector<HTMLElement>('[data-testid="dashboard-search-row"]')!.hidden).toBe(true);
+    await keydown(window, { key: "k", metaKey: true });
+    await tick();
+    expect(host.querySelector<HTMLElement>('[data-testid="dashboard-search-row"]')!.hidden).toBe(false);
+    expect(document.activeElement).toBe(searchInput());
   });
 });

@@ -622,7 +622,8 @@ describe("Dashboard Calendar routing", () => {
     expect(calendarSurface, "no Calendar surface rendered — the assertions below would be vacuous").not.toBeNull();
 
     expect(header!.contains(summary!)).toBe(true);
-    expect(header!.contains(newShootLink!)).toBe(true);
+    expect(bar!.contains(newShootLink!), "#923: New shoot sits in the view bar").toBe(true);
+    expect(header!.className, "#923: the title and summary are for assistive tech only").toContain("sr-only");
     expect(bar!.contains(field!)).toBe(true);
     expect(header!.contains(field!)).toBe(false);
     expect(bar!.contains(host.querySelector('[role="tablist"]'))).toBe(true);

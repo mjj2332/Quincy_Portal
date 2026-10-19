@@ -19,6 +19,7 @@
 import type { StagePresentationKey, StageTransportKey } from "@quincy/shared";
 import { sydneyDayKey } from "./date-format";
 import { initials } from "./initials";
+import type { ProjectStageKey } from "./stages";
 import type { ColourBy } from "./timeline-colour-by";
 
 /** An instant as the Dashboard's DTOs carry it: a `Date`, epoch milliseconds, or an ISO string. */
@@ -52,6 +53,15 @@ const STAGE_TONES: Record<StagePresentationKey, StageTone> = {
   edited_review: { stage: "edited_review", color: "var(--stage-edited-review)", treatment: "solid" },
   delivered: { stage: "delivered", color: "var(--stage-delivered)", treatment: "wash" },
 };
+
+/**
+ * The key a Stage COLUMN draws its label with (#923): Editing is one Stage, and "· autoHDR" is a Project's
+ * variant (`StageLabel` adds it for `editing_autohdr`), so an Admin's `editing_autohdr` column reads "Editing".
+ * Lives here, not in `stages.tsx`: that module is the one the DOM suites mock for `useStages`.
+ */
+export function columnLabelKey(value: ProjectStageKey): ProjectStageKey {
+  return value === "editing_autohdr" ? "editing" : value;
+}
 
 /**
  * The tone of a Stage. `editing_autohdr` (the Admin-only transport key) draws as Editing; a missing or
@@ -101,6 +111,20 @@ export function projectLateness(
 ): Lateness {
   if (project.archived || project.stageKey === "delivered" || project.deadlineAt === null) return NOT_LATE;
   return latenessOf(epochOf(project.deadlineAt), now);
+}
+
+/**
+ * Whether a Project's Deadline falls on today's Sydney civil day and it isn't late yet (the Table's and Board's
+ * "Today · 17:00" dot). A Deadline earlier today has already passed, so `projectLateness` calls it late and this is
+ * false: the dot and the late chip never show together.
+ */
+export function dueToday(
+  project: { stageKey: string | null | undefined; deadlineAt: string | number | null; archived: boolean },
+  now: Instant,
+): boolean {
+  if (project.deadlineAt === null || projectLateness(project, now).late) return false;
+  const due = epochOf(project.deadlineAt);
+  return Number.isFinite(due) && sydneyDayKey(due) === sydneyDayKey(epochOf(now));
 }
 
 /** A Subtask is late when its due (the end of its Subtask range) is in the past and it is not complete. */

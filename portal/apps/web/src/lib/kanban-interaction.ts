@@ -7,6 +7,7 @@ import {
   stageTransportKeyForRole,
   type MoveProjectStageRequest,
   type MoveProjectStageResponse,
+  type ProjectChecklistCounts,
   type Role,
   type StageKey,
   type StageMoveConfirmationReason,
@@ -50,6 +51,12 @@ export interface ProjectSummary {
    * cached snapshot or a fixture that predates this field still satisfies the type.
    */
   editors?: { id: string; name: string }[];
+  /**
+   * #923 D1: Subtask counts, staff list only (the External DTO never carries it). Both are
+   * non-negative with `completed <= total`; `{0,0}` is "No tasks". ABSENT means unknown (an old
+   * cached snapshot, an External row, a fixture) and is never read as "No tasks".
+   */
+  checklist?: ProjectChecklistCounts;
 }
 
 export type DroppableData =
