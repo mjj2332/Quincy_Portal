@@ -63,3 +63,12 @@ export function openNativePlayer(video: HTMLVideoElement | null): Promise<boolea
   } catch { /* refused: below */ }
   return Promise.resolve(false);
 }
+
+/**
+ * Whether Quincy's Full screen hands over to the device's own player (#927 D1): iPhone Safari, which has no element full screen for the page (`document.fullscreenEnabled`
+ * is not true) but has WebKit's player on the film. An iPad, a desktop and Android have element full screen, so they keep the in-app layer and its floating composer.
+ */
+export function fullScreenHandsOver(video: HTMLVideoElement | null, doc: Document = document): boolean {
+  if (!video || doc.fullscreenEnabled === true) return false;
+  return typeof (video as WebkitVideo).webkitEnterFullscreen === "function";
+}
