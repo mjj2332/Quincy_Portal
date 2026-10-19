@@ -1,11 +1,19 @@
 import { useState, type CSSProperties } from "react";
 import { embeddedMediaUrl } from "../../lib/embedded-media-core";
-import { XIcon } from "lucide-react";
+import { ImageOffIcon, XIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "../reui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "../reui/dialog";
 
 /** Twice the 48px (--space-7) close chip. */
 const SMALL_NATURAL = 96;
+
+/**
+ * Adaptation (#927 T1): the 56px tile a posted note's media strip draws (48px + 8px, in spacing tokens). Shared with `EmbeddedVideo`'s
+ * `size="thumb"`, so an image and a video sit in the strip as the same square. No prototype frame shows a posted strip; the plan
+ * settles 56px tiles that open the existing dialogs.
+ */
+export const EMBEDDED_THUMB_TILE = "block size-[calc(var(--space-7)+var(--space-2))] shrink-0 overflow-hidden rounded-[var(--radius-md)] border border-border bg-muted";
 
 /**
  * A posted embedded image (#493): a thumbnail that opens the larger view in the ReUI dialog. The
@@ -15,7 +23,8 @@ const SMALL_NATURAL = 96;
  * `max-width: 100%` and `height: auto` keep it responsive. Without a size (an older image) the box is as it always was.
  */
 /** `mediaUrl` (#835) is where the bytes are read from: the staff route by default, a Review link's own for a guest. */
-export function EmbeddedImage({ mediaId, alt, width, height, mediaUrl = embeddedMediaUrl }: { mediaId: string; alt?: string; width?: number; height?: number; mediaUrl?: (mediaId: string) => string }) {
+/** `size="thumb"` (#927 T1) is a posted note's strip tile: the picture cropped to a 56px square, opening the same dialog. The default is the inline image every other post draws, unchanged. */
+export function EmbeddedImage({ mediaId, alt, width, height, mediaUrl = embeddedMediaUrl, size = "default" }: { mediaId: string; alt?: string; width?: number; height?: number; mediaUrl?: (mediaId: string) => string; size?: "default" | "thumb" }) {
   const [open, setOpen] = useState(false);
   const [failed, setFailed] = useState(false);
   // Under twice the 48px close chip in either dimension, the chip would cover most of the image (a 24px one entirely): the stage then pads its top and right by the chip so the image sits beside it.
@@ -23,16 +32,24 @@ export function EmbeddedImage({ mediaId, alt, width, height, mediaUrl = embedded
   const src = mediaUrl(mediaId);
   // The author's alt text (#553); an image posted before alt existed has none and keeps the generic name.
   const label = alt?.trim() || "Embedded image";
+  const thumb = size === "thumb";
   const reserved = width !== undefined && height !== undefined && width > 0 && height > 0 ? { width, height } : {};
   // The trigger hugs the image the stylesheet draws (#611): it takes the recorded size too, since a button sizes from the image's width attribute, not from the width the CSS caps it to.
   const sizedTrigger = width !== undefined && height !== undefined && width > 0 && height > 0 ? { "data-sized": "", style: { "--embedded-image-aspect": width / height, "--embedded-image-width": width } as CSSProperties } : {};
+  // A tile keeps its square when the file is gone, so the strip does not reflow; it says why in its name.
+  if (failed && thumb) return <span data-testid="embedded-image-unavailable" role="img" aria-label="Image unavailable" title="Image unavailable" className={cn(EMBEDDED_THUMB_TILE, "grid place-items-center text-foreground-secondary")}><ImageOffIcon aria-hidden="true" className="size-4" /></span>;
   if (failed) return <p data-testid="embedded-image-unavailable" className="my-[var(--space-2)] text-foreground-secondary [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">Image unavailable</p>;
   return <>
     {/* The trigger is registered with the dialog, so Escape or Close returns focus to this thumbnail even where a click does not focus a button. */}
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<button type="button" data-testid="embedded-image" {...sizedTrigger} aria-label={`View image: ${label}`} className="rich-text__embedded-image-trigger my-[var(--space-2)] block max-w-full cursor-zoom-in rounded-[var(--radius-xs)] focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2" />}>
-        <img src={src} alt={label} {...reserved} loading="lazy" decoding="async" onError={() => setFailed(true)} className="rich-text__embedded-image" />
-      </DialogTrigger>
+      {thumb
+        // The tile is a fixed square, so the recorded size has no box to reserve and nothing to hug.
+        ? <DialogTrigger render={<button type="button" data-testid="embedded-image" data-size="thumb" aria-label={`View image: ${label}`} className={cn(EMBEDDED_THUMB_TILE, "cursor-zoom-in p-0 transition-colors hover:border-[color:var(--border-hover)] focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2")} />}>
+          <img src={src} alt={label} loading="lazy" decoding="async" onError={() => setFailed(true)} className="block size-full object-cover" />
+        </DialogTrigger>
+        : <DialogTrigger render={<button type="button" data-testid="embedded-image" {...sizedTrigger} aria-label={`View image: ${label}`} className="rich-text__embedded-image-trigger my-[var(--space-2)] block max-w-full cursor-zoom-in rounded-[var(--radius-xs)] focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2" />}>
+          <img src={src} alt={label} {...reserved} loading="lazy" decoding="async" onError={() => setFailed(true)} className="rich-text__embedded-image" />
+        </DialogTrigger>}
       {/* The review Lightbox's language: an inverse (dark) stage, the image edge to edge, and the close button on a scrim chip only as large as the button, so a light image never hides it and the photo is not darkened. */}
       <DialogContent data-surface="inverse" data-testid="embedded-image-dialog" showCloseButton={false} className={`place-items-center max-h-[90dvh] min-h-[var(--space-7)] w-fit min-w-[var(--space-7)] max-w-[calc(100%-2rem)] gap-0 overflow-hidden bg-background p-0 text-foreground ring-0 sm:max-w-[min(90vw,64rem)]${small ? " p-[var(--space-7)]" : ""}`}>
         <DialogTitle className="sr-only">{label}</DialogTitle>
