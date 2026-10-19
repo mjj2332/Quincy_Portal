@@ -61,7 +61,8 @@ const EMPTY_COLUMN_COPY: Record<StageKey, string> = {
  * #923 D3: "+ New shoot" in Awaiting RAW only, for a viewer with `createProject`, to `/projects/new` with no
  * Stage preset. `slot` is frame 4e's `.addc`, the dashed full-width row at the column's end; otherwise it is
  * the empty column's action (frame 4h). Outside the column's `SortableContext` list either way. Control height
- * (38px, 44px on a phone), not the frame's 34px (#923 session defaults).
+ * (38px, 44px on a phone), not the frame's 34px (#923 session defaults). Sentence case, as both frames write it,
+ * not the Button's uppercase eyebrow (#923 pass round 2, row 3).
  */
 function NewShootLink({ slot }: { slot: boolean }) {
   return (
@@ -69,7 +70,7 @@ function NewShootLink({ slot }: { slot: boolean }) {
       variant="outline"
       nativeButton={false}
       render={<InternalLink to="/projects/new" data-testid="board-column-new-shoot" />}
-      className={slot ? "w-full border-dashed bg-transparent text-xs text-foreground-secondary" : "mt-[var(--space-2)]"}
+      className={`normal-case tracking-[var(--tracking-normal)] ${slot ? "w-full border-dashed bg-transparent text-xs text-foreground-secondary" : "mt-[var(--space-2)]"}`}
     >
       <Plus aria-hidden="true" />
       New shoot
@@ -81,6 +82,8 @@ function NewShootLink({ slot }: { slot: boolean }) {
  * Frame 4f: the phone Board's Stage pills (`reui/toggle` chip), one per column with its swatch and count. A pill
  * SCROLLS the strip to its column; every column stays mounted, so no droppable mounts or unmounts, and the pills
  * are disabled for the whole of a drag. Swiping the strip moves the pressed pill (`onScroll` in the Board).
+ * No inline padding and no rule of its own (#923 pass round 2, row 7): the first pill starts on the column's
+ * edge, and the column's top border is the one line between them.
  */
 function StagePills({ stages, counts, active, disabled, onSelect }: {
   stages: readonly PipelineStage[];
@@ -94,7 +97,7 @@ function StagePills({ stages, counts, active, disabled, onSelect }: {
       role="group"
       aria-label="Stages"
       data-testid="board-stage-pills"
-      className="hidden max-[721px]:flex shrink-0 gap-[var(--space-2)] overflow-x-auto px-[var(--space-4)] py-[var(--space-3)] border-b border-b-border [scrollbar-width:none]"
+      className="hidden max-[721px]:flex shrink-0 gap-[var(--space-2)] overflow-x-auto py-[var(--space-3)] [scrollbar-width:none]"
     >
       {stages.map((stage) => {
         const pressed = stage.key === active;
@@ -836,8 +839,10 @@ export function ProjectKanbanBoard2({
                           <span className="ms-auto flex-none">{toggle("Collapse", true)}</span>
                         </div>
                       </div>
-                      <ScrollArea className="min-h-0 flex-1">
-                        <KanbanColumnContent value={stage.key} strategy={boardNoShiftStrategy} className="relative flex flex-col gap-[var(--space-3)] p-[var(--space-3)] min-h-[120px]" data-testid="board-column-list">
+                      {/* #923 pass round 2, row 9: Base UI's scrollbar overlays the list's end edge, so a column that
+                          scrolls (`data-has-overflow-y` on the Root) widens the list's end padding into a gutter for it. */}
+                      <ScrollArea className="group/column-scroll min-h-0 flex-1">
+                        <KanbanColumnContent value={stage.key} strategy={boardNoShiftStrategy} className="relative flex flex-col gap-[var(--space-3)] p-[var(--space-3)] group-data-[has-overflow-y]/column-scroll:pe-[var(--space-5)] min-h-[120px]" data-testid="board-column-list">
                           {stageProjects.length === 0 && (
                             <EmptyState size="compact" title={EMPTY_COLUMN_COPY[stageKey]} data-testid="board-column-empty" className="px-[var(--space-1)]">
                               {offersNewShoot ? <NewShootLink slot={false} /> : null}
@@ -873,7 +878,7 @@ export function ProjectKanbanBoard2({
                             <DropIndicator className="bottom-[calc(var(--space-3)/2)] translate-y-1/2" />
                           )}
                         </KanbanColumnContent>
-                        {offersNewShoot && stageProjects.length > 0 && <div className="px-[var(--space-3)] pb-[var(--space-3)]"><NewShootLink slot /></div>}
+                        {offersNewShoot && stageProjects.length > 0 && <div className="px-[var(--space-3)] pb-[var(--space-3)] group-data-[has-overflow-y]/column-scroll:pe-[var(--space-5)]"><NewShootLink slot /></div>}
                       </ScrollArea>
                     </KanbanColumn>
                   );

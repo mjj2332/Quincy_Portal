@@ -35,6 +35,8 @@ export type CellContextValue = {
   projectHrefFor: (projectId: string) => string;
   stages: readonly Pick<PipelineStage, "key" | "label">[];
   appearanceOf: (project: ProjectSummary) => ProjectAppearance;
+  /** The studio's civil year at the Table's `now`: a Shoot date in it drops its year (frame 4b). */
+  currentYear: number;
   isGroupOpen: (key: string) => boolean;
   toggleGroup: (key: string) => void;
 };
@@ -60,12 +62,12 @@ export function projectPlace(project: ProjectSummary): string {
   return project.suburb?.trim() || project.postcode?.trim() || "Location pending";
 }
 
-/** The 44x30 cover thumb (frames 4b/4g `.cv.th`). `onFailedChange` lets the caller offer a retry. */
-export function ProjectThumb({ project, retryToken, onFailedChange }: { project: ProjectSummary; retryToken: number; onFailedChange: (failed: boolean) => void }) {
+/** The 44x30 cover thumb (frames 4b/4g `.cv.th`). `onFailedChange` lets the caller offer a retry; `failed` draws the initial. */
+export function ProjectThumb({ project, retryToken, failed, onFailedChange }: { project: ProjectSummary; retryToken: number; failed: boolean; onFailedChange: (failed: boolean) => void }) {
   return (
-    <span className="block h-7.5 w-11 shrink-0 overflow-hidden rounded-sm bg-[var(--ink-800)]">
+    <span data-testid="project-thumb" className="block h-7.5 w-11 shrink-0 overflow-hidden rounded-sm bg-[var(--ink-800)]">
       {/* `!`: `.project-cover-placeholder` (unlayered app.css) sets a Board-card font size that would clip in this box. */}
-      <CoverMedia project={project} retryToken={retryToken} onFailedChange={onFailedChange} placeholderClassName="!text-[length:var(--text-sm)]" />
+      <CoverMedia project={project} retryToken={retryToken} failed={failed} onFailedChange={onFailedChange} placeholderClassName="!text-[length:var(--text-sm)]" />
     </span>
   );
 }

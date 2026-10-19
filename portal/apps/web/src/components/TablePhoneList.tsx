@@ -56,7 +56,7 @@ function PhoneRow({ project }: { project: ProjectSummary }) {
       data-late={appearance.lateness.late}
       className="relative flex items-start gap-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-3)]"
     >
-      <ProjectThumb project={project} retryToken={cover.token} onFailedChange={cover.setFailed} />
+      <ProjectThumb project={project} retryToken={cover.token} failed={cover.failed} onFailedChange={cover.setFailed} />
       <div className="flex min-w-0 flex-1 flex-col gap-[var(--space-1)]">
         <InternalLink
           to={projectHrefFor(project.id)}

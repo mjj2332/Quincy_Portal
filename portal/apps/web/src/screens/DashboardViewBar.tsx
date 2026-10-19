@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
+import { useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { Calendar, ChevronDown, GanttChart, Plus, Search, SlidersHorizontal, SquareKanban, Table2, type LucideIcon } from "lucide-react";
 import { InternalLink } from "../components/InternalLink";
@@ -18,6 +18,7 @@ import { Tabs, TabsList, TabsTrigger } from "../components/reui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../components/reui/tooltip";
 import { getDashboardSearchSnapshotForPrincipal, subscribeDashboardSearch } from "../lib/dashboard-search-store";
 import { PHONE_VIEWPORT_QUERY, useMediaQuery } from "../lib/use-media-query";
+import { useOwnWidth } from "../lib/use-own-width";
 import { SCROLL_FADE_MASK_CLASSES, useScrollFade } from "../lib/use-scroll-fade";
 import { cn } from "../lib/utils";
 import type { DashboardView } from "./dashboard-helpers";
@@ -134,21 +135,6 @@ export function viewBarLayout(width: number, { phone, narrowShell }: { phone: bo
   if (width >= TABLET_MIN + extra) return "tablet";
   if (width >= LABELLED_MIN + extra) return "compact";
   return "tight";
-}
-
-/** The element's own width: measured before paint, then kept by a ResizeObserver where there is one. */
-function useOwnWidth(ref: RefObject<HTMLElement | null>): number {
-  const [width, setWidth] = useState(0);
-  useLayoutEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    setWidth(element.getBoundingClientRect().width);
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(([entry]) => { if (entry) setWidth(entry.contentRect.width); });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [ref]);
-  return width;
 }
 
 export type DashboardViewBarProps = {
