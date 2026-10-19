@@ -1308,10 +1308,15 @@ describe("rich notes on the page (#835 C)", () => {
     const image = byId("guest-note-body")!.querySelector("img")!;
     expect(image.getAttribute("src")).toBe(`/d/api/links/${LINK}/media/${MEDIA}`);
     expect(image.getAttribute("alt")).toBe("Site photo");
-    const video = byId("guest-note-body")!.querySelector("video")!;
+    // The video is a strip tile (#927): its poster from the link's route, and the player only once the tile is opened.
+    const tile = byId("guest-note-body")!.querySelector<HTMLElement>('[data-testid="embedded-video-thumb"]')!;
+    expect(tile.querySelector("img")!.getAttribute("src")).toBe(`/d/api/links/${LINK}/media/${CLIP}/poster`);
+    expect(byId("guest-note-body")!.querySelector("video")).toBeNull();
+    await click(tile);
+    const video = document.querySelector<HTMLVideoElement>('[data-testid="embedded-video-dialog"] video')!;
     expect(video.getAttribute("src")).toBe(`/d/api/links/${LINK}/media/${CLIP}`);
     expect(video.getAttribute("poster")).toBe(`/d/api/links/${LINK}/media/${CLIP}/poster`);
-    expect(host.innerHTML).not.toContain("/media/embedded/");
+    expect(document.body.innerHTML).not.toContain("/media/embedded/");
   });
 
   it("a note with no document still reads from its text", async () => {

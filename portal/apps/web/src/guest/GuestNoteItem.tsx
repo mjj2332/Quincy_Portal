@@ -3,7 +3,7 @@ import { useNoteDraft, type GuestDrafts } from "./guest-drafts";
 import { PencilIcon } from "lucide-react";
 import { legacyBodyToRichTextDoc, type GuestNoteDto, type GuestNoteThreadDto, type RichTextDoc } from "@quincy/shared";
 import type { EditorMediaTransport } from "../lib/embedded-media-core";
-import { RichTextContent } from "../components/RichTextContent";
+import { NoteBody } from "../components/quincy/NoteMediaStrip";
 import { noteAnchorLabel } from "../lib/video-note-view";
 import { cn } from "../lib/utils";
 import { useNoteCardSeek } from "../lib/note-card-seek";
@@ -64,7 +64,7 @@ function Author({ note }: { note: GuestNoteDto }) {
 /** The note as the guest reads it: the rich document when the note has one (pictures from the link's media routes; a mention is already the plain "@Name"), else its text. */
 export function NoteText({ note, media }: { note: GuestNoteDto; media: EditorMediaTransport }) {
   if (note.deleted) return <p data-testid="guest-note-tombstone" className="m-0 text-foreground-secondary italic [font:var(--type-body-sm)]">Note deleted</p>;
-  if (note.content) return <div data-testid="guest-note-body" className="text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [overflow-wrap:anywhere]"><RichTextContent content={note.content} mediaUrl={media.mediaUrl} posterUrl={media.posterUrl} /></div>;
+  if (note.content) return <div data-testid="guest-note-body" className="text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [overflow-wrap:anywhere]"><NoteBody content={note.content} mediaUrl={media.mediaUrl} posterUrl={media.posterUrl} /></div>;
   return <p data-testid="guest-note-body" className={BODY}>{note.body}</p>;
 }
 
