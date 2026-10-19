@@ -6,7 +6,7 @@ import { resetUiPrefMemory } from "../../lib/ui-prefs";
 import "../../testing/dom-polyfills";
 import { ReviewSplit } from "./ReviewPane";
 import { useContext } from "react";
-import { SheetModeContext, useReviewSheet } from "./ReviewSheet";
+import { SheetModeContext, useReviewSheet, useSheetMode } from "./ReviewSheet";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,7 +19,7 @@ type Mode = "off" | "watch" | "compose";
 /** What the composer reads of the sheet (#880 S4): the mode it is given, or "none" off a phone sheet. */
 function ModeProbe() { const value = useContext(SheetModeContext); return <span data-testid="mode-probe" data-mode={value?.mode ?? "none"} data-floating={value?.floating === true ? "true" : "false"} data-cancel={value && "onCancel" in value ? "true" : "false"} />; }
 function Harness({ immersive, stacked, open = true, drawing = false }: { immersive?: Mode; stacked: boolean; open?: boolean; drawing?: boolean }) {
-  const sheet = useReviewSheet({ drawing, filmAspect: 16 / 9 });
+  const sheet = useSheetMode(useReviewSheet({ filmAspect: 16 / 9 }), drawing);
   return <ReviewSplit
     open={open} width={360} onWidth={() => undefined} onNarrow={() => undefined} paneId="pane" handleLabel="Resize notes" stacked={stacked} {...(stacked ? { sheet } : {})} {...(immersive ? { immersive } : {})}
     strip={<div data-testid="video-review-strip" />}
