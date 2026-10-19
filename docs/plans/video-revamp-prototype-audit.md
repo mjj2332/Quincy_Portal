@@ -57,3 +57,11 @@ Why this shipped: builders worked from text plans that cited the prototype only 
 briefs never mentioned it, the design reviewer judged against the tokens only, and the phone pass
 ran in a narrow desktop Chrome that cannot raise the iOS keyboard. AGENTS.md ("Prototype as spec")
 and `docs/subagents/Subagent-Orchestration.md` §2a now cover each of those.
+
+## Update, 2026-10-20 (#927)
+
+The note composer rebuild (#927) removed three things this audit lists as shipped: the phone compose strip's
+**+** tray (Q1) with its in / out and frame-step controls, the player's range button and the Draw action in the
+player transport, and the timecode chip on the picture. The note box (`quincy/NoteComposerBox`) now carries the
+anchor chip, in / out marks, the pen and visibility itself, at every width. The rows above describe #889 as it
+shipped, not as it is now. See `docs/maps/note-composer.md`.
