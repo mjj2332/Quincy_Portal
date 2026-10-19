@@ -4,7 +4,8 @@
  */
 import { act } from "react";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NoteComposerBox, type NoteComposerBoxProps } from "./NoteComposerBox";
@@ -310,7 +311,7 @@ describe("NoteComposerBox, phone (P1) and Full screen (F1)", () => {
 describe("NoteComposerBox is Guest-safe", () => {
   it("imports no staff store, API or router", () => {
     for (const file of ["NoteComposerBox.tsx", "NoteDrawRow.tsx"]) {
-      const source = readFileSync(join(process.cwd(), "src/components/quincy", file), "utf8");
+      const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), file), "utf8");
       const imports = [...source.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]!);
       expect(imports.filter((s) => /lib\/(?:api|auth|router|app-router|query-client|video-note-form-store)|InternalLink|^@tanstack\//.test(s)), file).toEqual([]);
     }
