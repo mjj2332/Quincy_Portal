@@ -36,10 +36,15 @@ export function EmbeddedVideo({ mediaId, hasPoster, className, videoClassName, m
 
 /**
  * The strip tile (#927 T1): the poster frame under a play badge, and no player until one is asked for, so a note with several videos
- * loads no video bytes. A posterless video, or a poster that fails, is the plain tile with a film glyph. The dialog is the whiteboard's
- * player stage (`EmbeddedVideoDialog`: inverse, the player edge to edge) with `EmbeddedImage`'s 48px close chip (#553). It is built here
- * rather than reusing `EmbeddedVideoDialog` because that dialog reads only the staff routes, and a Review link's tile must play from its own.
- * The trigger is registered with the dialog, so Escape or Close returns focus to the tile.
+ * loads no video bytes. A posterless video, or a poster that fails, is the plain tile with a film glyph.
+ *
+ * Adaptation note: the player inside the dialog is this component's default, the same `EmbeddedVideo` a posted note played inline
+ * before #927 (through `RichTextContent`), fed the same `mediaUrl` / `posterUrl`: the staff routes for staff, the Review link's own routes
+ * for a guest. Only the dialog shell is new. The one shared video dialog, `EmbeddedVideoDialog` (the whiteboard's), takes no media URLs
+ * and so always plays from the staff routes, which a guest cannot read; `delivery/FilmPlayerDialog` is the Delivery page's film player.
+ * The shell copies `EmbeddedVideoDialog`'s stage (inverse, the player edge to edge) and `EmbeddedImage`'s 48px close chip (#553). Giving
+ * `EmbeddedVideoDialog` URL props would let the two share one shell. The trigger is registered with the dialog, so Escape or Close
+ * returns focus to the tile.
  */
 function EmbeddedVideoThumb({ mediaId, hasPoster, mediaUrl, posterUrl }: { mediaId: string; hasPoster?: boolean; mediaUrl: (mediaId: string) => string; posterUrl: (mediaId: string) => string }) {
   const [open, setOpen] = useState(false);

@@ -21,7 +21,7 @@ import { Badge } from "../reui/badge";
 import { Button as ReuiButton } from "../reui/button";
 import { Item } from "../reui/item";
 import { Kbd } from "../reui/kbd";
-import { RichTextContent } from "../RichTextContent";
+import { NoteBody } from "../quincy/NoteMediaStrip";
 import { VideoNoteEditor } from "./VideoNoteEditor";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../reui/tooltip";
 import { IconTip } from "../quincy/IconTip";
@@ -68,9 +68,9 @@ function AuthorTag({ note }: { note: VideoNoteDto }) {
 /** The note's text, or a muted line for a deleted one. */
 export function NoteText({ note }: { note: VideoNoteDto }) {
   if (note.deleted) return <p data-testid="video-note-tombstone" className="m-0 text-foreground-secondary [font:var(--type-body-sm)] italic">Note deleted</p>;
-  // A rich note (#835) draws its document: mentions, images and videos. An older note is its plain text.
+  // A rich note (#835) draws its document: its text, then its images and videos as one strip (#927). An older note is its plain text.
   return note.content
-    ? <div data-testid="video-note-body"><RichTextContent className="rich-text--body" content={note.content} /></div>
+    ? <div data-testid="video-note-body"><NoteBody className="rich-text--body" content={note.content} /></div>
     : <p data-testid="video-note-body" className="m-0 whitespace-pre-wrap text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [overflow-wrap:anywhere]">{note.body}</p>;
 }
 
