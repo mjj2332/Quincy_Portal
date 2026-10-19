@@ -92,8 +92,8 @@ describe("EditProject Services", () => {
     expect(tile("Video").checked).toBe(true);
     expect(tile("Video").disabled).toBe(true);
     // Video reads like RAW: a fixed tile whose hint says the Collection is already there.
-    expect(tile("Video").closest("label")!.textContent).toBe("VideoAlready created");
-    expect(tile("RAW").closest("label")!.textContent).toBe("RAWAlready created");
+    expect(tile("Video").closest("label")!.textContent).toBe("VideoAlways included");
+    expect(tile("RAW").closest("label")!.textContent).toBe("RAWAlways included");
 
     await save();
     const payload = lastPayload();

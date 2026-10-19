@@ -215,12 +215,14 @@ export function EditProject({ projectId, onReturnToWorkspace, onDeleted }: { pro
           <QuincyField id="project-postcode" label="Postcode" inputMode="numeric" value={form.postcode} onChange={(event) => updateField("postcode", event.target.value)} />
         </div>
       </section>
-      <ProjectFields form={form} errors={errors} existingCollections={project.collections.map((collection) => collection.kind)} mode="edit" monitoredRawFolder={project.monitoredRawFolder} onChange={updateField} onToggle={toggleSelection} />
-      {/* Beside Save, not atop the form: a refused save (a Service holding media, a stale save) must show where the click was. */}
-      {submitError && <Notice role="alert">{submitError}</Notice>}
-      <div className="flex flex-wrap justify-end gap-[var(--space-3)] max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full">
-        <InternalLink className={buttonClasses("secondary", {})} {...cancelProps} aria-disabled={isSubmitting}>Cancel</InternalLink>
-        <Button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving details…" : "Save changes"}</Button>
+      <ProjectFields form={form} errors={errors} mode="edit" monitoredRawFolder={project.monitoredRawFolder} onChange={updateField} onToggle={toggleSelection} />
+      {/* Beside Save, not atop the form: a refused save (a Service holding media, a stale save) must show where the click was. Grouped with the actions so it reads as Save's result, not a section of its own. */}
+      <div className="flex flex-col gap-[var(--space-3)]">
+        {submitError && <Notice role="alert">{submitError}</Notice>}
+        <div className="flex flex-wrap justify-end gap-[var(--space-3)] max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full">
+          <InternalLink className={buttonClasses("secondary", {})} {...cancelProps} aria-disabled={isSubmitting}>Cancel</InternalLink>
+          <Button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving details…" : "Save changes"}</Button>
+        </div>
       </div>
     </form> : <EmptyState role={loadError ? "alert" : "status"} tone={loadError ? "error" : "empty"} title={loadError ? "Project details unavailable." : "Loading shoot details."}>{loadError ?? "Preparing the form."}</EmptyState>)}
     {canEditProject && project && can("adminBackend") && <section

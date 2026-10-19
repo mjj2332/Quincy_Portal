@@ -67,7 +67,7 @@ const CHECK_TILE =
   "min-h-[var(--space-7)] p-[12px] bg-card text-foreground-secondary " +
   "[font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] " +
   "transition-[background-color] duration-[var(--dur-fast)] ease-[var(--ease-standard)] " +
-  "hover:bg-secondary has-[:checked]:bg-surface-sunken " +
+  "hover:bg-secondary " +
   "has-[:focus-visible]:outline-[length:var(--border-width-bold)] has-[:focus-visible]:outline-solid " +
   "has-[:focus-visible]:outline-ring -outline-offset-2 has-[:focus-visible]:-outline-offset-2 " +
   "has-[:disabled]:cursor-default has-[:disabled]:text-foreground-secondary " +
@@ -109,10 +109,9 @@ export function validateProjectFields(form: ProjectForm, mode: ProjectFieldsMode
   };
 }
 
-export function ProjectFields({ form, errors, existingCollections = [], mode = "create", monitoredRawFolder, shootExtras, onChange, onToggle }: {
+export function ProjectFields({ form, errors, mode = "create", monitoredRawFolder, shootExtras, onChange, onToggle }: {
   form: ProjectForm;
   errors: Partial<Record<ProjectFieldError, string>>;
-  existingCollections?: CollectionKind[];
   mode?: ProjectFieldsMode;
   /** Set when a ready Editor folder mapping already monitors this project's RAW intake — the
    * Tonomo fields below stay fully editable (they still drive Tonomo change detection, RAW
@@ -123,7 +122,6 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
   onChange: (field: ProjectTextField, value: string) => void;
   onToggle: (field: ProjectSelectionField, value: string) => void;
 }) {
-  const collectionExists = (kind: CollectionKind) => existingCollections.includes(kind);
   const policy = projectFieldsPolicy(mode);
 
   return <>
@@ -164,7 +162,7 @@ export function ProjectFields({ form, errors, existingCollections = [], mode = "
         {SERVICE_TILES.map((tile) => "fixed" in tile
           ? <label className={CHECK_TILE} key={tile.fixed.kind}>
             <input type="checkbox" checked disabled className={CHECKBOX_INPUT} />
-            <span className={TILE_SPAN}><strong className={TILE_LABEL}>{tile.fixed.label}</strong><small className={TILE_HINT}>{collectionExists(tile.fixed.kind) ? "Already created" : "Always included"}</small></span>
+            <span className={TILE_SPAN}><strong className={TILE_LABEL}>{tile.fixed.label}</strong><small className={TILE_HINT}>Always included</small></span>
           </label>
           : <label className={CHECK_TILE} key={tile.service.kind}><input type="checkbox" checked={form.orderedServices.includes(tile.service.kind)} onChange={() => onToggle("orderedServices", tile.service.kind)} className={CHECKBOX_INPUT} /><span className={TILE_SPAN}>{tile.service.label}</span></label>)}
       </div>
