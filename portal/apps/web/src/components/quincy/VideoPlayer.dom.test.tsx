@@ -621,10 +621,10 @@ describe("the phone control bar (#879)", () => {
 });
 
 describe("the phone control bar's frame step and Social row (#879 review)", () => {
-  it("a phone has no frame step even when the host still passes phoneFrameStep (#927), and Social controls take their own row", async () => {
+  it("a phone has no frame step (#927), and Social controls take their own row", async () => {
     const viewport = mockViewport({ width: 390 });
     try {
-      await mount(versionOf(), { phoneFrameStep: true, social: { overlays: [{ id: "a", name: "Reels", imageUrl: "/a" }], currentId: "a", onOverlay: () => undefined, status: "ready", onRetry: () => undefined } });
+      await mount(versionOf(), { social: { overlays: [{ id: "a", name: "Reels", imageUrl: "/a" }], currentId: "a", onOverlay: () => undefined, status: "ready", onRetry: () => undefined } });
       await load();
       expect(host.querySelector('[aria-label="Previous frame"]')).toBeNull();
       expect(host.querySelector('[aria-label="Next frame"]')).toBeNull();

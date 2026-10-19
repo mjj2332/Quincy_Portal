@@ -570,3 +570,58 @@ describe("the guest phone notes list: the whole card seeks (#901)", () => {
     expect(stop()).not.toBe(before);
   });
 });
+
+describe("the guest phone sheet while drawing (#927 P4)", () => {
+  const film = () => byId("guest-video-screen")!.querySelector("video")!;
+  const pen = () => document.body.querySelector<HTMLButtonElement>('button[aria-label="Draw on the frame"]')!;
+  const transport = () => byId("video-scrubber")!.parentElement!;
+  async function ready() {
+    await openVideo();
+    await act(async () => { stub.loadMetadata(film(), { duration: 120, videoWidth: 1920, videoHeight: 1080 }); });
+    await act(async () => { stub.finishSeek(film()); stub.presentFrame(film(), 0); });
+    await flush(2);
+  }
+  const penDown = async () => {
+    await act(async () => { pen().click(); });
+    await act(async () => { stub.finishSeek(film()); stub.presentFrame(film(), 0); });
+    await flush(4);
+  };
+
+  it("the pen lowers the keyboard into draw mode; tapping the text raises it into compose with the drawing row still in the box, the transport put away; leaving the field is draw again", async () => {
+    await ready();
+    await act(async () => { area()!.focus(); });
+    expect(mode()).toBe("compose");
+    await penDown();
+    expect(document.activeElement).not.toBe(area());
+    expect(mode()).toBe("draw");
+    expect(byId("note-draw-row")).not.toBeNull();
+    expect(transport().hasAttribute("hidden")).toBe(false);
+    await act(async () => { area()!.focus(); });
+    await flush(2);
+    expect(mode()).toBe("compose");
+    expect(byId("note-draw-row")).not.toBeNull();
+    expect(transport().hasAttribute("hidden")).toBe(true);
+    await act(async () => { area()!.blur(); });
+    await flush(4);
+    expect(mode()).toBe("draw");
+    expect(transport().hasAttribute("hidden")).toBe(false);
+  });
+});
+
+describe("Full screen on iPhone (#927 D1)", () => {
+  afterEach(() => {
+    delete (document as unknown as Record<string, unknown>).fullscreenEnabled;
+    delete (HTMLVideoElement.prototype as unknown as Record<string, unknown>).webkitEnterFullscreen;
+  });
+  it("the Full screen button hands the film to the native player, in the press, and the in-app layer never opens", async () => {
+    Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: false });
+    const native = vi.fn();
+    (HTMLVideoElement.prototype as unknown as { webkitEnterFullscreen: () => void }).webkitEnterFullscreen = native;
+    await openVideo();
+    const film = byId("guest-video-screen")!.querySelector("video")!;
+    await act(async () => { stub.loadMetadata(film, { duration: 120, videoWidth: 1920, videoHeight: 1080 }); });
+    await act(async () => { byId("video-fullscreen")!.click(); });
+    expect(native).toHaveBeenCalledTimes(1);
+    expect(byId("video-exit-fullscreen")).toBeNull();
+  });
+});

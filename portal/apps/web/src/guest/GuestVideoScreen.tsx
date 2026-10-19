@@ -23,7 +23,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Tabs, TabsList, TabsTrigger } from "../components/reui/tabs";
 import { ReviewPhoneBar, VersionChip } from "../components/quincy/ReviewPhoneBar";
 import { ActionRow, ActionSeparator, ReviewActionSheet } from "../components/quincy/ReviewActionSheet";
-import { blurComposerField, isComposerField, useReviewSheet } from "../components/quincy/ReviewSheet";
+import { blurComposerField, isComposerField, useReviewSheet, useSheetMode } from "../components/quincy/ReviewSheet";
 import { PHONE_QUERY } from "../lib/review-pane-geometry";
 import { isPaneToggleKey } from "../lib/video-player-keys";
 import { useVisualViewport } from "../lib/use-visual-viewport";
@@ -169,10 +169,10 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
   const [notesFailed, setNotesFailed] = useState(false);
   // Popups (Version select, Versions and action sheets) portal into this slot, inside the inverse scope, not to body (#877).
   const [slot, setSlot] = useState<HTMLElement | null>(null);
-  const sheetControl = useReviewSheet({ drawing: false, filmAspect: version.height > 0 ? version.width / version.height : 16 / 9 });
-  const sheetStopRef = useRef(sheetControl.stop);
-  sheetStopRef.current = sheetControl.stop;
-  const setSheetStop = sheetControl.onStop;
+  const sheetState = useReviewSheet({ filmAspect: version.height > 0 ? version.width / version.height : 16 / 9 });
+  const sheetStopRef = useRef(sheetState.stop);
+  sheetStopRef.current = sheetState.stop;
+  const setSheetStop = sheetState.onStop;
   // Full screen (#880; "immersive" is the code name): held here, above the layout, so it survives the 721px crossing a rotation makes. A phone that opens already sideways starts in it (D14).
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [immersive, setImmersive] = useState<ImmersiveState>(() => rotate(null, { landscape: readLandscape(), phoneDevice: readPhoneDevice() }));
@@ -184,12 +184,12 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
     // mid-compose the field is left (the draft stays in the composer) and the prompt asks to turn upright; mid-search search mode ends (the query stays).
     // Read at the turn, from this render's state, while the sheet's own blur path still runs.
     if (immersive === null && rotate(null, { landscape, phoneDevice }) !== null) {
-      if (sheetControl.composing) { blurComposerField(); askUpright(); }
-      else if (sheetControl.searching) { blurNotesSearchField(); sheetControl.onSearching(false); }
+      if (sheetState.composing) { blurComposerField(); askUpright(); }
+      else if (sheetState.searching) { blurNotesSearchField(); sheetState.onSearching(false); }
     }
     setImmersive((current) => rotate(current, { landscape, phoneDevice }));
   });
-  const full = useImmersive({ rootRef, state: immersive, setState: setImmersive });
+  const full = useImmersive({ rootRef, state: immersive, setState: setImmersive, handoff: () => playerRef.current?.openSystemPlayer?.() });
   const imm = immersive !== null;
   // The phone's handling (#880 S1): a phone width, or a phone device in Full screen. A sideways iPhone is 844pt wide, so `phone` is off, yet its keyboard still pans the
   // page: the root follows the visual viewport and the canvas is ink there too. In Full screen the keyboard going away blurs the composer's field and leaves the composer shown.
@@ -207,7 +207,7 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
   // The guest column follows the visual viewport for as long as the phone screen is up (#879 PR 2, the staff viewer's r5 mechanism): the hook alone writes its height, transform
   // and transition, so the strip ends on the keyboard's top edge and the notices above the screen stay inside the box.
   // Searching too (#879 PR 3b, F1): the search field raises the keyboard without composing; its keyboard-gone fallback blurs the field and leaves search open.
-  useVisualViewport(handheld && (sheetControl.composing || sheetControl.searching || (imm && composeShown)), () => { if (sheetControl.composing || (imm && composeShown)) { if (!sheetControl.held) blurComposerField(); } else blurNotesSearchField(); }, viewportRoot, handheld);
+  useVisualViewport(handheld && (sheetState.composing || sheetState.searching || (imm && composeShown)), () => { if (sheetState.composing || (imm && composeShown)) { if (!sheetState.held) blurComposerField(); } else blurNotesSearchField(); }, viewportRoot, handheld);
   // Meanwhile the document's canvas is ink: iOS shows it under the page while it scrolls back as the keyboard drops (#879 fix r11).
   useInkCanvas(handheld);
   const [versionsOpen, setVersionsOpen] = useState(false);
@@ -392,6 +392,8 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
   }), [api, writer, settle]);
 
   const compose = useGuestCompose({ clock, frameCount: version.frameCount, markupAllowed: session.link.allow.markup, post, edit: editRoot, latestOf });
+  // The sheet's one mode (#927; lesson "A layout switched by two flags will disagree…"): from here on everything reads `sheetControl.mode`, and nothing overrides it.
+  const sheetControl = useSheetMode(sheetState, compose.penDown);
   // Social preview (#872): in memory, shared by every Video and Version of this screen, off again after All videos. Nothing else changes (#877): notes, marks and drawing work with it on, and turning it on or off touches no draft or drawing.
   const preview = useSocialPreview();
   const socialOn = preview.on && socialOverlays.length > 0;
@@ -686,7 +688,7 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
   const panel = <GuestNotesPanel threads={listedThreads} failed={notesFailed} onRetry={() => { setNotesAttempt((n) => n + 1); }} selectedId={selectedId} onSelect={select} timecode={timecode} {...(filteredEmpty ? { filteredEmpty } : {})} header={phone ? notesHead : <div className="flex items-center justify-between gap-[var(--space-2)]">{heading}{paneControls.hideButton}</div>} top={addNote} footer={footer} writing={writing} phone={phone} />;
   const openSheet = () => { if (sheetStopRef.current === "collapsed") setSheetStop("half"); };
   // Draw mode from the moment the pen goes down (its frame confirm included), so the sheet does not flash back to its browse stop meanwhile (#879 PR 2).
-  const sheet = phone ? { ...sheetControl, mode: compose.penDown ? "draw" as const : sheetControl.mode } : undefined;
+  const sheet = phone ? sheetControl : undefined;
   const latestLabel = `v${version.version}${version.version === newest ? " · latest" : ""}`;
   // P10's rows (#879 PR 3b), in the settled order: Social preview, Download vN, Download all…, Copy my notes…, then the decisions under a rule. Approve is a row only while
   // the header's slot holds the Changes requested badge (owner decision; F6: undecided, the header's Approve is the one way in, and an approval leaves nothing to approve).
@@ -777,7 +779,7 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
       immersive={imm ? (composeShown ? "compose" : "watch") : "off"}
       {...(sheet ? { sheet } : {})}
       strip={paneControls.strip}
-      player={<OverlayContainerContext.Provider value={slot}><VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(canWrite && session.verified && compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { revealPane(); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportLocked={compose.penDown} transportHidden={phone && (sheetControl.mode === "search" || (sheetControl.mode === "compose" && !compose.penDown))} immersive={immersiveHost} /></OverlayContainerContext.Provider>}
+      player={<OverlayContainerContext.Provider value={slot}><VideoPlayer key={version.assetId} controlRef={playerRef} keyboard="host" version={version} title={`${video.title}, version ${version.version}`} className="flex-1" markers={markers} onMarkerSelect={(id) => { const thread = threads?.find((candidate) => candidate.id === id); if (thread) select(thread); }} onClockChange={setClock} {...rangeProps} {...(canWrite && session.verified && compose.onMark ? { onMark: (kind: "in" | "out", frame: number) => { revealPane(); compose.onMark!(kind, frame); } } : {})} overlay={overlay} watermark={watermark ? (box) => <PremiumWatermark box={box} /> : undefined} {...(socialMode ? { social: socialMode } : {})} onMediaError={onMediaError} transportLocked={compose.penDown} transportHidden={phone && (sheetControl.mode === "search" || sheetControl.mode === "compose")} immersive={immersiveHost} /></OverlayContainerContext.Provider>}
       // The pane's popups (a note's ⋯ menu) portal into the same slot as the player's, inside the inverse scope (fix round 1: they drew light on the dark viewer).
       pane={<OverlayContainerContext.Provider value={slot}><aside data-testid="guest-notes-aside" className="flex min-h-0 flex-1 flex-col bg-card text-card-foreground min-[721px]:overflow-hidden min-[721px]:border-l min-[721px]:border-border min-[721px]:p-[var(--space-5)] min-[721px]:in-data-[immersive=compose]:border-l-0 min-[721px]:in-data-[immersive=compose]:p-0"><div data-sheet-part="head" className="flex shrink-0 items-center border-b border-border bg-card px-[var(--space-3)] min-[721px]:hidden" onClick={openSheet}>{phone && <Tabs value="notes" className="w-full"><TabsList variant="line" className="w-full justify-start rounded-none bg-card px-0 max-[721px]:!h-11 max-[721px]:!p-0"><TabsTrigger value="notes" data-testid="guest-notes-heading" className="max-[721px]:!h-11 max-[721px]:flex-none max-[721px]:px-[var(--space-3)] max-[721px]:after:!bottom-0">{tabContent}</TabsTrigger></TabsList></Tabs>}</div><div data-testid="guest-notes-aside-body" className="flex min-h-0 flex-1 flex-col max-[721px]:p-[var(--space-4)] max-[721px]:in-data-[mode=browse]:py-0 max-[721px]:in-data-[mode=compose]:py-[var(--space-2)] max-[721px]:in-data-[immersive=compose]:p-0">{panel}</div></aside></OverlayContainerContext.Provider>}
     />
