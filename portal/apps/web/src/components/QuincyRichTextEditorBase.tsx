@@ -12,7 +12,6 @@ import {
   EmbeddedImage,
   EmbeddedVideo,
   LinkPreview,
-  NOTE_MEDIA_REMOVE_META,
   createRichTextEditorExtensions,
   noteMediaTailStart,
   type RichTextEditorPreset,
@@ -708,7 +707,7 @@ export function QuincyRichTextEditorBase({
   const strip = stripItems.length > 0 ? <NoteDraftStrip
     items={stripItems} disabled={disabled} phone={phone} inline={stripContainer === undefined} mediaUrl={mediaUrl} posterUrl={posterUrl}
     nameOf={(node) => node.type === "image" ? node.attrs.alt?.trim() || fileNames.current.get(node.attrs.mediaId) || "Image" : fileNames.current.get(node.attrs.mediaId) ?? "Video"}
-    onRemove={(mediaId) => { const at = findMedia(mediaId); if (at) editor.view.dispatch(editor.state.tr.delete(at.pos, at.pos + at.size).setMeta(NOTE_MEDIA_REMOVE_META, true)); }}
+    onRemove={(mediaId) => { const at = findMedia(mediaId); if (at) editor.view.dispatch(editor.state.tr.delete(at.pos, at.pos + at.size)); }}
     onCancel={(key) => { running.current.get(key)?.release(); announceCancelled(); }}
     onAlt={(mediaId, alt) => { const at = findMedia(mediaId); if (at) editor.view.dispatch(editor.state.tr.setNodeMarkup(at.pos, undefined, { ...at.attrs, alt })); }}
     onFocusText={() => editor.commands.focus()}

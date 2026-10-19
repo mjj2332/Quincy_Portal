@@ -65,7 +65,7 @@ describe.each([["a phone (stacked, with the sheet)", true], ["a desktop width", 
   it("compose is F1's box (#927 T9): inside the dock's scrim, a space above the scrubber, centred at most the frame's ~560px (from the token scale) inside the dock's insets; the pane draws no surface or padding of its own, the box does", async () => {
     await render({ stacked, immersive: "compose", open: false });
     const classes = q("video-review-pane")!.className.split(/\s+/);
-    for (const name of ["left-[max(var(--space-3),env(safe-area-inset-left))]", "right-[max(var(--space-3),env(safe-area-inset-right))]", "mx-auto", "max-w-[calc(var(--container-sm)-var(--space-8)-var(--space-4))]", "overflow-y-auto"]) expect(classes, name).toContain(name);
+    for (const name of ["left-[max(var(--space-3),env(safe-area-inset-left))]", "right-[max(var(--space-3),env(safe-area-inset-right))]", "mx-auto", "max-w-[var(--note-float-width)]", "overflow-y-auto"]) expect(classes, name).toContain(name);
     for (const name of ["bg-card", "px-[var(--space-3)]", "py-[var(--space-2)]", "border", "border-border", "p-[var(--space-3)]", "mb-[var(--space-2)]", "inset-x-[var(--space-3)]", "w-[var(--review-pane-w)]"]) expect(classes, name).not.toContain(name);
     expect(q("video-review-pane")!.style.getPropertyValue("--review-pane-w")).toBe("");
   });

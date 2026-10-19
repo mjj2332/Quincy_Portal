@@ -41,26 +41,27 @@ export interface NoteDrawRowProps {
 
 /** Keeps the focus where it is: a press on these controls must not take it from the field, or iOS drops the keyboard (#879 fix, §3.4). */
 export const keepFocus = (event: { preventDefault: () => void }) => { event.preventDefault(); };
-const KEEP_FOCUS = { onPointerDown: keepFocus, onMouseDown: keepFocus } as const;
+/** The press handlers a row control spreads on: `keepFocus` on pointer and mouse down. (The box marks its own controls instead: `KEEP_FOCUS_MARKER`.) */
+const KEEP_FOCUS_HANDLERS = { onPointerDown: keepFocus, onMouseDown: keepFocus } as const;
 
 /**
  * A composer tool (prototype `.cmp-tool`): a quiet glyph button, 32px on a 8px radius, 44px on a phone and on a touch tablet.
- * The hover lift is the box's own sunken ground with a tenth of the ink mixed in (the prototype's ink-600 over ink-700): the inverse
+ * The hover lift is `note-lift` (tokens/tailwind.css: the box's sunken ground with a tenth of the ink mixed in): the inverse
  * `--muted` the ghost variant hovers with IS the box's ground, so it would not show. The pressed state is the chip's caution tint.
  */
-export const NOTE_TOOL = "rounded-[var(--radius-md)] border-0 px-0 text-foreground-secondary transition-colors hover:bg-[color-mix(in_oklch,var(--surface-sunken),var(--foreground)_10%)] hover:!text-foreground aria-pressed:bg-[color-mix(in_oklch,var(--warning-foreground)_16%,transparent)] aria-pressed:!text-warning-foreground aria-disabled:opacity-50 aria-disabled:hover:bg-transparent aria-disabled:hover:!text-foreground-secondary [&_svg:not([class*='size-'])]:size-4.5";
+export const NOTE_TOOL = "rounded-[var(--radius-md)] border-0 px-0 text-foreground-secondary transition-colors hover:bg-note-lift hover:!text-foreground aria-pressed:bg-[color-mix(in_oklch,var(--warning-foreground)_16%,transparent)] aria-pressed:!text-warning-foreground aria-disabled:opacity-50 aria-disabled:hover:bg-transparent aria-disabled:hover:!text-foreground-secondary [&_svg:not([class*='size-'])]:size-4.5";
 /** 32px; 44px on a touch tablet (scoped above the phone width: docs/lessons.md "A touch phone matches `pointer-coarse:` too"). */
 export const NOTE_TARGET = "size-8 min-[721px]:pointer-coarse:size-11";
 /** The phone's 44px, with the prototype's 20px glyph. */
 export const NOTE_TARGET_PHONE = "size-11 [&_svg:not([class*='size-'])]:size-5";
 /** The checked tool: the lift, full ink, and the toolbar's inset hairline (prototype `[aria-checked=true]`). */
-const CHECKED = cn("data-checked:bg-[color-mix(in_oklch,var(--surface-sunken),var(--foreground)_10%)] data-checked:!text-foreground", SELECTED_HAIRLINE_CHECKED);
+const CHECKED = cn("data-checked:bg-note-lift data-checked:!text-foreground", SELECTED_HAIRLINE_CHECKED);
 /** A swatch disc, its paint inline (pen ink applied to the frame, not interface chrome: design tokens §1.5). */
 const SWATCH = "block rounded-full border border-solid border-[length:var(--border-width-hair)] border-border";
-const SEP = "mx-0.5 h-4.5 bg-[color-mix(in_srgb,var(--border)_70%,transparent)] data-[orientation=vertical]:self-center";
+const SEP = "mx-0.5 h-4.5 bg-border-soft data-[orientation=vertical]:self-center";
 
 function HistoryButton({ label, title, shortcuts, Icon, disabled, onClick, target }: { label: string; title: string; shortcuts?: string; Icon: LucideIcon; disabled: boolean; onClick: () => void; target: string }) {
-  return <Button type="button" variant="ghost" size="icon" aria-label={label} title={title} aria-keyshortcuts={shortcuts} disabled={disabled} className={cn(NOTE_TOOL, target)} {...KEEP_FOCUS} onClick={onClick}>
+  return <Button type="button" variant="ghost" size="icon" aria-label={label} title={title} aria-keyshortcuts={shortcuts} disabled={disabled} className={cn(NOTE_TOOL, target)} {...KEEP_FOCUS_HANDLERS} onClick={onClick}>
     <Icon aria-hidden="true" />
   </Button>;
 }
@@ -78,14 +79,14 @@ export function NoteDrawRow({ tool, color, onToolChange, onColorChange, canUndo,
     // The row scrolls rather than wraps (the 44px targets do not fit a narrow phone); the block padding keeps the focus ring inside the scroller's clip.
     className={cn("-my-1 -ms-[var(--space-2)] flex min-w-0 flex-nowrap items-center overflow-x-auto overflow-y-hidden py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0", SCROLL_FADE_MASK_CLASSES)}
   >
-    <Button ref={doneRef} type="button" variant="ghost" size="icon" aria-label="Done drawing" title="Done drawing (Esc)" className={cn(NOTE_TOOL, target)} {...KEEP_FOCUS} onClick={onDone}>
+    <Button ref={doneRef} type="button" variant="ghost" size="icon" aria-label="Done drawing" title="Done drawing (Esc)" className={cn(NOTE_TOOL, target)} {...KEEP_FOCUS_HANDLERS} onClick={onDone}>
       <ChevronLeftIcon aria-hidden="true" />
     </Button>
     {sep("s1")}
     <RadioGroup aria-label="Drawing tool" className="inline-flex w-auto items-center gap-0" value={tool} onValueChange={(value) => { if (value !== tool) onToolChange(value as MarkupToolKind); }}>
       {MARKUP_TOOLS.map(({ kind, label, Icon }) => (
         <RadioGroupItem
-          key={kind} value={kind} aria-label={label} title={label} render={<button type="button" />} nativeButton {...KEEP_FOCUS}
+          key={kind} value={kind} aria-label={label} title={label} render={<button type="button" />} nativeButton {...KEEP_FOCUS_HANDLERS}
           // aspect-auto first: the item's own `size-4 aspect-square` must give way to the target.
           className={cn("aspect-auto items-center justify-center rounded-[var(--radius-md)] border-0 bg-transparent cursor-pointer data-checked:border-0", NOTE_TOOL, target, CHECKED)}
         ><Icon aria-hidden="true" /></RadioGroupItem>
@@ -107,7 +108,7 @@ export function NoteDrawRow({ tool, color, onToolChange, onColorChange, canUndo,
         </ToggleGroup>
         {phone && <Button
           type="button" variant="ghost" disabled={!canClear}
-          className="-mx-[var(--space-2)] -mb-[var(--space-2)] min-h-11 justify-start gap-[var(--space-3)] rounded-none rounded-b-[var(--radius-md)] border-t-[color-mix(in_srgb,var(--border)_60%,transparent)] px-[var(--space-3)] normal-case tracking-normal !text-destructive-wash-foreground [font:var(--type-label)] transition-colors"
+          className="-mx-[var(--space-2)] -mb-[var(--space-2)] min-h-11 justify-start gap-[var(--space-3)] rounded-none rounded-b-[var(--radius-md)] border-t-border-faint px-[var(--space-3)] normal-case tracking-normal !text-destructive-wash-foreground [font:var(--type-label)] transition-colors"
           onClick={() => { onClear(); setPalette(false); }}
         ><TrashIcon aria-hidden="true" />Clear drawing</Button>}
       </PopoverContent>

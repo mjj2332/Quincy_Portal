@@ -390,19 +390,40 @@ describe("the draft strip (C4)", () => {
     expect(shape(latest)).toEqual(["paragraph"]);
   });
 
-  it("keeps the files when the text is selected and deleted, or forward-deleted from its end", async () => {
+  // Owner decision (2026-10-20, "Allow delete"): a file goes with the selection deleted over it, and with Backspace or Delete, just as its × removes it.
+  it("removes the files when a selection over them is deleted, and undo brings them back with the text", async () => {
+    uploadImage.mockResolvedValueOnce(A).mockResolvedValueOnce(B);
+    const host = mount(<Harness initial={text("Swap")} />); await settle();
+    await pick(host, [png("a.png"), png("b.png")]);
+    // Past the history's 500ms grouping, so undo takes back the deletion alone, not the uploads with it.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
+    const tiptap = tiptapOf(host);
+    await act(async () => { tiptap.commands.focus(); tiptap.commands.selectAll(); });
+    await keydown(surfaceOf(host), "Backspace");
+    expect(shape(latest).filter((block) => block !== "paragraph")).toEqual([]);
+    expect(chips(host)).toHaveLength(0);
+    await act(async () => { tiptap.commands.undo(); });
+    const restored = tiptapToRichTextDoc(tiptap.getJSON());
+    expect(JSON.stringify(restored)).toContain("Swap");
+    expect(shape(restored)).toEqual(["paragraph", "image:1", "image:2"]);
+  });
+
+  it("removes a file with Delete from the end of the text, and a selected file with Backspace", async () => {
     uploadImage.mockResolvedValueOnce(A).mockResolvedValueOnce(B);
     const host = mount(<Harness initial={text("Swap")} />); await settle();
     await pick(host, [png("a.png"), png("b.png")]);
     const tiptap = tiptapOf(host);
-    await act(async () => { tiptap.commands.focus(); tiptap.commands.setTextSelection(posAfter(tiptap, "Swap")); tiptap.commands.joinForward(); });
-    expect(shape(latest)).toEqual(["paragraph", "image:1", "image:2"]);
-    await act(async () => { tiptap.commands.selectAll(); tiptap.commands.deleteSelection(); });
-    expect(shape(latest).filter((block) => block !== "paragraph")).toEqual(["image:1", "image:2"]);
-    expect(chips(host)).toHaveLength(2);
-    // Undo still brings the text back.
-    await act(async () => { tiptap.commands.undo(); });
-    expect(JSON.stringify(tiptapToRichTextDoc(tiptap.getJSON()))).toContain("Swap");
+    await act(async () => { tiptap.commands.focus(); tiptap.commands.setTextSelection(posAfter(tiptap, "Swap")); });
+    await keydown(surfaceOf(host), "Delete");
+    expect(shape(latest)).toEqual(["paragraph", "image:2"]);
+    expect(chips(host)).toHaveLength(1);
+    let imageAt = -1;
+    tiptap.state.doc.forEach((child, offset) => { if (child.type.name === "image") imageAt = offset; });
+    await act(async () => { tiptap.commands.setNodeSelection(imageAt); });
+    await keydown(surfaceOf(host), "Backspace");
+    expect(shape(latest)).toEqual(["paragraph"]);
+    expect(chips(host)).toHaveLength(0);
+    expect(JSON.stringify(latest)).toContain("Swap");
   });
 
   it("draws the strip into the host's element when one is given", async () => {

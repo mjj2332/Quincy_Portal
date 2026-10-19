@@ -256,6 +256,14 @@ describe("NoteComposerBox, edit (E1)", () => {
     expect(save.onSave).toHaveBeenCalledTimes(1);
   });
 
+  it("shows no visibility at all when the host gives none (a guest's edit: owner decision 2026-10-20)", async () => {
+    const { visibility: _omit, ...rest } = edit() as Extract<NoteComposerBoxProps, { variant: "edit" }>;
+    await mount(rest as NoteComposerBoxProps);
+    expect(q("note-composer-visibility")).toBeNull();
+    expect(q("note-composer-tools")!.textContent).not.toMatch(/Internal|Client-visible/);
+    expect([...q("note-composer-tools")!.querySelectorAll("button")].slice(-2).map((b) => b.textContent)).toEqual(["Cancel", "Save"]);
+  });
+
   it("D4: editing the range locks the pen, with the lock's reason as its title; the locked control does nothing", async () => {
     const pen = { onPress: vi.fn(), disabled: true, reason: "Save or clear the in and out points to change the drawing." };
     await mount(edit({ pen }));

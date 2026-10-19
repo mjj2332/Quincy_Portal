@@ -1,4 +1,4 @@
-import { createContext, useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { createContext, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { releaseVelocity, settleSheet, sheetStops, type SheetStop, type SheetStops } from "../../lib/review-pane-geometry";
 import { TAP_SLOP } from "../../lib/tap-slop";
 
@@ -100,6 +100,15 @@ export type SheetModeValue = {
 };
 export const SheetModeContext = createContext<SheetModeValue | null>(null);
 
+/**
+ * The composer's post hold (#879, C7): a post sent from compose mode holds the sheet in compose mode until it settles, and the hold goes
+ * when the composer unmounts. One hook for the staff and Guest composers; `setHold` is absent outside a phone sheet.
+ */
+export function usePostHold(setHold: SheetModeValue["setHold"] | undefined, held: boolean) {
+  useEffect(() => { setHold?.("post", held); }, [setHold, held]);
+  useEffect(() => () => { setHold?.("post", false); }, [setHold]);
+}
+
 export const SHEET_COLLAPSED_MIN = 127;
 const PART = "[data-sheet-part]";
 const EDITABLE = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
@@ -142,6 +151,8 @@ export function useSheetPane({ enabled, control, room, paneRef, immersive = "off
 export const SHEET_FILM_FLOOR = "var(--space-9)";
 /** Marks the box in the composer that gives up height first (the box's text, which scrolls), so the film keeps its floor. */
 export const SHEET_TEXT_ATTR = "data-sheet-text";
+/** The attribute itself, for a composer to spread on its box's text region. */
+export const SHEET_TEXT = { [SHEET_TEXT_ATTR]: "" } as const;
 /** The room the marked box may take, published on the pane in compose mode; the composer's clamp reads it (`var(--sheet-text-room, …)`). */
 export const SHEET_TEXT_ROOM_VAR = "--sheet-text-room";
 

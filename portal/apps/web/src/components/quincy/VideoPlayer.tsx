@@ -107,7 +107,7 @@ const LEGEND = "flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--
  * surface (`data-surface="inverse"`) around it, like the Lightbox. `keyboard="self"` listens on the player; `"host"` leaves the
  * scope to the caller, who forwards events to `controlRef.handleKeyDown`.
  */
-export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, range, onClockChange, overlay, watermark, onMediaError, transportLocked = false, transportReplacement, social, transportHidden = false, immersive }: {
+export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, range, onClockChange, overlay, watermark, onMediaError, transportLocked = false, social, transportHidden = false, immersive }: {
   version: VideoPlayerVersion;
   title: string;
   controlRef?: Ref<VideoPlayerControl>;
@@ -138,8 +138,6 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   onMediaError?: () => void;
   /** Drawing: the transport, the scrubber and the player's keys are inert, so nothing moves the frame under the pen. */
   transportLocked?: boolean;
-  /** Replaces the whole transport block (scrubber, controls, key legend) in place, under the picture, while the host needs the room (drawing). Never overlaid on the picture. */
-  transportReplacement?: ReactNode;
   /**
    * Social preview (#871): the film framed 9:16 under an overlay. Nothing else changes (#877): markers, the range, I and O, Draw and the markup overlay all work, the overlay slot drawn inside the frame
    * on the letterboxed picture, so a stroke is the same fraction of the film with Social on or off. Playback, the scrubber, the keys, mute, the time format and full screen work as ever.
@@ -153,10 +151,6 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [muted, setMutedState] = useState(initialMuted);
   const playerRef = useRef<HTMLElement | null>(null);
-  // The transport block's height, kept while it shows so its replacement (drawing) takes at least the same room: the picture above never moves when Draw is pressed.
-  const transportRef = useRef<HTMLDivElement | null>(null);
-  const transportHeight = useRef<number | null>(null);
-  useLayoutEffect(() => { if (transportReplacement == null && !transportHidden && transportRef.current) transportHeight.current = transportRef.current.offsetHeight; });
   const clock = useVideoFrameClock(video, version, initialFrame === undefined ? {} : { initialFrame });
 
   const timecode = useFrameLabel(version);
@@ -218,7 +212,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const [scrubbing, setScrubbing] = useState(false);
   const composing = immersive?.addNote?.pressed === true;
   const cardOpen = immersive?.card != null;
-  const drawing = transportReplacement != null || transportLocked;
+  const drawing = transportLocked;
   const paused = !clock.playing;
   const held = chromeHeld({ playing: clock.playing, composing, drawing, card: cardOpen, focusWithin: focusHeld, popupOpen, scrubbing });
   const lastWake = useRef(0);
@@ -333,7 +327,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const FADE = "motion-safe:transition-opacity motion-safe:duration-[var(--dur-base)] motion-safe:ease-[var(--ease-entrance)]";
   // In Full screen (#880) the badge is F1's centre Play, on every width, and it fades with the rest of the controls.
   // P1's centre Play is a phone's (owner decision, #880 review 10): a desktop's Full screen has none; Play stays in the controls row and on Space.
-  const badge = handheld && !clock.playing && !hidesTransport && !transportLocked && transportReplacement == null
+  const badge = handheld && !clock.playing && !hidesTransport && !transportLocked
     ? <Button type="button" variant="ghost" size="icon" tabIndex={-1} aria-hidden="true" data-testid="video-play-badge" data-immersive-chrome="" inert={!chromeVisible} className={cn(PLAY_BADGE, imm && FADE, imm && fade)} onClick={() => { parkFocus(); clock.play(); }}><Play aria-hidden="true" className="size-6" /></Button>
     : null;
   // The press target for Full screen: the host's mode, else the browser's element full screen where it has one (Compare and every other host).
@@ -373,7 +367,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(write);
     if (observer && dockRef.current) observer.observe(dockRef.current);
     return () => { observer?.disconnect(); target.style.removeProperty("--immersive-controls-h"); };
-  }, [imm, section, transportReplacement != null, composing]); // eslint-disable-line react-hooks/exhaustive-deps -- the dock is one node; the replacement changes its height, the composer its top padding
+  }, [imm, section, composing]); // eslint-disable-line react-hooks/exhaustive-deps -- the dock is one node; the composer changes its top padding
   const markerSelect = imm && immersive?.onMarkerTap ? immersive.onMarkerTap : onMarkerSelect;
   const noticeClass = imm ? "absolute inset-x-[var(--space-3)] top-[var(--space-7)] z-20" : "";
 
@@ -418,8 +412,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     {/* The replacement sits ABOVE the transport, which stays mounted and hidden under it (#879 PR 2): unmounted, the slider came back as a new node, measured its thumb inside whatever
         box hid it next (a phone's Done lands in compose mode, where the transport is hidden) and drew no thumb until the frame moved. */}
     <div ref={dockRef} {...dockProps} className={dockClass}>
-    {transportReplacement != null && <div className="flex flex-col justify-center" style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div>}
-    <div ref={transportRef} hidden={hidesTransport || transportReplacement != null} className={cn(transportClass, "[&[hidden]]:hidden")}>
+    <div hidden={hidesTransport} className={cn(transportClass, "[&[hidden]]:hidden")}>
     {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track.
         A phone draws it as P1's `.scrub` band (#879 PR 3a): `--space-6` tall, the marker lane laid inside it along the top, the track through its middle, a 44px touch band from the slider's `band` size. */}
     <div data-testid="video-scrubber" className={handheld ? "relative h-[var(--space-6)]" : undefined} onPointerDownCapture={imm ? startScrub : undefined}>

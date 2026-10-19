@@ -117,7 +117,7 @@ describe("VideoPlayer controls auto-hide (#880, D13)", () => {
     await rerender({ immersive: hostOf({ card: <div>A note</div> }) });
     await advance(10_000);
     expect(chrome()).toBe("shown");
-    await rerender({ immersive: hostOf(), transportLocked: true, transportReplacement: <div>Pen tools</div> });
+    await rerender({ immersive: hostOf(), transportLocked: true });
     await advance(10_000);
     expect(chrome()).toBe("shown");
   });
@@ -365,23 +365,22 @@ describe("VideoPlayer full screen controls (#880, D13)", () => {
 
 describe("VideoPlayer Full screen dock (#880 S2)", () => {
   const slider = () => host.querySelector<HTMLElement>('[data-testid="video-scrubber"] [role="slider"]');
-  it("is one wrapper around the replacement and the transport: the pen down neither swaps the dock nor remounts the slider", async () => {
+  it("is one wrapper around the transport: the pen down (the transport locked) neither swaps the dock nor remounts the slider", async () => {
     await mount({ immersive: hostOf() });
     const dock = byTestId("video-immersive-dock")!; const thumb = slider()!;
-    await rerender({ immersive: hostOf(), transportReplacement: <div data-testid="pen-tools">Pen</div> });
+    await rerender({ immersive: hostOf(), transportLocked: true });
     expect(byTestId("video-immersive-dock")).toBe(dock);
-    expect(dock.contains(byTestId("pen-tools"))).toBe(true);
     expect(slider()).toBe(thumb);
     await rerender({ immersive: hostOf() });
     expect(byTestId("video-immersive-dock")).toBe(dock);
     expect(slider()).toBe(thumb);
   });
-  it("publishes --immersive-controls-h from the wrapper, with the replacement inside it", async () => {
+  it("publishes --immersive-controls-h from the wrapper", async () => {
     const split = document.createElement("div"); split.setAttribute("data-testid", "video-review-split"); document.body.appendChild(split);
     host = document.createElement("div"); split.appendChild(host); root = createRoot(host);
     const heights = new WeakMap<Element, number>();
     const spy = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) { return heights.get(this) ?? 0; });
-    await act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" immersive={hostOf()} transportReplacement={<div>Pen</div>} />); });
+    await act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" immersive={hostOf({ addNote: { pressed: true, onToggle: () => undefined } })} />); });
     heights.set(byTestId("video-immersive-dock")!, 132);
     await act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" immersive={hostOf()} />); });
     expect(split.style.getPropertyValue("--immersive-controls-h")).toBe("132px");
@@ -392,7 +391,7 @@ describe("VideoPlayer Full screen dock (#880 S2)", () => {
     host = document.createElement("div"); split.appendChild(host); root = createRoot(host);
     const heights = new WeakMap<Element, number>();
     const spy = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) { return heights.get(this) ?? 0; });
-    await act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" immersive={hostOf()} transportReplacement={<div>Pen</div>} />); });
+    await act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" immersive={hostOf({ addNote: { pressed: true, onToggle: () => undefined } })} />); });
     const dock = byTestId("video-immersive-dock")!;
     heights.set(dock, 132); dock.style.paddingTop = "40px";
     await act(async () => { root!.render(<VideoPlayer version={version} title="Main walkthrough" immersive={hostOf()} />); });

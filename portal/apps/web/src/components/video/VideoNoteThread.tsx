@@ -24,7 +24,7 @@ import { Badge } from "../reui/badge";
 import { Button as ReuiButton } from "../reui/button";
 import { Item } from "../reui/item";
 import { NoteBody } from "../quincy/NoteMediaStrip";
-import { NoteComposerBox, type NoteAnchorChip } from "../quincy/NoteComposerBox";
+import { NoteComposerBox, rangeChip, type NoteAnchorChip } from "../quincy/NoteComposerBox";
 import { VideoNoteEditor } from "./VideoNoteEditor";
 import { MARKUP_FULL_TEXT, type NoteDrawControls } from "./VideoMarkupOverlay";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../reui/tooltip";
@@ -281,7 +281,7 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
         </IconTip></span>}
       </div>}
       {form?.kind === "reply" && <NoteComposerBox
-        variant="reply" label="Reply" testId="video-note-reply-form" phone={phone} className="p-0" formAttributes={{ "data-notes-form": "reply" }}
+        variant="reply" label="Reply" testId="video-note-reply-form" phone={phone} formAttributes={{ "data-notes-form": "reply" }}
         field={<div ref={replyField} data-testid="video-note-reply-body" className="min-w-0">
           <label className="sr-only" htmlFor={`video-note-reply-${thread.id}`}>Write a reply</label>
           <VideoNoteEditor
@@ -354,9 +354,8 @@ function NoteEditBox({ thread, editing, store, assetId, clock, timecode, busy, s
   const hasDrawing = drawing.items === null ? drawing.hadDrawing && !drawing.remove : drawing.items.length > 0;
 
   const toPoint = () => { if (!clock) return; store.makePoint(assetId, clock); setPointed(store.slot(assetId).marks.value); };
-  const chip: NoteAnchorChip = shown.in !== null
-    ? { kind: "range", from: timecode(shown.in), to: timecode(shown.out ?? Math.max(liveFrame, shown.in)), toLive: shown.out === null, onClear: toPoint, clearDisabled: busy || framesLocked || drawingNow || !clock }
-    : { kind: "point", at: point === null ? "" : timecode(point), following: false };
+  const chip: NoteAnchorChip = rangeChip(shown, liveFrame, timecode, { onClear: toPoint, disabled: busy || framesLocked || drawingNow || !clock })
+    ?? { kind: "point", at: point === null ? "" : timecode(point), following: false };
   const rangeOff = busy || !clock || framesLocked || drawingNow;
   const rangeReason = framesLocked ? FRAMES_FOLLOW : !clock ? "Loading the film…" : null;
 
@@ -373,7 +372,7 @@ function NoteEditBox({ thread, editing, store, assetId, clock, timecode, busy, s
   </>;
 
   return <NoteComposerBox
-    variant="edit" label="Edit note" testId="video-note-edit-form" phone={phone} className="p-0" formAttributes={{ "data-notes-form": "edit" }}
+    variant="edit" label="Edit note" testId="video-note-edit-form" phone={phone} formAttributes={{ "data-notes-form": "edit" }}
     visibility={thread.visibility}
     field={<div ref={fieldRef} data-testid="video-note-edit-body" className="min-w-0">
       <label className="sr-only" htmlFor={`video-note-edit-${thread.id}`}>Edit note</label>

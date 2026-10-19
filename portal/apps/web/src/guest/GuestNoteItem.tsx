@@ -218,7 +218,7 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
         {thread.resolved && replyDraft === null && <ResolvedTick data-testid="guest-note-resolved" className="ms-auto" />}
       </div>}
       {writing.canWrite && !thread.deleted && replyDraft !== null && <NoteComposerBox
-        variant="reply" label="Reply" testId="guest-reply-form" className="p-0"
+        variant="reply" label="Reply" testId="guest-reply-form"
         field={<GuestNoteField ref={replyEditor} testId="guest-reply-body" label="Your reply" placeholder="Reply…" media={writing.media} value={replyDraft.doc} disabled={replyStatus.pending || !writing.canWrite} onChange={(doc) => { drafts.set(replyKey, { ...replyDraft, doc }); }} onUploadingChange={setReplyUploading} onSubmit={() => { void sendReply(); }} stripContainer={replyStrip} />}
         strip={<div ref={setReplyStrip} className="empty:hidden" />}
         notice={replyStatus.problem !== null ? <p role="alert" data-testid="guest-reply-problem" className={PROBLEM}>{replyStatus.problem}</p> : null}

@@ -453,6 +453,8 @@
 .rich-text__embedded-video { display: block; width: 100%; aspect-ratio: 16 / 9; max-width: min(100%, calc(24rem * 16 / 9)); max-height: 24rem; height: auto; margin: 0; border-radius: var(--radius-xs); border: var(--border-width-hair) solid var(--border); object-fit: contain; background: var(--surface-sunken); }
 /* #592 — the playback-failure panel is the same box as the player (shared width/aspect-ratio/clamp above); it only centres its content. No own aspect-ratio or max-height, so the two cannot drift. */
 .rich-text__embedded-video.rich-text__embedded-video--unavailable { display: grid; place-content: center; justify-items: center; gap: var(--space-2); padding: var(--space-3); text-align: center; }
+/* #927 review — the player on a dialog's stage (`EmbeddedVideo size="stage"`: its tile dialog and `EmbeddedVideoDialog`): edge to edge, as tall as the dialog allows (its 90dvh cap), no frame. The unavailable panel takes it too. A modifier here, not `!` utilities, because this file is unlayered. */
+.rich-text__embedded-video.rich-text__embedded-video--stage { width: 100%; max-width: none; max-height: 90dvh; aspect-ratio: auto; border: 0; border-radius: var(--radius-none); }
 .rich-text__editor-content video.rich-text__embedded-video { margin: var(--space-2) 0; }
 .rich-text__embedded-video-node { position: relative; width: 100%; max-width: min(100%, calc(24rem * 16 / 9)); margin: var(--space-2) 0; }
 .rich-text__editor-content .rich-text__embedded-video-node > .rich-text__embedded-video { margin: 0; }

@@ -79,4 +79,11 @@
      `text-star-on` utility as well as plain CSS. */
   --color-star-on: var(--star-on);
   --color-star-off: var(--star-off);
+  /* #927, prototype note-composer: the lift a composer control hovers, opens or is checked to (the box's sunken ground with a tenth
+     of the ink mixed in: the prototype's ink-600 over ink-700), and the box's two softened hairlines, `faint` (60%: the box itself,
+     the palette's Clear rule) and `soft` (70%: the visibility pill, the drawing row's separators). Inline, like every alias here, so
+     the inverse scope's own --surface-sunken, --foreground and --border reach them. */
+  --color-note-lift: color-mix(in oklch, var(--surface-sunken), var(--foreground) 10%);
+  --color-border-faint: color-mix(in srgb, var(--border) 60%, transparent);
+  --color-border-soft: color-mix(in srgb, var(--border) 70%, transparent);
 }
