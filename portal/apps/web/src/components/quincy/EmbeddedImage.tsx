@@ -14,6 +14,13 @@ const SMALL_NATURAL = 96;
  * settles 56px tiles that open the existing dialogs.
  */
 export const EMBEDDED_THUMB_TILE = "block size-[calc(var(--space-7)+var(--space-2))] shrink-0 overflow-hidden rounded-[var(--radius-md)] border border-border bg-muted";
+/**
+ * Adaptation (#927 T2): the 32px (--space-6) thumb inside a draft note's chip (frame C4: `.cmp-file .thumb`, 32px at a 5px radius, here
+ * `--radius-sm`). It opens the same dialog as the posted tile, so the author can check what they attached. No border: the chip draws one.
+ */
+export const EMBEDDED_CHIP_TILE = "block size-[var(--space-6)] shrink-0 overflow-hidden rounded-[var(--radius-sm)] bg-muted";
+/** The tile class for a small size, or null for the inline default. */
+export const embeddedTile = (size: "default" | "thumb" | "chip") => size === "thumb" ? EMBEDDED_THUMB_TILE : size === "chip" ? EMBEDDED_CHIP_TILE : null;
 
 /**
  * A posted embedded image (#493): a thumbnail that opens the larger view in the ReUI dialog. The
@@ -24,7 +31,8 @@ export const EMBEDDED_THUMB_TILE = "block size-[calc(var(--space-7)+var(--space-
  */
 /** `mediaUrl` (#835) is where the bytes are read from: the staff route by default, a Review link's own for a guest. */
 /** `size="thumb"` (#927 T1) is a posted note's strip tile: the picture cropped to a 56px square, opening the same dialog. The default is the inline image every other post draws, unchanged. */
-export function EmbeddedImage({ mediaId, alt, width, height, mediaUrl = embeddedMediaUrl, size = "default" }: { mediaId: string; alt?: string; width?: number; height?: number; mediaUrl?: (mediaId: string) => string; size?: "default" | "thumb" }) {
+/** `size="chip"` (#927 T2) is the same tile at 32px, inside a draft note's chip. */
+export function EmbeddedImage({ mediaId, alt, width, height, mediaUrl = embeddedMediaUrl, size = "default" }: { mediaId: string; alt?: string; width?: number; height?: number; mediaUrl?: (mediaId: string) => string; size?: "default" | "thumb" | "chip" }) {
   const [open, setOpen] = useState(false);
   const [failed, setFailed] = useState(false);
   // Under twice the 48px close chip in either dimension, the chip would cover most of the image (a 24px one entirely): the stage then pads its top and right by the chip so the image sits beside it.
@@ -32,19 +40,20 @@ export function EmbeddedImage({ mediaId, alt, width, height, mediaUrl = embedded
   const src = mediaUrl(mediaId);
   // The author's alt text (#553); an image posted before alt existed has none and keeps the generic name.
   const label = alt?.trim() || "Embedded image";
-  const thumb = size === "thumb";
+  const tile = embeddedTile(size);
+  const thumb = tile !== null;
   const reserved = width !== undefined && height !== undefined && width > 0 && height > 0 ? { width, height } : {};
   // The trigger hugs the image the stylesheet draws (#611): it takes the recorded size too, since a button sizes from the image's width attribute, not from the width the CSS caps it to.
   const sizedTrigger = width !== undefined && height !== undefined && width > 0 && height > 0 ? { "data-sized": "", style: { "--embedded-image-aspect": width / height, "--embedded-image-width": width } as CSSProperties } : {};
   // A tile keeps its square when the file is gone, so the strip does not reflow; it says why in its name.
-  if (failed && thumb) return <span data-testid="embedded-image-unavailable" role="img" aria-label="Image unavailable" title="Image unavailable" className={cn(EMBEDDED_THUMB_TILE, "grid place-items-center text-foreground-secondary")}><ImageOffIcon aria-hidden="true" className="size-4" /></span>;
+  if (failed && thumb) return <span data-testid="embedded-image-unavailable" role="img" aria-label="Image unavailable" title="Image unavailable" className={cn(tile, "grid place-items-center text-foreground-secondary")}><ImageOffIcon aria-hidden="true" className="size-4" /></span>;
   if (failed) return <p data-testid="embedded-image-unavailable" className="my-[var(--space-2)] text-foreground-secondary [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)]">Image unavailable</p>;
   return <>
     {/* The trigger is registered with the dialog, so Escape or Close returns focus to this thumbnail even where a click does not focus a button. */}
     <Dialog open={open} onOpenChange={setOpen}>
       {thumb
         // The tile is a fixed square, so the recorded size has no box to reserve and nothing to hug.
-        ? <DialogTrigger render={<button type="button" data-testid="embedded-image" data-size="thumb" aria-label={`View image: ${label}`} className={cn(EMBEDDED_THUMB_TILE, "cursor-zoom-in p-0 transition-colors hover:border-[color:var(--border-hover)] focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2")} />}>
+        ? <DialogTrigger render={<button type="button" data-testid="embedded-image" data-size={size} aria-label={`View image: ${label}`} className={cn(tile, "cursor-zoom-in p-0 transition-colors hover:border-[color:var(--border-hover)] focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2")} />}>
           <img src={src} alt={label} loading="lazy" decoding="async" onError={() => setFailed(true)} className="block size-full object-cover" />
         </DialogTrigger>
         : <DialogTrigger render={<button type="button" data-testid="embedded-image" {...sizedTrigger} aria-label={`View image: ${label}`} className="rich-text__embedded-image-trigger my-[var(--space-2)] block max-w-full cursor-zoom-in rounded-[var(--radius-xs)] focus-visible:outline-[length:var(--border-width-bold)] focus-visible:outline-solid focus-visible:outline-ring focus-visible:outline-offset-2" />}>

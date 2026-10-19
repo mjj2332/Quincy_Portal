@@ -15,12 +15,12 @@ import { embeddedMediaPosterUrl, embeddedMediaUrl } from "./embedded-media-core"
 import { RICH_TEXT_HIGHLIGHT_COLORS, RICH_TEXT_MAX_NESTING, RICH_TEXT_TABLE_MAX_COLUMNS, RICH_TEXT_TABLE_MAX_ROWS, type RichTextDoc } from "@quincy/shared";
 
 // The Tiptap <-> stored RichTextDoc contract for `QuincyRichTextEditor`, in its two presets:
-// `"composer"` (Project discussion, #491) and `"document"` (Notice board, #492). The schema here is
+// `"composer"` (Project discussion, #491), `"document"` (Notice board, #492) and `"note"` (a note or reply on a Video, #927). The schema here is
 // the one `parseRichTextDoc` accepts (comment profile for the composer, notice profile for the
 // document), so the editor builds on it and never on a vendor extension set. Every attribute that
 // is stored has an explicit mapping in BOTH directions below: a mark or attribute with no mapping
 // collapses to `{ type }` and silently loses its value (docs/lessons.md, 2026-08-18).
-export type RichTextEditorPreset = "composer" | "document";
+export type RichTextEditorPreset = "composer" | "document" | "note";
 
 const DEFAULT_HIGHLIGHT = RICH_TEXT_HIGHLIGHT_COLORS[0];
 
@@ -270,12 +270,108 @@ function documentExtensions() {
   ];
 }
 
+/**
+ * A note (#927) cannot make a heading or a checklist, yet an old note keeps the ones it has: the nodes stay in the schema so it loads
+ * and round-trips unchanged (`parseRichTextDoc` still accepts them), but nothing new can be made. No input rule (`## `, `[ ] `), no
+ * shortcut (Mod-Alt-2, Mod-Shift-9), and the commands are kept but refuse (so `can()` answers false rather than throwing, which the
+ * shared `useRichTextState` selector would). No paste rule either: a pasted `<h2>` lands as a paragraph and a pasted checklist as a
+ * bulleted list, since the parser falls back to the paragraph and the bullet list's own `ul` / `li` rules.
+ */
+const refuse = () => () => false;
+const NoteHeading = TiptapNode.create({
+  name: "heading",
+  group: "block",
+  content: "inline*",
+  defining: true,
+  addAttributes() { return { level: { default: 2, rendered: false } }; },
+  parseHTML() { return []; },
+  renderHTML({ node, HTMLAttributes }) { return [`h${node.attrs.level === 3 ? 3 : 2}`, mergeAttributes(HTMLAttributes), 0]; },
+  addCommands() { return { setHeading: refuse, toggleHeading: refuse }; },
+});
+const NoteTaskList = TaskList.extend({
+  parseHTML() { return []; },
+  addInputRules() { return []; },
+  addKeyboardShortcuts() { return {}; },
+  addCommands() { return { toggleTaskList: refuse }; },
+});
+const noteTaskItem = (content: string) => TaskItem.extend({ content, parseHTML() { return []; }, addInputRules() { return []; } }).configure({ nested: true });
+
+/** Marks the transaction that removes a note's photo or video on purpose (its chip's ×); every other removal is put back. */
+export const NOTE_MEDIA_REMOVE_META = "quincyNoteMediaRemove";
+const isMediaNode = (node: ProseMirrorNode) => node.type.name === "image" || node.type.name === "video";
+const mediaIdOf = (node: ProseMirrorNode) => String(node.attrs.mediaId ?? "");
+/** Where the run of media that ends the note starts (the document's size when it does not end with media). */
+export function noteMediaTailStart(doc: ProseMirrorNode): number {
+  let start = doc.content.size;
+  for (let index = doc.childCount - 1; index >= 0; index -= 1) {
+    const child = doc.child(index);
+    if (!isMediaNode(child)) break;
+    start -= child.nodeSize;
+  }
+  return start;
+}
+
+/**
+ * A note's photos and videos are a strip after its text (#927, frame C4), drawn outside the text (`QuincyRichTextEditorBase`), so the
+ * text holds them as invisible atoms. Two rules keep that honest:
+ * - A photo or video new to the note that is not in the run that ends it is moved to the end. The editor's own upload already lands it
+ *   there; this is the backstop for anything else that inserts one.
+ * - One the author did not remove with its × (a selection deleted over it, a forward Delete at the end of the text) is put back at the
+ *   end, since nothing in the text showed it would go.
+ * Neither touches the host replacing the content (`preventUpdate`) or an undo / redo, and a photo an old note holds between paragraphs
+ * stays where it is: the stored order is never rewritten.
+ */
+export const NoteMediaTail = Extension.create({
+  name: "noteMediaTail",
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      appendTransaction(transactions, oldState, newState) {
+        if (!transactions.some((tr) => tr.docChanged)) return null;
+        if (transactions.some((tr) => tr.getMeta("preventUpdate") || tr.getMeta("history$") || tr.getMeta(NOTE_MEDIA_REMOVE_META))) return null;
+        // The note's media before and after, and which of it sat in (or now sits in) the run that ends the note.
+        const oldTail = noteMediaTailStart(oldState.doc);
+        const before: { id: string; node: ProseMirrorNode; inTail: boolean }[] = [];
+        oldState.doc.forEach((child, offset) => { if (isMediaNode(child)) before.push({ id: mediaIdOf(child), node: child, inTail: offset >= oldTail }); });
+        const known = new Set(before.map(({ id }) => id));
+        const tail = noteMediaTailStart(newState.doc);
+        const now = new Map<string, ProseMirrorNode>();
+        const tailNow: string[] = [];
+        const stray: { id: string; node: ProseMirrorNode; pos: number }[] = [];
+        newState.doc.forEach((child, offset) => {
+          if (!isMediaNode(child)) return;
+          const id = mediaIdOf(child);
+          now.set(id, child);
+          if (offset >= tail) tailNow.push(id);
+          else if (!known.has(id)) stray.push({ id, node: child, pos: offset });
+        });
+        const lost = before.filter(({ id }) => !now.has(id));
+        if (stray.length === 0 && lost.length === 0) return null;
+        // The run that ends the note is rebuilt in the order it had: an old note's photo lost from between paragraphs first, then the run
+        // as it was (with what was lost back in its place), then what is new to it.
+        const nodeOf = new Map<string, ProseMirrorNode>([...now, ...lost.map(({ id, node }) => [id, node] as const)]);
+        const order = [...new Set([
+          ...lost.filter(({ inTail }) => !inTail).map(({ id }) => id),
+          ...before.filter(({ id, inTail }) => inTail && nodeOf.has(id)).map(({ id }) => id),
+          ...tailNow,
+          ...stray.map(({ id }) => id),
+        ])];
+        const tr = newState.tr;
+        tr.delete(tail, newState.doc.content.size);
+        for (const { node, pos } of [...stray].reverse()) tr.delete(pos, pos + node.nodeSize);
+        tr.insert(tr.doc.content.size, order.map((id) => nodeOf.get(id)!));
+        return tr;
+      },
+    })];
+  },
+});
+
 /** The editor schema for a preset, shared with direct schema regression tests. */
 export function createRichTextEditorExtensions(preset: RichTextEditorPreset = "composer") {
   const itemContent = "paragraph (paragraph|bulletList|orderedList|taskList)*";
+  const note = preset === "note";
   return [
     StarterKit.configure({
-      heading: { levels: [2, 3] },
+      heading: note ? false : { levels: [2, 3] },
       blockquote: false,
       codeBlock: false,
       horizontalRule: false,
@@ -291,14 +387,14 @@ export function createRichTextEditorExtensions(preset: RichTextEditorPreset = "c
     }),
     ListItem.extend({ content: itemContent }),
     ListItemHardBreak,
-    TaskList.configure({}),
-    TaskItem.extend({ content: itemContent }).configure({ nested: true }),
+    ...(note ? [NoteHeading, NoteTaskList, noteTaskItem(itemContent)] : [TaskList.configure({}), TaskItem.extend({ content: itemContent }).configure({ nested: true })]),
     Mention.configure({ HTMLAttributes: { class: "rich-text__mention" }, suggestion: { items: () => [] } }),
     ListItemHeadingCommandBoundary,
     ListNestingBoundary,
     EmbeddedImage,
     LinkPreview,
-    ...(preset === "composer" ? [EmbeddedVideo] : []),
+    ...(preset === "composer" || note ? [EmbeddedVideo] : []),
+    ...(note ? [NoteMediaTail] : []),
     ...(preset === "document" ? documentExtensions() : []),
   ];
 }

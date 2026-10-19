@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactElement, type ReactNode, type RefObject } from "react";
 import { NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
 import { CheckIcon } from "lucide-react";
 import { RICH_TEXT_IMAGE_ALT_MAX_LENGTH } from "@quincy/shared";
@@ -59,6 +59,42 @@ function EmbeddedImageEditorView({ node, editor, selected, updateAttributes, ext
     </div>}
   </NodeViewWrapper>;
 }
+
+/**
+ * The alt-text popover on any trigger (#927 T2): a draft note's chip opens it from the file's name, which is the image's alt text by
+ * default. The same form and popover as the node view's own "Alt text" control.
+ */
+export function EmbeddedImageAltPopover({ alt, trigger, onApply, children }: { alt: string; trigger: ReactElement; onApply: (next: string | null) => void; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const titleId = useId();
+  return <Popover open={open} onOpenChange={setOpen}>
+    <PopoverTrigger render={trigger}>{children}</PopoverTrigger>
+    <PopoverContent align="start" sideOffset={8} aria-labelledby={titleId} className="w-80" data-testid="embedded-image-alt-popover" initialFocus={inputRef}>
+      <span id={titleId} className="sr-only">Edit alt text</span>
+      <AltForm alt={alt} inputRef={inputRef} onApply={(next) => { onApply(next || null); setOpen(false); }} />
+    </PopoverContent>
+  </Popover>;
+}
+
+/**
+ * A note's photo in the text (#927 T2): an invisible atom, since the note draws its photos and videos as a strip of chips after the
+ * text (`QuincyRichTextEditorBase`, frame C4). Not selectable or draggable, so neither the caret nor a drag can land on something unseen.
+ */
+export function hiddenNoteMediaView(kind: "image" | "video") {
+  return () => {
+    const dom = document.createElement("div");
+    dom.hidden = true;
+    dom.contentEditable = "false";
+    dom.dataset.noteMedia = kind;
+    return { dom, ignoreMutation: () => true };
+  };
+}
+export const EmbeddedImageNoteNode = EmbeddedImage.extend({
+  selectable: false,
+  draggable: false,
+  addNodeView() { return hiddenNoteMediaView("image"); },
+});
 
 /** The editor's `image` node with the image and its "Alt text" control (shown on the selected image) as the node view (#553). */
 export const EmbeddedImageWithView = EmbeddedImage.extend({

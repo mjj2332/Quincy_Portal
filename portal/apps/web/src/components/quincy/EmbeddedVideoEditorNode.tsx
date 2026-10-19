@@ -3,6 +3,7 @@ import { NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tip
 import { VideoIcon } from "lucide-react";
 import { EmbeddedVideo } from "../../lib/rich-text-tiptap";
 import { Badge } from "../reui/badge";
+import { hiddenNoteMediaView } from "./EmbeddedImageEditorNode";
 
 function EmbeddedVideoEditorView({ node, extension }: NodeViewProps) {
   const { mediaUrl, posterUrl } = extension.options as { mediaUrl: (mediaId: string) => string; posterUrl: (mediaId: string) => string };
@@ -21,4 +22,11 @@ function EmbeddedVideoEditorView({ node, extension }: NodeViewProps) {
 /** The editor's `video` node with the muted preview and a "Video" badge over it (#556), so a poster frame does not read as a still image. */
 export const EmbeddedVideoWithView = EmbeddedVideo.extend({
   addNodeView() { return ReactNodeViewRenderer(EmbeddedVideoEditorView); },
+});
+
+/** A note's video in the text (#927 T2): an invisible atom, as `EmbeddedImageNoteNode` is; the note's strip draws it. */
+export const EmbeddedVideoNoteNode = EmbeddedVideo.extend({
+  selectable: false,
+  draggable: false,
+  addNodeView() { return hiddenNoteMediaView("video"); },
 });

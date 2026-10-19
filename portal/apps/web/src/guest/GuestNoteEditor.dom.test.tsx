@@ -2,6 +2,7 @@ import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RichTextDoc } from "@quincy/shared";
+import type { RichTextEditorHandle } from "../components/QuincyRichTextEditorBase";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const uploadMultipartFile = vi.hoisted(() => vi.fn());
@@ -9,7 +10,7 @@ vi.mock("../lib/multipart-upload", () => ({ uploadMultipartFile }));
 const { GuestNoteEditor } = await import("./GuestNoteEditor");
 const { createGuestMediaTransport } = await import("./guest-api");
 
-/** The real rich field on a Review link (#835 C): no mentions, and every byte goes through the link's own media routes. */
+/** The real rich field on a Review link (#835 C): no mentions, and every byte goes through the link's own media routes. The `note` preset (#927): the box's paperclip opens the picker through the handle. */
 const LINK = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const BASE = `/d/api/links/${LINK}/media`;
 const MEDIA = "33333333-3333-4333-8333-333333333333";
@@ -21,10 +22,11 @@ let root: Root | null = null;
 let latest: RichTextDoc = empty();
 let busy: boolean[] = [];
 let fetchMock: ReturnType<typeof vi.fn>;
+let handle: RichTextEditorHandle | null = null;
 const transport = createGuestMediaTransport(LINK);
 function Harness() {
   const [value, setValue] = useState(empty());
-  return <GuestNoteEditor testId="field" label="Your note" media={transport} value={value} onChange={(next) => { latest = next; setValue(next); }} onUploadingChange={(uploading) => { busy.push(uploading); }} />;
+  return <GuestNoteEditor ref={(next) => { handle = next; }} testId="field" label="Your note" media={transport} value={value} onChange={(next) => { latest = next; setValue(next); }} onUploadingChange={(uploading) => { busy.push(uploading); }} />;
 }
 async function mount() {
   const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
@@ -35,7 +37,7 @@ async function mount() {
 const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 
 beforeEach(() => {
-  latest = empty(); busy = [];
+  latest = empty(); busy = []; handle = null;
   uploadMultipartFile.mockReset(); uploadMultipartFile.mockResolvedValue({});
   fetchMock = vi.fn(async (input: RequestInfo | URL) => String(input) === BASE ? json({ mediaId: MEDIA, devDirect: true }) : String(input).endsWith("/complete") ? json({ mediaId: MEDIA, state: "pending" }) : new Response(null, { status: 204 }));
   globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -61,22 +63,24 @@ describe("the guest's note field", () => {
     expect(JSON.stringify(latest)).not.toContain('"mention"');
   });
 
-  it("offers Insert image and Insert video, and its picker takes no HEIC", async () => {
+  it("opens one picker for photos and videos through the handle, and it takes no HEIC", async () => {
     const host = await mount();
-    expect(host.querySelector('button[aria-label="Insert image"]')).not.toBeNull();
-    expect(host.querySelector('button[aria-label="Insert video"]')).not.toBeNull();
+    // The note preset has no toolbar: the box's paperclip is the way in.
+    expect(host.querySelector('button[aria-label="Insert image"]')).toBeNull();
     const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => undefined);
-    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="Insert image"]')!.click(); });
+    await act(async () => { handle!.pickMedia(); });
     click.mockRestore();
-    expect(host.querySelector<HTMLInputElement>('input[data-testid="rich-text-image-picker"]')!.accept).toBe("image/jpeg,image/png,image/webp");
+    const accept = host.querySelector<HTMLInputElement>('input[data-testid="rich-text-media-picker"]')!.accept.split(",");
+    expect(accept).toEqual(expect.arrayContaining(["image/jpeg", "image/png", "image/webp", "video/mp4"]));
+    expect(accept.some((type) => /heic|heif/i.test(type))).toBe(false);
   });
 
   it("uploads an image through the link's routes, reports it busy until it lands, and shows it from the link", async () => {
     const host = await mount();
     const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => undefined);
-    await act(async () => { host.querySelector<HTMLButtonElement>('button[aria-label="Insert image"]')!.click(); });
+    await act(async () => { handle!.pickMedia(); });
     click.mockRestore();
-    const picker = host.querySelector<HTMLInputElement>('input[data-testid="rich-text-image-picker"]')!;
+    const picker = host.querySelector<HTMLInputElement>('input[data-testid="rich-text-media-picker"]')!;
     Object.defineProperty(picker, "files", { configurable: true, value: [png()] });
     await act(async () => { picker.dispatchEvent(new Event("change", { bubbles: true })); });
     await settle(); await settle();
@@ -84,6 +88,7 @@ describe("the guest's note field", () => {
     expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([BASE, `${BASE}/${MEDIA}/complete`]);
     expect(uploadMultipartFile.mock.calls[0]![2]).toBe(`${BASE}/${MEDIA}/direct`);
     expect(JSON.stringify(latest)).toContain(MEDIA);
-    expect(host.querySelector<HTMLImageElement>(`img[data-media-id="${MEDIA}"]`)!.getAttribute("src")).toBe(`${BASE}/${MEDIA}`);
+    // It shows in the draft strip's chip, read from the link's own route.
+    expect(host.querySelector<HTMLImageElement>('[data-testid="note-draft-chip"] img')!.getAttribute("src")).toBe(`${BASE}/${MEDIA}`);
   });
 });
