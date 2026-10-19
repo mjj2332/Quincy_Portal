@@ -409,17 +409,15 @@ describe("VideoPlayer Full screen dock (#880 S2)", () => {
     expect(dock.className).not.toContain("pt-[var(--space-6)]");
   });
 
-  it("F1 and F2 draw no frame chip on the film: Full screen leaves it out, watching or composing; outside Full screen it is the stage's as before (landscape fix 1)", async () => {
-    // A laid-out film, so the stage has a picture box to draw the chip in.
+  it("draws no frame chip on the film, in or out of Full screen (#927)", async () => {
+    // A laid-out film, so the stage has a picture box to have drawn the chip in.
     const spies = (["offsetWidth", "offsetHeight"] as const).map((prop) => vi.spyOn(HTMLElement.prototype, prop, "get").mockReturnValue(800));
     await mount({ immersive: hostOf({ on: false }) });
-    expect(byTestId("video-timecode-chip")).not.toBeNull();
+    expect(byTestId("video-timecode-chip")).toBeNull();
     await rerender({ immersive: hostOf() });
     expect(byTestId("video-timecode-chip")).toBeNull();
     await rerender({ immersive: hostOf({ addNote: { pressed: true, onToggle: () => undefined } }) });
     expect(byTestId("video-timecode-chip")).toBeNull();
-    await rerender({ immersive: hostOf({ on: false }) });
-    expect(byTestId("video-timecode-chip")).not.toBeNull();
     for (const spy of spies) spy.mockRestore();
   });
 

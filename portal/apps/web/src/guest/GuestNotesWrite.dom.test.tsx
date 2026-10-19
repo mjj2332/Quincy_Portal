@@ -1878,32 +1878,27 @@ describe("the time format on the guest page (#860)", () => {
   });
 });
 
-describe("In / Out range button and handles (#861)", () => {
+describe("In / Out range handles and keys, no player button (#861, #927)", () => {
   const rangeButton = () => byId("video-range-button") as HTMLButtonElement | null;
   const handle = (kind: "in" | "out") => byId(`video-range-${kind}`);
   const keyOn = async (target: Element, k: string) => { await act(async () => { target.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); }); await flush(); };
 
-  it("with no open composer the button is there but disabled, and it starts nothing", async () => {
+  it("with no open composer there is no range button, and the I key starts nothing", async () => {
     await open();
-    expect(rangeButton()!.disabled).toBe(true);
+    expect(rangeButton()).toBeNull();
+    await keyDown("i");
     expect(byId("guest-composer")).toBeNull();
   });
 
-  it("with an open composer the button cycles Set out -> Clear -> Set in, and the anchor and pending band follow", async () => {
+  it("with an open composer the I and O keys set the range, and the anchor and pending band follow", async () => {
     await open();
     await atSeconds(2);
     await click(byId("guest-add-note"));
-    expect(rangeButton()!.disabled).toBe(false);
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set out point");
+    expect(rangeButton()).toBeNull();
     await atSeconds(4);
-    await click(rangeButton());
+    await keyDown("o");
     expect(byId("guest-composer-anchor")?.textContent).toMatch(/00:00:02:00.*00:00:04:00/);
     expect(byId("video-pending-band")).not.toBeNull();
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Clear in and out");
-    await click(rangeButton());
-    expect(byId("guest-composer-anchor")?.textContent).toBe("No frame marked");
-    expect(byId("video-pending-band")).toBeNull();
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set in point");
   });
 
   it("a handle moves one end and the POST carries the exclusive end frame", async () => {
@@ -1916,7 +1911,7 @@ describe("In / Out range button and handles (#861)", () => {
     await atSeconds(2);
     await click(byId("guest-add-note"));
     await atSeconds(4);
-    await click(rangeButton());
+    await keyDown("o");
     await keyOn(handle("in")!, "ArrowRight");
     expect(byId("guest-composer-anchor")?.textContent).toMatch(/00:00:02:01.*00:00:04:00/);
     await typeInto(byId("guest-composer-body"), "Nudged");
@@ -1929,19 +1924,19 @@ describe("In / Out range button and handles (#861)", () => {
     await atSeconds(2);
     await click(byId("guest-add-note"));
     await click(byId("guest-composer-draw"));
-    // The transport stays mounted under the markup toolbar (PR 2 fix round 2), hidden: the range button is out of view, not gone.
-    expect(rangeButton()?.closest("[hidden]")).not.toBeNull();
+    // The transport stays mounted under the markup toolbar (PR 2 fix round 2), hidden; the player has no range button either way.
+    expect(rangeButton()).toBeNull();
   });
 
-  it("Clear on a note being edited keeps its first frame as a point", async () => {
+  it("With no Clear button, an In mark past the edit's Out clears the Out: the note becomes a point", async () => {
     notes = { [asset(10)]: [mine(2, { revision: 3, startFrame: 50, endFrame: 101 })] };
     await open();
     await click(byId("guest-note-actions"));
     await click(menuItem("Edit"));
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Clear in and out");
-    await click(rangeButton());
-    expect(byId("guest-composer-anchor")?.textContent).toMatch(/^At 00:00:02:00/);
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set out point");
+    expect(rangeButton()).toBeNull();
+    await atSeconds(5);
+    await keyDown("i");
+    expect(byId("guest-composer-anchor")?.textContent).toMatch(/^At 00:00:05:00/);
   });
 
   it("a link that allows no comments has no range button", async () => {

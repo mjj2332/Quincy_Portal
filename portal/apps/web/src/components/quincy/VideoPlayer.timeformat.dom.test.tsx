@@ -22,17 +22,6 @@ let shim: ReturnType<typeof installLocalStorageShim>;
 const video = () => host.querySelector("video")!;
 const byTestId = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 const readout = () => byTestId("video-readout")!.textContent;
-const chip = () => byTestId("video-timecode-chip")?.textContent;
-async function withLayout(run: () => Promise<void>) {
-  const original = Object.getOwnPropertyDescriptors(HTMLElement.prototype);
-  for (const [prop, value] of [["offsetWidth", 800], ["offsetHeight", 800], ["offsetLeft", 0], ["offsetTop", 0]] as const) Object.defineProperty(HTMLElement.prototype, prop, { configurable: true, get: () => value });
-  try { await run(); } finally {
-    for (const prop of ["offsetWidth", "offsetHeight", "offsetLeft", "offsetTop"] as const) {
-      const d = original[prop];
-      if (d) Object.defineProperty(HTMLElement.prototype, prop, d); else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[prop];
-    }
-  }
-}
 const flush = async (n = 3) => { for (let i = 0; i < n; i += 1) await act(async () => { await Promise.resolve(); }); };
 
 async function mount(version = versionOf()) {
@@ -79,23 +68,13 @@ describe("VideoPlayer time format menu (#860)", () => {
     expect(byTestId("video-time-format-standard")!.getAttribute("aria-checked")).toBe("false");
   });
 
-  it("Standard reads elapsed m:ss, ignoring the start timecode: readout, slider text and the stage chip follow", async () => {
+  it("Standard reads elapsed m:ss, ignoring the start timecode: readout and slider text follow", async () => {
     await mount(versionOf({ startTimecodeFrames: 90000 }));
     await load();
     await pick("standard");
     expect(readout()).toBe("0:00 / 0:04");
     expect(host.querySelector('input[aria-label="Timeline"]')!.getAttribute("aria-valuetext")).toBe("0:00");
     expect(byTestId("video-time-format-trigger")!.getAttribute("aria-label")).toBe("Time format: Standard");
-  });
-
-  it("Standard keeps the chip's frame number beside the elapsed time", async () => {
-    await withLayout(async () => {
-      await mount();
-      await load();
-      await pick("standard");
-      await present(30);
-      expect(chip()).toBe("0:01 · frame 30");
-    });
   });
 
   it("Standard floors the rational rate: 29.97 frame 1798 is 0:59 and 1800 is 1:00; an hour reads h:mm:ss", async () => {
@@ -117,16 +96,13 @@ describe("VideoPlayer time format menu (#860)", () => {
     expect(readout()).toMatch(/^1:00:00 \//);
   });
 
-  it("Frames reads the 0-based frame index, and the chip drops its repeated frame suffix", async () => {
-    await withLayout(async () => {
-      await mount();
-      await load();
-      await pick("frames");
-      expect(readout()).toBe("0 / 100");
-      await present(7);
-      expect(readout()).toBe("7 / 100");
-      expect(chip()).toBe("frame 7");
-    });
+  it("Frames reads the 0-based frame index", async () => {
+    await mount();
+    await load();
+    await pick("frames");
+    expect(readout()).toBe("0 / 100");
+    await present(7);
+    expect(readout()).toBe("7 / 100");
   });
 
   it("the choice persists in the browser, survives a remount and is shared under the one key", async () => {
