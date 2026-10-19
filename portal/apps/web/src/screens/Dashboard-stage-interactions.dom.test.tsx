@@ -646,6 +646,8 @@ describe("Dashboard Stage interactions", () => {
       board: { contractEnabled: true, orderedProjectIdsByStage: {} },
     });
     authState.delivered = true;
+    // #923: Delivered starts collapsed; this viewer has expanded it (a stored `[]`), so its cards are mounted.
+    Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem: (key: string) => (key.startsWith("quincy:dashboard:board:collapsed:") ? "[]" : null), setItem: () => undefined } });
     let moved = false;
     apiGetMock.mockImplementation((path) => path === "/api/projects" ? Promise.resolve(snapshot(moved)) : Promise.resolve({}));
     apiPostMock.mockImplementationOnce(() => {

@@ -131,7 +131,8 @@ function assertHeaderBarSeparation(host: HTMLDivElement) {
   expect(newShootLink, "no New shoot link rendered — the assertions below would be vacuous").not.toBeUndefined();
 
   expect(header!.contains(summary!)).toBe(true);
-  expect(header!.contains(newShootLink!)).toBe(true);
+  expect(bar!.contains(newShootLink!), "#923: New shoot sits in the view bar").toBe(true);
+  expect(header!.className, "#923: the title and summary are for assistive tech only").toContain("sr-only");
   expect(header!.contains(field!)).toBe(false);
   expect(bar!.contains(field!)).toBe(true);
   expect(bar!.contains(summary!)).toBe(false);

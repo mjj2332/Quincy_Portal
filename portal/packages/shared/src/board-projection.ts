@@ -15,12 +15,16 @@ export type DashboardBoardProjection = {
  */
 export type ProjectEditorRef = { id: string; name: string };
 
+export type ProjectChecklistCounts = { completed: number; total: number };
+
 /** The internal summary remains intentionally open to the existing staff-only fields. */
 export type InternalProjectSummaryDto = {
   id: string;
   stageKey: StageTransportKey;
   boardRevision: number;
   editors: ProjectEditorRef[];
+  /** #923 D1: Subtask counts for the staff list; `{0,0}` means no Subtasks. Optional on the wire for older snapshots. */
+  checklist?: ProjectChecklistCounts;
   [key: string]: unknown;
 };
 

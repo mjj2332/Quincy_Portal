@@ -8,6 +8,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "./Dashboard";
+import { ApiError } from "../lib/api";
 import { confirmStore } from "../lib/confirm";
 import { __resetDashboardSearchStoreForTest } from "../lib/dashboard-search-store";
 
@@ -127,6 +128,38 @@ describe("Dashboard fills the viewport (#363)", () => {
     const skeleton = region().querySelector<HTMLElement>('[role="status"]')!;
     expect(skeleton).not.toBeNull();
     for (const token of ["flex-1", "min-h-0"]) expect(classesOf(skeleton)).toContain(token);
+  });
+
+  // #923 frame 4h: each view loads in its own shape. The Board module is mocked here, so this also pins that
+  // the Board's skeleton does not live in the module a test (or a lazy split) can replace.
+  it("loads the Board in the Board's shape and the Table in the Table's", async () => {
+    apiGetMock.mockImplementation(() => new Promise(() => {}));
+    await render();
+    expect(region().querySelector('[data-testid="board-skeleton"]')?.getAttribute("role")).toBe("status");
+    expect(region().querySelector('[data-testid="table-skeleton"]')).toBeNull();
+    await act(async () => { root.unmount(); });
+    root = createRoot(host);
+    window.history.replaceState(null, "", "/?view=table");
+    await render();
+    expect(region().querySelector('[data-testid="table-skeleton"]')?.getAttribute("role")).toBe("status");
+    expect(region().querySelector('[data-testid="board-skeleton"]')).toBeNull();
+  });
+
+  it("shows the region's inline error, and Retry asks for the projects again (4h)", async () => {
+    // A 400 is not retried (`projectQueryRetry`), so the error lands at once.
+    apiGetMock.mockImplementation(() => Promise.reject(new ApiError("Projects could not be loaded.", 400)));
+    await render();
+    const alert = region().querySelector<HTMLElement>('[role="alert"]')!;
+    expect(alert.textContent).toContain("Couldn't load these projects.");
+    expect(alert.textContent).toContain("Check your connection, then try again.");
+    const requests = apiGetMock.mock.calls.filter(([path]) => path.startsWith("/api/projects")).length;
+    apiGetMock.mockImplementation(() => Promise.resolve(projectResponse()));
+    const retry = [...alert.querySelectorAll("button")].find((button) => button.textContent === "Retry")!;
+    await act(async () => { retry.click(); await Promise.resolve(); });
+    await settle();
+    expect(apiGetMock.mock.calls.filter(([path]) => path.startsWith("/api/projects")).length).toBeGreaterThan(requests);
+    expect(region().querySelector('[role="alert"]')).toBeNull();
+    expect(region().querySelector('[data-testid="dashboard-board"]')).not.toBeNull();
   });
 
   it("the Table fills the region, with its header and rows inside one scroll viewport (#431)", async () => {

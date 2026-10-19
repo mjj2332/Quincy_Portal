@@ -587,12 +587,14 @@ describe("Dashboard Board seam (#98)", () => {
     const collapse = () => document.querySelector<HTMLButtonElement>('[aria-label="Collapse Awaiting RAW"]');
     const key = (userId: string) => `quincy:dashboard:board:collapsed:${userId}`;
 
-    it("persists per user id, survives a remount, and leaves another viewer expanded", async () => {
+    // #923: a viewer with nothing stored starts at the default, Delivered collapsed. This fixture has no Delivered
+    // column, so nothing is a rail to begin with, but the default shows in what a collapse writes.
+    it("persists per user id, survives a remount, and leaves another viewer at the default", async () => {
       await render("admin-1");
       expect(rails(), "anchor: expanded to begin with").toHaveLength(0);
       await act(async () => { collapse()!.click(); await Promise.resolve(); });
       expect(rails()).toHaveLength(1);
-      expect(window.localStorage.getItem(key("admin-1"))).toBe(JSON.stringify(["awaiting_raw"]));
+      expect(window.localStorage.getItem(key("admin-1"))).toBe(JSON.stringify(["awaiting_raw", "delivered"]));
       expect(document.querySelector('[data-focus-key="stage-heading:awaiting_raw"]'), "the rail keeps its heading focus key").not.toBeNull();
       expect(document.querySelector('[aria-label="Expand Awaiting RAW"]')?.getAttribute("aria-expanded")).toBe("false");
 
@@ -607,7 +609,7 @@ describe("Dashboard Board seam (#98)", () => {
       expect(rails(), "another viewer inherited the collapse").toHaveLength(0);
     });
 
-    it("reads corrupt storage as all expanded, and expands again from the rail", async () => {
+    it("reads corrupt storage as the default, and expands again from the rail", async () => {
       window.localStorage.setItem(key("admin-1"), "{not json");
       await render("admin-1");
       expect(rails()).toHaveLength(0);
@@ -615,7 +617,7 @@ describe("Dashboard Board seam (#98)", () => {
       expect(rails()).toHaveLength(1);
       await act(async () => { document.querySelector<HTMLButtonElement>('[aria-label="Expand Awaiting RAW"]')!.click(); await Promise.resolve(); });
       expect(rails()).toHaveLength(0);
-      expect(window.localStorage.getItem(key("admin-1"))).toBe("[]");
+      expect(window.localStorage.getItem(key("admin-1"))).toBe(JSON.stringify(["delivered"]));
     });
   });
 });
