@@ -91,11 +91,16 @@ const DEADLINE_TRIGGER = "max-w-[calc(100%+var(--space-1))]";
 
 /**
  * The phone list (4g `.prow`, ~86pt tall) draws the Deadline as a 20px line, but `CELL_TRIGGER`'s 44px min-height at
- * <=721px and on touch made the row ~113pt (#923 review round 3). Here the box is the 20px text line and the 44px
- * touch target is an invisible `after:` 12px above and below it, the same way `reui/button`'s `chip` size draws its
- * hit area, so the target stays 44px without adding layout height. Width keeps `CELL_TRIGGER`'s 44px minimum.
+ * <=721px and on touch made the row ~113pt (#923 review round 3). Here the box is the 20px text line and the touch
+ * target is an invisible `after:`, the way `reui/button`'s `chip` size draws its hit area, so it adds no layout height.
+ *
+ * The `after:` starts on the Deadline line and grows only downward, into the row's 12px bottom padding: 20 + 12 =
+ * 32px tall. A symmetric 12px reached up over the suburb line (4px gap, then the suburb), so a low tap on the suburb
+ * opened the date popover instead of the Project (#923 polish). 44px would have to cross into the next row's top
+ * padding, the same fault one row down, so 32px (above WCAG 2.5.8's 24px) is the tallest that stays in this row.
+ * Width keeps `CELL_TRIGGER`'s 44px minimum. A cover retry under the line sits in that 12px gap and paints above it.
  */
-const PHONE_DEADLINE_TRIGGER = "relative min-h-5 pointer-coarse:min-h-5 max-[721px]:min-h-5 after:absolute after:inset-x-0 after:-inset-y-[var(--space-3)] after:content-['']";
+const PHONE_DEADLINE_TRIGGER = "relative min-h-5 pointer-coarse:min-h-5 max-[721px]:min-h-5 after:absolute after:inset-x-0 after:top-0 after:-bottom-[var(--space-3)] after:content-['']";
 
 /**
  * The Deadline (frames 4b/4g `.dl`): a dot before today's Deadline, the shared editable cell, then the late
@@ -136,7 +141,7 @@ export function ProjectDeadline({ project, appearance, canEditDeadline, terminal
           popupCollisionPadding={shellAwarePopupPadding}
         />
       </div>
-      {appearance.lateLabel && <LateChip>{appearance.lateLabel}</LateChip>}
+      {appearance.lateLabel && <LateChip size={wrap ? "line" : "default"}>{appearance.lateLabel}</LateChip>}
     </div>
   );
 }

@@ -8,8 +8,12 @@ import { cn } from "../../lib/utils";
  * 4.5:1 or better on the surface paper. Pass only what `lib/dashboard-project-appearance.ts` called late.
  */
 export function LateChip({ size = "default", className, children, ...props }: ComponentProps<"span"> & {
-  /** `rail` is the Board's collapsed-column form: a 24px-wide vertical chip, its text reading bottom to top. */
-  size?: "default" | "rail";
+  /**
+   * `rail` is the Board's collapsed-column form: a 24px-wide vertical chip, its text reading bottom to top.
+   * `line` is 20px tall (4g `.late`, `height:20px`) for the phone list's 20px Deadline line, where the 24px chip
+   * made every late row 4px taller than its line (#923 polish). The Table grid and the Board keep `default`.
+   */
+  size?: "default" | "rail" | "line";
 }) {
   return (
     <span
@@ -19,7 +23,9 @@ export function LateChip({ size = "default", className, children, ...props }: Co
         "inline-flex items-center whitespace-nowrap rounded-sm border-[length:var(--border-width-hair)] border-late bg-card text-xs text-late",
         size === "rail"
           ? "w-6 rotate-180 justify-center px-0 py-[var(--space-2)] [writing-mode:vertical-rl]"
-          : "h-6 px-[var(--space-2)]",
+          : size === "line"
+            ? "h-5 px-[var(--space-2)]"
+            : "h-6 px-[var(--space-2)]",
         className,
       )}
       {...props}

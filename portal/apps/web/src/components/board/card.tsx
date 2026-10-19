@@ -29,7 +29,8 @@ import { CardActionsMenu, CardContextMenuContent, type CardMenuBinding, type Car
  * - the footer: the stars, then the Editor avatars.
  *
  * Every colour and every late or done figure comes from `projectAppearance` (#923 plan § Shared rules), never
- * derived here. No dashed "No editor" avatar (#82, D4), no RAW count.
+ * derived here. No Editors draws `AvatarStack`'s dashed "No Editor assigned" circle, as frame 4e does and the
+ * Table's Editors cell does (owner decision, #923 review round 3); there is no RAW count.
  *
  * The whole card is the drag handle, but NOT by wrapping it in `KanbanItemHandle` the way the block
  * does. dnd-kit's handle attributes default to `role="button"`, and a `role="button"` ancestor

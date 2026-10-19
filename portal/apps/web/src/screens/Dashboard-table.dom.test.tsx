@@ -557,7 +557,10 @@ describe("one line per row, frame 4b's grid (#923 pass round 1, rows 6–8)", ()
     const line = tr.querySelector<HTMLElement>('[data-testid="project-table-deadline-line"]')!;
     expect(line.className).toContain("flex-nowrap");
     expect(line.className).not.toMatch(/(^|\s)flex-wrap(\s|$)/);
-    expect(line.querySelector('[data-testid="late-chip"]')).not.toBeNull();
+    const chip = line.querySelector<HTMLElement>('[data-testid="late-chip"]')!;
+    // The grid keeps its 24px chip; only the phone list's 20px line draws the `line` size (#923 polish).
+    expect(chip.getAttribute("data-size")).toBe("default");
+    expect(chip.className.split(/\s+/)).toContain("h-6");
     const trigger = line.querySelector<HTMLElement>('[data-testid="project-table-deadline-trigger"]')!;
     expect(trigger.querySelector("[title]")!.getAttribute("title")).toBe("Wed 1 Jan · 11:00");
     // #923 pass round 2, row 11: no date reads "Pending", which fits the column instead of truncating.
@@ -630,13 +633,40 @@ describe("narrow screens: the phone list (#923, frame 4g)", () => {
     // No min-height of 44px at any width: the box is the 20px text line (4g `.prow` is ~86pt tall)...
     expect(classes.filter((name) => name.includes("min-h-[44px]"))).toEqual([]);
     expect(classes).toEqual(expect.arrayContaining(["min-h-5", "pointer-coarse:min-h-5", "max-[721px]:min-h-5"]));
-    // ...and a 20px box plus 12px above and below is the 44px touch target.
-    expect(classes).toEqual(expect.arrayContaining(["relative", "after:absolute", "after:inset-x-0", "after:-inset-y-[var(--space-3)]"]));
+    // ...and the touch target is an `after:` drawn beyond that box.
+    expect(classes).toEqual(expect.arrayContaining(["relative", "after:absolute", "after:inset-x-0", "after:content-['']"]));
   });
 
   const PAST = Date.parse("2020-01-01T00:00:00.000Z");
   const list = () => table().querySelector<HTMLElement>('[data-testid="project-table-phone-list"]');
   const phoneRow = (id: string) => table().querySelector<HTMLAnchorElement>(`[data-testid="project-table-row-link"][href="/projects/${id}"]`)!.closest("li")!;
+
+  it("never reaches the Deadline's hit area up over the suburb line: it starts on the Deadline line and grows into the row's bottom padding (#923 polish)", async () => {
+    narrow = true;
+    storage.set(tablePrefsKey("user-1"), JSON.stringify({ groupBy: "none", hiddenColumns: [] }));
+    projects = [row("p1", { deadlineAt: day(1), deadlineLocalCivil: civil(1) })];
+    await renderTable();
+    const item = phoneRow("p1");
+    const classes = item.querySelector<HTMLElement>('[data-testid="project-table-deadline-trigger"]')!.className.split(/\s+/);
+    // The top edge is the trigger's own top edge: no symmetric inset, no negative top.
+    expect(classes).toContain("after:top-0");
+    expect(classes.filter((name) => /^after:-?(inset|inset-y|top)-(?!x-)/.test(name) && name !== "after:top-0")).toEqual([]);
+    // The bottom reaches into the row's 12px bottom padding (`py-[var(--space-3)]`) and no further.
+    expect(classes).toContain("after:-bottom-[var(--space-3)]");
+    expect(item.className.split(/\s+/)).toContain("py-[var(--space-3)]");
+  });
+
+  it("draws the late chip at the 20px Deadline line's height, so it adds nothing to the row (#923 polish)", async () => {
+    narrow = true;
+    storage.set(tablePrefsKey("user-1"), JSON.stringify({ groupBy: "none", hiddenColumns: [] }));
+    projects = [row("p1", { deadlineAt: PAST, deadlineLocalCivil: "2020-01-01T11:00" })];
+    await renderTable();
+    const chip = phoneRow("p1").querySelector<HTMLElement>('[data-testid="late-chip"]')!;
+    expect(chip.getAttribute("data-size")).toBe("line");
+    const classes = chip.className.split(/\s+/);
+    expect(classes).toContain("h-5");
+    expect(classes).not.toContain("h-6");
+  });
 
   it("is a list grouped by Stage, not a grid, and leaves the saved choice untouched; the Display menu says why", async () => {
     storage.set(tablePrefsKey("user-1"), JSON.stringify({ groupBy: "stage", hiddenColumns: ["deadline"], showDelivered: true }));
