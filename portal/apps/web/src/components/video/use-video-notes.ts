@@ -161,11 +161,10 @@ export function useVideoNotes({ projectId, version, role, userId, archived, form
     playerProps: {
       markers, pendingRange, onMarkerSelect, onClockChange, transportLocked: drawing,
       ...(writable && clock ? { onMark: (kind: "in" | "out", frame: number) => { forms.mark(assetId, kind, frame, clock); } } : {}),
-      /** The range button and handles (#861): always there while notes are on; disabled where a mark would be refused. Clear on an open edit makes it a point (a note keeps a frame); on a new draft it empties the marks. */
+      /** The range handles (#861): always there while notes are on; locked where a mark would be refused. Clearing is the note forms' own (#927). */
       range: {
         marks: effectiveMarks(marks, clock).value,
         locked: !writable || marksHeld,
-        clear: () => { if (forms.slot(assetId).open) { if (clock) forms.makePoint(assetId, clock); } else forms.clearMarks(assetId); },
       } satisfies VideoRangeControl,
     },
   };

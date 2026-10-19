@@ -60,7 +60,7 @@ async function pointer(type: string, target: Element, { clientX, button = 0, isP
 }
 const centre = (frame: number) => 6 + frame;
 
-const noopRange = (marks: NoteMarks, over: Partial<NonNullable<Props["range"]>> = {}): NonNullable<Props["range"]> => ({ marks, locked: false, clear: () => undefined, ...over });
+const noopRange = (marks: NoteMarks, over: Partial<NonNullable<Props["range"]>> = {}): NonNullable<Props["range"]> => ({ marks, locked: false, ...over });
 
 beforeEach(() => { stub = installVideoElementStub(); shim = installLocalStorageShim(); resetUiPrefMemory(); });
 afterEach(async () => {
@@ -79,7 +79,7 @@ describe("VideoPlayer range: handles and keys, no button (#861, #927)", () => {
     expect(rangeButton()).toBeNull();
     await update({ range: noopRange({ in: 10, out: 20 }) });
     expect(rangeButton()).toBeNull();
-    await update({ range: noopRange({ in: 10, out: 20 }, { locked: true, hint: "Add a note to mark a range" }) });
+    await update({ range: noopRange({ in: 10, out: 20 }, { locked: true }) });
     expect(rangeButton()).toBeNull();
     expect(byTestId("video-range-tip")).toBeNull();
     expect(host.querySelector('[aria-label="Set in point"], [aria-label="Set out point"], [aria-label="Clear in and out"]')).toBeNull();

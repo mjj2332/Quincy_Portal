@@ -73,7 +73,7 @@ export type PasteOp = { opId: number; status: "idle" | "committing" | "failed" }
  */
 export type PastePreview = { generation: number; status: "idle" | "loading" | "ok" | "failed" | "invalid"; plan: VideoNotePastePreviewResponse | null; error: string | null; notice: string | null; failure: { text: string; retry: boolean } | null };
 export type PastePreviewRun = (offsetFrames: number) => Promise<VideoNotePastePreviewResponse>;
-export type Slot = { composer: Composer; /** The composer's drawing, the pen, and draw mode (#741 6b-ui). */ markup: ComposerMarkup; tool: MarkupTool; draw: DrawState | null; /** The undo and redo steps of each form's drawing (the hook's history, kept here so it outlives the player and a Version switch). Valid only for the very array it was last anchored to. */ history: DrawHistories; open: OpenForm | null; marks: StoredMarks; op: Op | null; spent: boolean; /** Why a form closed by itself (its note was deleted elsewhere). */ notice: (Problem & { rootId: string }) | null; paste: PasteDraft; pasteOp: PasteOp; pasteView: PastePreview; /** Whether the paste dialog is open, and what the last paste said. */ pasteOpen: boolean; pasteResult: string | null; /** The phone composer's + tray is open (#879). Not part of the draft: nothing counts it as unsent, and Cancel, a post, leaving the Version and Escape close it. */ extras: boolean };
+export type Slot = { composer: Composer; /** The composer's drawing, the pen, and draw mode (#741 6b-ui). */ markup: ComposerMarkup; tool: MarkupTool; draw: DrawState | null; /** The undo and redo steps of each form's drawing (the hook's history, kept here so it outlives the player and a Version switch). Valid only for the very array it was last anchored to. */ history: DrawHistories; open: OpenForm | null; marks: StoredMarks; op: Op | null; spent: boolean; /** Why a form closed by itself (its note was deleted elsewhere). */ notice: (Problem & { rootId: string }) | null; paste: PasteDraft; pasteOp: PasteOp; pasteView: PastePreview; /** Whether the paste dialog is open, and what the last paste said. */ pasteOpen: boolean; pasteResult: string | null };
 
 /** A form's undo / redo steps and the frame they were made on (a drawing has exactly one frame, so steps never cross frames). */
 export type DrawHistory = { steps: MarkupHistory; frame: number | null };
@@ -90,7 +90,7 @@ const EMPTY_PASTE: PasteDraft = Object.freeze({ offset: 0, unticked: Object.free
 const EMPTY_PASTE_OP: PasteOp = Object.freeze({ opId: 0, status: "idle" });
 const EMPTY_PASTE_VIEW: PastePreview = Object.freeze({ generation: 0, status: "idle", plan: null, error: null, notice: null, failure: null });
 const PASTE_STALE_NOTICE = "Some notes changed since the preview, so the list was refreshed. Check it, then paste again.";
-const EMPTY_SLOT: Slot = Object.freeze({ composer: EMPTY_COMPOSER, markup: EMPTY_MARKUP, tool: DEFAULT_PEN, draw: null, history: NO_HISTORIES, open: null, marks: NO_MARKS, op: null, spent: false, notice: null, paste: EMPTY_PASTE, pasteOp: EMPTY_PASTE_OP, pasteView: EMPTY_PASTE_VIEW, pasteOpen: false, pasteResult: null, extras: false });
+const EMPTY_SLOT: Slot = Object.freeze({ composer: EMPTY_COMPOSER, markup: EMPTY_MARKUP, tool: DEFAULT_PEN, draw: null, history: NO_HISTORIES, open: null, marks: NO_MARKS, op: null, spent: false, notice: null, paste: EMPTY_PASTE, pasteOp: EMPTY_PASTE_OP, pasteView: EMPTY_PASTE_VIEW, pasteOpen: false, pasteResult: null });
 
 export function effectiveMarks(marks: StoredMarks, clock: object | null): { value: NoteMarks; touched: boolean } {
   return marks.clock !== null && marks.clock === clock ? marks : { value: marks.seed, touched: false };
@@ -100,6 +100,13 @@ export function effectiveMarks(marks: StoredMarks, clock: object | null): { valu
 export function marksLocked(held: Slot): boolean {
   return !!held.op || !!held.draw || (!!held.open && (!held.open.frames || held.open.drawing.touched));
 }
+
+/** The composer's anchor after its text becomes `body`: no text and no stroke releases it (the chip follows the playhead again); the first text stamps the frame on screen; else it stays. */
+const anchorAfter = (held: Slot, body: string, frameNow: number): number | null => {
+  const { composer, markup } = held;
+  if (body === "") return markup.items.length > 0 ? composer.anchorFrame : null;
+  return composer.body === "" && composer.anchorFrame === null ? frameNow : composer.anchorFrame;
+};
 
 const isAbort = (error: unknown) => error instanceof Error && error.name === "AbortError";
 const messageOf = (error: unknown, fallback: string) => (error instanceof Error && error.message ? error.message : fallback);
@@ -256,15 +263,15 @@ export function createNoteFormStore(key: string) {
 
     setBody(assetId: string, body: string, frameNow: number) {
       const composer = slot(assetId).composer;
-      // Composing starts at the first character: the frame on screen then is the anchor, until the text is gone again.
-      const anchorFrame = body === "" ? null : composer.body === "" && composer.anchorFrame === null ? frameNow : composer.anchorFrame;
+      // Composing starts at the first character: the frame on screen then is the anchor, until the text is gone again (and no stroke holds it, #927).
+      const anchorFrame = anchorAfter(slot(assetId), body, frameNow);
       put(assetId, { composer: { ...composer, body, content: null, anchorFrame, visibility: body === "" ? "internal" : composer.visibility, revision: composer.revision + 1 }, spent: false });
     },
     /** The rich draft (#835): the text the draft reads as (mentions as @Name, a count hint for media) drives Post, the anchor and the length, the document is what is sent. */
     setContent(assetId: string, content: RichTextDoc, frameNow: number) {
       const composer = slot(assetId).composer;
       const body = videoNoteBody(content);
-      const anchorFrame = body === "" ? null : composer.body === "" && composer.anchorFrame === null ? frameNow : composer.anchorFrame;
+      const anchorFrame = anchorAfter(slot(assetId), body, frameNow);
       put(assetId, { composer: { ...composer, body, content, anchorFrame, visibility: body === "" ? "internal" : composer.visibility, revision: composer.revision + 1 }, spent: false });
     },
     setVisibility(assetId: string, visibility: VideoNoteVisibility) {
@@ -281,8 +288,14 @@ export function createNoteFormStore(key: string) {
       if (composer.body !== "" || composer.anchorFrame === frame) return;
       put(assetId, { composer: { ...composer, anchorFrame: frame } });
     },
-    /** Opens or closes the phone composer's + tray (#879). */
-    setExtras(assetId: string, open: boolean) { if (slot(assetId).extras !== open) put(assetId, { extras: open }); },
+    /**
+     * The note has started without text (#927): an upload began or (inside `setItems`) the first stroke landed. The frame on screen then is the
+     * anchor, as the first keystroke makes it, so scrubbing no longer moves the chip. A frozen anchor never moves.
+     */
+    freeze(assetId: string, frame: number) {
+      const composer = slot(assetId).composer;
+      if (composer.anchorFrame === null) put(assetId, { composer: { ...composer, anchorFrame: frame } });
+    },
 
     /** Returns false (nothing opens) while a request is out in this Version. The end is exclusive in storage, so the last included frame is end - 1. */
     openEdit(assetId: string, note: VideoNoteDto, rootId: string): boolean {
@@ -375,7 +388,7 @@ export function createNoteFormStore(key: string) {
       const now = slot(assetId).composer;
       const nowMarkup = slot(assetId).markup;
       put(assetId, {
-        op: null, marks: NO_MARKS, extras: false, composer: now.revision === op.revision ? { ...EMPTY_COMPOSER, revision: now.revision + 1 } : now,
+        op: null, marks: NO_MARKS, composer: now.revision === op.revision ? { ...EMPTY_COMPOSER, revision: now.revision + 1 } : now,
         markup: nowMarkup.revision === markupRevision ? emptyMarkup(nowMarkup.revision + 1) : nowMarkup,
         ...(nowMarkup.revision === markupRevision ? { history: { ...slot(assetId).history, composer: null } } : {}),
       });
@@ -493,7 +506,9 @@ export function createNoteFormStore(key: string) {
       const frame = held.draw?.frame ?? null;
       if (form === "composer") {
         const items = typeof next === "function" ? next(held.markup.items) : next;
-        put(assetId, { markup: { items, drawingFrame: items.length === 0 ? null : held.markup.drawingFrame ?? frame, revision: held.markup.revision + 1 }, spent: false });
+        // The first stroke starts the note (#927): its frame is the anchor from then on, as the first keystroke's is. Clear keeps it while there is text.
+        const composer = items.length > 0 && held.composer.anchorFrame === null && frame !== null ? { composer: { ...held.composer, anchorFrame: frame } } : {};
+        put(assetId, { markup: { items, drawingFrame: items.length === 0 ? null : held.markup.drawingFrame ?? frame, revision: held.markup.revision + 1 }, spent: false, ...composer });
         return;
       }
       const open_ = held.open;
@@ -515,7 +530,7 @@ export function createNoteFormStore(key: string) {
     discardComposer(assetId: string) {
       const held = slot(assetId);
       if (held.op) return;
-      put(assetId, { composer: { ...EMPTY_COMPOSER, revision: held.composer.revision + 1 }, markup: emptyMarkup(held.markup.revision + 1), history: { ...held.history, composer: null }, marks: { ...NO_MARKS, seed: held.marks.seed }, spent: false, extras: false, ...(held.draw?.form === "composer" ? { draw: null } : {}) });
+      put(assetId, { composer: { ...EMPTY_COMPOSER, revision: held.composer.revision + 1 }, markup: emptyMarkup(held.markup.revision + 1), history: { ...held.history, composer: null }, marks: { ...NO_MARKS, seed: held.marks.seed }, spent: false, ...(held.draw?.form === "composer" ? { draw: null } : {}) });
     },
     /** Takes the composer's drawing away (the chip's Remove). */
     clearMarkup(assetId: string) {
@@ -560,8 +575,6 @@ export function createNoteFormStore(key: string) {
       // Draw mode owns the first Escape: it cancels a frame confirmation or leaves the drawing phase, and the strokes stay. The dirty-form hold below is the next Escape, the viewer the one after.
       if (held.draw) { put(assetId, { draw: null }); return { consumed: true, focus: "draw" }; }
       if (held.op?.phase === "confirming") { cancelConfirmation(assetId); put(assetId, { spent: true }); return { consumed: true, focus: "textarea" }; }
-      // The phone composer's + tray is next: it closes and the field keeps the focus (the keyboard stays up).
-      if (held.extras) { put(assetId, { extras: false }); return { consumed: true, focus: "textarea" }; }
       const dirty = isDirty(held);
       if (held.open && !dirty) { close(assetId); return { consumed: true, focus: "opener" }; }
       if (dirty && !held.spent) { put(assetId, { spent: true }); return { consumed: true, focus: "textarea" }; }
@@ -580,7 +593,7 @@ export function createNoteFormStore(key: string) {
     leave(assetId: string) {
       const held = slot(assetId);
       const reset = held.composer.body === "" && held.composer.visibility !== "internal";
-      if (held.spent || reset || held.draw || held.extras) put(assetId, { ...(held.draw ? { draw: null } : {}), ...(held.spent ? { spent: false } : {}), ...(held.extras ? { extras: false } : {}), ...(reset ? { composer: { ...held.composer, visibility: "internal" as const, revision: held.composer.revision + 1 } } : {}) });
+      if (held.spent || reset || held.draw) put(assetId, { ...(held.draw ? { draw: null } : {}), ...(held.spent ? { spent: false } : {}), ...(reset ? { composer: { ...held.composer, visibility: "internal" as const, revision: held.composer.revision + 1 } } : {}) });
     },
     rearm(assetId: string) { if (slot(assetId).spent) put(assetId, { spent: false }); },
     /** The open form's note left the Version's full list (deleted elsewhere): the form goes, unless its own request is out (it is reconciled again when that settles). */

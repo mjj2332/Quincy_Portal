@@ -1009,7 +1009,7 @@ describe("Compare: notes, one column with a tab per side (#741 7c)", () => {
     const text = tid("video-note-composer")!.querySelector<HTMLTextAreaElement>("textarea")!;
     await type(text, "On the second cut");
     api.apiPost.mockResolvedValue(note({ assetId: ids.asset2, startFrame: 5, body: "On the second cut" }));
-    await click(tid("video-note-post")!);
+    await click(tid("video-note-composer")!.querySelector<HTMLButtonElement>('button[type="submit"]')!);
     await land(5);
     await flush(4);
     expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, { startFrame: 5, visibility: "internal", content: legacyBodyToRichTextDoc("On the second cut") });
@@ -1025,7 +1025,7 @@ describe("Compare: notes, one column with a tab per side (#741 7c)", () => {
     expect(stores.made[0]!.slot(ids.asset3).marks.touched).toBe(false);
     expect(tid("video-pending-band")).not.toBeNull();
     // B parked before its window: I and O are unbound.
-    await click(tid("video-note-clear-marks")!);
+    await click(tid("note-composer-chip")!.querySelector<HTMLButtonElement>('button[aria-label="Clear in and out"]')!);
     const offset = tid("video-compare-offset") as HTMLInputElement;
     offset.focus();
     await type(offset, "12");

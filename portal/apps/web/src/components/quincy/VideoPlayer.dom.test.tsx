@@ -594,7 +594,7 @@ describe("the phone control bar (#879)", () => {
   it("is one row: play, timecode, mute and full screen, with no frame steps, shuttle legend, time-format menu or in/out; padded by --space-3; the marker lane collapses with no markers", async () => {
     const viewport = mockViewport({ width: 390 });
     try {
-      await mount(versionOf(), { markers: [], onMark: () => {}, range: { marks: { in: null, out: null, seed: 0 } as never, locked: false, clear: () => {} } });
+      await mount(versionOf(), { markers: [], onMark: () => {}, range: { marks: { in: null, out: null, seed: 0 } as never, locked: false } });
       await load();
       expect(button("Play")).toBeTruthy();
       expect(button("Mute") ?? null).not.toBeNull();
