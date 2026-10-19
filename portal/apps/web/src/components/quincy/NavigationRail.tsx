@@ -1,5 +1,6 @@
 import { useRef, useState, type MouseEvent } from "react";
 import {
+  Bell,
   LayoutDashboard,
   List,
   SquareKanban,
@@ -27,6 +28,7 @@ import {
 } from "@/components/reui/sidebar";
 import { InitialsAvatar } from "./InitialsAvatar";
 import { Separator } from "@/components/reui/separator";
+import { Badge } from "@/components/reui/badge";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { InternalLink } from "../InternalLink";
 import { Menu } from "./menu";
@@ -56,7 +58,10 @@ import type {
  *   preference — `SidebarProvider` is pinned closed by `RailedShell`.
  * - `sheet` (narrow, inside `RailSheet`): the labelled 288px column the hamburger opens. Rows keep
  *   their visible labels and 44px targets, and the account menu keeps a Notification preferences
- *   row (there is no settings icon here, and the header owns the bell).
+ *   row (there is no settings icon here, and the header owns the bell). On the phone Dashboard the
+ *   bar has no bell (#923, owner decision), so the shell passes `notifications` and a Notifications
+ *   row sits above the footer, inset like the nav items: the unread count, and a press that opens the
+ *   page's panel.
  *
  * Neither variant renders the Dashboard view links (Table/Board/Calendar/Timeline): the Dashboard's
  * own view controls choose a view (the tabs ticket, #427, replaces them). `item.children` stays in
@@ -218,9 +223,14 @@ export type NavigationRailProps = {
    * a wide-window override is a call the shell makes, not the rail.
    */
   showBell?: boolean;
+  /**
+   * `sheet` only: a Notifications row just above the footer, for a page with no bell of its own
+   * (#923, the phone Dashboard). `RailedShell` decides, and owns what a press does.
+   */
+  notifications?: { unreadCount: number; onOpen: () => void };
 };
 
-export function NavigationRail({ navigation, user, variant = "rail", showBell = true }: NavigationRailProps) {
+export function NavigationRail({ navigation, user, variant = "rail", showBell = true, notifications }: NavigationRailProps) {
   const isRail = variant === "rail";
   const isSheet = variant === "sheet";
 
@@ -339,6 +349,35 @@ export function NavigationRail({ navigation, user, variant = "rail", showBell = 
         ))}
         </nav>
       </SidebarContent>
+
+      {/* `sheet` only: the Notifications row (#923). A `SidebarGroup` of its own above the footer, not inside the
+          footer, so it takes the nav groups' 8px inset and lines up with Dashboard / Notice board / Admin; the
+          footer's 16px sides put it 8px right of them (#923 review round 3). No bottom padding: the footer's own
+          top padding is the gap to the account row. */}
+      {isSheet && notifications && (
+        <SidebarGroup className="pb-0" data-testid="navigation-rail-notifications-group">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                type="button"
+                className={cn(RAIL_ITEM, SHEET_TOUCH_TARGET)}
+                aria-label={notifications.unreadCount > 0 ? `Notifications, ${notifications.unreadCount} unread` : "Notifications"}
+                data-testid="navigation-rail-notifications"
+                data-touch-target
+                onClick={notifications.onOpen}
+              >
+                <Bell aria-hidden="true" />
+                <span>Notifications</span>
+                {notifications.unreadCount > 0 && (
+                  <Badge variant="destructive" radius="full" className="ms-auto tabular-nums" aria-hidden="true">
+                    {notifications.unreadCount > 99 ? "99+" : notifications.unreadCount}
+                  </Badge>
+                )}
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
+      )}
 
       {/* The rail's foot: bell, settings, avatar — a hairline-bordered cluster, app-shell-22's
           bordered group. `isRail` swaps the sheet's 16px side padding for the nav groups' own

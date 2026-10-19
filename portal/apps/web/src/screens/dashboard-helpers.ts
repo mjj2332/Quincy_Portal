@@ -238,9 +238,18 @@ export function isCanonicalShootDate(value: string | null): value is string {
   return value !== null && parseCanonicalShootDate(value) !== null;
 }
 
-export function formatDashboardDate(value: string | null): string {
-  if (value === null) return "Shoot date pending";
+const SHORT_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/**
+ * The Table's Shoot cell (#923 frame 4b): "Tue 20 Oct", with the year only outside `currentYear` (the studio's
+ * civil year), and "Pending" with no date, which fits the column where "Shoot date pending" truncated. A legacy
+ * value that is not a calendar date is shown as it is.
+ */
+export function formatDashboardDate(value: string | null, currentYear: number): string {
+  if (value === null) return "Pending";
   const parsed = parseCanonicalShootDate(value);
   if (!parsed) return value;
-  return `${parsed.day} ${MONTHS[parsed.month - 1]} ${parsed.year}`;
+  const weekday = SHORT_WEEKDAYS[new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.day)).getUTCDay()];
+  const text = `${weekday} ${parsed.day} ${MONTHS[parsed.month - 1]}`;
+  return parsed.year === currentYear ? text : `${text} ${parsed.year}`;
 }

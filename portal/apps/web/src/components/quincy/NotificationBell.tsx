@@ -8,7 +8,7 @@ import { cn } from "../../lib/utils";
 import { InternalLink } from "../InternalLink";
 import { TabStrip } from "./TabStrip";
 import { NotificationList, NotificationEmptyState } from "./NotificationList";
-import { useNotificationFeed } from "../../lib/use-notifications";
+import { useNotificationFeed, type UseNotificationFeedResult } from "../../lib/use-notifications";
 import { dismissFocusTarget, type NotificationFilter, type NotificationListItem } from "../../lib/notification-list";
 
 /**
@@ -91,9 +91,19 @@ import { dismissFocusTarget, type NotificationFilter, type NotificationListItem 
  * happy-dom evaluates no `@media` queries at all, and the shell-breakpoint guard forbids a
  * `max-[…]` variant in this file regardless, so `showThumbnails` keys off the `placement` prop
  * JS already threads through rather than a CSS breakpoint of its own.
+ *
+ * ## The panel without its bell (#923)
+ *
+ * On a phone the Dashboard's view bar has no room for the bell, so the owner moved it into the nav
+ * Sheet: the menu button carries the unread count and the Sheet a Notifications row
+ * (`PhoneShellNav.tsx`). That row opens THIS panel, unchanged, anchored to the bar's row as the
+ * bell's was. So `NotificationBell` is two layers: the feed (`useNotificationFeed`, one per mounted
+ * entry point, so one poll) and `NotificationPopover`, the panel over a feed and an open state its
+ * caller owns. With `trigger={false}` it draws no bell, and focus goes to the caller's `finalFocus`
+ * on close, since there is no trigger to return to.
  */
 
-const NOTIFICATION_POLL_MS = 25_000;
+export const NOTIFICATION_POLL_MS = 25_000;
 
 const HEAD = "flex items-center justify-between gap-[var(--space-3)] px-[var(--space-4)] py-[var(--space-3)] " +
   "border-b-[length:var(--border-width-hair)] [border-bottom-style:solid] border-b-border shrink-0";
@@ -174,15 +184,48 @@ export type NotificationBellProps = {
   anchorRef: RefObject<HTMLElement | null>;
 };
 
-export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = false, placement, anchorRef }: NotificationBellProps) {
+export function NotificationBell({ poll = NOTIFICATION_POLL_MS, ...props }: NotificationBellProps) {
+  // #115 — fetch/poll/mark-read/mark-all/dismiss and the derived filter/bucket/visible state all
+  // live in the hook; the panel keeps only the popup ref, the dismiss-focus handoff, tab
+  // selection's own focus side effect, and the popover/placement chrome.
+  const feed = useNotificationFeed({ poll });
+  const [open, setOpen] = useState(false);
+  return <NotificationPopover {...props} feed={feed} open={open} onOpenChange={setOpen} />;
+}
+
+/** The unread count as the bell draws it: a pill pinned to its control's corner, capped at "99+". Shared with the phone menu button (#923). */
+export function UnreadCountBadge({ count, labelled = true, "data-testid": testId }: { count: number; labelled?: boolean; "data-testid"?: string }) {
+  if (count <= 0) return null;
+  return (
+    <span
+      className={cn(
+        "absolute top-0 right-[-3px] min-w-[16px] h-[16px] px-1 rounded-[var(--radius-pill)]",
+        "text-center leading-[16px] whitespace-nowrap tabular-nums",
+        "bg-destructive !text-destructive-foreground text-[length:var(--text-2xs)]",
+      )}
+      aria-label={labelled ? `${count} unread` : undefined}
+      aria-hidden={labelled ? undefined : true}
+      data-testid={testId}
+    >
+      {count > 99 ? "99+" : String(count)}
+    </span>
+  );
+}
+
+export type NotificationPopoverProps = Omit<NotificationBellProps, "poll"> & {
+  feed: UseNotificationFeedResult;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** `false` draws no bell: the caller opens the panel (#923, the phone Sheet's Notifications row). */
+  trigger?: boolean;
+  /** Where focus goes on close when there is no bell to return to. */
+  finalFocus?: RefObject<HTMLElement | null>;
+};
+
+export function NotificationPopover({ feed, open: notificationsOpen, onOpenChange: setNotificationsOpen, trigger = true, finalFocus, touchTarget = false, placement, anchorRef }: NotificationPopoverProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const idPrefix = useId();
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
-  // #115 — fetch/poll/mark-read/mark-all/dismiss and the derived filter/bucket/visible state all
-  // live in the hook now; this file keeps only the popup ref, the dismiss-focus handoff, tab
-  // selection's own focus side effect, and the popover/placement chrome below.
-  const { notifications, unreadCount, now, refreshNow, tab, setTab, filtered, buckets, visible, markRead, markAllRead, dismiss } =
-    useNotificationFeed({ poll });
+  const { notifications, unreadCount, now, refreshNow, tab, setTab, filtered, buckets, visible, markRead, markAllRead, dismiss } = feed;
   const notificationsPopupRef = useRef<HTMLDivElement | null>(null);
   // Set only by `dismissNotification`, consumed by the layout effect below — never a timer: a
   // deferred focus call could land after the list has changed again.
@@ -254,38 +297,30 @@ export function NotificationBell({ poll = NOTIFICATION_POLL_MS, touchTarget = fa
   }
 
   return (
-    <div className="relative" data-testid="rail-notifications">
+    // With no bell the host takes no box (`contents`), so it adds no gap to the row it sits in.
+    <div className={trigger ? "relative" : "contents"} data-testid="rail-notifications">
       <Popover open={notificationsOpen} onOpenChange={handleOpenChange} modal={false}>
-        <PopoverTrigger
-          ref={triggerRef}
-          className={cn(placement === "rail" ? RAIL_TRIGGER : TRIGGER, touchTarget && TOUCH_TARGET)}
-          aria-label={unreadCount ? `${unreadCount} unread notifications` : "Notifications"}
-          data-testid="rail-notification-trigger"
-        >
-          {/* `display: contents` — a real DOM node to carry the `data-touch-target` test seam
-              without changing the trigger's own layout box. */}
-          <span className="contents" data-touch-target={touchTarget ? true : undefined}>
-            <Bell aria-hidden="true" />
-            <span className="sr-only">Notifications</span>
-            {unreadCount > 0 && (
-              <span
-                className={cn(
-                  "absolute top-0 right-[-3px] min-w-[16px] h-[16px] px-1 rounded-[var(--radius-pill)]",
-                  "text-center leading-[16px] whitespace-nowrap tabular-nums",
-                  "bg-destructive !text-destructive-foreground text-[length:var(--text-2xs)]",
-                )}
-                aria-label={`${unreadCount} unread`}
-                data-testid="rail-notification-badge"
-              >
-                {cappedCount}
-              </span>
-            )}
-          </span>
-        </PopoverTrigger>
+        {trigger && (
+          <PopoverTrigger
+            ref={triggerRef}
+            className={cn(placement === "rail" ? RAIL_TRIGGER : TRIGGER, touchTarget && TOUCH_TARGET)}
+            aria-label={unreadCount ? `${unreadCount} unread notifications` : "Notifications"}
+            data-testid="rail-notification-trigger"
+          >
+            {/* `display: contents` — a real DOM node to carry the `data-touch-target` test seam
+                without changing the trigger's own layout box. */}
+            <span className="contents" data-touch-target={touchTarget ? true : undefined}>
+              <Bell aria-hidden="true" />
+              <span className="sr-only">Notifications</span>
+              <UnreadCountBadge count={unreadCount} data-testid="rail-notification-badge" />
+            </span>
+          </PopoverTrigger>
+        )}
         <PopoverContent
           ref={notificationsPopupRef}
           data-testid="rail-notifications-panel"
           initialFocus={notificationsPopupRef}
+          finalFocus={finalFocus}
           anchor={anchorRef}
           positionMethod="fixed"
           side={PLACEMENT[placement].side}

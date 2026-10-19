@@ -147,6 +147,20 @@ describe("mapInternalProjects (#475)", () => {
     expect(mapInternalProjects({ projects: rows }).every((row) => row.boardContractEnabled === true)).toBe(true);
   });
 
+  it("keeps a valid checklist, leaves an absent one absent and drops a malformed one (#923 D1)", () => {
+    const rows = [
+      { ...project("a"), checklist: { completed: 1, total: 3 } },
+      { ...project("b"), checklist: { completed: 0, total: 0 } },
+      project("c"),
+      { ...project("d"), checklist: { completed: 4, total: 3 } },
+      { ...project("e"), checklist: { completed: "1", total: 2 } as never },
+    ];
+    const mapped = mapInternalProjects({ projects: rows, board: { contractEnabled: true } });
+    expect(mapped[0]!.checklist).toEqual({ completed: 1, total: 3 });
+    expect(mapped[1]!.checklist).toEqual({ completed: 0, total: 0 });
+    for (const index of [2, 3, 4]) expect(mapped[index]).not.toHaveProperty("checklist");
+  });
+
   it("ignores the deprecated map when a stale server still sends it", () => {
     // The type no longer names the key; a stale server still sends it on the wire.
     const stale = { projects: [project("a")], board: { contractEnabled: true, orderedProjectIdsByStage: { raw_review: ["a"] } } };

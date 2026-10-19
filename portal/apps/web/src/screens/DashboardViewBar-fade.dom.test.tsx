@@ -41,7 +41,7 @@ describe("DashboardViewBar tab row scroll fade (#652)", () => {
 
   async function mount() {
     await act(async () => {
-      root.render(<DashboardViewBar renderedView="table" canViewProductionCalendar disabled={false} onSelectView={() => undefined} principalId="u1" searchFocusRequest={null} onSearchFocusHandled={() => undefined} />);
+      root.render(<DashboardViewBar renderedView="table" canViewProductionCalendar canCreateProject={false} disabled={false} onSelectView={() => undefined} principalId="u1" searchFocusRequest={null} onSearchFocusHandled={() => undefined} />);
       await Promise.resolve();
     });
     return host.querySelector('[aria-label="Dashboard view"]')!.closest<HTMLElement>("[data-fade]");

@@ -7,8 +7,10 @@ import { STAGE_KEYS, type StageKey } from "@quincy/shared";
  * Admin's `editing_autohdr` are the same entry). Storage is injected, in the shape
  * `initializeKanbanSortMode` takes, so this module stays pure.
  *
- * Reads are forgiving: anything that is not a JSON array of known keys reads as "all expanded". Writes
- * are best-effort: storage may be unavailable, and the in-memory choice stands either way.
+ * #923: Delivered starts collapsed. Nothing stored, unreadable storage and anything that is not a JSON array
+ * read as `DEFAULT_COLLAPSED_STAGES`; a stored array is the viewer's own choice, so a stored `[]` (everything
+ * expanded) stays `[]`, and unknown keys inside one are dropped. Writes are best-effort: storage may be
+ * unavailable, and the in-memory choice stands either way.
  */
 export type BoardCollapseStorage = {
   read: (key: string) => string | null;
@@ -16,6 +18,9 @@ export type BoardCollapseStorage = {
 };
 
 const KNOWN = new Set<string>(STAGE_KEYS);
+
+/** What a viewer with no stored choice sees collapsed (#923 session default). */
+export const DEFAULT_COLLAPSED_STAGES: readonly StageKey[] = ["delivered"];
 
 export function boardCollapseKey(principalId: string): string {
   return `quincy:dashboard:board:collapsed:${principalId}`;
@@ -31,9 +36,11 @@ export function normalizeCollapsedStages(value: unknown): StageKey[] {
 export function readCollapsedStages(principalId: string, storage: BoardCollapseStorage): StageKey[] {
   try {
     const stored = storage.read(boardCollapseKey(principalId));
-    return stored === null ? [] : normalizeCollapsedStages(JSON.parse(stored));
+    if (stored === null) return [...DEFAULT_COLLAPSED_STAGES];
+    const parsed: unknown = JSON.parse(stored);
+    return Array.isArray(parsed) ? normalizeCollapsedStages(parsed) : [...DEFAULT_COLLAPSED_STAGES];
   } catch {
-    return [];
+    return [...DEFAULT_COLLAPSED_STAGES];
   }
 }
 

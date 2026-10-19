@@ -6,6 +6,7 @@ import { peopleProjectSpanLabel } from "../lib/timeline-colour-by";
 import { cn } from "../lib/utils";
 import { PersonToneAvatar } from "./ProductionGanttColourBy";
 import { AvatarStack } from "./quincy/AvatarStack";
+import { LateChip } from "./quincy/LateChip";
 
 /**
  * #916 / #919: what the Dashboard Timeline draws inside and beside each bar, frame 3a
@@ -193,14 +194,7 @@ export function renderGanttBarTrailing(data: ProductionGanttRowData | undefined,
   if (!data || !isLastSegment) return null;
   const label = lateLabel(data.appearance.lateness);
   const people = diamondPeople(data);
-  const chip = label && (
-    <span
-      data-testid="gantt-late-chip"
-      className="inline-flex h-6 items-center whitespace-nowrap rounded-sm border-[length:var(--border-width-hair)] border-late bg-card px-2 text-xs text-late"
-    >
-      {label}
-    </span>
-  );
+  const chip = label && <LateChip data-testid="gantt-late-chip">{label}</LateChip>;
   if (!people || !chip) return people ?? chip ?? null;
   return (
     <span className="flex items-center gap-1.5">
