@@ -357,7 +357,7 @@ function buildCoreTier(anchor: string, referenceInstantMs: number): ProjectBuild
       id: fixtureId(`project:${key}`), key, street: `QA FIXTURE · ${street}`, suburb: "QA Fixtures",
       agencyName: "QA Fixture — synthetic data", stageKey, priority: opts.priority ?? null,
       shootDate: opts.shootDate === undefined ? null : opts.shootDate, boardRevision: stageKey === "awaiting_raw" ? 0 : 1,
-      notes: `QA-FIXTURE-v1 · anchor=${anchor} · tier=core · key=${key}`, deadline, services: ["raw"],
+      notes: `QA-FIXTURE-v1 · anchor=${anchor} · tier=core · key=${key}`, deadline, services: ["raw", "video"],
       createdAtMs, updatedAtMs: createdAtMs,
     };
     return { project: row, createdAtMs };
@@ -467,7 +467,7 @@ function buildDensityTier(anchor: string, referenceInstantMs: number): ProjectBu
       id: fixtureId(`project:${key}`), key, street: `QA FIXTURE · Density ${String(i + 1).padStart(2, "0")}`, suburb: "QA Density",
       agencyName: "QA Fixture — synthetic data", stageKey, priority: null, shootDate: null,
       boardRevision: stageKey === "awaiting_raw" ? 0 : 1, notes: `QA-FIXTURE-v1 · anchor=${anchor} · tier=density · key=${key}`,
-      deadline: null, services: ["raw"], createdAtMs, updatedAtMs: createdAtMs,
+      deadline: null, services: ["raw", "video"], createdAtMs, updatedAtMs: createdAtMs,
     };
     builds.push({ project, subtasks: bulkSubtasks(project.id, key, DENSITY_SUBTASKS_PER_PROJECT, 0, createdAtMs, anchor) });
   }

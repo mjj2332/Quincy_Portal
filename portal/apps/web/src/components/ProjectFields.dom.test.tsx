@@ -273,3 +273,42 @@ describe("ProjectFields shoot date (#421)", () => {
     expect(onChange).toHaveBeenCalledWith("shootDate", "");
   });
 });
+
+describe("ProjectFields Services", () => {
+  let host: HTMLElement;
+
+  beforeEach(() => { host = mount(); apiGetMock.mockReset().mockResolvedValue({ photographers: [], editors: [] }); });
+  afterEach(async () => { await unmount(); host.remove(); });
+
+  const tiles = () => [...host.querySelectorAll<HTMLLabelElement>('[role="group"][aria-labelledby="services-heading"] label')];
+  const tile = (name: string) => tiles().find((label) => label.textContent?.startsWith(name))!.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+
+  it.each(["create", "edit"] as const)("lays out RAW, Edited photography, Video, Floorplan and Copywriting, with RAW and Video fixed, in %s mode", async (mode) => {
+    const onToggle = vi.fn();
+    await render(<ProjectFields form={{ ...form, orderedServices: ["edited"] }} errors={{}} mode={mode} onChange={() => undefined} onToggle={onToggle} />);
+
+    expect(tiles().map((label) => label.textContent)).toEqual(["RAWAlways included", "Edited photography", "VideoAlways included", "Floorplan", "Copywriting"]);
+    for (const fixed of ["RAW", "Video"]) {
+      expect(tile(fixed).checked).toBe(true);
+      expect(tile(fixed).disabled).toBe(true);
+    }
+    expect(tile("Edited photography").checked).toBe(true);
+    for (const optional of ["Edited photography", "Floorplan", "Copywriting"]) expect(tile(optional).disabled).toBe(false);
+
+    await click(tile("Video"));
+    expect(onToggle).not.toHaveBeenCalled();
+    await click(tile("Floorplan"));
+    expect(onToggle).toHaveBeenCalledWith("orderedServices", "floorplan");
+    await click(tile("Edited photography"));
+    expect(onToggle).toHaveBeenLastCalledWith("orderedServices", "edited");
+  });
+
+  it("says in Edit details that a service holding media can't be removed, and in Create says nothing", async () => {
+    await render(<ProjectFields form={form} errors={{}} mode="edit" onChange={() => undefined} onToggle={() => undefined} />);
+    expect(host.textContent).toContain("A service that already holds media can't be removed.");
+    expect(host.textContent).not.toContain("Services are fixed after a project is created.");
+
+    await render(<ProjectFields form={form} errors={{}} mode="create" onChange={() => undefined} onToggle={() => undefined} />);
+    expect(host.textContent).not.toContain("A service that already holds media");
+  });
+});

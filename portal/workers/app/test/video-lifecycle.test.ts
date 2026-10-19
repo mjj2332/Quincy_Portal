@@ -74,32 +74,29 @@ describe("archive with an active video upload", () => {
   });
 });
 
-describe("removing the Video service with an active upload", () => {
-  it("is blocked while a reservation is active, naming it, and allowed once it has ended", async () => {
+describe("clearing the services never removes the Video Collection (always-on video)", () => {
+  const hasVideo = async (projectId: string) => (await database.DB.prepare("SELECT 1 AS n FROM collections WHERE project_id = ? AND kind = 'video'").bind(projectId).first()) !== null;
+
+  it("keeps the Collection and an active reservation when the services are cleared", async () => {
     const projectId = await newProject(); const reservation = await seedReservation({ projectId, status: "pending" });
-    const blocked = await request(`/api/projects/${projectId}`, "admin", "PATCH", { orderedServices: [] });
-    expect(blocked.status).toBe(409);
-    const body = await blocked.json() as { blocked: Array<{ kind: string; videoUploadCount: number }> };
-    expect(body.blocked).toEqual([expect.objectContaining({ kind: "video", videoUploadCount: 1 })]);
-    expect(await database.DB.prepare("SELECT 1 FROM collections WHERE project_id = ? AND kind = 'video'").bind(projectId).first()).not.toBeNull();
-    expect(await reservationStatus(reservation.id)).toBe("pending");
-    await database.DB.prepare("UPDATE video_upload_reservations SET status = 'failed' WHERE id = ?").bind(reservation.id).run();
     expect((await request(`/api/projects/${projectId}`, "admin", "PATCH", { orderedServices: [] })).status).toBe(200);
-    expect(await database.DB.prepare("SELECT 1 FROM collections WHERE project_id = ? AND kind = 'video'").bind(projectId).first()).toBeNull();
+    expect(await hasVideo(projectId)).toBe(true);
+    expect(await reservationStatus(reservation.id)).toBe("pending");
   });
 
-  it("holds in the SQL: a reservation made after the pre-read keeps the Collection, and the reservation with it", async () => {
+  it("keeps the Collection and a reservation made after the pre-read", async () => {
     const projectId = await newProject();
     const environment = racingDb(() => seedReservation({ projectId, status: "pending" }));
     const response = await appRequest(environment, `/api/projects/${projectId}`, "admin", "PATCH", { orderedServices: [] });
-    expect(response.status).toBe(409);
-    expect(await database.DB.prepare("SELECT 1 FROM collections WHERE project_id = ? AND kind = 'video'").bind(projectId).first()).not.toBeNull();
+    expect(response.status).toBe(200);
+    expect(await hasVideo(projectId)).toBe(true);
     expect((await database.DB.prepare("SELECT count(*) AS n FROM video_upload_reservations WHERE project_id = ?").bind(projectId).first<{ n: number }>())!.n).toBe(1);
   });
 
-  it("is still blocked by a committed Version (the existing asset rule, pinned)", async () => {
+  it("keeps the Collection and a committed Version", async () => {
     const projectId = await newProject(); await seedVideoVersion({ projectId });
-    expect((await request(`/api/projects/${projectId}`, "admin", "PATCH", { orderedServices: [] })).status).toBe(409);
+    expect((await request(`/api/projects/${projectId}`, "admin", "PATCH", { orderedServices: [] })).status).toBe(200);
+    expect(await hasVideo(projectId)).toBe(true);
   });
 });
 

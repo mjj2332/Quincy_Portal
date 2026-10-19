@@ -118,6 +118,8 @@ videoUploadsRoutes.post("/projects/:projectId/video-uploads", terminalRoute("/pr
   const filename = normalizeVideoUploadFilename(data.filename); const newVideoTitle = data.videoId === undefined ? filmTitleFromFilename(filename) : null;
   let inserted: D1Result<{ version: number }>;
   try {
+    // Every Project has a Video Collection (always-on video). This covers a Project the 0081 backfill or create did not reach (the apply-to-deploy gap, old fixtures).
+    await c.env.DB.prepare("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) SELECT ?, p.id, 'video', 'empty', 0, ?, ? FROM projects p WHERE p.id = ? AND p.archived_at IS NULL ON CONFLICT(project_id, kind) DO NOTHING").bind(newId(), now, now, projectId).run();
     inserted = await c.env.DB.prepare(`${RESERVE_SQL} RETURNING version`).bind(reservationId, user.id, videoId, newVideoTitle, assetId, key, filename, data.bytes, data.clientProbe === undefined ? null : JSON.stringify(data.clientProbe), expiresAt, newId(), now, projectId).all<{ version: number }>();
   } catch (error) {
     if (/UNIQUE constraint failed/i.test(errorText(error)) && /video_id/.test(errorText(error))) return uploadInProgress(c, videoId);
@@ -171,7 +173,7 @@ async function reserveRefusal(c: Context<AppEnv>, projectId: string, existingVid
   const project = await db.prepare("SELECT archived_at AS archivedAt, (SELECT id FROM collections WHERE project_id = projects.id AND kind = 'video') AS collectionId FROM projects WHERE id = ?").bind(projectId).first<{ archivedAt: number | null; collectionId: string | null }>();
   if (!project) return c.json({ error: "Project not found" }, 404);
   if (project.archivedAt !== null) return archivedResponse(c);
-  if (!project.collectionId) return c.json({ error: "This project has no Video service. Add it before uploading video.", code: "video_service_missing" }, 409);
+  if (!project.collectionId) return c.json({ error: "Could not reserve this upload. Try again.", code: "upload_unavailable" }, 409);
   if (existingVideoId && !await db.prepare("SELECT 1 FROM videos WHERE id = ? AND collection_id = ? AND removed_at IS NULL").bind(existingVideoId, project.collectionId).first()) return c.json({ error: "Video not found" }, 404);
   const active = (await db.prepare(`SELECT COUNT(*) AS n FROM video_upload_reservations WHERE project_id = ? AND created_by = ? AND status IN (${ACTIVE_SQL})`).bind(projectId, userId).first<{ n: number }>())?.n ?? 0;
   if (active >= VIDEO_UPLOAD_MAX_ACTIVE_PER_USER) return c.json({ error: "You already have three uploads in progress in this project. Finish or cancel one first.", code: "too_many_uploads" }, 429);
