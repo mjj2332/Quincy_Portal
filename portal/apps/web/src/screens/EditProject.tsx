@@ -207,7 +207,6 @@ export function EditProject({ projectId, onReturnToWorkspace, onDeleted }: { pro
       <InternalLink className={buttonClasses("secondary", {})} {...cancelProps}>Cancel</InternalLink>
     </header>
     {canEditProject && (project ? archived ? <Notice tone="caution" role="status">Archived projects are read-only. Restore the project to edit its details.</Notice> : <form id={EDIT_FORM_ID} data-testid="edit-project-form" className="flex flex-col gap-[var(--space-8)]" onSubmit={(event) => void submit(event)} noValidate>
-      {submitError && <Notice role="alert">{submitError}</Notice>}
       <section className="create-project__section" aria-labelledby="property-heading">
         <SectionHead eyebrow="Property" id="property-heading">Where is the shoot?</SectionHead>
         <div className={FIELD_GRID_PROPERTY}>
@@ -217,6 +216,8 @@ export function EditProject({ projectId, onReturnToWorkspace, onDeleted }: { pro
         </div>
       </section>
       <ProjectFields form={form} errors={errors} existingCollections={project.collections.map((collection) => collection.kind)} mode="edit" monitoredRawFolder={project.monitoredRawFolder} onChange={updateField} onToggle={toggleSelection} />
+      {/* Beside Save, not atop the form: a refused save (a Service holding media, a stale save) must show where the click was. */}
+      {submitError && <Notice role="alert">{submitError}</Notice>}
       <div className="flex flex-wrap justify-end gap-[var(--space-3)] max-[721px]:flex-col-reverse max-[721px]:[&>*]:w-full">
         <InternalLink className={buttonClasses("secondary", {})} {...cancelProps} aria-disabled={isSubmitting}>Cancel</InternalLink>
         <Button type="submit" disabled={isSubmitting}>{isSubmitting ? "Saving details…" : "Save changes"}</Button>

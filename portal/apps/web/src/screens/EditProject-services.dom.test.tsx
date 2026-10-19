@@ -121,6 +121,8 @@ describe("EditProject Services", () => {
     await save();
 
     expect(alert()?.textContent).toBe("Edited photography already has media, so it can't be removed.");
+    // The refusal sits beside Save, after Services, so it is on screen where the click was (browser pass: atop the form it was 1300px above).
+    expect(alert()!.nextElementSibling?.querySelector('button[type="submit"]')).not.toBeNull();
     expect(tile("Edited photography").checked).toBe(true);
     expect(tile("Floorplan").checked).toBe(true);
     expect(host.querySelector<HTMLInputElement>("#project-suburb")!.value).toBe("Paddington");
