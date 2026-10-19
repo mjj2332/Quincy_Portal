@@ -1,4 +1,4 @@
-import { Fragment, useRef } from "react";
+import { Fragment, useRef, type Ref } from "react";
 import { PanelLeftIcon } from "lucide-react";
 
 import { Button } from "@/components/reui/button";
@@ -13,7 +13,7 @@ import {
 import { SheetTrigger } from "@/components/reui/sheet";
 import { InternalLink } from "../InternalLink";
 import { cn } from "../../lib/utils";
-import { NotificationBell } from "./NotificationBell";
+import { NotificationBell, UnreadCountBadge } from "./NotificationBell";
 import { buildStaffBreadcrumb, type StaffNavigation } from "../../lib/staff-navigation";
 import type { RailMode } from "../../lib/shell-rail";
 
@@ -34,7 +34,9 @@ import type { RailMode } from "../../lib/shell-rail";
  *   nobody can see, and there is no rail on screen to hold it there.
  * - **Not at all on the Dashboard** (#923 D2, ADR 0015 amendment): while a page that draws the
  *   chrome in its own row is mounted, `RailedShell` renders no header; that page hosts
- *   `ShellNavTrigger` and the bell itself when narrow.
+ *   `ShellNavTrigger` and the bell itself when narrow. On a phone the Dashboard folds the bell into
+ *   the trigger and the Sheet instead (`PhoneShellNav.tsx`, #923): `ShellNavTrigger`'s
+ *   `unreadCount` is for that.
  *
  * The trigger is a real `SheetTrigger`, not a plain button: `RailedShell`'s `Sheet` wraps both the
  * rail slot and this content column in one Root, so this header and `RailSheet`'s popup are
@@ -64,14 +66,25 @@ export type ShellHeaderProps = {
  * `useShellChromeInPage` in `RailedShell.tsx`). It must render inside `RailedShell`'s Sheet Root,
  * which wraps the whole content column, so any page under the shell can host it.
  */
-export function ShellNavTrigger({ className }: { className?: string }) {
+export function ShellNavTrigger({ className, unreadCount, ref }: {
+  className?: string;
+  /**
+   * #923 (phone Dashboard): the bell moved into the Sheet, so the trigger carries its unread count,
+   * drawn as the bell drew it and spoken in the trigger's name. Unset: no count, as everywhere else.
+   */
+  unreadCount?: number;
+  ref?: Ref<HTMLButtonElement>;
+}) {
+  const unread = unreadCount ?? 0;
   return (
     <SheetTrigger
+      ref={ref}
       data-testid="shell-header-sheet-trigger"
-      aria-label="Open navigation"
-      render={<Button variant="ghost" size="icon" className={cn("size-[44px]", className)} />}
+      aria-label={unread > 0 ? `Open navigation, ${unread} unread notifications` : "Open navigation"}
+      render={<Button variant="ghost" size="icon" className={cn("relative size-[44px]", className)} />}
     >
       <PanelLeftIcon />
+      <UnreadCountBadge count={unread} labelled={false} data-testid="shell-nav-unread-badge" />
     </SheetTrigger>
   );
 }

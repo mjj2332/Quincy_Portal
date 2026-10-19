@@ -62,8 +62,17 @@ import { ShellHeader } from "./ShellHeader";
  * Dashboard down the moment the sheet opens (`app.css`'s `.app:has(.page--fill)` is the precedent).
  * The claim is made in a layout effect, so the header is gone before the first paint.
  */
-type ShellChrome = { mode: RailMode; claimHeader: () => () => void };
+type ShellChrome = { mode: RailMode; claimHeader: () => () => void; offerSheetNotifications: (entry: SheetNotifications) => () => void };
 const ShellChromeContext = createContext<ShellChrome | null>(null);
+
+/**
+ * #923 (owner decision): on a phone the Dashboard's bar has no room for the bell, so the page offers the
+ * nav Sheet a Notifications row instead (`PhoneShellNav.tsx`): its unread count, and how to open the
+ * page's notifications panel. Choosing the row closes the Sheet WITHOUT handing focus back to the menu
+ * button, then opens the panel once the Sheet has finished closing (`onOpenChangeComplete`), so the
+ * modal's inert page and its focus restore never race the panel's own focus.
+ */
+export type SheetNotifications = { unreadCount: number; open: () => void };
 
 /**
  * Claims the shell's header for the calling page while it is mounted and returns the shell's mode
@@ -75,6 +84,21 @@ export function useShellChromeInPage(): RailMode | null {
   const claimHeader = chrome?.claimHeader;
   useLayoutEffect(() => claimHeader?.(), [claimHeader]);
   return chrome?.mode ?? null;
+}
+
+/**
+ * Offers the nav Sheet a Notifications row while the caller is mounted with an entry (`null` offers none).
+ * `open` is read when the row is chosen, so a new function each render costs nothing.
+ */
+export function useSheetNotifications(entry: SheetNotifications | null): void {
+  const offer = useContext(ShellChromeContext)?.offerSheetNotifications;
+  const openRef = useRef<(() => void) | null>(null);
+  openRef.current = entry?.open ?? null;
+  const unreadCount = entry ? entry.unreadCount : null;
+  useLayoutEffect(() => {
+    if (!offer || unreadCount === null) return;
+    return offer({ unreadCount, open: () => openRef.current?.() });
+  }, [offer, unreadCount]);
 }
 
 export type RailedShellProps = {
@@ -107,7 +131,15 @@ export function RailedShell({ navigation, user, shortcutsSuspended = false, onSe
     setHeaderClaims((count) => count + 1);
     return () => setHeaderClaims((count) => count - 1);
   }, []);
-  const chrome = useMemo<ShellChrome>(() => ({ mode, claimHeader }), [mode, claimHeader]);
+  // The page's Notifications row for the Sheet (#923, phone Dashboard), and a request to open its panel
+  // once the Sheet has closed.
+  const [sheetNotifications, setSheetNotifications] = useState<SheetNotifications | null>(null);
+  const openNotificationsAfterCloseRef = useRef(false);
+  const offerSheetNotifications = useCallback((entry: SheetNotifications) => {
+    setSheetNotifications(entry);
+    return () => setSheetNotifications((current) => (current === entry ? null : current));
+  }, []);
+  const chrome = useMemo<ShellChrome>(() => ({ mode, claimHeader, offerSheetNotifications }), [mode, claimHeader, offerSheetNotifications]);
   const pageOwnsHeader = headerClaims > 0;
 
   useEffect(() => setSheetOpen(false), [location]);
@@ -181,11 +213,27 @@ export function RailedShell({ navigation, user, shortcutsSuspended = false, onSe
     setSheetOpen(open);
   }
 
+  function openNotificationsFromSheet() {
+    skipSheetRestoreRef.current = true;
+    openNotificationsAfterCloseRef.current = true;
+    setSheetOpen(false);
+  }
+
+  function handleSheetOpenChangeComplete(open: boolean) {
+    if (open || !openNotificationsAfterCloseRef.current) return;
+    openNotificationsAfterCloseRef.current = false;
+    sheetNotifications?.open();
+  }
+
+  const sheetNotificationsRow = mode === "sheet" && sheetNotifications
+    ? { unreadCount: sheetNotifications.unreadCount, onOpen: openNotificationsFromSheet }
+    : undefined;
+
   const railSlot = (
     <>
       <RailSheet finalFocus={sheetFinalFocus} impersonating={impersonating}>
         <div className="contents" onClick={closeSheetOnLinkClick}>
-          <NavigationRail navigation={navigation} user={user} variant="sheet" showBell={false} />
+          <NavigationRail navigation={navigation} user={user} variant="sheet" showBell={false} notifications={sheetNotificationsRow} />
         </div>
       </RailSheet>
       {mode !== "sheet" && <NavigationRail navigation={navigation} user={user} variant={mode} />}
@@ -196,7 +244,7 @@ export function RailedShell({ navigation, user, shortcutsSuspended = false, onSe
     // Pinned closed: the icon-only state is the only one the rail has (ADR 0015), so the provider
     // takes no `onOpenChange` and nothing can open it.
     <SidebarProvider open={false} className="app__shell min-w-0">
-      <Sheet open={mode === "sheet" && sheetOpen} onOpenChange={handleSheetOpenChange}>
+      <Sheet open={mode === "sheet" && sheetOpen} onOpenChange={handleSheetOpenChange} onOpenChangeComplete={handleSheetOpenChangeComplete}>
         {railSlot}
         {contentColumn}
       </Sheet>

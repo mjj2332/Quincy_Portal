@@ -259,6 +259,29 @@ describe("the phone row (4f, 4g)", () => {
     expect(searchField()!.className).toContain("max-[721px]:text-[length:var(--text-base)]");
   });
 
+  // #923 owner decision: the bell moved into the nav Sheet, so the picker keeps icon + label + chevron on a 390 or 402pt phone.
+  it("shows the picker's label beside its icon and chevron at 390 and 402pt, and truncates it rather than overflow", async () => {
+    const label = () => picker()!.querySelector<HTMLElement>("[data-picker-label]");
+    for (const [viewport, width] of [[390, 358], [402, 370]] as const) {
+      setViewportWidth(viewport);
+      barWidth = width;
+      await mount({ renderedView: "calendar" });
+      expect(label()?.textContent, `${viewport}pt`).toBe("Calendar");
+      expect(label()!.className).toContain("truncate");
+      expect(picker()!.querySelectorAll("svg"), "the view's icon and the chevron").toHaveLength(2);
+      act(() => root.unmount());
+      root = createRoot(host);
+    }
+  });
+
+  it("keeps only the icon and chevron on a phone narrower than 390pt", async () => {
+    setViewportWidth(375);
+    barWidth = 343;
+    await mount();
+    expect(picker()!.querySelector("[data-picker-label]")).toBeNull();
+    expect(picker()!.getAttribute("aria-label")).toBe("View: Board");
+  });
+
   it("locks the picker while a board move or calendar write is in flight", async () => {
     await mount({ disabled: true });
     expect(picker()!.disabled || picker()!.getAttribute("aria-disabled") === "true").toBe(true);

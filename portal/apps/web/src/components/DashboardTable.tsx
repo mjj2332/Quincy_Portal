@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTable, type ColumnDef, type ColumnVisibilityState, type ExpandedState, type Row, type SortingState } from "@tanstack/react-table";
 import { formatSydneyCivil, type Role } from "@quincy/shared";
 import { Badge } from "./reui/badge";
@@ -85,7 +85,9 @@ import { cn } from "../lib/utils";
  * `hiddenColumns` is the viewer's Display choice; a column the viewer's role cannot see (Priority
  * and Progress for an External Editor) is hidden on top of it at render, never stored. So is a column
  * that does not fit the panel's measured width (`columnsDroppedToFit`, #923 pass round 2): Deadline and
- * Project always stay. Progress has no header sort (4b draws none on it).
+ * Project always stay. The grid reports those width-dropped columns (`onWidthDroppedColumnsChange`) so the
+ * Display menu can say why a chosen column is not on screen (owner decision, #923); the phone list and the
+ * all-hidden empty state draw no columns, so they report none. Progress has no header sort (4b draws none on it).
  */
 
 type Column = ColumnDef<DataGridFeatures, TableRowData>;
@@ -334,9 +336,11 @@ export type DashboardTableProps = {
   showDelivered?: boolean;
   /** Turns Delivered back on, for the empty state when Display hid every row. */
   onShowDelivered?: () => void;
+  /** The viewer's chosen columns the grid leaves out for width right now (never stored), in column order. */
+  onWidthDroppedColumnsChange?: (columns: readonly HideableColumnId[]) => void;
 };
 
-export function DashboardTable({ projects, role, groupBy, hiddenColumns, canPrioritize, pendingOrdering, terminal, onPriorityChange, projectHrefFor, now: givenNow, showDelivered = true, onShowDelivered }: DashboardTableProps) {
+export function DashboardTable({ projects, role, groupBy, hiddenColumns, canPrioritize, pendingOrdering, terminal, onPriorityChange, projectHrefFor, now: givenNow, showDelivered = true, onShowDelivered, onWidthDroppedColumnsChange }: DashboardTableProps) {
   const { stages } = useStages();
   const { can } = useCapabilities();
   const canEditDeadline = can("editProject");
@@ -353,10 +357,13 @@ export function DashboardTable({ projects, role, groupBy, hiddenColumns, canPrio
   // only: what drops for width is never written to `hiddenColumns`, so a wider screen shows them again.
   const panelRef = useRef<HTMLDivElement>(null);
   const panelWidth = useOwnWidth(panelRef);
-  const visibility = useMemo<ColumnVisibilityState>(() => {
+  const { visibility, widthDropped } = useMemo(() => {
     const chosen = TABLE_COLUMN_IDS.filter((id) => columnVisibleToRole(id, role) && (id === "address" || !hiddenColumns.includes(id as HideableColumnId)));
     const dropped = columnsDroppedToFit(chosen, SIZES, panelWidth);
-    return Object.fromEntries(TABLE_COLUMN_IDS.map((id) => [id, chosen.includes(id) && !dropped.has(id)]));
+    return {
+      visibility: Object.fromEntries(TABLE_COLUMN_IDS.map((id) => [id, chosen.includes(id) && !dropped.has(id)])) as ColumnVisibilityState,
+      widthDropped: TABLE_COLUMN_IDS.filter((id): id is HideableColumnId => id !== "address" && dropped.has(id)),
+    };
   }, [hiddenColumns, panelWidth, role]);
 
   const shown = useMemo(() => hideDelivered(projects, showDelivered), [projects, showDelivered]);
@@ -393,6 +400,13 @@ export function DashboardTable({ projects, role, groupBy, hiddenColumns, canPrio
   }), [appearances, canEditDeadline, canPrioritize, collapsedKeys, groupBy, now, onPriorityChange, pendingOrdering, projectHrefFor, role, stages, terminal]);
 
   const allHidden = projects.length > 0 && shown.length === 0;
+  // Only the grid draws columns; the phone list and the empty state report none. Keyed by value, so an
+  // unrelated re-render (a new array of the same ids) never calls back.
+  const reportedDropped = narrow || allHidden ? "" : widthDropped.join(",");
+  useEffect(() => {
+    onWidthDroppedColumnsChange?.(reportedDropped === "" ? [] : (reportedDropped.split(",") as HideableColumnId[]));
+  }, [onWidthDroppedColumnsChange, reportedDropped]);
+  useEffect(() => () => onWidthDroppedColumnsChange?.([]), [onWidthDroppedColumnsChange]);
   const footer = groupBy === "none" && !allHidden ? tableCountLabel({ shown: shown.length, total: projects.length }) : null;
 
   return (

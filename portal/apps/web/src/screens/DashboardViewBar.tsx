@@ -5,6 +5,7 @@ import { InternalLink } from "../components/InternalLink";
 import { DashboardSearch, type DashboardSearchFocusRequest } from "../components/quincy/DashboardSearch";
 import { Button, buttonClasses } from "../components/quincy/Button";
 import { NotificationBell } from "../components/quincy/NotificationBell";
+import { PhoneShellNav } from "../components/quincy/PhoneShellNav";
 import { useShellChromeInPage } from "../components/quincy/RailedShell";
 import { ShellNavTrigger } from "../components/quincy/ShellHeader";
 import {
@@ -35,6 +36,9 @@ import type { DashboardView } from "./dashboard-helpers";
  * The bar claims the shell's header while it is mounted (`useShellChromeInPage`), so the shell draws
  * no breadcrumb and no 50px row on the Dashboard, the Project sheet's backdrop included. In a narrow
  * shell (<=771px) the bar hosts what that header held: the nav Sheet trigger first, the bell last.
+ * On a phone (<=721px) the bell moves into the nav Sheet instead (owner decision, #923): the menu
+ * button carries the unread count and the Sheet a Notifications row that opens the same panel
+ * (`PhoneShellNav.tsx`), which frees the 44px the view picker needs for its label.
  *
  * ## Layout, from the bar's own width (`viewBarLayout`)
  * - `full` (4a): every tab labelled, a 280px search with its ⌘K hint.
@@ -43,7 +47,9 @@ import type { DashboardView } from "./dashboard-helpers";
  *   tooltip (and as their accessible name); the search becomes an icon.
  * - `tight`: compact, and New shoot drops its label too, for a narrow shell's 722–747px.
  * - `phone` (<=721px, 4f / 4g): a view picker in place of the tabs and 44px icon actions, New shoot
- *   last; the picker's label shows only where it fits beside the nav trigger and the bell.
+ *   last. The picker shows icon, label and chevron from a 390pt phone up (`PICKER_LABEL_MIN`); the
+ *   label truncates rather than push the row past the bar should a Filter count or a long view
+ *   name need the room. Narrower phones keep the icon and chevron.
  * The width is measured, not a media query, because the rail, the narrow shell's chrome and the page
  * gutter all take from it. Unmeasured (no layout yet), the bar is `full`.
  *
@@ -123,8 +129,13 @@ const FULL_MIN = 960;
 const TABLET_MIN = 844;
 const LABELLED_MIN = 548;
 const SHELL_CHROME = 104;
-/** The phone picker shows its label only where it fits beside six 44px icons. */
-const PICKER_LABEL_MIN = 392;
+/**
+ * The phone picker's label shows from a 390pt phone's bar (358 = 390 less the page's two 16px gutters)
+ * up. With the bell in the nav Sheet (#923) the row holds five 44px icons and four 4px gaps (236px) beside
+ * the picker, which leaves 122px at 358: icon, chevron, padding and gaps take 58, so 64px for the label,
+ * enough for "Calendar" at 14px. Below it the label could only show truncated.
+ */
+const PICKER_LABEL_MIN = 358;
 
 /** Which row the bar draws at `width` (its own, measured). Pure, for the tests and the frames' widths. */
 export function viewBarLayout(width: number, { phone, narrowShell }: { phone: boolean; narrowShell: boolean }): ViewBarLayout {
@@ -245,20 +256,22 @@ export function DashboardViewBar({
           "[border-bottom-style:solid] border-b-[length:var(--border-width-hair)] border-b-border",
         )}
       >
-        {narrowShell && <ShellNavTrigger className="shrink-0 self-center" />}
+        {narrowShell && (phone
+          ? <PhoneShellNav anchorRef={rowRef} className="shrink-0 self-center" />
+          : <ShellNavTrigger className="shrink-0 self-center" />)}
 
         {layout === "phone" ? (
-          <div className="flex shrink-0 items-center py-[var(--space-2)]">
+          <div className="flex min-w-0 items-center py-[var(--space-2)]">
             <DropdownMenu>
               <DropdownMenuTrigger
                 data-testid="dashboard-view-picker"
                 id={current ? VIEW_TAB_ID(current.view) : undefined}
                 aria-label={current ? `View: ${current.label}` : "View"}
                 disabled={disabled}
-                className={buttonClasses("secondary", { className: cn(TOOLBAR_CONTROL, "shrink-0 px-[var(--space-2)]") })}
+                className={buttonClasses("secondary", { className: cn(TOOLBAR_CONTROL, "min-w-0 max-w-full px-[var(--space-2)]") })}
               >
                 {current && <current.Icon aria-hidden="true" />}
-                {current && width >= PICKER_LABEL_MIN && <span aria-hidden="true">{current.label}</span>}
+                {current && width >= PICKER_LABEL_MIN && <span data-picker-label aria-hidden="true" className="min-w-0 truncate">{current.label}</span>}
                 <ChevronDown aria-hidden="true" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-auto min-w-48">
@@ -350,7 +363,7 @@ export function DashboardViewBar({
           {layout === "phone" && newShoot}
         </div>
 
-        {narrowShell && (
+        {narrowShell && !phone && (
           <div className="flex shrink-0 items-center">
             <NotificationBell placement="header" anchorRef={rowRef} touchTarget />
           </div>

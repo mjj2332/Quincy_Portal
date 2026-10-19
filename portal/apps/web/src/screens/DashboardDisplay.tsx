@@ -66,14 +66,21 @@ export function BoardDisplayContent({ value, onChange, stages, disabled = false 
  * The Table's Group by (None, Stage, Client), the hideable columns (Project is never offered) and, since #923,
  * "Show: Delivered Projects" (a viewer preference, not a Filter rule). The Show group renders once the caller
  * wires `onShowDeliveredChange`: a checkbox with no handler would be a control that does nothing.
+ *
+ * A column the viewer chose that the Table leaves out for width (`widthDroppedColumns`, owner decision #923)
+ * stays checked, because the choice is still theirs and comes back on a wider screen, but is disabled with
+ * "Hidden at this width" under its name: unticking it would change nothing on screen. A column the viewer hid
+ * is unchecked and enabled as before, whatever the width.
  */
-export function TableDisplayContent({ groupBy, onGroupByChange, hiddenColumns, hideableColumns, onColumnVisibilityChange, showDelivered = true, onShowDeliveredChange }: {
+export function TableDisplayContent({ groupBy, onGroupByChange, hiddenColumns, hideableColumns, onColumnVisibilityChange, widthDroppedColumns = [], showDelivered = true, onShowDeliveredChange }: {
   groupBy: TableGroupBy;
   onGroupByChange: (next: TableGroupBy) => void;
   hiddenColumns: readonly HideableColumnId[];
   /** The columns this viewer can see at all (no Priority or Progress for an External Editor). */
   hideableColumns: readonly HideableColumnId[];
   onColumnVisibilityChange: (column: HideableColumnId, visible: boolean) => void;
+  /** The chosen columns the Table leaves out for width right now (from `DashboardTable`). */
+  widthDroppedColumns?: readonly HideableColumnId[];
   showDelivered?: boolean;
   onShowDeliveredChange?: (show: boolean) => void;
 }) {
@@ -92,11 +99,20 @@ export function TableDisplayContent({ groupBy, onGroupByChange, hiddenColumns, h
       <DropdownMenuGroup>
         <DropdownMenuLabel>Columns</DropdownMenuLabel>
         {narrow && <p data-testid="table-display-narrow-note" className={DISPLAY_NOTE_CLASS}>On narrow screens the Table is a list; columns apply on wider screens.</p>}
-        {hideableColumns.map((column) => (
-          <DropdownMenuCheckboxItem key={column} checked={!hiddenColumns.includes(column)} onCheckedChange={(checked) => onColumnVisibilityChange(column, checked)}>
-            {TABLE_COLUMN_LABELS[column]}
-          </DropdownMenuCheckboxItem>
-        ))}
+        {hideableColumns.map((column) => {
+          const chosen = !hiddenColumns.includes(column);
+          const forWidth = chosen && widthDroppedColumns.includes(column);
+          return (
+            <DropdownMenuCheckboxItem key={column} checked={chosen} disabled={forWidth} onCheckedChange={(checked) => onColumnVisibilityChange(column, checked)}>
+              {forWidth ? (
+                <span className="flex min-w-0 flex-col">
+                  <span>{TABLE_COLUMN_LABELS[column]}</span>
+                  <span className="text-xs text-foreground-secondary">Hidden at this width</span>
+                </span>
+              ) : TABLE_COLUMN_LABELS[column]}
+            </DropdownMenuCheckboxItem>
+          );
+        })}
       </DropdownMenuGroup>
       {onShowDeliveredChange && (
         <>

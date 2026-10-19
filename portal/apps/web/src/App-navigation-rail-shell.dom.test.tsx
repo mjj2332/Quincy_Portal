@@ -1098,9 +1098,9 @@ describe("the Dashboard draws the shell's chrome in its own view bar (#923 D2)",
     expect(host.querySelector('[data-shell-header]')?.getAttribute("data-shell-header")).toBe("shell");
   });
 
-  it("below 772px: the nav trigger and the one bell sit in the view bar's row, and the trigger opens the navigation", async () => {
+  it("722–771px: the nav trigger and the one bell sit in the view bar's row, and the trigger opens the navigation", async () => {
     const host = await renderAt("/?view=board");
-    await resizeTo(390);
+    await resizeTo(740);
     await tick();
     expect(host.querySelector('[data-testid="shell-header"]')).toBeNull();
     const row = host.querySelector('[data-testid="dashboard-view-row"]')!;
@@ -1115,6 +1115,71 @@ describe("the Dashboard draws the shell's chrome in its own view bar (#923 D2)",
     await click(trigger!);
     await tick();
     expect(document.querySelector('[data-testid="rail-sheet"]')).not.toBeNull();
+  });
+
+  // Owner decision (#923): on a phone the bell leaves the bar for the nav Sheet, so the view picker keeps its label.
+  describe("on a phone (<=721px) the bell moves into the nav Sheet", () => {
+    const row = (host: ParentNode) => host.querySelector('[data-testid="dashboard-view-row"]')!;
+    const sheetRow = () => document.querySelector<HTMLButtonElement>('[data-testid="rail-sheet"] [data-testid="navigation-rail-notifications"]');
+    const panel = () => document.querySelector<HTMLElement>('[data-testid="rail-notifications-panel"]');
+
+    it("draws no bell in the bar; the menu button carries the unread count and says so in its name", async () => {
+      vi.mocked(apiGet).mockResolvedValue({ notifications: [], unreadCount: 5 });
+      const host = await renderAt("/?view=board");
+      await resizeTo(390);
+      await tick();
+      expect(row(host).querySelector('[data-testid="rail-notification-trigger"]')).toBeNull();
+      expect(document.querySelectorAll('[data-testid="rail-notification-trigger"]')).toHaveLength(0);
+      const trigger = sheetTrigger(row(host))!;
+      await waitFor(() => expect(trigger.getAttribute("aria-label")).toBe("Open navigation, 5 unread notifications"));
+      expect(trigger.querySelector('[data-testid="shell-nav-unread-badge"]')?.textContent).toBe("5");
+    });
+
+    it("names the menu button plainly and draws no badge with nothing unread", async () => {
+      const host = await renderAt("/?view=board");
+      await resizeTo(390);
+      await tick();
+      const trigger = sheetTrigger(row(host))!;
+      expect(trigger.getAttribute("aria-label")).toBe("Open navigation");
+      expect(trigger.querySelector('[data-testid="shell-nav-unread-badge"]')).toBeNull();
+    });
+
+    it("the Sheet's Notifications row shows the count and opens the bell's panel under the bar; closing it returns focus to the menu button", async () => {
+      vi.mocked(apiGet).mockResolvedValue({ notifications: [], unreadCount: 5 });
+      const host = await renderAt("/?view=board");
+      await resizeTo(390);
+      await tick();
+      const trigger = sheetTrigger(row(host))!;
+      await waitFor(() => expect(trigger.getAttribute("aria-label")).toBe("Open navigation, 5 unread notifications"));
+
+      await click(trigger);
+      await tick();
+      const entry = sheetRow()!;
+      expect(entry).not.toBeNull();
+      expect(entry.textContent).toContain("Notifications");
+      expect(entry.getAttribute("aria-label")).toBe("Notifications, 5 unread");
+
+      await click(entry);
+      await waitFor(() => expect(document.querySelector('[data-testid="rail-sheet"]')).toBeNull());
+      await waitFor(() => expect(panel()).not.toBeNull());
+      expect(panel()!.getAttribute("role")).toBe("dialog");
+      await waitFor(() => expect(panel()!.contains(document.activeElement)).toBe(true));
+
+      await keydown(panel()!, { key: "Escape" });
+      await waitFor(() => expect(panel()).toBeNull());
+      expect(document.activeElement).toBe(sheetTrigger(row(host)));
+    });
+
+    it("has no Notifications row in the Sheet off the Dashboard, where the shell header keeps its bell", async () => {
+      dashboardMock.viewBar = false;
+      const host = await renderAt("/?view=board");
+      await resizeTo(390);
+      await tick();
+      expect(host.querySelector('[data-testid="shell-header"] [data-testid="rail-notification-trigger"]')).not.toBeNull();
+      await click(sheetTrigger(host)!);
+      await tick();
+      expect(sheetRow()).toBeNull();
+    });
   });
 
   it("⌘K on the narrow Dashboard opens the search behind its icon and focuses the field", async () => {
