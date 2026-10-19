@@ -90,6 +90,14 @@ function deadlineViewOf(project: ProjectSummary, appearance: ProjectAppearance):
 const DEADLINE_TRIGGER = "max-w-[calc(100%+var(--space-1))]";
 
 /**
+ * The phone list (4g `.prow`, ~86pt tall) draws the Deadline as a 20px line, but `CELL_TRIGGER`'s 44px min-height at
+ * <=721px and on touch made the row ~113pt (#923 review round 3). Here the box is the 20px text line and the 44px
+ * touch target is an invisible `after:` 12px above and below it, the same way `reui/button`'s `chip` size draws its
+ * hit area, so the target stays 44px without adding layout height. Width keeps `CELL_TRIGGER`'s 44px minimum.
+ */
+const PHONE_DEADLINE_TRIGGER = "relative min-h-5 pointer-coarse:min-h-5 max-[721px]:min-h-5 after:absolute after:inset-x-0 after:-inset-y-[var(--space-3)] after:content-['']";
+
+/**
  * The Deadline (frames 4b/4g `.dl`): a dot before today's Deadline, the shared editable cell, then the late
  * chip with `lateLabel`'s wording. Only an editable trigger rides above the row link's overlay.
  *
@@ -116,7 +124,7 @@ export function ProjectDeadline({ project, appearance, canEditDeadline, terminal
           street={project.street}
           deadline={deadlineViewOf(project, appearance)}
           textClassName="!text-[length:var(--text-sm)] tabular-nums"
-          triggerClassName={DEADLINE_TRIGGER}
+          triggerClassName={cn(DEADLINE_TRIGGER, wrap && PHONE_DEADLINE_TRIGGER)}
           titled
           canEdit={canEdit}
           disabled={terminal}

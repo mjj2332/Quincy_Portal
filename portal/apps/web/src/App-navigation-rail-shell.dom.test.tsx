@@ -1170,6 +1170,24 @@ describe("the Dashboard draws the shell's chrome in its own view bar (#923 D2)",
       expect(document.activeElement).toBe(sheetTrigger(row(host)));
     });
 
+    it("insets the Notifications row like Dashboard / Notice board / Admin: a nav group of its own, not the footer's 16px (#923 review round 3)", async () => {
+      const host = await renderAt("/?view=board");
+      await resizeTo(390);
+      await tick();
+      await click(sheetTrigger(row(host))!);
+      await tick();
+      const entry = sheetRow()!;
+      const sheet = document.querySelector<HTMLElement>('[data-testid="rail-sheet"]')!;
+      const navGroup = sheet.querySelector<HTMLElement>('[data-testid="navigation-rail-group"]')!;
+      const group = entry.closest<HTMLElement>('[data-testid="navigation-rail-notifications-group"]');
+      expect(group).not.toBeNull();
+      expect(entry.closest('[data-testid="navigation-rail-footer"]')).toBeNull();
+      // The same horizontal inset as the nav items' group.
+      const inlinePadding = (element: HTMLElement) => element.className.split(/\s+/).filter((name) => /^(p|px|ps|pe)-/.test(name));
+      expect(inlinePadding(navGroup).length).toBeGreaterThan(0);
+      expect(inlinePadding(group!)).toEqual(inlinePadding(navGroup));
+    });
+
     it("has no Notifications row in the Sheet off the Dashboard, where the shell header keeps its bell", async () => {
       dashboardMock.viewBar = false;
       const host = await renderAt("/?view=board");

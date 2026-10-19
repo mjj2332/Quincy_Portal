@@ -1072,16 +1072,16 @@ describe("KanbanCard2 — Editor avatars, Deadline and RAW counts (#82)", () => 
     expect(meta.querySelector('[aria-label*="more Editor"]')).toBeNull();
   });
 
-  it("renders no avatar slot at all for an empty Editors array", async () => {
-    await renderCard({ editors: [] });
-    expect(host.querySelector('[data-testid="board-card-meta"]')).toBeNull();
-    expect(host.querySelector('[aria-label="No Editor assigned"]')).toBeNull();
-  });
-
-  it("renders no avatar slot at all when Editors is absent", async () => {
-    await renderCard({ editors: undefined });
-    expect(host.querySelector('[data-testid="board-card-meta"]')).toBeNull();
-    expect(host.querySelector('[aria-label="No Editor assigned"]')).toBeNull();
+  // #923 review round 3 (owner decision, frame 4e): no Editors draws the Table's dashed "No Editor assigned" circle.
+  it.each([["an empty Editors array", []], ["no Editors field", undefined]] as const)("draws the dashed No Editor circle in the footer for %s", async (_label, editors) => {
+    await renderCard({ editors: editors as [] | undefined });
+    const meta = host.querySelector('[data-testid="board-card-meta"]')!;
+    expect(meta).not.toBeNull();
+    expect(meta.closest('[data-testid="board-card-footer-slot"]')).not.toBeNull();
+    const empty = meta.querySelector<HTMLElement>('[role="img"][aria-label="No Editor assigned"]')!;
+    expect(empty).not.toBeNull();
+    expect(empty.className).toContain("border-dashed");
+    expect(meta.querySelectorAll('[role="img"]')).toHaveLength(1);
   });
 
   it("puts the Editor avatars in the footer row with the stars: stars first, avatars last, outside the link", async () => {

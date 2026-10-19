@@ -32,6 +32,7 @@ import {
   defaultCollapsedGroups,
   groupTableRows,
   hideDelivered,
+  isSortableColumnId,
   sortTableRows,
   stageDisplayLabel,
   tableCountLabel,
@@ -258,7 +259,7 @@ const COLUMNS: Column[] = TABLE_COLUMN_IDS.map((id): Column => ({
   cell: CELLS[id].cell,
   size: SIZES[id],
   meta: { headerClassName: CELL_X, cellClassName: CELL_X },
-  enableSorting: id !== "progress",
+  enableSorting: isSortableColumnId(id),
   enableHiding: id !== "address",
 }));
 

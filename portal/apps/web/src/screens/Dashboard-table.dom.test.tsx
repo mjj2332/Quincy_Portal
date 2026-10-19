@@ -113,8 +113,8 @@ const DEFAULT_HEADERS = COLUMN_HEADERS.filter((name) => name !== "RAW received")
 /** The server's order, and the default Deadline-ascending order of the same five rows (missing last). */
 const SERVER_ORDER = ["p1", "p2", "p3", "p4", "p5"];
 const BY_DEADLINE = ["p2", "p4", "p1", "p5", "p3"];
-/** The #431 suites run flat with every column; the #923 default suites clear this. */
-const FLAT_ALL_COLUMNS = JSON.stringify({ groupBy: "none", hiddenColumns: [] });
+/** The #431 suites run flat with every column and every row, Delivered included; the #923 default suites clear this. */
+const FLAT_ALL_COLUMNS = JSON.stringify({ groupBy: "none", hiddenColumns: [], showDelivered: true });
 
 let projects: Row[];
 let host: HTMLDivElement;
@@ -266,8 +266,8 @@ describe("the Table's structure (#431)", () => {
     expect(table().querySelector("table")).not.toBeNull();
     expect(table().querySelector('[role="grid"]')).toBeNull();
     expect(headerNames()).toEqual(COLUMN_HEADERS);
-    // Progress has no sort, so no aria-sort at all.
-    expect(headers().map((cell) => cell.getAttribute("aria-sort"))).toEqual(COLUMN_HEADERS.map((name) => (name === "Deadline" ? "ascending" : name === "Progress" ? null : "none")));
+    // Progress and Editors have no sort (frame 4b), so no aria-sort at all.
+    expect(headers().map((cell) => cell.getAttribute("aria-sort"))).toEqual(COLUMN_HEADERS.map((name) => (name === "Deadline" ? "ascending" : name === "Progress" || name === "Editors" ? null : "none")));
     expect(rowIds()).toEqual(BY_DEADLINE);
   });
 
@@ -313,7 +313,6 @@ describe("sorting (#431)", () => {
     Stage: ["p2", "p4", "p3", "p1", "p5"],
     Client: ["p2", "p4", "p1", "p5", "p3"],
     Shoot: ["p2", "p4", "p1", "p5", "p3"],
-    Editors: ["p2", "p5", "p4", "p1", "p3"],
     Priority: ["p5", "p2", "p4", "p1", "p3"],
     "RAW received": ["p5", "p1", "p3", "p2", "p4"],
   };
@@ -322,7 +321,6 @@ describe("sorting (#431)", () => {
     Stage: ["p1", "p5", "p3", "p2", "p4"],
     Client: ["p5", "p1", "p4", "p2", "p3"],
     Shoot: ["p5", "p1", "p4", "p2", "p3"],
-    Editors: ["p1", "p4", "p5", "p2", "p3"],
     Priority: ["p1", "p4", "p2", "p5", "p3"],
     "RAW received": ["p4", "p2", "p3", "p1", "p5"],
   };
@@ -353,9 +351,10 @@ describe("sorting (#431)", () => {
     expect(rowIds()).toEqual(SERVER_ORDER);
   });
 
-  it("Progress has no header sort (frame 4b)", async () => {
+  it.each(["Progress", "Editors"])("%s has no header sort (frame 4b)", async (name) => {
     await renderTable();
-    expect(th("Progress").querySelector("button")).toBeNull();
+    expect(th(name).querySelector("button")).toBeNull();
+    expect(th(name).getAttribute("aria-sort")).toBeNull();
   });
 
   it("sorts Stage by pipeline order and keeps tied rows in the server's order", async () => {
@@ -475,13 +474,15 @@ describe("column visibility (#431)", () => {
     currentUser = "user-2";
     await renderTable();
     expect(headerNames()).toEqual(DEFAULT_HEADERS);
-    expect(groupLabels()).toEqual(["Awaiting RAW", "Editing", "Delivered"]);
+    // user-2's defaults: grouped by Stage, Delivered hidden by Display (#923 round 3, frame 4c).
+    expect(groupLabels()).toEqual(["Awaiting RAW", "Editing"]);
   });
 
   it("restores a stored Group by and hidden columns", async () => {
     storage.set(tablePrefsKey("user-1"), JSON.stringify({ groupBy: "stage", hiddenColumns: ["raw", "editors"] }));
     await renderTable();
-    expect(groupLabels()).toEqual(["Awaiting RAW", "Editing", "Delivered"]);
+    // Stored before Show Delivered existed, so Delivered takes the default: hidden.
+    expect(groupLabels()).toEqual(["Awaiting RAW", "Editing"]);
     expect(headerNames()).toEqual(["Project", "Stage", "Client", "Shoot", "Deadline", "Progress", "Priority"]);
     expect(headerNames()).not.toContain("RAW received");
     expect(headerNames()).not.toContain("Editors");
@@ -491,7 +492,7 @@ describe("column visibility (#431)", () => {
     storage.set(tablePrefsKey("user-1"), "{not json");
     await renderTable();
     expect(headerNames()).toEqual(DEFAULT_HEADERS);
-    expect(groupLabels()).toEqual(["Awaiting RAW", "Editing", "Delivered"]);
+    expect(groupLabels()).toEqual(["Awaiting RAW", "Editing"]);
   });
 
   it("survives storage that throws", async () => {
@@ -619,12 +620,26 @@ describe("narrow screens: the phone list (#923, frame 4g)", () => {
     for (const trigger of groupTriggers()) expect(trigger.className).toContain("normal-case");
   });
 
+  it("keeps the Deadline trigger's 44px hit area out of the row's height: a 20px line, the hit area drawn by after: (#923 review round 3)", async () => {
+    narrow = true;
+    storage.set(tablePrefsKey("user-1"), JSON.stringify({ groupBy: "none", hiddenColumns: [] }));
+    projects = [row("p1", { deadlineAt: day(1), deadlineLocalCivil: civil(1) })];
+    await renderTable();
+    const trigger = table().querySelector<HTMLElement>('[data-testid="project-table-row-link"][href="/projects/p1"]')!.closest("li")!.querySelector<HTMLElement>('[data-testid="project-table-deadline-trigger"]')!;
+    const classes = trigger.className.split(/\s+/);
+    // No min-height of 44px at any width: the box is the 20px text line (4g `.prow` is ~86pt tall)...
+    expect(classes.filter((name) => name.includes("min-h-[44px]"))).toEqual([]);
+    expect(classes).toEqual(expect.arrayContaining(["min-h-5", "pointer-coarse:min-h-5", "max-[721px]:min-h-5"]));
+    // ...and a 20px box plus 12px above and below is the 44px touch target.
+    expect(classes).toEqual(expect.arrayContaining(["relative", "after:absolute", "after:inset-x-0", "after:-inset-y-[var(--space-3)]"]));
+  });
+
   const PAST = Date.parse("2020-01-01T00:00:00.000Z");
   const list = () => table().querySelector<HTMLElement>('[data-testid="project-table-phone-list"]');
   const phoneRow = (id: string) => table().querySelector<HTMLAnchorElement>(`[data-testid="project-table-row-link"][href="/projects/${id}"]`)!.closest("li")!;
 
   it("is a list grouped by Stage, not a grid, and leaves the saved choice untouched; the Display menu says why", async () => {
-    storage.set(tablePrefsKey("user-1"), JSON.stringify({ groupBy: "stage", hiddenColumns: ["deadline"] }));
+    storage.set(tablePrefsKey("user-1"), JSON.stringify({ groupBy: "stage", hiddenColumns: ["deadline"], showDelivered: true }));
     const before = storage.get(tablePrefsKey("user-1"));
     narrow = true;
     await renderTable();
@@ -997,11 +1012,20 @@ function roundFourFixture(): Row[] {
 describe("a new viewer's Table (#923, frame 4b)", () => {
   beforeEach(() => { storage.clear(); });
 
-  it("is grouped by Stage under one header, with Delivered collapsed and RAW received hidden", async () => {
+  it("is grouped by Stage under one header, with Delivered hidden by Display and RAW received hidden (#923 round 3, frame 4c)", async () => {
     await renderTable();
     expect(table().querySelectorAll("table")).toHaveLength(1);
     expect(table().querySelectorAll("thead")).toHaveLength(1);
     expect(headerNames()).toEqual(DEFAULT_HEADERS);
+    expect(groupLabels()).toEqual(["Awaiting RAW", "Editing"]);
+    expect(groupTriggers().map((trigger) => trigger.getAttribute("aria-expanded"))).toEqual(["true", "true"]);
+    expect(rowIds()).toEqual(["p2", "p4", "p3"]);
+  });
+
+  it("shows the Delivered group collapsed once the viewer turns Show Delivered on", async () => {
+    await renderTable();
+    await openDisplay();
+    await click(groupCheckboxes("Show")[0]!);
     expect(groupLabels()).toEqual(["Awaiting RAW", "Editing", "Delivered"]);
     expect(groupTriggers().map((trigger) => trigger.getAttribute("aria-expanded"))).toEqual(["true", "true", "false"]);
     expect(rowIds()).toEqual(["p2", "p4", "p3"]);
@@ -1027,6 +1051,7 @@ describe("a new viewer's Table (#923, frame 4b)", () => {
   });
 
   it("a late row is marked data-late and carries lateLabel's chip; a Delivered row with a past Deadline is not late", async () => {
+    storage.set(tablePrefsKey("user-1"), JSON.stringify({ groupBy: "stage", hiddenColumns: ["raw"], showDelivered: true }));
     projects = roundFourFixture();
     await renderTable();
     await click(groupTriggers()[2]!);
@@ -1219,7 +1244,7 @@ describe("the Table component (#923: now, Show Delivered, footer, skeleton)", ()
     expect(status.querySelectorAll('[data-testid="table-skeleton-row"]').length).toBeGreaterThanOrEqual(5);
   });
 
-  it("Show Delivered sits in the Table's Display menu, on by default, and turning it off hides Delivered for this viewer (#923 S5)", async () => {
+  it("Show Delivered sits in the Table's Display menu, on, and turning it off hides Delivered for this viewer (#923 S5)", async () => {
     await renderTable();
     await openDisplay();
     const show = groupCheckboxes("Show");
@@ -1230,6 +1255,21 @@ describe("the Table component (#923: now, Show Delivered, footer, skeleton)", ()
     expect(rowIds()).toEqual(["p2", "p4", "p3"]);
     expect(table().querySelector('[data-testid="project-table-footer"]')?.textContent).toBe("3 of 5 projects · Delivered hidden by Display");
     expect(JSON.parse(storage.get(tablePrefsKey("user-1"))!).showDelivered).toBe(false);
+  });
+
+  it("a new viewer starts with Show Delivered off; flat, the footer says Display hid it (#923 round 3, frame 4c)", async () => {
+    storage.clear();
+    await renderTable();
+    await openDisplay();
+    expect(groupCheckboxes("Show")[0]!.getAttribute("aria-checked")).toBe("false");
+    await chooseGroupBy("None");
+    expect(rowIds()).toEqual(["p2", "p4", "p3"]);
+    expect(table().querySelector('[data-testid="project-table-footer"]')?.textContent).toBe("3 of 5 projects · Delivered hidden by Display");
+    await openDisplay();
+    await click(groupCheckboxes("Show")[0]!);
+    expect(rowIds()).toEqual(BY_DEADLINE);
+    expect(table().querySelector('[data-testid="project-table-footer"]')?.textContent).toBe("5 projects");
+    expect(JSON.parse(storage.get(tablePrefsKey("user-1"))!).showDelivered).toBe(true);
   });
 
   it("a stored Show Delivered off is read back, and the empty state's action turns it on again (#923 S5)", async () => {

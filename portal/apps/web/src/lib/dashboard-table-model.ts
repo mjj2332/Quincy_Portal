@@ -85,10 +85,14 @@ export function isTableColumnId(value: unknown): value is TableColumnId {
   return typeof value === "string" && (TABLE_COLUMN_IDS as readonly string[]).includes(value);
 }
 
-/** Progress has no header sort in the frame (4b draws no sort mark on it); every other column sorts. */
-export type SortableColumnId = Exclude<TableColumnId, "progress">;
+/**
+ * Progress and Editors have no header sort in the frame (4b draws no sort mark on either; #923 review round 3);
+ * every other column sorts.
+ */
+const UNSORTABLE_COLUMN_IDS = ["progress", "editors"] as const;
+export type SortableColumnId = Exclude<TableColumnId, (typeof UNSORTABLE_COLUMN_IDS)[number]>;
 export function isSortableColumnId(value: unknown): value is SortableColumnId {
-  return isTableColumnId(value) && value !== "progress";
+  return isTableColumnId(value) && !(UNSORTABLE_COLUMN_IDS as readonly string[]).includes(value);
 }
 
 /** The sort a viewer starts with (frames 4b and 4c both run by Deadline, earliest first). */
@@ -101,17 +105,18 @@ export const DEFAULT_TABLE_SORTING: SortingState = [{ id: "deadline", desc: fals
 /**
  * `showDelivered` is the Display menu's "Show: Delivered Projects" (#923): a viewer preference, not a
  * Filter rule. A new viewer starts grouped by Stage with RAW received hidden (frame 4b has no RAW
- * column); a stored explicit choice, Group by None included, is kept.
+ * column) and Delivered hidden (frame 4c, owner decision #923 round 3); a stored explicit choice,
+ * Group by None and Delivered shown included, is kept.
  */
 export type TablePrefs = { groupBy: TableGroupBy; hiddenColumns: HideableColumnId[]; showDelivered: boolean };
-export const DEFAULT_TABLE_PREFS: TablePrefs = { groupBy: "stage", hiddenColumns: ["raw"], showDelivered: true };
+export const DEFAULT_TABLE_PREFS: TablePrefs = { groupBy: "stage", hiddenColumns: ["raw"], showDelivered: false };
 const defaults = (): TablePrefs => ({ ...DEFAULT_TABLE_PREFS, hiddenColumns: [...DEFAULT_TABLE_PREFS.hiddenColumns] });
 
 export const tablePrefsKey = (principalId: string) => `quincy:dashboard:table:${principalId}`;
 
 /**
  * Reads whatever was stored into a valid `TablePrefs`: an unknown group-by falls back to Stage, a
- * missing column list to the default, a non-boolean `showDelivered` to shown, and an unknown,
+ * missing column list to the default, a missing or non-boolean `showDelivered` to the default (hidden), and an unknown,
  * duplicate or non-hideable column id (Address included) is dropped. Never throws.
  * Role-invisible columns are NOT filtered here: they are a render-time fact about the viewer, and a
  * stored value must survive a role change.
@@ -212,7 +217,6 @@ function comparators(stages: readonly Pick<PipelineStage, "key" | "displayOrder"
     },
     shootDate: simple((project) => (isCanonicalShootDate(project.shootDate) ? project.shootDate : MISSING)),
     deadline: simple((project) => project.deadlineAt ?? MISSING),
-    editors: simple((project) => text(project.editors?.[0]?.name)),
     priority: simple((project) => project.priority ?? MISSING),
     raw: simple((project) => project.receivedCount),
   };
