@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useImperativeHandle, type ReactNode, type Ref } from "react";
 import { createPortal } from "react-dom";
 import { legacyBodyToRichTextDoc, videoNoteBody, type RichTextDoc } from "@quincy/shared";
 
@@ -8,8 +8,15 @@ import { legacyBodyToRichTextDoc, videoNoteBody, type RichTextDoc } from "@quinc
  *
  * The phone pill's props (#879 fix) are honoured the way the real field places them: `inlineStart` / `inlineEnd` around the text, and a stand-in formatting toolbar (one Bold button)
  * portalled into `toolbarContainer` when that is an element. The inline toolbar of the desktop field is not stood in for.
+ *
+ * The note preset's handle (#927) is stood in for too: `pickMedia()` (the box's paperclip) starts one upload at once, as a picked file does (`onUploadingChange(true)`),
+ * and the `stub-upload-done` button ends it. Nothing is added to the draft: the strip has its own tests.
  */
-export function VideoNoteEditor({ id, value, onChange, disabled, placeholder, onSubmit, toolbarContainer, inlineStart, inlineEnd, contentClassName, contentAttributes, pill, pillWrap }: { id?: string; value: RichTextDoc; onChange: (value: RichTextDoc) => void; disabled?: boolean; placeholder?: string; onSubmit?: () => void; toolbarContainer?: HTMLElement | null; inlineStart?: ReactNode; inlineEnd?: ReactNode; contentClassName?: string; contentAttributes?: Readonly<Record<`data-${string}`, string>>; pill?: boolean; pillWrap?: boolean }) {
+export function VideoNoteEditor({ id, value, onChange, disabled, placeholder, onSubmit, onUploadingChange, ref, toolbarContainer, inlineStart, inlineEnd, contentClassName, contentAttributes, pill, pillWrap }: { id?: string; value: RichTextDoc; onChange: (value: RichTextDoc) => void; disabled?: boolean; placeholder?: string; onSubmit?: () => void; onUploadingChange?: (uploading: boolean) => void; ref?: Ref<{ pickMedia: () => void; focus: () => void }>; toolbarContainer?: HTMLElement | null; inlineStart?: ReactNode; inlineEnd?: ReactNode; contentClassName?: string; contentAttributes?: Readonly<Record<`data-${string}`, string>>; pill?: boolean; pillWrap?: boolean }) {
+  useImperativeHandle(ref, () => ({
+    pickMedia: () => { onUploadingChange?.(true); },
+    focus: () => { document.getElementById(id ?? "")?.focus(); },
+  }), [onUploadingChange, id]);
   const toolbar = <div role="toolbar" aria-label="Formatting" data-testid="stub-toolbar"><button type="button" data-testid="stub-bold">B</button></div>;
   const area = <textarea
     id={id} value={videoNoteBody(value)} placeholder={placeholder} readOnly={disabled} className={contentClassName} {...contentAttributes}
@@ -22,5 +29,6 @@ export function VideoNoteEditor({ id, value, onChange, disabled, placeholder, on
     {area}
     {inlineEnd !== undefined ? <div data-testid="stub-inline-end">{inlineEnd}</div> : null}
     {toolbarContainer ? createPortal(toolbar, toolbarContainer) : null}
+    {onUploadingChange ? <button type="button" hidden data-testid="stub-upload-done" onClick={() => { onUploadingChange(false); }} /> : null}
   </div>;
 }

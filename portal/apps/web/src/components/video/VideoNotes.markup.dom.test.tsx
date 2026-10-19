@@ -175,8 +175,12 @@ async function chooseNoteAction(scope: ParentNode, name: string, label: "Edit" |
 const settle = (ms = 300) => act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, ms)); });
 
 const ON = ["notes", "markup"];
-const drawButton = () => tid("video-markup-toolbar-draw") as HTMLButtonElement | null;
-const doneButton = () => tid("video-markup-done");
+/** The composer box's pen (#927): the way into drawing at every width. */
+const drawButton = () => composerBox()?.querySelector<HTMLButtonElement>('button[aria-label="Draw on the frame"]') ?? null;
+/** ‹ on the composer's drawing row; an edit's drawing keeps the stack's Done under the picture until #927 T7. */
+const doneButton = () => tid("video-markup-done") ?? document.querySelector<HTMLElement>('[data-testid="note-draw-row"] button[aria-label="Done drawing"]');
+const drawRow = () => tid("note-draw-row");
+const postButton = () => composerBox()?.querySelector<HTMLButtonElement>('button[type="submit"]') ?? null;
 const layer = () => tid("video-markup-layer") as unknown as SVGSVGElement;
 const strokesOnScreen = () => document.querySelectorAll('[data-testid="video-markup-stroke"]').length;
 const RECT = { left: 100, top: 200, width: 800, height: 450 };
@@ -195,13 +199,10 @@ beforeEach(() => {
 });
 afterEach(() => { restoreLayout?.(); restoreLayout = null; });
 
-// #927 T4: the player's transport has no Draw button any more; the pen lives in the composer (phone: the pen slot). Until T6 moves it for every width these cases reach drawing through the phone composer.
+// #927: the pen is the composer box's at every width, so these cases run at a desktop width; the few phone cases set their own viewport.
 let phoneViewport: ReturnType<typeof mockViewport> | null = null;
-beforeEach(() => { phoneViewport = mockViewport({ width: 390, coarse: true }); });
 afterEach(() => { phoneViewport?.restore(); phoneViewport = null; });
-/** The desktop layout (version picker, details button, key legend, frame steps), for what the phone composer lacks. */
-const phone = () => phoneViewport!.set({ width: 390, coarse: true });
-const desktop = () => phoneViewport!.set({ width: 1280, coarse: false });
+const phone = () => { if (phoneViewport) return phoneViewport.set({ width: 390, coarse: true }); phoneViewport = mockViewport({ width: 390, coarse: true }); return Promise.resolve(); };
 
 /** Brings the frame a seek asked for up on screen, the way the browser does. */
 const land = (frame: number) => act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, frame / 25); });
@@ -223,16 +224,18 @@ async function stroke(svg: Element, from: [number, number], to: [number, number]
 const markNote = (over: NoteOver = {}) => note({ body: "Has a drawing", startFrame: 30, endFrame: null, drawingFrame: 30, hasMarkup: true, revision: 3, ...over });
 const STROKE = { color: "#e64b3c", width: 4, points: [{ x: 0.1, y: 0.1 }, { x: 0.4, y: 0.4 }] };
 
-describe("Draw control visibility (#741 6b-ui)", () => {
-  it("shows one 'Draw' button when the part is on, the viewer can annotate, the composer exists and the film is paused", async () => {
+describe("Draw control visibility (#741 6b-ui; the composer's pen, #927)", () => {
+  it("shows one pen, in the composer box, when the part is on, the viewer can annotate and the composer exists; the player has no Draw or in/out", async () => {
     await openFilm({ parts: ON }, 12);
     expect(drawButton()).not.toBeNull();
-    expect(drawButton()!.getAttribute("aria-label")).toBe("Draw");
-    // The Draw button is the composer's pen: never over the picture, and no longer in the player's transport row (#927 T4).
+    expect(dialog()!.querySelectorAll('button[aria-label="Draw on the frame"]')).toHaveLength(1);
+    expect(drawButton()!.title).toBe("Draw on the frame");
+    // Never over the picture, and not in the player's transport row (#927 T4).
     expect(tid("video-stage")!.contains(drawButton())).toBe(false);
     expect(tid("video-player")!.contains(drawButton())).toBe(false);
+    expect(tid("video-player")!.querySelector('button[aria-label="In and out points"], button[aria-label="Draw"], [data-testid="video-markup-toolbar-draw"]')).toBeNull();
     expect(tid("video-markup-done")).toBeNull();
-    expect(dialog()!.querySelector('[aria-label="Markup tool"]')).toBeNull();
+    expect(drawRow()).toBeNull();
   });
 
   it("is absent altogether when the markup part is off, and notes still post as they always did", async () => {
@@ -241,19 +244,21 @@ describe("Draw control visibility (#741 6b-ui)", () => {
     expect(tid("video-markup")).toBeNull();
     await type(composerText(), "Plain note");
     api.apiPost.mockResolvedValue(note({ startFrame: 12, body: "Plain note" }));
-    await click(tid("video-note-post")!);
+    await click(postButton()!);
     await land(12);
     await flush(4);
     expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, { startFrame: 12, visibility: "internal", content: legacyBodyToRichTextDoc("Plain note") });
   });
 
-  it("is hidden while the film plays and back once it is paused", async () => {
+  it("stays while the film plays: pressing it pauses, brings the frame up, then opens the drawing row", async () => {
     await openFilm({ parts: ON }, 12);
     await click(dialog()!.querySelector<HTMLElement>('button[aria-label="Play"]')!);
-    expect(drawButton()).toBeNull();
-    await click(dialog()!.querySelector<HTMLElement>('button[aria-label="Pause"]')!);
-    await present(14);
     expect(drawButton()).not.toBeNull();
+    await click(drawButton()!);
+    await land(12);
+    await flush(2);
+    expect(drawRow()).not.toBeNull();
+    expect(stores.made.at(-1)!.slot(ids.asset2).draw).toMatchObject({ phase: "drawing", frame: 12 });
   });
 
   it("is hidden for a viewer who cannot annotate video, on an archived Project, and while a reply is open", async () => {
@@ -261,15 +266,17 @@ describe("Draw control visibility (#741 6b-ui)", () => {
     expect(drawButton()).toBeNull();
   });
 
-  it("is hidden on an archived Project and while a reply form is open; an edit of a root keeps it", async () => {
+  it("is locked, with the reason, while a reply or an edit is open (an edit draws through its own Edit drawing)", async () => {
     const s = seed();
     await openFilm({ parts: ON }, 12);
     await click(threadOf(s.n1.id).querySelector<HTMLElement>('[data-testid="video-note-reply-button"]')!);
-    expect(drawButton()).toBeNull();
+    expect(drawButton()!.getAttribute("aria-disabled")).toBe("true");
+    expect(drawButton()!.title).toBe("Finish or cancel the open reply first.");
     await click(tid("video-note-reply-cancel")!);
-    expect(drawButton()).not.toBeNull();
+    expect(drawButton()!.getAttribute("aria-disabled")).toBeNull();
     await chooseNoteAction(threadOf(s.n1.id), "Terry", "Edit");
-    expect(drawButton()).not.toBeNull();
+    expect(drawButton()!.title).toBe("Finish or cancel the open edit first.");
+    expect(tid("video-note-edit-draw")).not.toBeNull();
   });
 
   it("an archived Project has no Draw control", async () => {
@@ -279,15 +286,21 @@ describe("Draw control visibility (#741 6b-ui)", () => {
 });
 
 describe("Draw mode (#741 6b-ui)", () => {
-  it("Draw pauses, waits for the frame, then expands the pill in place with a trailing Done", async () => {
+  it("the pen pauses, waits for the frame, then the drawing row takes the tools' place (C6): ‹ | tools | colour | Undo, Redo, Clear; visibility and Send hide", async () => {
     await openFilm({ parts: ON }, 12);
     await click(drawButton()!);
     await land(12);
     await flush(2);
-    // The pen stays in the composer, pressed (pressing it again is Done).
-    expect(drawButton()!.getAttribute("aria-pressed")).toBe("true");
-    expect(doneButton()).not.toBeNull();
-    expect(dialog()!.querySelector('[aria-label="Markup tool"]')).not.toBeNull();
+    expect(drawRow()).not.toBeNull();
+    expect(composerBox()!.dataset.drawing).toBe("true");
+    expect(drawButton()).toBeNull();
+    expect(composerBox()!.querySelector('button[type="submit"], button[aria-label^="Who can see this note"]')).toBeNull();
+    expect([...drawRow()!.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))).toEqual(["Done drawing", "Pen", "Arrow", "Line", "Rectangle", "Pen colour", "Undo", "Redo", "Clear drawing"]);
+    expect(drawRow()!.querySelector('[role="radiogroup"][aria-label="Drawing tool"]')).not.toBeNull();
+    expect(document.activeElement).toBe(doneButton());
+    // The width is fixed (DEFAULT_PEN's 4): no width control, and no floating toolbar or legend under the picture.
+    expect(dialog()!.querySelector('[aria-label="Stroke width"]')).toBeNull();
+    expect(tid("video-markup-stack")).toBeNull();
     expect(tid("video-markup")!.dataset.drawing).toBe("true");
     expect(layer().style.touchAction).toBe("none");
   });
@@ -317,7 +330,10 @@ describe("Draw mode (#741 6b-ui)", () => {
     expect(drawButton()).not.toBeNull();
     expect(stores.made.at(-1)!.slot(ids.asset2).markup.items).toHaveLength(1);
     expect(tid("video-note-drawing-chip")).toBeNull(); // on the anchor frame: one chip, with the pencil
-    expect(tid("video-note-anchor")!.querySelector("svg")).not.toBeNull();
+    expect(tid("note-composer-chip")!.querySelector("svg")).not.toBeNull();
+    expect(tid("note-composer-chip")!.textContent).toBe("Note with a drawing at 01:00:00:12");
+    // ‹ puts the focus back on the pen.
+    expect(document.activeElement).toBe(drawButton());
     expect(strokesOnScreen()).toBe(1); // paused on its frame: the draft still shows
   });
 
@@ -364,9 +380,9 @@ describe("Draw mode (#741 6b-ui)", () => {
     expect(stub.calls).toEqual([]);
     expect(stub.writes).toEqual([]);
     expect(tid("video-pending-band")).toBeNull();
-    // The transport is replaced in view, not just disabled: it stays mounted under the toolbar, hidden (PR 2 fix round 2, so the scrubber's thumb survives).
-    expect(dialog()!.querySelector('button[aria-label="Play"]')!.closest("[hidden]")).not.toBeNull();
-    expect((tid("video-note-set-in") as HTMLButtonElement).disabled).toBe(true);
+    // The transport stays in view, inert (#927: the drawing row is the composer's, so nothing replaces it); in/out gives way to the row.
+    expect(dialog()!.querySelector<HTMLButtonElement>('button[aria-label="Play"]')!.disabled).toBe(true);
+    expect(composerBox()!.querySelector('button[aria-label="In and out points"]')).toBeNull();
     await click(doneButton()!);
     expect(dialog()!.querySelector<HTMLButtonElement>('button[aria-label="Play"]')!.disabled).toBe(false);
     await dispatchKey(popup(), "ArrowRight");
@@ -405,7 +421,6 @@ describe("Escape order with a drawing (#741 6b-ui)", () => {
   it("a popup open over the viewer takes Escape before draw mode does", async () => {
     await openFilm({ parts: ON }, 12);
     await startDrawing();
-    await desktop();
     await click(tid("video-details-button")!);
     await flush(4);
     expect(tid("video-details-popover")).not.toBeNull();
@@ -435,7 +450,7 @@ describe("Posting a drawing (#741 6b-ui)", () => {
     await type(composerText(), "Look at this");
     api.apiPost.mockResolvedValue(commit(note({ startFrame: 12, drawingFrame: 12, hasMarkup: true, body: "Look at this" })));
     await present(60); // the film moved on while the person wrote
-    await click(tid("video-note-post")!);
+    await click(postButton()!);
     expect(api.apiPost).not.toHaveBeenCalled();
     await land(12);
     await flush(4);
@@ -447,14 +462,44 @@ describe("Posting a drawing (#741 6b-ui)", () => {
     expect(stores.made.at(-1)!.slot(ids.asset2).markup.items).toHaveLength(0);
   });
 
-  it("Remove drawing in the composer takes the strokes away and the note posts plain", async () => {
+  it("Clear in the drawing row takes the strokes away and the pencil leaves the chip (no Remove drawing), and the note posts plain", async () => {
     await openFilm({ parts: ON }, 12);
     const svg = await startDrawing(12);
     await stroke(svg, [500, 425], [900, 650]);
     await click(doneButton()!);
-    await click(tid("video-note-remove-drawing")!);
-    expect(tid("video-note-drawing-chip")).toBeNull();
+    expect(tid("note-composer-chip")!.querySelector("svg")).not.toBeNull();
+    expect(tid("video-note-remove-drawing")).toBeNull();
+    await startDrawing(12);
+    await click(drawRow()!.querySelector<HTMLElement>('button[aria-label="Clear drawing"]')!);
+    await click(doneButton()!);
+    expect(tid("note-composer-chip")!.querySelector("svg")).toBeNull();
     expect(stores.made.at(-1)!.slot(ids.asset2).markup.items).toHaveLength(0);
+    await type(composerText(), "Plain now");
+    api.apiPost.mockResolvedValue(note({ startFrame: 12, body: "Plain now" }));
+    await click(postButton()!);
+    await land(12);
+    await flush(4);
+    expect(api.apiPost.mock.calls.at(-1)![1]).not.toHaveProperty("markup");
+  });
+
+  it("a drawing alone does not post (D2): Send is off with the reason, ⌘↵ sends nothing, and a few words post the drawing", async () => {
+    await openFilm({ parts: ON }, 12);
+    const svg = await startDrawing(12);
+    await stroke(svg, [500, 425], [900, 650]);
+    await click(doneButton()!);
+    const send = postButton()!;
+    expect(send.disabled || send.getAttribute("aria-disabled") === "true").toBe(true);
+    expect(send.title).toBe("Add a few words to post the drawing");
+    await dispatchKey(composerText(), "Enter", { metaKey: true });
+    await flush(2);
+    expect(api.apiPost).not.toHaveBeenCalled();
+    await type(composerText(), "See the mark");
+    expect(postButton()!.disabled).toBe(false);
+    api.apiPost.mockResolvedValue(note({ startFrame: 12, body: "See the mark" }));
+    await click(postButton()!);
+    await land(12);
+    await flush(4);
+    expect(api.apiPost.mock.calls.at(-1)![1]).toMatchObject({ drawingFrame: 12 });
   });
 
   it.each([
@@ -467,7 +512,7 @@ describe("Posting a drawing (#741 6b-ui)", () => {
     await click(doneButton()!);
     await type(composerText(), "Look");
     api.apiPost.mockRejectedValue(new ApiError("refused", status, { code }));
-    await click(tid("video-note-post")!);
+    await click(postButton()!);
     await land(12);
     await flush(4);
     expect(composerBox()!.textContent).toMatch(text);
@@ -481,7 +526,7 @@ describe("Posting a drawing (#741 6b-ui)", () => {
     await click(doneButton()!);
     await type(composerText(), "Look");
     api.apiPost.mockRejectedValue(new ApiError("Not found", 404, { error: "Not found" }));
-    await click(tid("video-note-post")!);
+    await click(postButton()!);
     await land(12);
     await flush(4);
     expect(composerBox()!.textContent).toMatch(/drawing isn't available/i);
@@ -518,7 +563,6 @@ describe("A note's saved drawing (#741 6b-ui)", () => {
   });
 
   it("hides while the film plays and when the filters exclude the note", async () => {
-    await desktop();
     const drawn = await withDrawnNote();
     await click(tid("video-note-anchor-button", threadOf(drawn.id))!);
     await land(30);
@@ -701,7 +745,8 @@ describe("A drawing with an item this build cannot read (#741 6b-ui, 6s override
     expect(reason.textContent).toMatch(/can't be shown/);
     expect(edit.getAttribute("aria-describedby")).toBe(reason.id);
     expect(remove.getAttribute("aria-describedby")).toBe(reason.id);
-    expect(drawButton()).toBeNull();
+    // The composer's pen is locked while the edit is open (#927), so no other way in to the drawing is offered.
+    expect(drawButton()!.getAttribute("aria-disabled")).toBe("true");
     await click(edit); await click(remove);
     expect(tid("video-note-edit-drawing-removed")).toBeNull();
   });
@@ -749,10 +794,13 @@ describe("Code-review fixes (#741 6b-ui)", () => {
     expect(editItems()).toEqual([]);
   });
 
-  it("new strokes after the saved drawing was removed save on their own frame", async () => {
+  // #927 T7: once an edit's saved drawing is removed its "Add drawing" button hides, and the player pen that used to reopen drawing is gone (T6). The edit box's own pen
+  // is T7's (VideoNoteThread); re-enable this then, drawing through that pen. The store side is covered meanwhile in video-note-form-store.markup.test.ts,
+  // "strokes drawn after the old drawing was removed freeze their own confirmed frame, and Save sends it".
+  it.skip("new strokes after the saved drawing was removed save on their own frame", async () => {
     const target = await editingSaved({ endFrame: 60 });
     await click(tid("video-note-edit-remove-drawing")!);
-    await click(drawButton()!);
+    await click(tid("video-note-edit-draw")!);
     await land(45);
     await flush(2);
     const svg = layer(); sized(svg);
@@ -819,9 +867,12 @@ describe("Code-review fixes (#741 6b-ui)", () => {
     expect(stores.made.at(-1)!.slot(ids.asset2).markup.items).toHaveLength(1);
   });
 
-  it("the floating Draw of an edit loads the saved drawing first, like Edit drawing", async () => {
+  it("with an edit open the composer's pen is locked, and the edit's own Edit drawing loads the saved drawing first", async () => {
     await editingSaved();
+    expect(drawButton()!.title).toBe("Finish or cancel the open edit first.");
     await click(drawButton()!);
+    expect(stores.made.at(-1)!.slot(ids.asset2).draw).toBeNull();
+    await click(tid("video-note-edit-draw")!);
     await land(30);
     await flush(2);
     expect(tid("video-markup")!.dataset.drawing).toBe("true");
@@ -845,22 +896,24 @@ describe("Code-review fixes (#741 6b-ui)", () => {
     expect(tid("video-note-edit-set-in")).not.toBeNull(); // the frame controls are back
   });
 
-  it("Clear marks is off while drawing", async () => {
+  it("the chip's clear (×) is off while drawing", async () => {
     await openFilm({ parts: ON }, 12);
-    await click(tid("video-note-set-in")!);
+    const range = () => composerBox()!.querySelector<HTMLElement>('button[aria-label="In and out points"]')!;
+    const clear = () => tid("note-composer-chip")!.querySelector<HTMLButtonElement>('button[aria-label="Clear in and out"]')!;
+    await click(range());
     await present(40);
-    await click(tid("video-note-set-out")!);
+    await click(range());
     await present(20);
-    expect((tid("video-note-clear-marks") as HTMLButtonElement).disabled).toBe(false);
+    expect(clear().disabled).toBe(false);
     await startDrawing(20);
-    expect((tid("video-note-clear-marks") as HTMLButtonElement).disabled).toBe(true);
+    expect(clear().disabled).toBe(true);
   });
 
   it("Undo after Clear cannot carry the old strokes to a different frame", async () => {
     await openFilm({ parts: ON }, 12);
     let svg = await startDrawing(12);
     await stroke(svg, [500, 425], [900, 650]);
-    await click(popup().querySelector<HTMLElement>('button[aria-label="Clear"]')!);
+    await click(popup().querySelector<HTMLElement>('button[aria-label="Clear drawing"]')!);
     await click(doneButton()!);
     await present(45);
     svg = await startDrawing(45);
@@ -963,11 +1016,9 @@ describe("Code-review fixes (#741 6b-ui)", () => {
     await click(popup().querySelector<HTMLElement>('button[aria-label="Undo"]')!);
     expect(popup().querySelector<HTMLButtonElement>('button[aria-label="Redo"]')!.disabled).toBe(false);
     await click(doneButton()!);
-    await desktop();
     await pickVersion("v1");
     await pickVersion("v2");
     await loadFilm(12);
-    await phone();
     await startDrawing(12);
     expect(popup().querySelector<HTMLButtonElement>('button[aria-label="Redo"]')!.disabled).toBe(false);
     await click(popup().querySelector<HTMLElement>('button[aria-label="Redo"]')!);
@@ -1009,23 +1060,24 @@ describe("Code-review fixes (#741 6b-ui)", () => {
 });
 
 describe("Drawing layout (#741 6b-ui design review)", () => {
-  it("while drawing, the transport is replaced in place and the toolbar sits outside the picture; Done brings the transport back", async () => {
+  it("while drawing, the drawing row is the composer's, outside the picture and the player; the transport stays in place, inert, and ‹ brings it back", async () => {
     await openFilm({ parts: ON }, 12);
     await startDrawing();
-    await desktop();
-    // Replaced in view: the transport stays mounted under the toolbar, hidden (PR 2 fix round 2).
-    for (const id of ["video-scrubber", "video-readout", "video-key-legend"]) expect(tid(id)!.closest("[hidden]")).not.toBeNull();
-    const toolbar = tid("video-markup-toolbar")!;
-    expect(toolbar).not.toBeNull();
-    expect(tid("video-stage")!.contains(toolbar)).toBe(false);
-    expect(dialog()!.querySelector('[data-testid="video-player"]')!.contains(toolbar)).toBe(true);
-    expect(tid("video-stage")!.nextElementSibling!.contains(tid("video-markup-stack"))).toBe(true);
-    expect(tid("video-markup-legend")!.textContent).toBe("⌘Z undo · ⇧⌘Z redo · Esc done");
-    await click(doneButton()!);
-    expect(tid("video-scrubber")!.closest("[hidden]")).toBeNull();
+    // #927: no floating toolbar or stack under the picture any more; the transport and its key legend stay where they are.
+    for (const id of ["video-scrubber", "video-readout", "video-key-legend"]) expect(tid(id)!.closest("[hidden]")).toBeNull();
     expect(tid("video-markup-stack")).toBeNull();
-    // The desktop transport has no pen any more (#927 T4); T6 puts it in the composer.
-    expect(drawButton()).toBeNull();
+    expect(tid("video-markup-toolbar")).toBeNull();
+    expect(tid("video-markup-legend")).toBeNull();
+    expect(dialog()!.querySelector<HTMLButtonElement>('button[aria-label="Play"]')!.disabled).toBe(true);
+    const row = drawRow()!;
+    // Through the row's own ancestors: happy-dom's child lists can go stale after the box swaps its tools for the row.
+    expect(row.closest('[data-notes-form="composer"]')).not.toBeNull();
+    expect(row.closest('[data-testid="video-stage"]')).toBeNull();
+    expect(row.closest('[data-testid="video-player"]')).toBeNull();
+    await click(doneButton()!);
+    expect(drawRow()).toBeNull();
+    expect(dialog()!.querySelector<HTMLButtonElement>('button[aria-label="Play"]')!.disabled).toBe(false);
+    expect(drawButton()).not.toBeNull();
   });
 
   it("a note posted with a drawing becomes the selected note, so its drawing stays on the picture", async () => {
@@ -1037,7 +1089,7 @@ describe("Drawing layout (#741 6b-ui design review)", () => {
     const created = note({ startFrame: 12, drawingFrame: 12, hasMarkup: true, body: "Look at this", revision: 1, createdAt: T(30) });
     markups = { [created.id]: { revision: 1, markup: [STROKE] } };
     api.apiPost.mockResolvedValue(commit(created));
-    await click(tid("video-note-post")!);
+    await click(postButton()!);
     await land(12);
     await flush(6);
     expect(threadOf(created.id).dataset.selected).toBe("true");
@@ -1114,10 +1166,9 @@ describe("A Post that completes after the Version changed (#741 6b-ui)", () => {
     await type(composerText(), "Slow post");
     let finish: (value: unknown) => void = () => {};
     api.apiPost.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
-    await click(tid("video-note-post")!);
+    await click(postButton()!);
     await land(12);
     await flush(2);
-    await desktop();
     await pickVersion("v1");
     await loadFilm(20);
     await click(tid("video-note-anchor-button", threadOf(other.id))!);
@@ -1152,8 +1203,9 @@ describe("The markup-is-full warning (#741 6b-ui)", () => {
     await act(async () => { stores.made.at(-1)!.setItems(ids.asset2, "composer", Array.from({ length: 200 }, () => ({ ...STROKE }))); });
     await stroke(svg, [500, 425], [900, 650]);
     expect(full()).toBe(true);
+    expect(tid("video-markup-full")!.getAttribute("role")).toBe("status");
+    await click(drawRow()!.querySelector<HTMLElement>('button[aria-label="Clear drawing"]')!);
     await click(doneButton()!);
-    await click(tid("video-note-remove-drawing")!);
     await click(drawButton()!);
     await land(12);
     await flush(2);
@@ -1162,9 +1214,9 @@ describe("The markup-is-full warning (#741 6b-ui)", () => {
 });
 
 describe("The scrubber after a phone drawing (#879 PR 2 fix round 2)", () => {
-  // Done on a phone hands the focus back to the pill's field in the same tap, so the transport comes back from under the markup toolbar in compose mode, hidden. It used to come
-  // back as a new subtree: the slider was mounted (and its thumb measured) inside the hidden box, and after Cancel the thumb stayed invisible until the frame changed.
-  it("the thumb is still drawn after Draw → Done → Cancel, and the slider is the same node throughout", async () => {
+  // ‹ on a phone hands the focus back to the box's field in the same tap, so the transport comes back in compose mode, hidden. It used to come back as a new subtree: the
+  // slider was mounted (and its thumb measured) inside the hidden box, and after the compose mode ended the thumb stayed invisible until the frame changed.
+  it("the thumb is still drawn after Draw → ‹ → leaving compose mode, and the slider is the same node throughout", async () => {
     const viewport = mockViewport({ width: 390, coarse: true });
     const restore = installSliderLayout();
     try {
@@ -1180,7 +1232,7 @@ describe("The scrubber after a phone drawing (#879 PR 2 fix round 2)", () => {
       await act(async () => { doneButton()!.click(); field().focus(); });
       await flush(2);
       expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("compose");
-      await act(async () => { tid("video-note-cancel")!.click(); field().blur(); });
+      await act(async () => { field().blur(); });
       await flush(4);
       expect(tid("video-review-pane")!.getAttribute("data-mode")).toBe("browse");
       expect(tid("video-scrubber")!.querySelector('[data-slot="slider"]')).toBe(slider);

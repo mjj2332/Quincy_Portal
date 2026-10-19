@@ -21,7 +21,9 @@ async function render() {
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
   await act(async () => { root.render(<VideoNoteComposer store={store} assetId={A} clock={clock} frameCount={300} timecode={(f) => `TC${f}`} post={post} onRefresh={vi.fn()} rich={{ projectId: "p1", role: "editor" }} />); });
 }
-const postButton = () => host.querySelector<HTMLButtonElement>('[data-testid="video-note-post"]')!;
+/** The box's round Send (#927); a lock with a reason is aria-disabled. */
+const postButton = () => host.querySelector<HTMLButtonElement>('[data-testid="video-note-composer"] button[type="submit"]')!;
+const off = () => postButton().disabled || postButton().getAttribute("aria-disabled") === "true";
 const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
 beforeEach(() => { store = createNoteFormStore("test"); post.mockClear(); field.props = null; });
 afterEach(async () => { await act(async () => { root.unmount(); }); document.body.replaceChildren(); });
@@ -30,7 +32,7 @@ describe("VideoNoteComposer rich field (#835)", () => {
   it("hands the field the Project and role, and Post stays off while the document is empty", async () => {
     await render();
     expect(field.props).toMatchObject({ projectId: "p1", role: "editor" });
-    expect(postButton().disabled).toBe(true);
+    expect(off()).toBe(true);
   });
 
   it("a mention makes the draft postable, and Post sends the document, not text", async () => {
@@ -38,7 +40,7 @@ describe("VideoNoteComposer rich field (#835)", () => {
     const doc = docWith({ type: "text", text: "Match " }, mention("u1", "Mia"));
     await act(async () => { field.props!.onChange(doc); });
     expect(store.slot(A).composer).toMatchObject({ body: "Match @Mia", content: doc });
-    expect(postButton().disabled).toBe(false);
+    expect(off()).toBe(false);
     await act(async () => { postButton().click(); });
     await flush();
     expect(post).toHaveBeenCalledWith(expect.objectContaining({ content: doc, visibility: "internal", startFrame: 12 }));
@@ -48,17 +50,24 @@ describe("VideoNoteComposer rich field (#835)", () => {
   it("holds Post while an upload is in flight, and releases it when the upload lands", async () => {
     await render();
     await act(async () => { field.props!.onChange(docWith({ type: "text", text: "x" })); });
-    expect(postButton().disabled).toBe(false);
+    expect(off()).toBe(false);
     await act(async () => { field.props!.onUploadingChange(true); });
-    expect(postButton().disabled).toBe(true);
+    expect(off()).toBe(true);
     await act(async () => { field.props!.onUploadingChange(false); });
-    expect(postButton().disabled).toBe(false);
+    expect(off()).toBe(false);
+  });
+
+  it("an upload starting freezes the anchor on the frame on screen (#927)", async () => {
+    await render();
+    expect(store.slot(A).composer.anchorFrame).toBeNull();
+    await act(async () => { field.props!.onUploadingChange(true); });
+    expect(store.slot(A).composer.anchorFrame).toBe(12);
   });
 
   it("a media-only note is postable, because its body carries the count hint", async () => {
     await render();
     await act(async () => { field.props!.onChange({ type: "doc", content: [{ type: "image", attrs: { mediaId: "m1" } }] }); });
     expect(store.slot(A).composer.body).toBe("[1 image]");
-    expect(postButton().disabled).toBe(false);
+    expect(off()).toBe(false);
   });
 });
