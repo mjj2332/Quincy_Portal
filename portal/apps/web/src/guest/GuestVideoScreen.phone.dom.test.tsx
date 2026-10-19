@@ -188,14 +188,14 @@ describe("the guest phone chrome (#879 PR 3a, P2)", () => {
     expect(strip.className).toContain("data-[compose=false]:gap-y-0");
   });
 
-  it("the transport drops frame step where the composer carries it, and keeps it for a guest who cannot write (C14)", async () => {
+  it("the phone transport has no frame step, for a guest who can write or not (#927 T4)", async () => {
     await openVideo();
     expect(document.body.querySelector('[aria-label="Previous frame"]')).toBeNull();
     await act(async () => { root!.unmount(); }); root = null; host.remove();
     withAllow({ comments: false });
     await open();
     await vi.waitFor(() => { expect(byId("video-player")).not.toBeNull(); });
-    expect(document.body.querySelector('[aria-label="Previous frame"]')).not.toBeNull();
+    expect(document.body.querySelector('[aria-label="Previous frame"]')).toBeNull();
   });
 });
 

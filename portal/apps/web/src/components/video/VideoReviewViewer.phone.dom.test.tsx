@@ -335,9 +335,9 @@ describe("D4 and focus", () => {
     expect(tid("video-pane-tab-delivery")!.className).toContain("max-[721px]:after:!bottom-0");
   });
 
-  it("the player keeps its frame steps on a phone where the composer cannot carry them (no notes), and drops them where it does", async () => {
+  it("a phone has no frame steps in the player, with notes or without (#927 T4)", async () => {
     await mount();
-    expect(document.querySelector('[aria-label="Previous frame"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label="Previous frame"]')).toBeNull();
     await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren();
     await mount({ notes: true });
     const deadline = Date.now() + 5000; while (!tid("video-player") && Date.now() < deadline) await flush(1);
