@@ -1043,3 +1043,45 @@ describe("Show in Timeline from the sheet (#464)", () => {
     expect(document.activeElement).not.toBe(opener);
   });
 });
+
+describe("a direct review link paints no cream at the top edge (#927 D6)", () => {
+  const FILM = "88888888-8888-4888-8888-888888888888";
+  /** The very first commit of a cold load: no settling, since Safari takes its top tint from the first paint. */
+  async function firstCommitAt(path: string) {
+    window.history.replaceState(null, "", path);
+    const host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => { root!.render(<App />); });
+  }
+
+  it("on a phone the sheet opened at a film URL takes the inverse surface from its first commit", async () => {
+    setViewportWidth(390);
+    await firstCommitAt(`${PROJECT_PATH}?tab=video&video=${FILM}&version=1`);
+    expect(sheet()).not.toBeNull();
+    expect(sheet()!.getAttribute("data-surface")).toBe("inverse");
+  });
+
+  it("on a phone a Project URL that names no film keeps the sheet's own light surface", async () => {
+    setViewportWidth(390);
+    await firstCommitAt(`${PROJECT_PATH}?tab=video`);
+    expect(sheet()).not.toBeNull();
+    expect(sheet()!.hasAttribute("data-surface")).toBe(false);
+    await settle();
+    expect(sheet()!.hasAttribute("data-surface")).toBe(false);
+  });
+
+  it("on a desktop the sheet at a film URL renders as before", async () => {
+    await firstCommitAt(`${PROJECT_PATH}?tab=video&video=${FILM}&version=1`);
+    expect(sheet()).not.toBeNull();
+    expect(sheet()!.hasAttribute("data-surface")).toBe(false);
+  });
+
+  it("leaving the film for the Project puts the light surface back", async () => {
+    setViewportWidth(390);
+    await firstCommitAt(`${PROJECT_PATH}?tab=video&video=${FILM}&version=1`);
+    await settle();
+    await traverseTo(`${PROJECT_PATH}?tab=video`, window.history.state);
+    expect(sheet()!.hasAttribute("data-surface")).toBe(false);
+  });
+});

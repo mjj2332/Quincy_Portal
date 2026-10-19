@@ -5,6 +5,7 @@ import { Button } from "@/components/reui/button";
 import { Sheet, SheetClose, SheetContent, SheetTitle } from "@/components/reui/sheet";
 import { shouldInterceptInternalLink } from "../../lib/router";
 import { OverlayContainerContext } from "../OverlayContainerContext";
+import { useMediaQuery } from "../../lib/use-media-query";
 import { hasOpenInnerLayer } from "./project-sheet-layers";
 import { ToastViewport } from "./ToastViewport";
 
@@ -42,6 +43,12 @@ export type ProjectSheetProps = {
   impersonating?: boolean;
   /** `false` leaves focus alone (#464: a Show-in landing owns it). */
   finalFocus?: () => HTMLElement | boolean;
+  /**
+   * #927 D6: the URL names a film. On a phone the sheet then paints on the inverse surface from its first commit, so a direct
+   * review load puts no cream at the top edge before the viewer mounts over it (Safari takes its top tint from the first paint
+   * and does not re-sample when the viewer mounts). The desktop sheet is unchanged.
+   */
+  filmOpen?: boolean;
   children: ReactNode;
 };
 
@@ -105,7 +112,8 @@ export function useDashboardReturnLink(): { to: string; onClick?: (event: MouseE
   };
 }
 
-export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClose, closeButton = true, impersonating = false, finalFocus, children }: ProjectSheetProps) {
+export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClose, closeButton = true, impersonating = false, finalFocus, filmOpen = false, children }: ProjectSheetProps) {
+  const phone = useMediaQuery(PROJECT_SHEET_PHONE_QUERY);
   const popupRef = useRef<HTMLDivElement | null>(null);
   const [slot, setSlot] = useState<HTMLDivElement | null>(null);
   const snapshotRef = useRef(false);
@@ -191,6 +199,7 @@ export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClos
         showCloseButton={false}
         data-testid="project-sheet"
         data-impersonating={impersonating ? "" : undefined}
+        data-surface={filmOpen && phone ? "inverse" : undefined}
         ref={popupRef}
         initialFocus={() => popupRef.current ?? true}
         finalFocus={finalFocus}

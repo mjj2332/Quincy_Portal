@@ -9,18 +9,21 @@ let root: Root | null = null;
 let api!: ReturnType<typeof useImmersive>;
 let setExternal!: (next: ImmersiveState) => void;
 let current: ImmersiveState = null;
+const handoff = vi.fn();
+let withHandoff = true;
 
 /** A screen in miniature: a root holding the two buttons the player renders, one at a time. */
 function Harness() {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [state, setState] = useState<ImmersiveState>(null);
   current = state; setExternal = setState;
-  api = useImmersive({ rootRef, state, setState });
+  api = useImmersive({ rootRef, state, setState, ...(withHandoff ? { handoff } : {}) });
   return <div ref={rootRef} data-testid="root">
     <button type="button" data-testid="before">Before</button>
     {state === null ? <button type="button" data-testid="video-fullscreen" onClick={api.toggle}>Full screen</button> : <button type="button" data-testid="video-exit-fullscreen" onClick={api.toggle}>Exit full screen</button>}
     <textarea data-testid="field" />
-    <section data-testid="video-player" tabIndex={-1} />
+    <section data-testid="video-player" tabIndex={-1}><div data-testid="video-stage"><video data-testid="stage-film" /></div></section>
+    <video data-testid="note-film" />
   </div>;
 }
 const q = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
@@ -31,7 +34,7 @@ const exit = vi.fn();
 const setFullscreen = (enabled: boolean) => Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: enabled });
 
 beforeEach(() => {
-  fullscreenElement = null; requestTarget = null; request.mockReset(); exit.mockReset();
+  fullscreenElement = null; requestTarget = null; request.mockReset(); exit.mockReset(); handoff.mockReset(); withHandoff = true;
   Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => fullscreenElement });
   (document as unknown as { exitFullscreen: () => Promise<void> }).exitFullscreen = () => { exit(); fullscreenElement = null; document.dispatchEvent(new Event("fullscreenchange")); return Promise.resolve(); };
   (HTMLElement.prototype as unknown as { requestFullscreen: () => Promise<void> }).requestFullscreen = function (this: Element) { requestTarget = this; request(); fullscreenElement = this; document.dispatchEvent(new Event("fullscreenchange")); return Promise.resolve(); };
@@ -42,6 +45,7 @@ afterEach(async () => {
   root = null;
   for (const key of ["fullscreenEnabled", "fullscreenElement", "exitFullscreen"]) delete (document as unknown as Record<string, unknown>)[key];
   delete (HTMLElement.prototype as unknown as Record<string, unknown>).requestFullscreen;
+  delete (HTMLVideoElement.prototype as unknown as Record<string, unknown>).webkitEnterFullscreen;
   document.body.replaceChildren();
 });
 async function mount() { const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); await act(async () => { root!.render(<Harness />); }); }
@@ -57,12 +61,66 @@ describe("useImmersive (#880, D12)", () => {
     expect(document.activeElement).toBe(q("video-exit-fullscreen"));
   });
 
-  it("where the browser has no element full screen (iPhone) the in-app layer alone is the full screen", async () => {
+  it("where the browser has no element full screen and the film no WebKit player, the in-app layer alone is the full screen", async () => {
     setFullscreen(false);
     await mount();
     await press("video-fullscreen");
     expect(current).toBe("button");
     expect(request).not.toHaveBeenCalled();
+  });
+
+  describe("iPhone hands Full screen to the native player (#927 D1)", () => {
+    /** iPhone Safari: no element full screen, and the film has WebKit's own player. */
+    const iPhone = () => {
+      setFullscreen(false);
+      (HTMLVideoElement.prototype as unknown as { webkitEnterFullscreen: () => void }).webkitEnterFullscreen = () => undefined;
+    };
+
+    it("the Full screen button calls the handoff and stays out of the in-app layer", async () => {
+      iPhone();
+      await mount();
+      await press("video-fullscreen");
+      expect(handoff).toHaveBeenCalledTimes(1);
+      expect(current).toBeNull();
+      expect(request).not.toHaveBeenCalled();
+      expect(q("video-fullscreen")).not.toBeNull();
+    });
+
+    it("only the stage's own film decides: a note's embedded video with WebKit's player does not", async () => {
+      setFullscreen(false);
+      await mount();
+      (q("note-film") as unknown as { webkitEnterFullscreen: () => void }).webkitEnterFullscreen = () => undefined;
+      await press("video-fullscreen");
+      expect(handoff).not.toHaveBeenCalled();
+      expect(current).toBe("button");
+    });
+
+    it("a turn still enters the in-app layer, and Exit full screen there leaves it without a handoff", async () => {
+      iPhone();
+      await mount();
+      await act(async () => { setExternal("turn"); });
+      expect(current).toBe("turn");
+      await press("video-exit-fullscreen");
+      expect(current).toBeNull();
+      expect(handoff).not.toHaveBeenCalled();
+    });
+
+    it("an iPad or desktop Safari film with WebKit's player keeps the in-app Full screen (element full screen is there)", async () => {
+      (HTMLVideoElement.prototype as unknown as { webkitEnterFullscreen: () => void }).webkitEnterFullscreen = () => undefined;
+      await mount();
+      await press("video-fullscreen");
+      expect(handoff).not.toHaveBeenCalled();
+      expect(current).toBe("button");
+      expect(request).toHaveBeenCalledTimes(1);
+    });
+
+    it("a screen that passes no handoff keeps the in-app layer on iPhone", async () => {
+      iPhone();
+      withHandoff = false;
+      await mount();
+      await press("video-fullscreen");
+      expect(current).toBe("button");
+    });
   });
 
   it("a rejected request leaves the in-app layer working", async () => {
