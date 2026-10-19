@@ -68,42 +68,25 @@ afterEach(async () => {
   root = null; stub.dispose(); shim.restore(); resetUiPrefMemory(); vi.unstubAllGlobals(); document.body.replaceChildren();
 });
 
-describe("VideoPlayer range button (#861)", () => {
-  it("without a range prop there is no button and no handle", async () => {
+describe("VideoPlayer range: handles and keys, no button (#861, #927)", () => {
+  it("without a range prop there is no handle", async () => {
     await mount({ onMark: vi.fn() });
-    expect(rangeButton()).toBeNull();
     expect(handle("in")).toBeNull();
   });
 
-  it("cycles Set in -> Set out -> Clear; an Out-only mark reads Set in again", async () => {
+  it("has no range button in any state: the composer owns in and out, the player keeps the handles and the I / O keys", async () => {
     await mount({ onMark: vi.fn(), range: noopRange(NONE) });
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set in point");
-    await update({ range: noopRange({ in: 10, out: null }) });
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set out point");
+    expect(rangeButton()).toBeNull();
     await update({ range: noopRange({ in: 10, out: 20 }) });
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Clear in and out");
-    await update({ range: noopRange({ in: null, out: 20 }) });
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set in point");
+    expect(rangeButton()).toBeNull();
+    await update({ range: noopRange({ in: 10, out: 20 }, { locked: true, hint: "Add a note to mark a range" }) });
+    expect(rangeButton()).toBeNull();
+    expect(byTestId("video-range-tip")).toBeNull();
+    expect(host.querySelector('[aria-label="Set in point"], [aria-label="Set out point"], [aria-label="Clear in and out"]')).toBeNull();
+    expect(handle("in")).not.toBeNull();
   });
 
-  it("pressing it marks the frame on screen through the same path as I and O, and Clear clears", async () => {
-    const onMark = vi.fn(); const clear = vi.fn();
-    await mount({ onMark, range: noopRange(NONE, { clear }) });
-    await present(12);
-    await act(async () => { rangeButton()!.click(); });
-    expect(onMark).toHaveBeenLastCalledWith("in", 12);
-    await update({ range: noopRange({ in: 12, out: null }, { clear }) });
-    await present(30);
-    await act(async () => { rangeButton()!.click(); });
-    expect(onMark).toHaveBeenLastCalledWith("out", 30);
-    await update({ range: noopRange({ in: 12, out: 30 }, { clear }) });
-    onMark.mockClear();
-    await act(async () => { rangeButton()!.click(); });
-    expect(clear).toHaveBeenCalledTimes(1);
-    expect(onMark).not.toHaveBeenCalled();
-  });
-
-  it("the button follows the keys: after I, the button says Set out", async () => {
+  it("the I key marks the frame on screen", async () => {
     const onMark = vi.fn();
     await mount({ onMark, range: noopRange(NONE) });
     await present(5);
@@ -111,19 +94,9 @@ describe("VideoPlayer range button (#861)", () => {
     expect(onMark).toHaveBeenCalledWith("in", 5);
   });
 
-  it("is disabled when the range is locked or the transport is (drawing), and carries the host's reason as its tooltip text", async () => {
-    await mount({ onMark: vi.fn(), range: noopRange(NONE, { locked: true, hint: "Add a note to mark a range" }) });
-    expect((rangeButton() as HTMLButtonElement).disabled).toBe(true);
-    // The reason is reachable: an enabled wrapper takes focus and opens the tooltip.
-    const tip = byTestId("video-range-tip")!;
-    expect(tip.contains(rangeButton())).toBe(true);
-    await act(async () => { tip.focus(); });
-    await flush(4);
-    expect(document.body.textContent).toContain("Add a note to mark a range");
-    await update({ range: noopRange(NONE) });
-    expect((rangeButton() as HTMLButtonElement).disabled).toBe(false);
-    await update({ transportLocked: true });
-    expect((rangeButton() as HTMLButtonElement).disabled).toBe(true);
+  it("keeps the I O in/out hint in the key legend", async () => {
+    await mount({ onMark: vi.fn(), range: noopRange(NONE) });
+    expect(byTestId("video-key-legend")!.textContent).toContain("in/out");
   });
 });
 

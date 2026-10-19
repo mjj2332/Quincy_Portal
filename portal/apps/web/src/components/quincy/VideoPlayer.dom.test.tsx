@@ -146,7 +146,7 @@ describe("VideoPlayer timecode (#741 4d-ii)", () => {
 });
 
 describe("VideoPlayer picture box (#741 4d-ii)", () => {
-  it("places the timecode chip inside the picture, not in the letterbox band", async () => {
+  it("measures the picture box inside the letterbox bands and draws no timecode chip in it (#927)", async () => {
     const original = Object.getOwnPropertyDescriptors(HTMLElement.prototype);
     for (const [prop, value] of [["offsetWidth", 800], ["offsetHeight", 800], ["offsetLeft", 0], ["offsetTop", 0]] as const) Object.defineProperty(HTMLElement.prototype, prop, { configurable: true, get: () => value });
     try {
@@ -157,10 +157,8 @@ describe("VideoPlayer picture box (#741 4d-ii)", () => {
       expect(picture.style.top).toBe("175px");
       expect(picture.style.height).toBe("450px");
       expect(picture.style.width).toBe("800px");
-      const chip = byTestId("video-timecode-chip")!;
-      expect(picture.contains(chip)).toBe(true);
-      expect(chip.textContent).toBe("01:00:42:13 · frame 1063");
-      expect(chip.getAttribute("aria-hidden")).toBe("true");
+      expect(byTestId("video-timecode-chip")).toBeNull();
+      expect(picture.children.length).toBe(0);
     } finally {
       for (const prop of ["offsetWidth", "offsetHeight", "offsetLeft", "offsetTop"] as const) {
         const d = original[prop];
@@ -195,20 +193,16 @@ describe("VideoPlayer layout (#741 4d-ii design review)", () => {
     expect(byTestId("video-player")!.className).toContain("min-h-0");
   });
 
-  it("keeps the timecode chip on one line and drops the frame number when the picture is too narrow for it", async () => {
-    await withLayout(800, 800, async () => {
-      await mount();
-      await load();
-      expect(byTestId("video-timecode-chip")!.className).toContain("whitespace-nowrap");
-      expect(byTestId("video-timecode-chip")!.className).toContain("max-w-[calc(100%-var(--space-4))]");
-      expect(byTestId("video-timecode-chip")!.textContent).toBe("00:00:00:00 · frame 0");
-    });
-    await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren();
-    await withLayout(120, 120, async () => {
-      await mount();
-      await load();
-      expect(byTestId("video-timecode-chip")!.textContent).toBe("00:00:00:00");
-    });
+  it("draws no timecode chip on the picture at any width: the transport readout carries the time (#927)", async () => {
+    for (const size of [800, 120]) {
+      await withLayout(size, size, async () => {
+        await mount();
+        await load();
+        expect(byTestId("video-timecode-chip")).toBeNull();
+        expect(byTestId("video-readout")!.textContent).toContain("00:00:00:00");
+      });
+      await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren();
+    }
   });
 
   it("hides the key legend on touch and narrow screens, and paints its chips with the Lightbox's readable shortcut skin", async () => {
@@ -627,14 +621,13 @@ describe("the phone control bar (#879)", () => {
 });
 
 describe("the phone control bar's frame step and Social row (#879 review)", () => {
-  it("a host with no composer turns the frame steps back on, and Social controls take their own row", async () => {
+  it("a phone has no frame step even when the host still passes phoneFrameStep (#927), and Social controls take their own row", async () => {
     const viewport = mockViewport({ width: 390 });
     try {
       await mount(versionOf(), { phoneFrameStep: true, social: { overlays: [{ id: "a", name: "Reels", imageUrl: "/a" }], currentId: "a", onOverlay: () => undefined, status: "ready", onRetry: () => undefined } });
       await load();
-      expect(host.querySelector('[aria-label="Previous frame"]')).not.toBeNull();
-      expect(host.querySelector('[aria-label="Next frame"]')).not.toBeNull();
-      // Five controls plus the timecode do not fit at 375: the short readout (no " / total") keeps it from running under Mute and Full screen.
+      expect(host.querySelector('[aria-label="Previous frame"]')).toBeNull();
+      expect(host.querySelector('[aria-label="Next frame"]')).toBeNull();
       expect(byTestId("video-readout-total")).toBeNull();
       const row = byTestId("video-controls-row")!;
       const social = byTestId("video-social-row")!;
@@ -643,12 +636,10 @@ describe("the phone control bar's frame step and Social row (#879 review)", () =
     } finally { viewport.restore(); }
   });
 
-  it("on a phone a short picture drops its timecode chip (the transport shows the time); a tall one keeps it", async () => {
+  it("a phone's picture carries no timecode chip however tall it is (#927)", async () => {
     const viewport = mockViewport({ width: 390 });
     try {
-      await withLayout(390, 110, async () => { await mount(); await load(); expect(byTestId("video-timecode-chip")).toBeNull(); });
-      await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren();
-      await withLayout(390, 300, async () => { await mount(); await load(); expect(byTestId("video-timecode-chip")).not.toBeNull(); });
+      await withLayout(390, 300, async () => { await mount(); await load(); expect(byTestId("video-timecode-chip")).toBeNull(); });
     } finally { viewport.restore(); }
   });
 
@@ -711,17 +702,13 @@ describe("the phone transport band (#879 PR 3a, P1 ControlBar: scrubber band, 44
     } finally { viewport.restore(); }
   });
 
-  it("frame steps on a phone (no composer) are plain 32px icons too", async () => {
+  it("the phone control bar has no frame step (#927): scrubber, play, time, mute, full screen", async () => {
     const viewport = mockViewport({ width: 390 });
     try {
-      await mount(versionOf(), { phoneFrameStep: true });
+      await mount(versionOf());
       await load();
-      for (const name of ["Previous frame", "Next frame"]) {
-        const control = host.querySelector<HTMLElement>(`[aria-label="${name}"]`)!;
-        expect(control.className, name).toContain("size-8");
-        expect(control.className, name).toContain("hover:bg-muted");
-        expect(control.className, name).not.toContain("border-border");
-      }
+      expect(host.querySelector('[aria-label="Previous frame"]')).toBeNull();
+      expect(host.querySelector('[aria-label="Next frame"]')).toBeNull();
     } finally { viewport.restore(); }
   });
 
