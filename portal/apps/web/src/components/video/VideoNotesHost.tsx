@@ -35,14 +35,14 @@ export default function VideoNotesHost({ notes, video, version, detailsRows, onS
   const phone = useMediaQuery(PHONE_QUERY);
   const session = useVideoNotes({ projectId: notes.projectId, version, role: notes.role, userId: notes.userId, archived: notes.archived, forms: notes.forms, markup: notes.markup === true, openNoteId: notes.openNoteId ?? null, phone });
   // The drawing surface reaches the player only as its overlay slot, built here in the notes chunk: the player never imports it, so a Project without markup pays nothing.
-  // The pen and the drawing row are the note forms' (#927): the panel hands them to the composer box. An edit's drawing keeps its stack under the picture until #927 T7.
-  const { overlay, draw, transportReplacement } = useVideoMarkup(session);
+  // The pen and the drawing row are the note forms' (#927): the panel hands them to the composer box. A root note's edit box takes `draw.edit` the same way (T7).
+  const { overlay, draw } = useVideoMarkup(session);
   // The marker export lives here, not in the panel, so the phone header's action sheet reaches the same options and request as the desktop ⋯ menu (identity-keyed by Version inside the hook).
   const exp = useMarkerExport({ enabled: notes.exportEnabled === true && roleHasCapability(session.role, "viewVideo"), projectId: session.projectId, assetId: session.assetId, userId: session.userId, title: video.title, version: version.version, threads: session.threads });
   const drawing = useSyncExternalStore(session.forms.subscribe, () => session.forms.slot(session.assetId).draw?.phase === "drawing");
   const clipboard = useNotesClipboard({ session, video, phone });
   return <>{children({
-    playerProps: { ...session.playerProps, ...(overlay ? { overlay } : {}), ...(transportReplacement ? { transportReplacement } : {}) },
+    playerProps: { ...session.playerProps, ...(overlay ? { overlay } : {}) },
     panel: <VideoNotesPanel key={version.assetId} session={session} detailsRows={detailsRows} exp={exp} clipboard={clipboard} phone={phone} draw={draw} {...(onSearchChange ? { onSearchChange } : {})} />,
     // The open notes the list can show (#879 PR 3a): a deleted root nobody replied to is hidden, so it is not counted either.
     markerExport: exp, drawing, openCount: session.threads ? noteCounts(session.threads, DEFAULT_NOTE_FILTERS).totals.open : null,

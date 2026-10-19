@@ -95,6 +95,14 @@ const postLabel = () => postButton()?.getAttribute("aria-label");
 const isOff = (button: HTMLElement) => (button as HTMLButtonElement).disabled || button.getAttribute("aria-disabled") === "true";
 /** The composer's one in/out button (In, then Out, then clear) and its chip. */
 const rangeButton = () => document.querySelector<HTMLButtonElement>('[data-testid="video-note-composer"] button[aria-label="In and out points"]');
+/** The composer's own anchor chip; an open edit box draws one too (#927 T7, E1). */
+const composerChip = () => document.querySelector<HTMLElement>('[data-testid="video-note-composer"] [data-testid="note-composer-chip"]');
+/** A root note's edit is the note composer box (#927 T7, E1): its in/out, its chip, Cancel and Save. */
+const editBox = () => document.querySelector<HTMLElement>('[data-notes-form="edit"]');
+const editSave = () => editBox()?.querySelector<HTMLButtonElement>('button[type="submit"]') ?? null;
+const editCancel = () => [...(editBox()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.textContent === "Cancel") ?? null;
+const editRange = () => editBox()?.querySelector<HTMLButtonElement>('button[aria-label="In and out points"]') ?? null;
+const editChip = () => editBox()?.querySelector<HTMLElement>('[data-testid="note-composer-chip"]') ?? null;
 const visibilityTrigger = () => document.querySelector<HTMLButtonElement>('[data-testid="video-note-composer"] button[aria-label^="Who can see this note"]')!;
 async function pickVisibility(value: "internal" | "public") {
   await click(visibilityTrigger());
@@ -261,18 +269,18 @@ describe("Video notes panel (#741 5b)", () => {
     expect(tomb.textContent).toContain("Still relevant");
   });
 
-  it("Reply posts only the body, names the inherited visibility, and shows the reply under the thread (story 35)", async () => {
+  it("Reply posts only the body, inherits the note's visibility (no menu, R1), and shows the reply under the thread (story 35)", async () => {
     const s = seed();
     await openFilm();
     const thread = threadOf(s.n1.id);
     await click(tid("video-note-reply-button", thread)!);
     const form = thread.querySelector<HTMLElement>('[data-notes-form="reply"]')!;
-    expect(form.textContent).toContain("Reply · Internal");
+    expect(form.querySelector('button[aria-label^="Who can see this note"]')).toBeNull();
     expect(form.querySelector<HTMLElement>('[role="group"]')).toBeNull();
     const added = { ...s.n1, replies: [replyTo(s.n1, { body: "On it", createdAt: T(20) })] } as VideoNoteThreadDto;
     api.apiPost.mockResolvedValue(commit(added));
     await type(form.querySelector<HTMLElement>("textarea") as HTMLTextAreaElement, "On it");
-    await click(tid("video-note-reply-post", form)!);
+    await click(form.querySelector<HTMLElement>('button[aria-label="Send reply"]')!);
     await flush(4);
     expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-notes/${s.n1.id}/replies`, { content: legacyBodyToRichTextDoc("On it") });
     expect(tid("video-note-body", [...threadOf(s.n1.id).querySelectorAll<HTMLElement>('[data-testid="video-note-reply"]')][0]!)!.textContent).toBe("On it");
@@ -492,10 +500,11 @@ describe("Edit frames through the player keys", () => {
     await dispatchKey(popup(), "i");
     await present(30);
     await dispatchKey(popup(), "o");
-    expect(tid("note-composer-chip")!.textContent).not.toContain("Note from");
+    expect(composerChip()?.textContent ?? "").not.toContain("Note from");
+    expect(editChip()!.textContent).toContain("Note from");
     expect(tid("video-pending-band")).not.toBeNull();
     api.apiPatch.mockResolvedValue(commit({ ...s.n1, startFrame: 20, endFrame: 31, revision: 2 } as VideoNoteThreadDto));
-    await click(tid("video-note-edit-save")!);
+    await click(editSave()!);
     await flush(4);
     expect(api.apiPatch).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-notes/${s.n1.id}`, { expectedRevision: 1, startFrame: 20, endFrame: 31 });
   });
@@ -766,7 +775,7 @@ describe("Marker lane (test 26)", () => {
 
 describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", () => {
   const notesKey = () => projectDataKeys.videoNotes(PROJECT, ids.asset2);
-  const composerAnchor = () => tid("note-composer-chip")!.textContent ?? "";
+  const composerAnchor = () => composerChip()?.textContent ?? "";
   const editForms = () => [...document.querySelectorAll<HTMLElement>('[data-notes-form="edit"]')];
   const conflictOf = (note: VideoNoteThreadDto) => new ApiError("Conflict", 409, { code: "note_conflict", thread: note });
 
@@ -778,15 +787,15 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     await act(async () => { queryClient!.setQueryData(notesKey(), seed().all.map((n) => (n.id === s.n1.id ? elsewhere : n))); });
     await type(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>("textarea")!, "My edit");
     api.apiPatch.mockRejectedValueOnce(conflictOf(elsewhere));
-    await click(tid("video-note-edit-save")!);
+    await click(editSave()!);
     await flush(4);
     expect(api.apiPatch).toHaveBeenCalledTimes(1);
     expect(api.apiPatch.mock.calls[0]![1]).toEqual({ expectedRevision: 1, content: legacyBodyToRichTextDoc("My edit") });
     expect(tid("video-note-conflict")!.textContent).toContain("Changed in another tab");
     expect(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("My edit");
-    expect(tid("video-note-edit-save")!.textContent).toBe("Save anyway");
+    expect(editSave()!.textContent).toBe("Save anyway");
     api.apiPatch.mockResolvedValueOnce(commit({ ...elsewhere, body: "My edit", revision: 3 } as VideoNoteThreadDto));
-    await click(tid("video-note-edit-save")!);
+    await click(editSave()!);
     await flush(4);
     expect(api.apiPatch.mock.calls[1]![1]).toEqual({ expectedRevision: 2, content: legacyBodyToRichTextDoc("My edit") });
   });
@@ -803,7 +812,7 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     await dispatchKey(popup(), "i");
     await flush(2);
     api.apiPatch.mockResolvedValue(commit({ ...s.n4, startFrame: 20, endFrame: 251, revision: 2 } as VideoNoteThreadDto));
-    await click(tid("video-note-edit-save")!);
+    await click(editSave()!);
     await flush(4);
     expect(api.apiPatch).toHaveBeenCalledTimes(1);
     expect(api.apiPatch).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-notes/${s.n4.id}`, { expectedRevision: 1, startFrame: 20, endFrame: 251 });
@@ -819,7 +828,7 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     await dispatchKey(popup(), "i");
     await flush(2);
     expect(composerAnchor()).not.toContain("Note from");
-    await click(tid("video-note-reply-cancel")!);
+    await click(tid("video-note-reply-button", threadOf(s.n2.id))!); // the toggle closes the reply (R1: no Cancel)
     await dispatchKey(popup(), "i");
     await flush(2);
     expect(composerAnchor()).toContain("Note from");
@@ -837,7 +846,7 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     expect(editForms().length).toBe(1);
     expect(document.querySelector(`[data-marker-id="${s.n1.id}"]`)).toBeNull();
     await dispatchKey(popup(), "i");
-    expect(tid("video-note-edit-anchor")!.textContent).toContain("01:00:00:20");
+    expect(editChip()!.textContent).toContain("01:00:00:20");
     expect(composerAnchor()).not.toContain("Note from");
     await click(tid("video-notes-filter-visibility-all")!);
     expect(threadOf(s.n1.id).textContent).not.toContain("Outside current filters");
@@ -926,7 +935,7 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     expect(isOff(rangeButton()!)).toBe(true);
     expect(tid("video-note-other-form-hint")!.textContent).toBe("Finish or cancel the open edit first.");
     expect(editForms().length).toBe(1);
-    await click(tid("video-note-edit-cancel")!);
+    await click(editCancel()!);
     expect(tid("video-note-other-form-hint")).toBeNull();
     expect(isOff(postButton()!)).toBe(false);
     await click(tid("video-note-reply-button", threadOf(s.n2.id))!);
@@ -945,7 +954,7 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     await type(threadOf(n.id).querySelector<HTMLTextAreaElement>("textarea")!, "v1 edit");
     const pending = gate();
     api.apiPatch.mockReturnValueOnce(pending.promise);
-    await click(tid("video-note-edit-save")!);
+    await click(editSave()!);
     await pickVersion("v2");
     await chooseNoteAction(threadOf(s.n1.id), "Terry", "Edit");
     expect(editForms().length).toBe(1);
@@ -1028,7 +1037,7 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     await type(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>("textarea")!, "My edit");
     const resolvedElsewhere = { ...s.n1, body: "Changed and resolved elsewhere", revision: 2, resolved: { at: T(30), by: me } } as VideoNoteThreadDto;
     api.apiPatch.mockRejectedValueOnce(conflictOf(resolvedElsewhere));
-    await click(tid("video-note-edit-save")!);
+    await click(editSave()!);
     await flush(6);
     expect(noteIds()).toContain(s.n1.id); // resolved, so the Open filter hides it: the open form pins it
     expect(threadOf(s.n1.id).textContent).toContain("Outside current filters");
@@ -1036,7 +1045,7 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     expect(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("My edit");
     await act(async () => { queryClient!.setQueryData(notesKey(), seed().all.map((n) => (n.id === s.n1.id ? { ...resolvedElsewhere, body: "And again", revision: 3 } as VideoNoteThreadDto : n))); });
     api.apiPatch.mockResolvedValueOnce(commit({ ...resolvedElsewhere, body: "My edit", revision: 4 } as VideoNoteThreadDto));
-    await click(tid("video-note-edit-save")!);
+    await click(editSave()!);
     await flush(6);
     expect(api.apiPatch.mock.calls[1]![1]).toEqual({ expectedRevision: 2, content: legacyBodyToRichTextDoc("My edit") });
   });
@@ -1655,21 +1664,21 @@ describe("In / Out range handles and keys, no player button (#861, #927)", () =>
     expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, { startFrame: 13, endFrame: 31, visibility: "internal", content: legacyBodyToRichTextDoc("Dragged") });
   });
 
-  it("while editing a note the controls drive the edit's marks, and Clear makes it a point note, never frameless", async () => {
+  it("while editing a note its own in/out drives the edit's marks: a range's third press makes it a point at its In, never frameless", async () => {
     const s = seed();
     await openFilm({}, 20);
     await click(tid("video-notes-filter-status-all")!);
     await chooseNoteAction(threadOf(s.n4.id), "Terry", "Edit");
     expect(rangeButton()).toBeNull();
-    expect(tid("video-note-edit-anchor")!.textContent).toContain("→");
-    // With no Clear button, a mark past the other end clears it: In after Out makes the edit a point note, never frameless.
-    await present(260);
-    await dispatchKey(popup(), "i");
-    expect(tid("video-note-edit-anchor")!.textContent).not.toContain("→");
-    api.apiPatch.mockResolvedValue(commit({ ...s.n4, startFrame: 260, endFrame: null, revision: 2 } as VideoNoteThreadDto));
-    await click(tid("video-note-edit-save")!);
+    expect(editChip()!.textContent).toContain("→");
+    // The edit box's three-press button (#927 E1): a range's next press is the third, which keeps its In as a point.
+    await present(230);
+    await click(editRange()!);
+    expect(editChip()!.textContent).not.toContain("→");
+    api.apiPatch.mockResolvedValue(commit({ ...s.n4, startFrame: 200, endFrame: null, revision: 2 } as VideoNoteThreadDto));
+    await click(editSave()!);
     await flush(4);
-    expect(api.apiPatch).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-notes/${s.n4.id}`, { expectedRevision: 1, startFrame: 260, endFrame: null });
+    expect(api.apiPatch).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-notes/${s.n4.id}`, { expectedRevision: 1, startFrame: 200, endFrame: null });
   });
 
   it("on an archived Project I / O stay inert, and there is no range button", async () => {

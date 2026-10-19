@@ -67,6 +67,22 @@ async function chooseAction(name: string, label: "Edit" | "Delete") {
   await act(async () => { item.click(); await Promise.resolve(); await Promise.resolve(); });
   await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 150)); });
 }
+/** The open reply or edit (#927: the note composer box, R1 / E1; a reply's own edit is a body-only form). */
+const formOf = (kind: "reply" | "edit") => host.querySelector<HTMLElement>(`[data-notes-form="${kind}"]`);
+const buttonNamed = (scope: ParentNode | null, name: string) => scope?.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`) ?? null;
+const buttonText = (scope: ParentNode | null, text: string) => [...(scope?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.textContent === text) ?? null;
+const sendReply = () => buttonNamed(formOf("reply"), "Send reply");
+const saveEdit = () => formOf("edit")?.querySelector<HTMLButtonElement>('button[type="submit"]') ?? null;
+const cancelEdit = () => buttonText(formOf("edit"), "Cancel");
+const rangeButton = () => buttonNamed(formOf("edit"), "In and out points");
+/** Off: natively disabled, or a lock with a reason (focusable, so `aria-disabled`). */
+const isOff = (button: HTMLButtonElement | null) => button !== null && (button.disabled || button.getAttribute("aria-disabled") === "true");
+/** What the edit box's anchor chip shows: its spoken prefix ("Note at …", "Note from … to …: ") left out. */
+const chipShown = () => {
+  const chip = formOf("edit")?.querySelector<HTMLElement>('[data-testid="note-composer-chip"]');
+  if (!chip) return null;
+  return (chip.textContent ?? "").replace(/^Note (with a drawing )?at /, "").replace(/^Note from [^:]*: /, "");
+};
 
 beforeEach(() => { vi.useRealTimers(); clockFrame = 20; store = createNoteFormStore("test"); });
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren(); });
@@ -109,7 +125,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     expect(tops).toEqual([58]); // the form's bottom (150) minus the viewport's (100), plus 8
     expect(document.documentElement.scrollTop).toBe(0);
     HTMLElement.prototype.getBoundingClientRect = realRect;
-    expect(tid("video-note-edit-anchor") ?? host.querySelector('[data-notes-form="edit"]')).not.toBeNull();
+    expect(formOf("edit")).not.toBeNull();
     delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
   });
 
@@ -135,7 +151,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     await click(tid("video-note-reply-button")!);
     expect(tid("video-note-resolve")).toBeNull();
     expect(tid("video-note-resolved-status")!.textContent).toBe("Resolved");
-    await click(tid("video-note-reply-cancel")!);
+    await click(tid("video-note-reply-button")!); // the toggle closes it
     expect(tid("video-note-resolve")).not.toBeNull();
     expect(tid("video-note-resolved-status")).toBeNull();
     await chooseAction("Terry", "Edit");
@@ -149,23 +165,65 @@ describe("VideoNoteThread (#741 5b)", () => {
     expect(tid("video-note-resolved-status")).toBeNull();
   });
 
-  it("14: Reply opens a form that names the inherited visibility, has no visibility control, posts the body only and returns focus to Reply", async () => {
+  it("R1: Reply opens the reply box with only the paperclip and Send (no in/out, pen, visibility or Cancel), posts the body only and returns focus to Reply", async () => {
     const t = thread();
     const { props } = await render(t);
     await click(tid("video-note-reply-button")!);
-    const form = host.querySelector<HTMLElement>('[data-notes-form="reply"]')!;
-    expect(form.textContent).toContain("Reply · Internal");
-    expect(form.querySelector("[data-testid^=video-note-visibility-]")).toBe(form.querySelector('[data-testid="video-note-visibility-badge"]'));
-    expect(form.querySelector('[role="group"]')).toBeNull();
-    expect((tid("video-note-reply-post", form) as HTMLButtonElement).disabled).toBe(true);
+    const form = formOf("reply")!;
+    expect(form.getAttribute("aria-label")).toBe("Reply");
+    expect([...form.querySelectorAll("button:not([hidden])")].map((button) => button.getAttribute("aria-label") ?? button.textContent)).toEqual(["Add photos or videos", "Send reply"]);
+    expect(form.querySelector('[data-testid^="video-note-visibility"], [data-testid="note-composer-visibility"], [data-testid="note-composer-chip"]')).toBeNull();
+    expect(form.textContent).not.toContain("Internal");
+    expect(isOff(sendReply())).toBe(true);
     await type(form.querySelector("textarea")!, "  On it  ");
     // The stored plain body is trimmed (5b07446a: `videoNoteBody`), while the document posted below keeps what was typed.
     expect(store.slot("asset").open?.text).toBe("On it");
-    await click(tid("video-note-reply-post", form)!);
+    expect(isOff(sendReply())).toBe(false);
+    await click(sendReply()!);
     await flush();
     expect(props.actions.reply).toHaveBeenCalledWith(t.id, legacyBodyToRichTextDoc("  On it  "));
-    expect(host.querySelector('[data-notes-form="reply"]')).toBeNull();
+    expect(formOf("reply")).toBeNull();
     expect(document.activeElement).toBe(tid("video-note-reply-button"));
+  });
+
+  it("R1: ⌘↵ in the reply sends it", async () => {
+    const t = thread();
+    const { props } = await render(t);
+    await click(tid("video-note-reply-button")!);
+    await type(formOf("reply")!.querySelector("textarea")!, "Quick one");
+    await act(async () => { formOf("reply")!.querySelector("textarea")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true, cancelable: true })); });
+    await flush();
+    expect(props.actions.reply).toHaveBeenCalledWith(t.id, legacyBodyToRichTextDoc("Quick one"));
+  });
+
+  it("R1: the Reply toggle, named Close reply while the box is open, dismisses it and its draft; focus stays on the toggle", async () => {
+    await render(thread());
+    const toggle = tid("video-note-reply-button")!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    await click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.getAttribute("aria-label")).toBe("Close reply");
+    expect(toggle.getAttribute("aria-keyshortcuts")).toBe("Escape");
+    await type(formOf("reply")!.querySelector("textarea")!, "Never mind");
+    await click(toggle);
+    await flush();
+    expect(formOf("reply")).toBeNull();
+    expect(store.slot("asset").open).toBeNull();
+    expect(toggle.getAttribute("aria-label")).toBeNull();
+    expect(document.activeElement).toBe(toggle);
+    await click(toggle);
+    expect(formOf("reply")!.querySelector("textarea")!.value).toBe(""); // the draft went with it
+  });
+
+  it("R1: the paperclip opens the picker and Send waits for the upload", async () => {
+    await render(thread());
+    await click(tid("video-note-reply-button")!);
+    await type(formOf("reply")!.querySelector("textarea")!, "With a picture");
+    await click(buttonNamed(formOf("reply"), "Add photos or videos")!);
+    expect(isOff(sendReply())).toBe(true);
+    expect(sendReply()!.title).toBe("Wait for the uploads to finish.");
+    await click(tid("stub-upload-done", formOf("reply")!)!);
+    expect(isOff(sendReply())).toBe(false);
   });
 
   it("14: a reply that fails keeps the form and text and shows the server's message", async () => {
@@ -175,7 +233,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     await render(t, { actions });
     await click(tid("video-note-reply-button")!);
     await type(host.querySelector("textarea")!, "Hello");
-    await click(tid("video-note-reply-post")!);
+    await click(sendReply()!);
     await flush();
     expect(tid("video-note-notice")!.textContent).toContain("Boom from server");
     expect(host.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("Hello");
@@ -188,7 +246,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     await render(thread(), { actions });
     await click(tid("video-note-reply-button")!);
     await type(host.querySelector("textarea")!, "Hello");
-    await click(tid("video-note-reply-post")!);
+    await click(sendReply()!);
     await flush();
     expect(actions.reply).toHaveBeenCalledTimes(1);
     expect(tid("video-note-notice")!.textContent).toContain("may or may not have gone through");
@@ -293,7 +351,6 @@ describe("VideoNoteThread (#741 5b)", () => {
     await act(async () => { item.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); item.click(); await Promise.resolve(); await Promise.resolve(); });
     await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 150)); });
     expect(document.activeElement).toBe(host.querySelector('[data-notes-form="edit"] textarea'));
-    expect(host.querySelector('[data-notes-form="edit"]')!.getAttribute("data-size-container")).toBe("true");
   });
 
   it("K1: the edit form renders after the menu has closed (a real keyboard run): focus still ends in its textarea, and a re-mounted form does not take focus", async () => {
@@ -316,11 +373,11 @@ describe("VideoNoteThread (#741 5b)", () => {
     const replyEl = tids("video-note-reply")[0]!;
     const replyMenu = replyEl.querySelector<HTMLElement>('[data-testid="video-note-actions"]')!;
     await chooseAction("Terry", "Edit"); // opens the root's; close it first
-    await click(tid("video-note-edit-cancel")!);
+    await click(cancelEdit()!);
     await act(async () => { store.openEdit("asset", mine, root0.id); });
     expect(host.querySelector('[data-notes-form="edit"]')).not.toBeNull();
     (document.activeElement as HTMLElement | null)?.blur();
-    await click(tid("video-note-edit-cancel")!);
+    await click(cancelEdit()!);
     await flush();
     expect(document.activeElement).toBe(replyMenu);
   });
@@ -333,7 +390,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     await act(async () => { store.openEdit("asset", mine, root0.id); });
     await act(async () => { store.openEdit("asset", root0, root0.id); }); // no cancel in between
     (document.activeElement as HTMLElement | null)?.blur();
-    await click(tid("video-note-edit-cancel")!);
+    await click(cancelEdit()!);
     await flush();
     expect(document.activeElement).toBe(rootMenu);
   });
@@ -370,49 +427,105 @@ describe("VideoNoteThread (#741 5b)", () => {
     expect(store.slot("asset").open?.kind).toBe("edit");
     await type(form.querySelector("textarea")!, "A better note");
     expect(store.slot("asset").open?.text).toBe("A better note");
-    await click(tid("video-note-edit-save", form)!);
+    await click(saveEdit()!);
     await flush();
     expect(props.actions.edit).toHaveBeenCalledWith(t.id, { expectedRevision: 3, content: para("A better note") });
     expect(host.querySelector('[data-notes-form="edit"]')).toBeNull();
     expect(store.slot("asset").open).toBeNull();
   });
 
-  it("18: with frames changed through Set in / Set out, Save sends the frames with the revision (a range as start and end + 1)", async () => {
+  it("E1: the edit box: the note's anchor on the chip, a fixed visibility label, Cancel and Save; no visibility menu and no Send", async () => {
+    await render(thread({ visibility: "public", startFrame: 10 }));
+    await chooseAction("Terry", "Edit");
+    const form = formOf("edit")!;
+    expect(form.getAttribute("aria-label")).toBe("Edit note");
+    expect(chipShown()).toBe("TC10");
+    expect(tid("note-composer-visibility", form)!.textContent).toBe("Client-visible");
+    expect(tid("note-composer-visibility", form)!.title).toBe("Visibility can't change once posted");
+    expect(form.querySelector('[aria-haspopup="menu"]')).toBeNull();
+    expect(buttonNamed(form, "Post note")).toBeNull();
+    expect(cancelEdit()).not.toBeNull();
+    expect(saveEdit()!.textContent).toBe("Save");
+    expect(buttonNamed(form, "Add photos or videos")).not.toBeNull();
+    expect(buttonNamed(form, "Draw on the frame")).toBeNull(); // no drawing controls handed in
+  });
+
+  it("E1: in/out is the three-press button: In at the playhead with Out following it, then Out, then back to a point at In; Save sends the frames", async () => {
     const t = thread({ revision: 2, startFrame: 10, endFrame: null });
     const { props } = await render(t);
     await chooseAction("Terry", "Edit");
-    expect(tid("video-note-edit-anchor")!.textContent).toBe("TC10");
-    clockFrame = 20; await click(tid("video-note-edit-set-in")!); await flush();
-    clockFrame = 30; await click(tid("video-note-edit-set-out")!); await flush();
-    expect(tid("video-note-edit-anchor")!.textContent).toBe("TC20 → TC30");
-    await click(tid("video-note-edit-save")!);
+    expect(rangeButton()!.title).toBe("Set in (I)");
+    expect(rangeButton()!.getAttribute("aria-pressed")).toBe("false");
+    clockFrame = 20; await click(rangeButton()!); await flush();
+    expect(chipShown()).toBe("TC20 → TC20");
+    expect(tid("note-composer-chip-live", formOf("edit")!)).not.toBeNull();
+    expect(rangeButton()!.title).toBe("Set out (O)");
+    expect(rangeButton()!.getAttribute("aria-pressed")).toBe("true");
+    clockFrame = 30; await click(rangeButton()!); await flush();
+    expect(chipShown()).toBe("TC20 → TC30");
+    expect(rangeButton()!.title).toBe("Clear in / out");
+    await click(saveEdit()!);
     await flush();
     expect(props.actions.edit).toHaveBeenCalledWith(t.id, { expectedRevision: 2, startFrame: 20, endFrame: 31 });
   });
 
-  it("18: Set in, Set out and Make point drive the form's marks; Make point collapses a range to its first mark", async () => {
-    const t = thread({ startFrame: 10, endFrame: 21 });
-    await render(t);
-    await chooseAction("Terry", "Edit");
-    expect(tid("video-note-edit-anchor")!.textContent).toBe("TC10 → TC20");
-    clockFrame = 15; await click(tid("video-note-edit-set-in")!); await flush();
-    expect(tid("video-note-edit-anchor")!.textContent).toBe("TC15 → TC20");
-    clockFrame = 18; await click(tid("video-note-edit-set-out")!); await flush();
-    expect(tid("video-note-edit-anchor")!.textContent).toBe("TC15 → TC18");
-    await click(tid("video-note-edit-make-point")!);
-    expect(tid("video-note-edit-anchor")!.textContent).toBe("TC15");
-  });
-
-  it("18: a note with markup has no frame controls and never sends frames", async () => {
-    const t = thread({ hasMarkup: true, revision: 4 });
+  it("E1: the third press, or the chip's ×, keeps a frame: the range becomes a point at its In (an edited note always has an anchor)", async () => {
+    const t = thread({ revision: 2, startFrame: 10, endFrame: 21 });
     const { props } = await render(t);
     await chooseAction("Terry", "Edit");
-    expect(tid("video-note-edit-set-in")).toBeNull();
-    expect(tid("video-note-edit-anchor")).toBeNull();
+    expect(chipShown()).toBe("TC10 → TC20");
+    expect(rangeButton()!.title).toBe("Clear in / out");
+    await click(rangeButton()!); await flush();
+    expect(chipShown()).toBe("TC10");
+    expect(rangeButton()!.title).toBe("Set in (I)");
+    expect(rangeButton()!.getAttribute("aria-pressed")).toBe("false");
+    clockFrame = 15; await click(rangeButton()!); await flush();
+    clockFrame = 18; await click(rangeButton()!); await flush();
+    expect(chipShown()).toBe("TC15 → TC18");
+    await click(buttonNamed(tid("note-composer-chip", formOf("edit")!), "Clear in and out")!); await flush();
+    expect(chipShown()).toBe("TC15");
+    await click(saveEdit()!);
+    await flush();
+    expect(props.actions.edit).toHaveBeenCalledWith(t.id, { expectedRevision: 2, startFrame: 15, endFrame: null });
+  });
+
+  it("D4: a note with a drawing keeps its frames: in/out is locked with the reason, the chip carries the pencil, and Save never sends frames", async () => {
+    const t = thread({ hasMarkup: true, drawingFrame: 10, revision: 4 });
+    const { props } = await render(t);
+    await chooseAction("Terry", "Edit");
+    expect(isOff(rangeButton())).toBe(true);
+    expect(rangeButton()!.title).toBe("Frames follow the drawing.");
+    expect(chipShown()).toBe("TC10");
+    expect(tid("note-composer-chip", formOf("edit")!)!.querySelector("svg")).not.toBeNull(); // the pencil
+    await click(rangeButton()!);
     await type(host.querySelector("textarea")!, "Changed");
-    await click(tid("video-note-edit-save")!);
+    await click(saveEdit()!);
     await flush();
     expect(props.actions.edit).toHaveBeenCalledWith(t.id, { expectedRevision: 4, content: para("Changed") });
+  });
+
+  it("E1: the drawing controls handed in are the box's: the pen, and while drawing the row in place of the tools; a click in the portaled colour popover never seeks the card", async () => {
+    const t = thread({ startFrame: 10 });
+    const onSeek = vi.fn();
+    const pen = vi.fn();
+    const onColorChange = vi.fn();
+    const row = { tool: "freehand" as const, color: "#e64b3c", onToolChange: vi.fn(), onColorChange, canUndo: false, canRedo: false, canClear: false, onUndo: vi.fn(), onRedo: vi.fn(), onClear: vi.fn(), onDone: vi.fn() };
+    const { rerender } = await render(t, { onSeek, draw: { pen: { onPress: pen }, row: null, full: false } });
+    await chooseAction("Terry", "Edit");
+    await click(buttonNamed(formOf("edit"), "Draw on the frame")!);
+    expect(pen).toHaveBeenCalledTimes(1);
+    await rerender({ draw: { pen: { onPress: pen }, row, full: true } });
+    expect(tid("note-draw-row", formOf("edit")!)).not.toBeNull();
+    expect(saveEdit()).toBeNull(); // Save and the label give way while drawing, as in the composer
+    expect(formOf("edit")!.textContent).toContain("That is as much markup as one note can hold.");
+    await click(buttonNamed(formOf("edit"), "Pen colour")!);
+    await flush();
+    const palette = document.querySelector<HTMLElement>('[data-testid="note-draw-palette"]')!;
+    expect(tid("video-note-thread")!.contains(palette)).toBe(false);
+    const swatch = [...palette.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.getAttribute("aria-pressed") !== "true")!;
+    await click(swatch);
+    expect(onColorChange).toHaveBeenCalledTimes(1);
+    expect(onSeek).not.toHaveBeenCalled();
   });
 
   it("18: editing a reply sends the body only, with the reply's own revision, and has no frame controls", async () => {
@@ -420,9 +533,11 @@ describe("VideoNoteThread (#741 5b)", () => {
     const r = reply(root0, { revision: 7, body: "Reply body" });
     const { props } = await render({ ...root0, replies: [r] } as VideoNoteThreadDto);
     await chooseAction("Terry", "Edit");
-    expect(tid("video-note-edit-set-in")).toBeNull();
+    expect(rangeButton()).toBeNull();
+    expect(buttonNamed(formOf("edit"), "Draw on the frame")).toBeNull();
+    expect(formOf("edit")!.querySelector('[data-testid="note-composer-chip"]')).toBeNull();
     await type(host.querySelector("textarea")!, "Reply body 2");
-    await click(tid("video-note-edit-save")!);
+    await click(saveEdit()!);
     await flush();
     expect(props.actions.edit).toHaveBeenCalledWith(r.id, { expectedRevision: 7, content: para("Reply body 2") });
   });
@@ -437,7 +552,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     const { rerender } = await render(t, { actions });
     await chooseAction("Terry", "Edit");
     await type(host.querySelector("textarea")!, "My edit");
-    await click(tid("video-note-edit-save")!);
+    await click(saveEdit()!);
     await flush();
     expect(tid("video-note-notice")!.textContent).toContain("This note changed since you opened it.");
     expect(actions.edit).toHaveBeenLastCalledWith(t.id, { expectedRevision: 1, content: para("My edit") });
@@ -446,8 +561,8 @@ describe("VideoNoteThread (#741 5b)", () => {
     await rerender({ thread: serverThread });
     expect(tid("video-note-conflict")!.textContent).toContain("Changed by someone else");
     expect(host.querySelector("textarea")!.value).toBe("My edit");
-    expect(tid("video-note-edit-save")!.textContent).toBe("Save anyway");
-    await click(tid("video-note-edit-save")!);
+    expect(saveEdit()!.textContent).toBe("Save anyway");
+    await click(saveEdit()!);
     await flush();
     expect(actions.edit).toHaveBeenLastCalledWith(t.id, { expectedRevision: 2, content: para("My edit") });
     expect(host.querySelector('[data-notes-form="edit"]')).toBeNull();
@@ -459,7 +574,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     await render(thread(), { actions });
     await chooseAction("Terry", "Edit");
     await type(host.querySelector("textarea")!, "Late edit");
-    await click(tid("video-note-edit-save")!);
+    await click(saveEdit()!);
     await flush();
     expect(tid("video-note-notice")!.textContent).toContain("This note was deleted.");
     expect(host.querySelector('[data-notes-form="edit"]')).toBeNull();
@@ -495,7 +610,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     await chooseAction("Terry", "Edit");
     await rerender({ thread: { ...t, revision: 5, body: "Edited in another tab" } as VideoNoteThreadDto });
     await type(host.querySelector("textarea")!, "Mine");
-    await click(tid("video-note-edit-save")!);
+    await click(saveEdit()!);
     await flush();
     expect(actions.edit).toHaveBeenCalledWith(t.id, { expectedRevision: 3, content: para("Mine") });
   });
@@ -506,7 +621,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     const { rerender } = await render(t, { actions });
     await chooseAction("Terry", "Edit");
     await rerender({ thread: { ...t, revision: 5, body: "Edited in another tab" } as VideoNoteThreadDto });
-    await click(tid("video-note-edit-save")!);
+    await click(saveEdit()!);
     await flush();
     expect(actions.edit).not.toHaveBeenCalled();
   });
@@ -519,12 +634,13 @@ describe("VideoNoteThread (#741 5b)", () => {
     await render(t, { actions });
     await chooseAction("Terry", "Edit");
     await type(host.querySelector("textarea")!, "Sent text");
-    await click(tid("video-note-edit-save")!);
+    await click(saveEdit()!);
     expect(host.querySelector("textarea")!.readOnly).toBe(true);
     await type(host.querySelector("textarea")!, "Late correction");
     expect(host.querySelector("textarea")!.value).toBe("Sent text");
-    expect((tid("video-note-edit-set-in") as HTMLButtonElement).disabled).toBe(true);
-    expect((tid("video-note-edit-cancel") as HTMLButtonElement).disabled).toBe(true);
+    expect(isOff(rangeButton())).toBe(true);
+    expect(cancelEdit()!.disabled).toBe(true);
+    expect(saveEdit()!.textContent).toBe("Saving…");
     await act(async () => { settle({}); });
     await flush();
     expect(host.querySelector('[data-notes-form="edit"]')).toBeNull();
@@ -536,7 +652,7 @@ describe("VideoNoteThread (#741 5b)", () => {
     await chooseAction("Terry", "Edit");
     expect(host.querySelector('[data-notes-form="edit"]')).not.toBeNull();
     // The edit form hides Reply; close it the way another form's opening does (the composer taking over), then reply.
-    await click(tid("video-note-edit-cancel")!);
+    await click(cancelEdit()!);
     await click(tid("video-note-reply-button")!);
     expect(host.querySelector('[data-notes-form="reply"]')).not.toBeNull();
     await chooseAction("Terry", "Edit");
@@ -632,7 +748,7 @@ describe("the whole card seeks to its frame (#901)", () => {
     await tap(tid("video-note-reply-button")!);
     await flush();
     await tap(tid("video-note-reply-body")!.querySelector("textarea")!);
-    await click(tid("video-note-reply-cancel")!);
+    await click(tid("video-note-reply-button")!);
     await chooseAction("Terry", "Edit");
     await tap(card().querySelector('[data-notes-form="edit"]')!);
     expect(onSeek).not.toHaveBeenCalled();
