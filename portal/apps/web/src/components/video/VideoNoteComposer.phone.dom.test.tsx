@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { VideoFrameClock, FrameClockState } from "../../lib/video-frame-clock";
 import { ApiError } from "../../lib/api";
 import { createNoteFormStore, type NoteFormStore } from "../../lib/video-note-form-store";
-import { SheetModeContext, isInComposer, useReviewSheet, type SheetModeValue } from "../quincy/ReviewSheet";
+import { SheetModeContext, isInComposer, useReviewSheet, useSheetMode, type SheetModeValue } from "../quincy/ReviewSheet";
 import "../../testing/dom-polyfills";
 import { mockViewport, type MockViewport } from "../../testing/viewport";
 vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
@@ -14,7 +14,7 @@ import { VideoNoteComposer } from "./VideoNoteComposer";
 
 /**
  * The phone composer (#879; the note box since #927, frames P1, P3, P4): the same box as the desktop at 44px, two rows at rest (the text, then the tools), the whole draft
- * in the sheet's compose mode. No + tray, frame step, hint line or Cancel. The layout follows the sheet's mode alone, which the harness below computes as `useReviewSheet` does.
+ * in the sheet's compose mode. No + tray, frame step, hint line or Cancel. The layout follows the sheet's mode alone, which the harness below computes as `useSheetMode` does.
  */
 let frameNow = 12;
 function fakeClock() {
@@ -33,7 +33,7 @@ function fakeClock() {
 /** The sheet the composer sits in: its mode follows the field's focus and the composer's holds, and is handed down the way `ReviewSplit` hands it. */
 let sheetMode: () => string = () => "none";
 function Sheet({ drawing, children }: { drawing: boolean; children: ReactNode }) {
-  const sheet = useReviewSheet({ drawing, filmAspect: 16 / 9 });
+  const sheet = useSheetMode(useReviewSheet({ filmAspect: 16 / 9 }), drawing);
   sheetMode = () => sheet.mode;
   const value = useMemo<SheetModeValue>(() => ({ mode: sheet.mode, setHold: sheet.setHold }), [sheet.mode, sheet.setHold]);
   return <div data-sheet-part="composer" data-testid="sheet"

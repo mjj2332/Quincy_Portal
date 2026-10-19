@@ -145,8 +145,6 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
    * on the letterboxed picture, so a stroke is the same fraction of the film with Social on or off. Playback, the scrubber, the keys, mute, the time format and full screen work as ever.
    */
   social?: SocialPreviewMode;
-  /** @deprecated #927 T4: the phone control bar has no frame step at all. Accepted and ignored until the hosts (T8, T10) stop passing it. */
-  phoneFrameStep?: boolean;
   /** The phone compose mode (#879 fix, P6): the transport block is hidden (still mounted), so the film takes the room above the compose strip. Ignored in Full screen, where F1 keeps the controls under the composer. */
   transportHidden?: boolean;
   /** Quincy's Full screen (#880). */

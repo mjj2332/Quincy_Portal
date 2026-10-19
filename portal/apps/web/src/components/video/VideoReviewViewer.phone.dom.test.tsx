@@ -33,7 +33,7 @@ let root: Root | null = null; let host: HTMLElement;
 async function flush(times = 6) { for (let i = 0; i < times; i += 1) await act(async () => { await Promise.resolve(); await new Promise<void>((resolve) => setTimeout(resolve, 0)); }); }
 const tid = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 const onCreate = vi.fn();
-async function mount(props: { shown?: (v: number) => void; deepLink?: boolean; download?: boolean; reviewLinks?: boolean; trash?: boolean; social?: boolean; status?: boolean; delivery?: boolean; notes?: boolean; exportOff?: boolean; onClose?: () => void; forms?: NoteFormStore } = {}) {
+async function mount(props: { shown?: (v: number) => void; deepLink?: boolean; download?: boolean; reviewLinks?: boolean; trash?: boolean; social?: boolean; status?: boolean; delivery?: boolean; notes?: boolean; markup?: boolean; exportOff?: boolean; onClose?: () => void; forms?: NoteFormStore } = {}) {
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
   await act(async () => {
     root!.render(<QuincyQueryProvider principalId={auth.userId} role="editor"><VideoReviewViewer
@@ -45,7 +45,7 @@ async function mount(props: { shown?: (v: number) => void; deepLink?: boolean; d
       {...(props.reviewLinks ? { reviewLinks: { onCreate } } : {})}
       {...(props.trash ? { trash: { projectId: PROJECT, archived: false } } : {})}
       {...(props.social ? { social: { projectId: PROJECT, role: "editor" as const } } : {})}
-      {...(props.notes ? { notes: { projectId: PROJECT, role: "editor" as const, userId: auth.userId, archived: false, forms: props.forms ?? createNoteFormStore("phone-test"), exportEnabled: props.exportOff !== true } } : {})}
+      {...(props.notes ? { notes: { projectId: PROJECT, role: "editor" as const, userId: auth.userId, archived: false, forms: props.forms ?? createNoteFormStore("phone-test"), exportEnabled: props.exportOff !== true, ...(props.markup ? { markup: true } : {}) } } : {})}
       {...(props.delivery ? { delivery: { projectId: PROJECT, role: "editor" as const, archived: false, store: createVideoApprovalStore("phone-test") } } : {})}
       {...(props.status ? { reviewStatus: { projectId: PROJECT, role: "editor" as const, archived: false } } : {})}
     /></QuincyQueryProvider>);
@@ -665,5 +665,73 @@ describe("the phone notes list: the whole card seeks (#901)", () => {
     });
     await flush(2);
     expect(pane.getAttribute("data-stop")).not.toBe(before);
+  });
+});
+
+describe("the phone sheet while drawing (#927 P4)", () => {
+  const film = () => document.querySelector<HTMLElement>('[role="dialog"]')!.querySelector("video")!;
+  const box = () => tid("video-note-composer")!;
+  const pen = () => box().querySelector<HTMLButtonElement>('button[aria-label="Draw on the frame"]')!;
+  const mode = () => tid("video-review-pane")!.getAttribute("data-mode");
+  const transport = () => tid("video-scrubber")!.parentElement!;
+  async function drawingFilm() {
+    await mount({ notes: true, markup: true });
+    const deadline = Date.now() + 5000; while (!document.querySelector("textarea") && Date.now() < deadline) await flush(1);
+    await act(async () => { stub.loadMetadata(film(), { duration: 12, videoWidth: 1920, videoHeight: 1080 }); });
+    await act(async () => { stub.finishSeek(film()); stub.presentFrame(film(), 0); });
+    await flush(2);
+  }
+  const penDown = async () => { await click(pen()); await act(async () => { stub.finishSeek(film()); stub.presentFrame(film(), 0); }); await flush(2); };
+
+  it("the pen lowers the keyboard into draw mode; tapping the text raises it into compose with the drawing row still in the box, the transport put away; leaving the field is draw again", async () => {
+    await drawingFilm();
+    const field = document.querySelector<HTMLTextAreaElement>("textarea")!;
+    await act(async () => { field.focus(); });
+    expect(mode()).toBe("compose");
+    await penDown();
+    expect(document.activeElement).not.toBe(field);
+    expect(mode()).toBe("draw");
+    expect(tid("note-draw-row")).not.toBeNull();
+    expect(transport().hasAttribute("hidden")).toBe(false);
+    // A tap on the text while drawing (P4): the keyboard is up, the box keeps the drawing row, and the sheet is laid out for the keyboard.
+    await act(async () => { field.focus(); });
+    await flush(2);
+    expect(mode()).toBe("compose");
+    expect(tid("note-draw-row")).not.toBeNull();
+    expect(transport().hasAttribute("hidden")).toBe(true);
+    expect(tid("video-review-player")!.className).toContain("overflow-hidden");
+    await act(async () => { field.blur(); });
+    await flush(4);
+    expect(mode()).toBe("draw");
+    expect(transport().hasAttribute("hidden")).toBe(false);
+  });
+
+  it("‹ ends drawing with the keyboard still down: browse, the tools row back, and a tap on the text is compose again", async () => {
+    await drawingFilm();
+    await penDown();
+    expect(mode()).toBe("draw");
+    await click(tid("note-draw-row")!.querySelector<HTMLButtonElement>('button[aria-label="Done drawing"]')!);
+    expect(tid("note-draw-row")).toBeNull();
+    expect(mode()).toBe("browse");
+    await act(async () => { document.querySelector<HTMLTextAreaElement>("textarea")!.focus(); });
+    expect(mode()).toBe("compose");
+  });
+});
+
+describe("Full screen on iPhone (#927 D1)", () => {
+  afterEach(() => {
+    delete (document as unknown as Record<string, unknown>).fullscreenEnabled;
+    delete (HTMLVideoElement.prototype as unknown as Record<string, unknown>).webkitEnterFullscreen;
+  });
+  it("the Full screen button hands the film to the native player, in the press, and the in-app layer never opens", async () => {
+    Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: false });
+    const native = vi.fn();
+    (HTMLVideoElement.prototype as unknown as { webkitEnterFullscreen: () => void }).webkitEnterFullscreen = native;
+    await mount();
+    const film = document.querySelector<HTMLElement>('[role="dialog"]')!.querySelector("video")!;
+    await act(async () => { stub.loadMetadata(film, { duration: 12, videoWidth: 1920, videoHeight: 1080 }); });
+    await act(async () => { tid("video-fullscreen")!.click(); });
+    expect(native).toHaveBeenCalledTimes(1);
+    expect(tid("video-exit-fullscreen")).toBeNull();
   });
 });

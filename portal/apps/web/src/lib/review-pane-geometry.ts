@@ -14,12 +14,16 @@ const STAGE_GAP = 0;
 export type SheetStop = "collapsed" | "half" | "full";
 export type SheetStops = Record<SheetStop, number>;
 
+/**
+ * The sheet's three stops. `collapsed` is the measured bar (the grabber, the head and the composer: since #927 the two-row box at rest, P1), and the browse stops never cut it:
+ * when the split is too short for the film's floor and the bar both, the film gives way, as it does for compose, and only the split itself bounds the bar.
+ */
 export function sheetStops({ available, collapsed, filmAspect, width, transport }: { available: number; collapsed: number; filmAspect: number; width: number; transport: number }): SheetStops {
   const cap = Math.round(FILM_SHARE * available);
   const film = filmAspect < 1 ? cap : Math.min(cap, Math.round(width / filmAspect + transport));
   const filmFloor = Math.max(FILM_FLOOR, PICTURE_MIN + STAGE_GAP + transport);
-  const full = Math.max(0, available - filmFloor);
-  const floor = Math.min(collapsed, full);
+  const floor = Math.max(0, Math.min(collapsed, available));
+  const full = Math.max(floor, available - filmFloor);
   const half = Math.min(full, Math.max(floor, available - film));
   return { collapsed: floor, half, full };
 }

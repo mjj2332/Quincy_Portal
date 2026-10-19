@@ -146,7 +146,7 @@ export function useGuestCompose({ clock, frameCount, markupAllowed, post, edit, 
   /** The player's I / O marks (a draft opens if none is), or undefined while the marks cannot change (locked by a drawing, drawing in progress, or posting). */
   onMark: ((kind: "in" | "out", frame: number) => void) | undefined;
   /** The draft's marks, for the player's handles (#861), and the Clear they offer (back to a point). Both inert while `onMark` is. */
-  marks: NoteMarks; clearMarks: () => void;
+  marks: NoteMarks;
 } {
   const [isOpen, setOpen] = useState(false);
   const [doc, setDoc] = useState<RichTextDoc>(EMPTY_DOC);
@@ -368,7 +368,6 @@ export function useGuestCompose({ clock, frameCount, markupAllowed, post, edit, 
 
   /** Back to a point at the range's start: an edit keeps a frame, and a new draft keeps its anchor (the note has started). */
   const clearRange = useCallback(() => { const current = marksRef.current; setMarks({ in: current.in ?? current.out, out: null }); setInMarked(false); }, [setMarks, setInMarked]);
-  const clearMarks = useMemo(() => (marksOpen ? clearRange : () => undefined), [marksOpen, clearRange]);
 
   const showsDraft = drawing || (isOpen && items.length > 0 && drawFrame !== null && !playing && frameNow === drawFrame);
   const overlay = useCallback((box: Box | null): ReactNode => {
@@ -451,7 +450,7 @@ export function useGuestCompose({ clock, frameCount, markupAllowed, post, edit, 
   const replacing = editingId !== null && (items.length > 0 || phase !== "off" || removed);
   const replacesSavedDrawing = useCallback((id: string | null) => replacing && id === editingId, [replacing, editingId]);
   // `strip` is rebuilt every render (its commands read the draft as rendered); the composer is the one reader and re-renders with the hook's owner anyway.
-  return { isOpen, editingId, drawing, penDown, strip, endDrawing, replacesSavedDrawing, begin, beginEdit, close: closeFromPage, overlay, onMark, marks, clearMarks };
+  return { isOpen, editingId, drawing, penDown, strip, endDrawing, replacesSavedDrawing, begin, beginEdit, close: closeFromPage, overlay, onMark, marks };
 }
 
 /** The SVG on the picture box. A gesture never outlives draw mode or the picture it started on: leaving, or a resize, drops the stroke in progress and keeps the finished ones. */
