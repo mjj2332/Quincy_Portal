@@ -31,7 +31,8 @@ export const PEN_COLOUR_NAMES = {
 } as const;
 export const MARKUP_WIDTHS = [2, 4, 7] as const;
 
-const TOOLS: { kind: MarkupToolKind; label: string; Icon: LucideIcon }[] = [
+/** The four tools, in the order every drawing control shows them (exported for the note composer's drawing row, #927). */
+export const MARKUP_TOOLS: readonly { kind: MarkupToolKind; label: string; Icon: LucideIcon }[] = [
   { kind: "freehand", label: "Pen", Icon: PencilIcon },
   { kind: "arrow", label: "Arrow", Icon: ArrowUpRightIcon },
   { kind: "line", label: "Line", Icon: MinusIcon },
@@ -42,10 +43,10 @@ const TOOLS: { kind: MarkupToolKind; label: string; Icon: LucideIcon }[] = [
 const TARGET = "h-7 min-w-7 max-[721px]:h-11 max-[721px]:min-w-11 min-[721px]:pointer-coarse:h-11 min-[721px]:pointer-coarse:min-w-11";
 const GROUP = "inline-flex w-auto items-center gap-[var(--space-1)]";
 /** The selection ring is a box-shadow on the inner circle (a --card gap, then a --ring band), so the outline stays free for the global keyboard :focus-visible ring. The pressed fill is cleared: the ring alone shows the selection. */
-const SWATCH_ITEM = "group/swatch aria-pressed:bg-transparent";
-const SWATCH_RING = "group-aria-pressed/swatch:shadow-[0_0_0_2px_var(--card),0_0_0_calc(2px+var(--border-width-bold))_var(--ring)]";
+export const SWATCH_ITEM = "group/swatch aria-pressed:bg-transparent";
+export const SWATCH_RING = "group-aria-pressed/swatch:shadow-[0_0_0_2px_var(--card),0_0_0_calc(2px+var(--border-width-bold))_var(--ring)]";
 /** The selected chip's fill (--secondary) is ~1.17:1 against the pill, so it also carries an inset --border-hover hairline. The phone composer's + and pen reuse the pressed one (#879 fix r9): on the inverse pill --secondary is the pill's own ink-700. */
-const SELECTED_HAIRLINE_CHECKED = "data-checked:shadow-[inset_0_0_0_var(--border-width-hair)_var(--border-hover)]";
+export const SELECTED_HAIRLINE_CHECKED = "data-checked:shadow-[inset_0_0_0_var(--border-width-hair)_var(--border-hover)]";
 export const SELECTED_HAIRLINE_PRESSED = "aria-pressed:shadow-[inset_0_0_0_var(--border-width-hair)_var(--border-hover)]";
 const COMPACT_BUTTON = "w-11 min-w-11 px-0 min-[721px]:pointer-coarse:min-w-11";
 /** The default button is 38px; a touch tablet gets 44px. */
@@ -77,7 +78,7 @@ export interface MarkupToolbarProps {
 export function MarkupToolbar({ label, tool, onToolChange, onColorChange, onWidthChange, canUndo, canRedo, canClear, onUndo, onRedo, onClear, compact = false, trailing, testId, className }: MarkupToolbarProps) {
   const tools = (
     <RadioGroup key="tools" aria-label="Markup tool" className={GROUP} value={tool.kind} onValueChange={(value) => { if (value !== tool.kind) onToolChange(value as MarkupToolKind); }}>
-      {TOOLS.map(({ kind, label: name, Icon }) => (
+      {MARKUP_TOOLS.map(({ kind, label: name, Icon }) => (
         <RadioGroupItem
           key={kind} value={kind} aria-label={name} title={name} render={<button type="button" />} nativeButton
           className={cn(
