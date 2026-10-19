@@ -91,6 +91,9 @@ async function open(initialVideoId: string | null = null) {
   await act(async () => { root!.render(<GuestApp token="tok123" initialVideoId={initialVideoId} />); });
   await flush();
 }
+/** A control of the note box by its accessible name (#927). */
+const inBox = (label: string) => document.body.querySelector<HTMLButtonElement>(`[data-testid="guest-composer"] button[aria-label="${label}"]`);
+const off = (element: HTMLButtonElement | null) => element !== null && (element.disabled || element.getAttribute("aria-disabled") === "true");
 const byId = (id: string) => document.body.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 const allById = (id: string) => [...document.body.querySelectorAll<HTMLElement>(`[data-testid="${id}"]`)];
 const click = async (element: Element | null | undefined) => { await act(async () => { (element as HTMLElement).click(); }); await flush(); };
@@ -216,47 +219,46 @@ describe("Social preview on the Review link (#872)", () => {
     expect(overlayImage()).toBeNull();
   });
 
-  it("keeps the same <video> element, the marker lane and the range button, and I marks the in frame of an open note", async () => {
+  it("keeps the same <video> element and the marker lane, and I marks the in frame of the note", async () => {
     notes = { [asset(10)]: [note(1)] };
     await open();
     expect(byId("video-marker-lane")).not.toBeNull();
     const before = host.querySelector("video");
-    await click(byId("guest-add-note"));
     await social(true);
     expect(host.querySelector("video")).toBe(before);
     expect(byId("video-marker-lane")).not.toBeNull();
     expect(byId("video-range-button")).toBeNull();
     await atSeconds(2);
     await keyDown("i");
-    expect(byId("guest-composer-anchor")?.textContent).toContain("00:00:02:00");
+    expect(byId("note-composer-chip")?.textContent).toContain("00:00:02:00");
+    expect(inBox("In and out points")!.getAttribute("aria-pressed")).toBe("true");
     await social(false);
     expect(byId("video-marker-lane")).not.toBeNull();
     expect(host.querySelector("video")).toBe(before);
   });
 
-  it("keeps Add a note and the empty-list line with Social on: no paused line, nothing hidden", async () => {
+  it("keeps the note box and the empty-list line with Social on: no paused line, nothing hidden", async () => {
     await open();
-    expect(byId("guest-add-note")).not.toBeNull();
+    expect(byId("guest-composer")).not.toBeNull();
     await social(true);
-    expect(byId("guest-add-note")!.closest("[hidden]")).toBeNull();
-    expect(byId("guest-add-note")!.closest("[inert]")).toBeNull();
+    expect(byId("guest-composer")!.closest("[hidden]")).toBeNull();
+    expect(byId("guest-composer")!.closest("[inert]")).toBeNull();
     expect(byId("guest-notes-social-paused")).toBeNull();
     expect(document.body.textContent).toContain("No notes yet");
     await social(false);
     expect(document.body.textContent).toContain("No notes yet");
-    expect(byId("guest-add-note")).not.toBeNull();
+    expect(byId("guest-composer")).not.toBeNull();
   });
 
   it("a guest can Post a note while Social is on", async () => {
     extra = (url, init) => (url.endsWith("/notes") && init?.method === "POST" ? Promise.resolve(json(mine(5, { body: "From Social" }), 201)) : undefined);
     await open();
     await social(true);
-    await click(byId("guest-add-note"));
     await typeInto(byId("guest-composer-body"), "From Social");
     await submit("guest-composer");
     expect(requests("POST")).toHaveLength(1);
     expect(toggle()!.getAttribute("aria-pressed")).toBe("true");
-    expect(byId("guest-composer")).toBeNull();
+    expect(byId("guest-composer")!.dataset.open).toBe("false");
   });
 
   it("is offered to a guest who cannot comment, with no paused line", async () => {
@@ -270,10 +272,9 @@ describe("Social preview on the Review link (#872)", () => {
   it("keeps a typed composer draft (body and an in mark) visible and intact while Social is on, and after it", async () => {
     await open();
     await atSeconds(1);
-    await click(byId("guest-add-note"));
     await typeInto(byId("guest-composer-body"), "Half written");
-    await click(byId("guest-composer-mark-in"));
-    const anchor = byId("guest-composer-anchor")!.textContent;
+    await click(inBox("In and out points"));
+    const anchor = byId("note-composer-chip")!.textContent;
     await social(true);
     expect(byId("guest-composer")!.closest("[hidden]")).toBeNull();
     expect(byId("guest-composer")!.closest("[inert]")).toBeNull();
@@ -281,37 +282,35 @@ describe("Social preview on the Review link (#872)", () => {
     await social(false);
     expect(byId("guest-composer")!.closest("[hidden]")).toBeNull();
     expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("Half written");
-    expect(byId("guest-composer-anchor")!.textContent).toBe(anchor);
+    expect(byId("note-composer-chip")!.textContent).toBe(anchor);
   });
 
   it("keeps the same composer and editor nodes across Social, and an upload started before it is never torn down", async () => {
     await open();
-    await click(byId("guest-add-note"));
     const form = byId("guest-composer"); const editor = byId("guest-composer-body");
     await act(async () => { field.props.get("guest-composer-body")!.onUploadingChange?.(true); });
-    expect((byId("guest-composer-post") as HTMLButtonElement).disabled).toBe(true);
+    expect(off(inBox("Post note"))).toBe(true);
     await social(true);
     await social(false);
     expect(byId("guest-composer")).toBe(form);
     expect(byId("guest-composer-body")).toBe(editor);
     expect(field.unmounts).toBe(0);
-    expect((byId("guest-composer-post") as HTMLButtonElement).disabled).toBe(true);
+    expect(off(inBox("Post note"))).toBe(true);
   });
 
   it("settles a Post that is still out when Social turns on: the answer lands and the composer is usable again", async () => {
     let release: (response: Response) => void = () => undefined;
     extra = (url, init) => (url.endsWith("/notes") && init?.method === "POST" ? new Promise<Response>((resolve) => { release = resolve; }) : undefined);
     await open();
-    await click(byId("guest-add-note"));
     await typeInto(byId("guest-composer-body"), "On its way");
     await submit("guest-composer");
-    expect((byId("guest-composer-post") as HTMLButtonElement).disabled).toBe(true);
+    expect(off(inBox("Post note"))).toBe(true);
     await social(true);
     await act(async () => { release(json(mine(5, { body: "On its way" }), 201)); });
     await flush();
     await social(false);
-    expect(byId("guest-composer")).toBeNull();
-    expect(byId("guest-add-note")).not.toBeNull();
+    expect(byId("guest-composer")!.dataset.open).toBe("false");
+    expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("");
   });
 
   it("settles a Save that is still out when Social turns on", async () => {
@@ -323,13 +322,13 @@ describe("Social preview on the Review link (#872)", () => {
     await click(menuItem("Edit"));
     await typeInto(byId("guest-composer-body"), "Changed");
     await submit("guest-composer");
-    expect((byId("guest-composer-post") as HTMLButtonElement).disabled).toBe(true);
+    expect(off(document.body.querySelector<HTMLButtonElement>('[data-testid="guest-composer"] button[type="submit"]'))).toBe(true);
     await social(true);
     await act(async () => { release(json(mine(2, { revision: 4, body: "Changed" }))); });
     await flush();
     await social(false);
-    expect(byId("guest-composer")).toBeNull();
-    expect(byId("guest-add-note")).not.toBeNull();
+    expect(byId("guest-composer")!.dataset.variant).toBe("guest");
+    expect(byId("guest-composer")!.dataset.open).toBe("false");
   });
 
   it("keeps an open own-note Edit form usable with Social on, with its text", async () => {
@@ -367,20 +366,20 @@ describe("Social preview on the Review link (#872)", () => {
     await withLayout(async () => {
       await open();
       await atSeconds(1);
-      // A phone has no Add a note: the pen sits in the pill (#879 PR 2), with the field mounted at rest for a verified guest.
+      // The pen sits in the note box (#927), with the field mounted at rest for a verified guest.
       await vi.waitFor(() => { expect(byId("guest-composer-body")).not.toBeNull(); });
-      await click(byId("guest-composer-draw"));
+      await click(inBox("Draw on the frame"));
       await atSeconds(1);
       const layer = byId("guest-draft-layer")!;
       await draw(layer);
-      expect(byId("guest-markup-toolbar")).not.toBeNull();
+      expect(byId("note-draw-row")).not.toBeNull();
       await social(true);
-      expect(byId("guest-markup-toolbar")).not.toBeNull();
+      expect(byId("note-draw-row")).not.toBeNull();
       expect(byId("guest-draft-layer")).toBe(layer);
       expect(byId("video-social-frame")!.contains(layer)).toBe(true);
       expect(byId("video-review-pane")!.getAttribute("data-mode")).toBe("draw");
       await social(false);
-      expect(byId("guest-markup-toolbar")).not.toBeNull();
+      expect(byId("note-draw-row")).not.toBeNull();
       expect(byId("guest-draft-layer")).toBe(layer);
     });
   });

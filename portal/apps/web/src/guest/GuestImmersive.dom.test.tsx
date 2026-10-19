@@ -173,15 +173,13 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     await open();
     byId("video-fullscreen")!.focus();
     await click(byId("video-fullscreen"));
+    const box = byId("guest-composer");
     await click(byId("video-immersive-add-note"));
-    // A phone's composer is the strip (#879 PR 2), the same node the sheet showed; a desktop's is the form.
-    expect(byId(size.coarse ? "guest-compose-strip" : "guest-composer")).not.toBeNull();
+    // The note box (#927), the same node the pane showed, floats over the film; the field has the focus inside the tap.
+    expect(byId("guest-composer")).toBe(box);
+    expect(box!.dataset.floating).toBe("true");
     expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
-    // A phone's Full screen composer is P6's compose strip (S4, owner decision 1): its hint names the stamp, and the field has the focus inside the tap.
-    if (size.coarse) {
-      expect(byId("guest-composer-stamp")!.textContent).toContain("the note is stamped here");
-      expect(byId("video-review-pane")!.contains(document.activeElement)).toBe(true);
-    }
+    expect(byId("video-review-pane")!.contains(document.activeElement)).toBe(true);
     await tapMarker();
     expect(byId("review-note-card")).not.toBeNull();
     await escape();
@@ -189,30 +187,27 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
     await escape();
     expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
-    expect(byId(size.coarse ? "guest-compose-strip" : "guest-composer")).not.toBeNull();
+    expect(byId("guest-composer")).toBe(box);
     await escapeOutOfTooltip();
     await escape();
     expect(immersiveOn()).toBe(false);
     expect(document.activeElement).toBe(byId("video-fullscreen"));
   });
 
-  it("Cancel discards the draft and closes the composer, as the Add note toggle does (#880 fix round 1, item 2)", async () => {
+  it("Add note again hides the box and keeps the draft; a new note has no Cancel (#927 G1)", async () => {
     await open();
     await click(byId("video-fullscreen"));
     await click(byId("video-immersive-add-note"));
     await typeInto(byId("guest-composer-body"), "Trim the opening");
     expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
-    // A desktop click focuses the button first (a phone's Cancel keeps the field's focus instead).
-    if (!size.coarse) await act(async () => { byId("guest-composer-cancel")!.focus(); });
-    await click(byId("guest-composer-cancel"));
-    expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
-    // A touch device's focus after Cancel is the player: a scripted focus on Add note opened its tooltip and a heavy ring there (#880 review 4's family). A desktop keeps Add note.
-    expect(document.activeElement).toBe(byId(size.coarse ? "video-player" : "video-immersive-add-note"));
+    expect([...byId("guest-composer")!.querySelectorAll("button")].some((item) => item.textContent?.trim() === "Cancel")).toBe(false);
     await click(byId("video-immersive-add-note"));
-    expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("");
+    expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
+    await click(byId("video-immersive-add-note"));
+    expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("Trim the opening");
   });
 
-  it("the Full screen composer drops the notes pane's sheet chrome: no padding or side border around it (#880 fix round 1, item 3)", async () => {
+  it("the Full screen composer drops the notes pane's sheet chrome: no padding or side border around it, and the box draws none of its own (#880 fix round 1, item 3)", async () => {
     await open();
     await click(byId("video-fullscreen"));
     await click(byId("video-immersive-add-note"));
@@ -221,29 +216,9 @@ describe.each([["a phone at 390", { width: 390, height: 844, coarse: true }], ["
     for (const name of ["min-[721px]:in-data-[immersive=compose]:p-0", "min-[721px]:in-data-[immersive=compose]:border-l-0"]) expect(aside, name).toContain(name);
     const inner = byId("guest-notes-aside-body")!.className.split(/\s+/);
     expect(inner).toContain("max-[721px]:in-data-[immersive=compose]:p-0");
-    if (size.coarse) {
-      const band = byId("guest-compose-strip")!.closest<HTMLElement>("[data-sheet-part=composer]")!.className.split(/\s+/);
-      for (const name of ["in-data-[immersive=compose]:border-t-0", "in-data-[immersive=compose]:pt-0"]) expect(band, name).toContain(name);
-    } else {
-      const form = byId("guest-composer")!.className.split(/\s+/);
-      for (const name of ["in-data-[immersive=compose]:border-b-0", "in-data-[immersive=compose]:pb-0"]) expect(form, name).toContain(name);
-    }
-  });
-
-  it("on a phone, the Full screen strip's Cancel ends its hint line in one head row spanning both columns, so the pill keeps its width (#880 review 6)", async () => {
-    if (!size.coarse) return;
-    await open();
-    await click(byId("video-fullscreen"));
-    await click(byId("video-immersive-add-note"));
-    const strip = byId("guest-compose-strip")!;
-    expect(strip.closest('[data-immersive="compose"]')).toBe(byId("video-review-pane"));
-    // The rendered structure: one grid item spanning both columns, the hint line then Cancel; Cancel sizes no column of its own.
-    const head = byId("guest-composer-head")!;
-    expect(head.parentElement).toBe(strip);
-    expect(head.classList.contains("col-span-2")).toBe(true);
-    expect(head.contains(byId("guest-composer-stamp"))).toBe(true);
-    expect(head.lastElementChild).toBe(byId("guest-composer-cancel"));
-    expect(composeRuleApplies(strip, "grid-rows-[auto_auto_auto]")).toBe(true);
+    const form = byId("guest-composer")!.className.split(/\s+/);
+    expect(form).toContain("p-0");
+    expect(form).not.toContain("border-t");
   });
 
   it("Tab is held inside the layer: the focus manager's guards exist only while in Full screen, and the page's header is inert", async () => {
@@ -336,12 +311,12 @@ describe("the guest page's Full screen Escape with the pen on the picture (#880 
     await atSeconds(2);
     await click(byId("video-fullscreen"));
     await click(byId("video-immersive-add-note"));
-    await click(byId("guest-composer-draw"));
+    await click(byId("guest-composer")!.querySelector('[aria-label="Draw on the frame"]'));
     await atSeconds(2);
-    expect(byId("guest-markup-toolbar")).not.toBeNull();
+    expect(byId("note-draw-row")).not.toBeNull();
     await escapeOutOfTooltip();
     await escape();
-    expect(byId("guest-markup-toolbar")).toBeNull();
+    expect(byId("note-draw-row")).toBeNull();
     expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
     await escapeOutOfTooltip();
     await escape();
@@ -400,8 +375,7 @@ describe("the guest page's Full screen: unverified Add note (#880)", () => {
     expect(byId("guest-verify-dialog")).toBeNull();
     expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
     expect(byId("video-immersive-add-note")!.getAttribute("aria-pressed")).toBe("true");
-    if (size.coarse) expect(byId("guest-compose-strip")!.getAttribute("data-open")).toBe("true");
-    else expect(byId("guest-composer")).not.toBeNull();
+    expect(byId("guest-composer")!.getAttribute("data-open")).toBe("true");
     // The focus stays in the viewer where Add note leaves it: Add note on a desktop, the player on a touch device (the keyboard is gone once the code is checked).
     expect(document.activeElement).toBe(byId(size.coarse ? "video-player" : "video-immersive-add-note"));
   });
@@ -465,7 +439,7 @@ describe("the guest page's Full screen and rotation (#880, D14)", () => {
     await click(byId("video-immersive-add-note"));
     expect(byId("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
     expect(byId("video-immersive-add-note")!.getAttribute("aria-pressed")).toBe("false");
-    expect(byId("guest-composer")).toBeNull();
+    expect(byId("guest-composer")!.dataset.open).toBe("false");
     expect(byId("video-immersive-prompt")!.textContent).toBe("Turn your phone upright to add a note.");
   });
   it("turning back with the field left in Full screen gives the sheet browse, not a stale compose (#880 S5)", async () => {
