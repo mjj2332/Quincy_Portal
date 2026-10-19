@@ -125,6 +125,105 @@ afterEach(async () => {
   window.history.replaceState(null, "", "/");
 });
 
+/** A control of the note box by its accessible name (#927: the box's tools carry labels, not test ids). */
+const labelled = (label: string, scope: ParentNode = document.body) => [...scope.querySelectorAll<HTMLElement>("button")].find((item) => item.getAttribute("aria-label") === label) ?? null;
+const box = () => byId("guest-composer");
+const inBox = (label: string) => (box() ? labelled(label, box()!) : null);
+const chip = () => byId("note-composer-chip");
+/** A control that is off: `disabled`, or locked with a reason (Base UI's focusable `aria-disabled`). */
+const off = (element: Element | null | undefined) => element instanceof HTMLButtonElement && (element.disabled || element.getAttribute("aria-disabled") === "true");
+const inOut = async () => { await click(inBox("In and out points")); };
+const pen = async () => { await click(inBox("Draw on the frame")); };
+const doneDrawing = async () => { await click(labelled("Done drawing")); };
+
+describe("the note box (#927 G1)", () => {
+  it("a verified guest's rail ends in the box: in/out, paperclip and pen bottom left, a round Post note bottom right, no visibility and no Add a note", async () => {
+    await open();
+    const form = box()!;
+    expect(form).not.toBeNull();
+    expect(form.getAttribute("data-variant")).toBe("guest");
+    expect(byId("guest-add-note")).toBeNull();
+    expect(inBox("In and out points")).not.toBeNull();
+    expect(inBox("Add photos or videos")).not.toBeNull();
+    expect(inBox("Draw on the frame")).not.toBeNull();
+    expect(form.querySelector('[aria-label^="Who can see this note"]')).toBeNull();
+    expect(byId("note-composer-visibility")).toBeNull();
+    const send = inBox("Post note") as HTMLButtonElement;
+    expect(send.getAttribute("type")).toBe("submit");
+    expect(off(send)).toBe(true);
+    // The box is the panel's foot: after the notes list.
+    expect(byId("guest-notes-panel")!.lastElementChild!.contains(form)).toBe(true);
+  });
+  it("hides the pen when drawing is off for the Project, and still posts", async () => {
+    session = { ...VERIFIED, link: { ...VERIFIED.link, allow: { ...VERIFIED.link.allow, markup: false } } };
+    extra = (url, init) => (url.endsWith("/notes") && init?.method === "POST" ? json(mine(5, { startFrame: 50 }), 201) : undefined);
+    await open();
+    expect(inBox("Draw on the frame")).toBeNull();
+    expect(inBox("In and out points")).not.toBeNull();
+    await atSeconds(2);
+    await typeInto(byId("guest-composer-body"), "Text only");
+    await submit("guest-composer");
+    expect(requests("POST").at(-1)!.body).toEqual({ startFrame: 50, content: para("Text only") });
+  });
+  it("the chip follows the film until the note starts, then stays on the frame the text began on", async () => {
+    extra = (url, init) => (url.endsWith("/notes") && init?.method === "POST" ? json(mine(5, { startFrame: 75 }), 201) : undefined);
+    await open();
+    await atSeconds(2);
+    expect(chip()!.textContent).toContain("00:00:02:00");
+    await atSeconds(3);
+    expect(chip()!.textContent).toContain("00:00:03:00");
+    await typeInto(byId("guest-composer-body"), "Here");
+    await atSeconds(5);
+    expect(chip()!.textContent).toContain("00:00:03:00");
+    expect((inBox("Post note") as HTMLButtonElement).disabled).toBe(false);
+    await click(inBox("Post note"));
+    expect(requests("POST").at(-1)!.body).toEqual({ startFrame: 75, content: para("Here") });
+    // Posted: the box is empty again and follows the film.
+    expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("");
+    expect(chip()!.textContent).toContain("00:00:05:00");
+  });
+  it("one in/out button: In, then Out, then clear; the chip reads In → Out with ×, and the post carries the range", async () => {
+    extra = (url, init) => (url.endsWith("/notes") && init?.method === "POST" ? json(mine(5, { startFrame: 50, endFrame: 101 }), 201) : undefined);
+    await open();
+    await atSeconds(2);
+    await click(inBox("In and out points"));
+    expect(inBox("In and out points")!.getAttribute("aria-pressed")).toBe("true");
+    await atSeconds(3);
+    expect(chip()!.textContent).toMatch(/00:00:02:00 → 00:00:03:00/);
+    expect(byId("note-composer-chip-live")).not.toBeNull();
+    await atSeconds(4);
+    await click(inBox("In and out points"));
+    expect(chip()!.textContent).toMatch(/00:00:02:00 → 00:00:04:00/);
+    expect(byId("note-composer-chip-live")).toBeNull();
+    await click(inBox("In and out points"));
+    expect(chip()!.textContent).not.toContain("→");
+    expect(inBox("In and out points")!.getAttribute("aria-pressed")).toBe("false");
+    await atSeconds(2);
+    await click(inBox("In and out points"));
+    await atSeconds(4);
+    await click(inBox("In and out points"));
+    await typeInto(byId("guest-composer-body"), "Cut this section");
+    await click(inBox("Post note"));
+    expect(requests("POST").at(-1)!.body).toEqual({ startFrame: 50, endFrame: 101, content: para("Cut this section") });
+  });
+  it("the chip's × clears the range back to a point", async () => {
+    await open();
+    await atSeconds(2);
+    await click(inBox("In and out points"));
+    await atSeconds(4);
+    await click(inBox("In and out points"));
+    await click(labelled("Clear in and out", chip()!));
+    expect(chip()!.textContent).not.toContain("→");
+  });
+  it("an unverified guest's box has a field that asks for verification, and no draft opens", async () => {
+    session = ANON;
+    await open();
+    expect(byId("guest-composer-body")).toBeNull();
+    await click(byId("guest-compose-shell-open"));
+    expect(byId("guest-verify-dialog")).not.toBeNull();
+  });
+});
+
 describe("A resolved note", () => {
   it("shows a non-interactive green tick status, not a badge or button; an open note shows none", async () => {
     notes = { [asset(10)]: [note(1, { resolved: true }), note(2)] };
@@ -159,26 +258,26 @@ describe("A resolved note", () => {
   });
 });
 
-describe("Add a note", () => {
+describe("the box's entry", () => {
   it("is not offered when the link does not allow comments", async () => {
     session = SESSION_OFF;
     await open();
-    expect(byId("guest-add-note")).toBeNull();
+    expect(box()).toBeNull();
   });
-  it("opens the verify dialog for a guest who has not verified, and no composer", async () => {
+  it("asks a guest who has not verified to verify, and opens no field", async () => {
     session = ANON;
     await open();
-    await click(byId("guest-add-note"));
+    await click(byId("guest-compose-shell-open"));
     expect(byId("guest-verify-dialog")).not.toBeNull();
-    expect(byId("guest-composer")).toBeNull();
+    expect(byId("guest-composer-body")).toBeNull();
   });
-  it("opens the composer for a verified guest", async () => {
+  it("is the field itself for a verified guest", async () => {
     await open();
-    await click(byId("guest-add-note"));
-    expect(byId("guest-composer")).not.toBeNull();
+    expect(byId("guest-composer-body")).not.toBeNull();
+    expect(byId("guest-compose-shell-open")).toBeNull();
     expect(byId("guest-verify-dialog")).toBeNull();
   });
-  it("verifies by email code, then lands in the composer, and later writes still work on the rotated session", async () => {
+  it("verifies by email code, then lands in the field, and later writes still work on the rotated session", async () => {
     session = ANON;
     extra = (url, init) => {
       if (url === `${BASE}/email/code` && init?.method === "POST") return json({ sent: true, resendAfterSeconds: 60 }, 202);
@@ -187,7 +286,7 @@ describe("Add a note", () => {
       return undefined;
     };
     await open();
-    await click(byId("guest-add-note"));
+    await click(byId("guest-compose-shell-open"));
     await typeInto(byId("guest-verify-email"), "sam@example.com");
     await typeInto(byId("guest-verify-name"), "Sam");
     await submit("guest-verify-identity-form");
@@ -196,7 +295,7 @@ describe("Add a note", () => {
     expect(requests("POST").map((call) => call.url)).toEqual([`${BASE}/email/code`, `${BASE}/email/verify`]);
     expect(requests("POST")[1]!.body).toEqual({ code: "123456", name: "Sam" });
     expect(byId("guest-verify-dialog")).toBeNull();
-    expect(byId("guest-composer")).not.toBeNull();
+    expect(document.activeElement).toBe(byId("guest-composer-body"));
     await typeInto(byId("guest-composer-body"), "After verifying");
     await submit("guest-composer");
     expect(allById("guest-note")).toHaveLength(1);
@@ -204,7 +303,7 @@ describe("Add a note", () => {
 });
 
 describe("the composer", () => {
-  it("posts a point note at the frame on screen when opened, adds it to the list and closes", async () => {
+  it("posts a point note at the frame the text began on, adds it to the list and empties the box", async () => {
     let posted: unknown = null;
     extra = (url, init) => {
       if (url === `${BASE}/versions/${asset(10)}/notes` && init?.method === "POST") { posted = JSON.parse(String(init.body)); return json(mine(5, { startFrame: 50 }), 201); }
@@ -212,12 +311,12 @@ describe("the composer", () => {
     };
     await open();
     await atSeconds(2);
-    await click(byId("guest-add-note"));
-    expect(byId("guest-composer-anchor")?.textContent).toContain("00:00:02:00");
+    expect(chip()?.textContent).toContain("00:00:02:00");
     await typeInto(byId("guest-composer-body"), "Too dark here");
     await submit("guest-composer");
     expect(posted).toEqual({ startFrame: 50, content: para("Too dark here") });
-    expect(byId("guest-composer")).toBeNull();
+    expect(box()!.getAttribute("data-open")).toBe("false");
+    expect((byId("guest-composer-body") as HTMLTextAreaElement).value).toBe("");
     const rows = allById("guest-note");
     expect(rows).toHaveLength(1);
     expect(rows[0]!.textContent).toContain("My note");
@@ -230,38 +329,39 @@ describe("the composer", () => {
     };
     await open();
     await atSeconds(2);
-    await click(byId("guest-add-note"));
+    await inOut();
     await atSeconds(4);
-    await click(byId("guest-composer-mark-out"));
-    expect(byId("guest-composer-anchor")?.textContent).toMatch(/00:00:02:00.*00:00:04:00/);
+    await inOut();
+    expect(chip()?.textContent).toMatch(/00:00:02:00.*00:00:04:00/);
     await typeInto(byId("guest-composer-body"), "Cut this section");
     await submit("guest-composer");
     expect(posted).toEqual({ startFrame: 50, endFrame: 101, content: para("Cut this section") });
   });
-  it("marking an in again moves the start, and clears an out that falls before it", async () => {
+  it("an I mark after the range moves the start, and clears an out that falls before it", async () => {
     await open();
     await atSeconds(2);
-    await click(byId("guest-add-note"));
+    await inOut();
     await atSeconds(4);
-    await click(byId("guest-composer-mark-out"));
+    await inOut();
     await atSeconds(6);
-    await click(byId("guest-composer-mark-in"));
-    expect(byId("guest-composer-anchor")?.textContent).toContain("00:00:06:00");
-    expect(byId("guest-composer-anchor")?.textContent).not.toMatch(/00:00:04:00/);
+    await keyDown("i");
+    expect(chip()?.textContent).toContain("00:00:06:00");
+    expect(chip()?.textContent).not.toMatch(/00:00:04:00/);
   });
-  it("will not post an empty note", async () => {
+  it("will not post an empty note: Post note is off and a submit sends nothing", async () => {
     await open();
-    await click(byId("guest-add-note"));
+    expect(off(inBox("Post note"))).toBe(true);
     await submit("guest-composer");
     expect(requests("POST")).toHaveLength(0);
-    expect(byId("guest-composer-problem")?.textContent).toMatch(/write a note/i);
   });
-  it("cancel closes it without posting", async () => {
+  it("a new note has no Cancel: taking the text out leaves nothing to post", async () => {
     await open();
-    await click(byId("guest-add-note"));
+    expect([...box()!.querySelectorAll("button")].some((item) => item.textContent?.trim() === "Cancel")).toBe(false);
     await typeInto(byId("guest-composer-body"), "never mind");
-    await click(byId("guest-composer-cancel"));
-    expect(byId("guest-composer")).toBeNull();
+    expect(off(inBox("Post note"))).toBe(false);
+    await typeInto(byId("guest-composer-body"), "");
+    expect(off(inBox("Post note"))).toBe(true);
+    await submit("guest-composer");
     expect(requests("POST")).toHaveLength(0);
   });
   it("sends one post for a double submit while the first is in flight", async () => {
@@ -271,7 +371,6 @@ describe("the composer", () => {
       return undefined;
     };
     await open();
-    await click(byId("guest-add-note"));
     await typeInto(byId("guest-composer-body"), "once");
     await submit("guest-composer");
     await submit("guest-composer");
@@ -280,7 +379,7 @@ describe("the composer", () => {
     await flush();
     expect(allById("guest-note")).toHaveLength(1);
   });
-  it("disables Mark in and Mark out while the post is pending, so a seek cannot change what the success clears", async () => {
+  it("turns in/out off while the post is pending, so a seek cannot change what the success clears", async () => {
     let release: () => void = () => undefined;
     extra = (url, init) => {
       if (url.endsWith("/notes") && init?.method === "POST") return new Promise<Response>((resolve) => { release = () => { resolve(json(mine(5), 201)); }; });
@@ -288,14 +387,12 @@ describe("the composer", () => {
     };
     await open();
     await atSeconds(2);
-    await click(byId("guest-add-note"));
     await typeInto(byId("guest-composer-body"), "once");
     await submit("guest-composer");
     await atSeconds(4);
-    expect((byId("guest-composer-mark-in") as HTMLButtonElement).disabled).toBe(true);
-    expect((byId("guest-composer-mark-out") as HTMLButtonElement).disabled).toBe(true);
-    await click(byId("guest-composer-mark-in"));
-    expect(byId("guest-composer-anchor")?.textContent).toContain("00:00:02:00");
+    expect(off(inBox("In and out points"))).toBe(true);
+    await inOut();
+    expect(chip()?.textContent).toContain("00:00:02:00");
     await act(async () => { release(); });
     await flush();
   });
@@ -308,7 +405,6 @@ describe("the composer", () => {
       return undefined;
     };
     await open();
-    await click(byId("guest-add-note"));
     await typeInto(byId("guest-composer-body"), "for v11");
     await submit("guest-composer");
     // Pick the other Version while the post is out.
@@ -353,7 +449,7 @@ describe("drawing", () => {
     Element.prototype.releasePointerCapture = () => undefined;
   });
 
-  it("pauses on the frame, shows the pen, and posts the drawing with its frame on a point note that follows it", async () => {
+  it("pauses on the frame, shows the drawing row, and posts the drawing with its frame on a point note that follows it", async () => {
     let posted: Record<string, unknown> | null = null;
     extra = (url, init) => {
       if (url.endsWith("/notes") && init?.method === "POST") { posted = JSON.parse(String(init.body)) as Record<string, unknown>; return json(mine(5, { startFrame: 50, hasMarkup: true, drawingFrame: 50 }), 201); }
@@ -362,58 +458,59 @@ describe("drawing", () => {
     await withLayout(async () => {
       await open();
       await atSeconds(1);
-      await click(byId("guest-add-note"));
       await atSeconds(2);
-      await click(byId("guest-composer-draw"));
+      await pen();
       await atSeconds(2);
-      expect(byId("guest-markup-toolbar")).not.toBeNull();
-      expect(byId("guest-composer-anchor")?.textContent).toContain("00:00:02:00");
+      expect(byId("note-draw-row")).not.toBeNull();
+      expect(chip()?.textContent).toContain("00:00:02:00");
       const layer = byId("guest-draft-layer")!;
       await draw(layer);
       expect(allById("guest-draft-stroke").length).toBeGreaterThan(0);
-      await click(byId("guest-markup-done"));
-      expect(byId("guest-markup-toolbar")).toBeNull();
-      expect(byId("guest-composer-drawing")).not.toBeNull();
+      await doneDrawing();
+      expect(byId("note-draw-row")).toBeNull();
+      // The chip carries the pencil once the draft has a drawing (C4).
+      expect(chip()?.textContent).toContain("Note with a drawing at");
       await typeInto(byId("guest-composer-body"), "Look here");
       await submit("guest-composer");
     });
     expect(posted).toMatchObject({ startFrame: 50, content: para("Look here"), drawingFrame: 50 });
     expect((posted as unknown as { markup: unknown[] }).markup).toHaveLength(1);
   });
-  it("keeps Draw enabled and pressed while drawing, and pressing it again finishes the drawing like Done; Post stays disabled meanwhile", async () => {
+  it("while drawing the row takes the tools' place and Post hides; ‹ gives them back, and a drawing alone does not post (D2)", async () => {
     await withLayout(async () => {
       await open();
       await atSeconds(2);
-      await click(byId("guest-add-note"));
-      await click(byId("guest-composer-draw"));
+      await pen();
       await atSeconds(2);
-      const drawButton = byId("guest-composer-draw") as HTMLButtonElement;
-      expect(byId("guest-markup-toolbar")).not.toBeNull();
-      expect(drawButton.getAttribute("aria-pressed")).toBe("true");
-      expect(drawButton.disabled).toBe(false);
-      expect((byId("guest-composer-post") as HTMLButtonElement).disabled).toBe(true);
-      await click(drawButton);
-      expect(byId("guest-markup-toolbar")).toBeNull();
-      expect((byId("guest-composer-draw") as HTMLButtonElement).getAttribute("aria-pressed")).toBe("false");
-      expect((byId("guest-composer-post") as HTMLButtonElement).disabled).toBe(false);
+      expect(byId("note-draw-row")).not.toBeNull();
+      expect(inBox("Post note")).toBeNull();
+      expect(inBox("Draw on the frame")).toBeNull();
+      await draw(byId("guest-draft-layer")!);
+      await doneDrawing();
+      expect(byId("note-draw-row")).toBeNull();
+      const post = inBox("Post note")!;
+      expect(off(post)).toBe(true);
+      expect(post.getAttribute("title")).toBe("Add a few words to post the drawing");
+      await typeInto(byId("guest-composer-body"), "Here");
+      expect(off(inBox("Post note"))).toBe(false);
     });
   });
   it("gives the composer's note field a placeholder", async () => {
     await open();
-    await click(byId("guest-add-note"));
     expect(byId("guest-composer-body")?.getAttribute("placeholder")).toBe("Add a note at this frame…");
   });
-  it("can take the drawing off again before posting", async () => {
+  it("can take the drawing off again before posting, with the row's Clear", async () => {
     await withLayout(async () => {
       await open();
       await atSeconds(2);
-      await click(byId("guest-add-note"));
-      await click(byId("guest-composer-draw"));
+      await pen();
       await atSeconds(2);
       await draw(byId("guest-draft-layer")!);
-      await click(byId("guest-markup-done"));
-      await click(byId("guest-composer-remove-drawing"));
-      expect(byId("guest-composer-drawing")).toBeNull();
+      await click(labelled("Clear drawing"));
+      expect(allById("guest-draft-stroke")).toHaveLength(0);
+      await doneDrawing();
+      expect(chip()?.textContent).toContain("Note at");
+      expect(chip()?.textContent).not.toContain("with a drawing");
     });
   });
   it("redraws the drawing of a note being edited, sending the strokes with the note's drawing frame", async () => {
@@ -423,10 +520,10 @@ describe("drawing", () => {
       await open();
       await click(byId("guest-note-actions"));
       await click(menuItem("Edit"));
-      await click(byId("guest-composer-draw"));
+      await pen();
       await atSeconds(2);
       await draw(byId("guest-draft-layer")!);
-      await click(byId("guest-markup-done"));
+      await doneDrawing();
       await submit("guest-composer");
     });
     const body = requests("PATCH").at(-1)!.body as { markup: unknown[] };
@@ -460,11 +557,11 @@ describe("drawing", () => {
         expect(allById("guest-markup-stroke")).toHaveLength(1);
         await click(byId("guest-note-actions"));
         await click(menuItem("Edit"));
-        await click(byId("guest-composer-draw"));
+        await pen();
         await atSeconds(2);
         expect(allById("guest-markup-stroke")).toHaveLength(0);
         await draw(byId("guest-draft-layer")!);
-        await click(byId("guest-markup-done"));
+        await doneDrawing();
         await atSeconds(2);
         expect(allById("guest-draft-stroke").length).toBeGreaterThan(0);
         expect(allById("guest-markup-stroke")).toHaveLength(0);
@@ -474,37 +571,37 @@ describe("drawing", () => {
       await withLayout(async () => {
         await open();
         await atSeconds(2);
-        await click(byId("guest-add-note"));
-        await click(byId("guest-composer-draw"));
+        await pen();
         await atSeconds(2);
         await draw(byId("guest-draft-layer")!);
         expect(allById("guest-draft-stroke").length).toBeGreaterThan(0);
         await click(button("Undo"));
         expect(allById("guest-draft-stroke")).toHaveLength(0);
-        await click(byId("guest-markup-done"));
+        await doneDrawing();
         await atSeconds(4);
-        await click(byId("guest-composer-draw"));
+        await pen();
         await atSeconds(4);
         expect((button("Redo") as HTMLButtonElement).disabled).toBe(true);
         await click(button("Redo"));
         expect(allById("guest-draft-stroke")).toHaveLength(0);
       });
     });
-    it("a drawing history never crosses drafts: draw, undo all, Cancel, start a new draft on another frame, press Draw, and Redo is disabled", async () => {
+    it("a drawing history never crosses drafts: draw, undo all, post, start a new draft on another frame, press the pen, and Redo is disabled", async () => {
+      extra = (url, init) => (url.endsWith("/notes") && init?.method === "POST" ? json(mine(5), 201) : undefined);
       await withLayout(async () => {
         await open();
         await atSeconds(2);
-        await click(byId("guest-add-note"));
-        await click(byId("guest-composer-draw"));
+        await pen();
         await atSeconds(2);
         await draw(byId("guest-draft-layer")!);
         await click(button("Undo"));
         expect(allById("guest-draft-stroke")).toHaveLength(0);
-        await click(byId("guest-markup-done"));
-        await click(byId("guest-composer-cancel"));
+        await doneDrawing();
+        await typeInto(byId("guest-composer-body"), "Posted");
+        await submit("guest-composer");
+        expect(box()!.getAttribute("data-open")).toBe("false");
         await atSeconds(4);
-        await click(byId("guest-add-note"));
-        await click(byId("guest-composer-draw"));
+        await pen();
         await atSeconds(4);
         expect((button("Redo") as HTMLButtonElement).disabled).toBe(true);
         await click(button("Redo"));
@@ -523,25 +620,24 @@ describe("drawing", () => {
         expect(markupReads).toBe(1);
         await click(byId("guest-note-actions"));
         await click(menuItem("Edit"));
-        await click(byId("guest-composer-draw"));
+        await pen();
         await atSeconds(2);
         await draw(byId("guest-draft-layer")!);
-        await click(byId("guest-markup-done"));
+        await doneDrawing();
         await submit("guest-composer");
         await atSeconds(2);
-        expect(byId("guest-composer")).toBeNull();
+        expect(box()!.getAttribute("data-variant")).toBe("guest");
         expect(markupReads).toBe(2);
         expect(allById("guest-markup-stroke")).toHaveLength(1);
         expect(byId("guest-markup")?.innerHTML).toContain("0.9");
       });
     });
   });
-  it("does not offer Draw when the link's markup part is off, and the composer still posts text", async () => {
+  it("does not offer the pen when the link's markup part is off", async () => {
     session = { ...VERIFIED, link: { ...VERIFIED.link, allow: { ...VERIFIED.link.allow, markup: false } } };
     await open();
-    await click(byId("guest-add-note"));
-    expect(byId("guest-composer")).not.toBeNull();
-    expect(byId("guest-composer-draw")).toBeNull();
+    expect(box()).not.toBeNull();
+    expect(inBox("Draw on the frame")).toBeNull();
   });
   it("offers no drawing controls when editing a note either (even removing one would be refused)", async () => {
     session = { ...VERIFIED, link: { ...VERIFIED.link, allow: { ...VERIFIED.link.allow, markup: false } } };
@@ -549,15 +645,15 @@ describe("drawing", () => {
     await open();
     await click(byId("guest-note-actions"));
     await click(menuItem("Edit"));
-    expect(byId("guest-composer-draw")).toBeNull();
-    expect(byId("guest-composer-remove-drawing")).toBeNull();
+    expect(box()!.getAttribute("data-variant")).toBe("edit");
+    expect(inBox("Draw on the frame")).toBeNull();
+    expect(labelled("Clear drawing")).toBeNull();
   });
 });
 
 describe("refusals on a post", () => {
   const post = async () => {
     await open();
-    await click(byId("guest-add-note"));
     await typeInto(byId("guest-composer-body"), "keep me");
     await submit("guest-composer");
   };
@@ -578,8 +674,7 @@ describe("refusals on a post", () => {
     refuse(() => json({ error: "project_archived" }, 409));
     await post();
     expect(byId("guest-archived-notice")).not.toBeNull();
-    expect(byId("guest-add-note")).toBeNull();
-    expect(byId("guest-composer")).toBeNull();
+    expect(box()).toBeNull();
   });
   it("the stub, or comments switched off, is the unavailable page", async () => {
     refuse(() => stub404());
@@ -623,7 +718,7 @@ describe("own notes", () => {
     await typeInto(field, "Reworded");
     await submit("guest-composer");
     expect(patched).toEqual({ expectedRevision: 3, content: para("Reworded") });
-    expect(byId("guest-composer")).toBeNull();
+    expect(box()!.getAttribute("data-variant")).toBe("guest");
     expect(byId("guest-note-body")?.textContent).toBe("Reworded");
   });
   it("sends nothing when an edit changed nothing", async () => {
@@ -633,7 +728,7 @@ describe("own notes", () => {
     await click(menuItem("Edit"));
     await submit("guest-composer");
     expect(requests("PATCH")).toHaveLength(0);
-    expect(byId("guest-composer")).toBeNull();
+    expect(box()!.getAttribute("data-variant")).toBe("guest");
   });
   it("on a revision conflict shows the latest, keeps the typed text, and says so", async () => {
     notes = { [asset(10)]: [mine(2, { revision: 3 })] };
@@ -657,11 +752,15 @@ describe("own notes", () => {
     await open();
     await click(byId("guest-note-actions"));
     await click(menuItem("Edit"));
-    expect(byId("guest-composer-anchor")?.textContent).toContain("00:00:02:00");
+    expect(box()!.getAttribute("data-variant")).toBe("edit");
+    expect(chip()?.textContent).toContain("00:00:02:00");
     await atSeconds(4);
-    await click(byId("guest-composer-mark-in"));
+    await inOut();
     await atSeconds(6);
-    await click(byId("guest-composer-mark-out"));
+    await inOut();
+    // D4: a new range locks the pen until it is saved, with the reason as its title.
+    expect(off(inBox("Draw on the frame"))).toBe(true);
+    expect(inBox("Draw on the frame")!.getAttribute("title")).toBe("Save the new frames before you draw.");
     await submit("guest-composer");
     expect(requests("PATCH").at(-1)!.body).toEqual({ expectedRevision: 3, startFrame: 100, endFrame: 151 });
   });
@@ -671,10 +770,14 @@ describe("own notes", () => {
     await open();
     await click(byId("guest-note-actions"));
     await click(menuItem("Edit"));
-    expect((byId("guest-composer-mark-in") as HTMLButtonElement).disabled).toBe(true);
-    expect((byId("guest-composer-mark-out") as HTMLButtonElement).disabled).toBe(true);
-    expect(byId("guest-composer-drawing")?.textContent).toMatch(/has a drawing/i);
-    await click(byId("guest-composer-remove-drawing"));
+    // D4: the drawing locks in/out, with the reason as its title; the chip carries the pencil. Clear in the drawing row takes the saved drawing off.
+    expect(off(inBox("In and out points"))).toBe(true);
+    expect(inBox("In and out points")!.getAttribute("title")).toMatch(/can't change while the note has a drawing/);
+    expect(chip()?.textContent).toContain("with a drawing");
+    await pen();
+    await atSeconds(2);
+    await click(labelled("Clear drawing"));
+    await doneDrawing();
     await submit("guest-composer");
     expect(requests("PATCH").at(-1)!.body).toEqual({ expectedRevision: 3, markup: null });
   });
@@ -725,7 +828,7 @@ describe("own notes", () => {
     expect(allById("guest-note")).toHaveLength(0);
     expect(byId("guest-delete-dialog")).toBeNull();
   });
-  it("returns focus to the Add a note button after the guest deletes their own root note from the keyboard", async () => {
+  it("returns focus to the notes panel after the guest deletes their own root note from the keyboard", async () => {
     notes = { [asset(10)]: [mine(2, { revision: 3 })] };
     extra = (url, init) => (url === `${BASE}/notes/${noteId(2)}` && init?.method === "DELETE" ? json({ thread: null }) : undefined);
     await open();
@@ -737,7 +840,7 @@ describe("own notes", () => {
     await flush();
     expect(allById("guest-note")).toHaveLength(0);
     expect(document.activeElement).not.toBe(document.body);
-    expect(document.activeElement).toBe(byId("guest-add-note"));
+    expect(document.activeElement).toBe(byId("guest-notes-panel"));
   });
   it("shows a tombstone when the server keeps the thread", async () => {
     notes = { [asset(10)]: [mine(2, { revision: 3 })] };
@@ -788,6 +891,34 @@ describe("replies", () => {
     expect(requests("POST").at(-1)).toEqual({ url: `${BASE}/notes/${noteId(1)}/replies`, body: { content: para("Will do") } });
     expect(allById("guest-note-reply")).toHaveLength(1);
     expect(byId("guest-reply-form")).toBeNull();
+  });
+  it("is the reply box (R1): paperclip and Send reply only, no visible Cancel; Reply again or Esc dismisses it and drops the draft", async () => {
+    notes = { [asset(10)]: [note(1)] };
+    await open();
+    const toggle = byId("guest-note-reply-button")!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    await click(toggle);
+    const form = byId("guest-reply-form")!;
+    expect(form.getAttribute("data-variant")).toBe("reply");
+    expect(labelled("Add photos or videos", form)).not.toBeNull();
+    expect(labelled("Send reply", form)).not.toBeNull();
+    for (const label of ["In and out points", "Draw on the frame"]) expect(labelled(label, form)).toBeNull();
+    expect(form.querySelector('[data-testid="note-composer-chip"]')).toBeNull();
+    expect([...form.querySelectorAll("button")].some((item) => item.textContent?.trim() === "Cancel")).toBe(false);
+    expect(off(labelled("Send reply", form))).toBe(true);
+    await typeInto(byId("guest-reply-body"), "Half a reply");
+    expect(off(labelled("Send reply", form))).toBe(false);
+    expect(byId("guest-note-reply-button")!.getAttribute("aria-expanded")).toBe("true");
+    expect(byId("guest-note-reply-button")!.getAttribute("aria-label")).toBe("Close reply");
+    await click(byId("guest-note-reply-button"));
+    expect(byId("guest-reply-form")).toBeNull();
+    await click(byId("guest-note-reply-button"));
+    expect((byId("guest-reply-body") as HTMLTextAreaElement).value).toBe("");
+    await typeInto(byId("guest-reply-body"), "Another");
+    await act(async () => { byId("guest-reply-body")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    await flush();
+    expect(byId("guest-reply-form")).toBeNull();
+    expect(requests("POST")).toHaveLength(0);
   });
   it("keeps a reply draft when the phone sheet collapses and opens again", async () => {
     await viewport.set({ width: 390, coarse: true });
@@ -850,13 +981,11 @@ describe("round 1 findings", () => {
       await click([...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.startsWith(label)));
     };
     await open();
-    await click(byId("guest-add-note"));
     await typeInto(byId("guest-composer-body"), "first");
     await submit("guest-composer");
     expect(posts).toBe(1);
     await pick("v10");
     await pick("v11");
-    await click(byId("guest-add-note"));
     await typeInto(byId("guest-composer-body"), "second draft");
     await act(async () => { release(); });
     await flush();
@@ -876,7 +1005,7 @@ describe("round 1 findings", () => {
     };
     await open();
     expect(byId("guest-note-self-badge")).toBeNull();
-    await click(byId("guest-add-note"));
+    await click(byId("guest-compose-shell-open"));
     await typeInto(byId("guest-verify-email"), "sam@example.com");
     await typeInto(byId("guest-verify-name"), "Sam");
     await submit("guest-verify-identity-form");
@@ -894,7 +1023,6 @@ describe("round 1 findings", () => {
       return undefined;
     };
     await open();
-    await click(byId("guest-add-note"));
     await typeInto(byId("guest-composer-body"), "keep me");
     await submit("guest-composer");
     expect(byId("guest-composer-problem")?.textContent).toMatch(/may or may not/i);
@@ -915,7 +1043,6 @@ describe("round 1 findings", () => {
     };
     await open();
     await click(button("Film 1"));
-    await click(byId("guest-add-note"));
     await typeInto(byId("guest-composer-body"), "maybe sent");
     await submit("guest-composer");
     await click(button("All videos"));
@@ -933,26 +1060,31 @@ describe("round 1 findings", () => {
     await open();
     const reads = () => fetchMock.mock.calls.filter((call) => String(call[0]) === `${BASE}/versions/${asset(10)}/notes` && ((call[1] as RequestInit | undefined)?.method ?? "GET") === "GET").length;
     const before = reads();
-    await click(byId("guest-add-note"));
     await typeInto(byId("guest-composer-body"), "x");
     await submit("guest-composer");
     expect(byId("guest-composer-problem")?.textContent).toMatch(/couldn.t be saved/i);
     expect(reads()).toBe(before);
   });
 
-  it("I and O mark the in and out frames while a composer is open, and do nothing otherwise", async () => {
+  it("I and O mark the in and out frames from the keyboard, as the box's button does; an unverified guest's keys mark nothing", async () => {
     await open();
     await atSeconds(2);
     await keyDown("i");
-    await click(byId("guest-add-note"));
-    expect(byId("guest-composer-anchor")?.textContent).toContain("00:00:02:00");
+    expect(chip()?.textContent).toContain("00:00:02:00 →");
+    expect(inBox("In and out points")!.getAttribute("aria-pressed")).toBe("true");
     await atSeconds(4);
     await keyDown("o");
-    expect(byId("guest-composer-anchor")?.textContent).toMatch(/00:00:02:00.*00:00:04:00/);
+    expect(chip()?.textContent).toMatch(/00:00:02:00.*00:00:04:00/);
     await atSeconds(6);
     await keyDown("i");
-    expect(byId("guest-composer-anchor")?.textContent).toContain("00:00:06:00");
-    expect(byId("guest-composer-anchor")?.textContent).not.toMatch(/00:00:04:00/);
+    expect(chip()?.textContent).toContain("00:00:06:00");
+    expect(chip()?.textContent).not.toMatch(/00:00:04:00/);
+    await act(async () => { root!.unmount(); }); root = null; host.remove();
+    session = ANON;
+    await open();
+    await atSeconds(2);
+    await keyDown("i");
+    expect(chip()?.textContent).not.toContain("→");
   });
 });
 
@@ -991,13 +1123,11 @@ describe("round 2 findings", () => {
     };
     await open();
     await click(button("Film 1"));
-    await click(byId("guest-add-note"));
     await typeInto(byId("guest-composer-body"), "slow");
     await submit("guest-composer");
     expect(requests("POST")).toHaveLength(1);
     await click(button("All videos"));
     await click(button("Film 1"));
-    await click(byId("guest-add-note"));
     await typeInto(byId("guest-composer-body"), "slow");
     await submit("guest-composer");
     expect(requests("POST")).toHaveLength(1);
@@ -1144,7 +1274,6 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
   beforeEach(async () => { await viewport.set({ width: 390, coarse: true }); });
   const area = () => byId("guest-composer-body") as HTMLTextAreaElement | null;
   const mode = () => byId("video-review-pane")!.getAttribute("data-mode");
-  const tray = () => byId("guest-composer-tray")!;
   const fieldReady = async () => { await vi.waitFor(() => { expect(area()).not.toBeNull(); }); };
   const focusField = async () => { await act(async () => { area()!.focus(); }); await flush(2); };
   const blurField = async () => { await act(async () => { area()!.blur(); }); await flush(4); };
@@ -1177,7 +1306,7 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     await flush(2);
     await focusField();
     await typeInto(area(), "Too dark here");
-    await press(byId("guest-composer-post"));
+    await press(inBox("Post note"));
     await flush(4);
     expect(requests("POST")).toHaveLength(1);
     expect(byId("notes-search-field")).toBeNull();
@@ -1186,62 +1315,38 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     expect(listed()).toContain(noteId(5));
   });
 
-  it("a verified guest's sheet ends in the pill at rest: +, chip, field, pen and a disabled round Send; no Add a note, hint or Cancel", async () => {
+  it("a verified guest's sheet ends in the box at rest (P1): chip and field, in/out, paperclip and pen, a round Post note; no Add a note, hint or Cancel", async () => {
     await open();
     await atSeconds(2);
     await fieldReady();
-    const strip = byId("guest-compose-strip")!;
-    expect(strip.closest('[data-sheet-part="composer"]')).not.toBeNull();
+    const form = box()!;
+    expect(form.closest('[data-sheet-part="composer"]')).not.toBeNull();
+    expect(form.getAttribute("data-variant")).toBe("guest");
     expect(byId("guest-add-note")).toBeNull();
-    expect(byId("guest-composer")).toBeNull();
-    expect(byId("stub-inline-start")!.contains(byId("guest-composer-extras"))).toBe(true);
-    expect(byId("stub-inline-start")!.contains(byId("guest-composer-anchor"))).toBe(true);
-    expect(byId("guest-composer-anchor")!.textContent).toContain("00:00:02:00");
-    expect(byId("stub-inline-end")!.contains(byId("guest-composer-draw"))).toBe(true);
-    const send = byId("guest-composer-post") as HTMLButtonElement;
-    expect(send.getAttribute("aria-label")).toBe("Post note");
-    expect(send.className).toContain("rounded-[var(--radius-pill)]");
-    expect(send.disabled).toBe(true);
-    expect(byId("guest-composer-stamp")).toBeNull();
-    expect(byId("guest-composer-cancel")).toBeNull();
-    expect(byId("stub-pill")!.dataset.pillWrap).toBe("false");
-    expect(tray().hasAttribute("inert")).toBe(true);
-    expect(tray().contains(byId("stub-toolbar"))).toBe(true);
+    expect(chip()!.textContent).toContain("00:00:02:00");
+    for (const label of ["In and out points", "Add photos or videos", "Draw on the frame", "Post note"]) expect(inBox(label)).not.toBeNull();
+    expect(off(inBox("Post note"))).toBe(true);
+    expect([...form.querySelectorAll("button")].some((item) => item.textContent?.trim() === "Cancel")).toBe(false);
+    expect(byId("guest-composer-tray")).toBeNull();
+    expect(byId("guest-composer-step-forward")).toBeNull();
     expect(area()!.getAttribute("placeholder")).toBe("Add a note…");
     expect(mode()).toBe("browse");
   });
 
-  it("at rest a placeholder too wide for the field ends at a word with one ellipsis; compose mode shows it whole (#879 PR 3a)", async () => {
-    // 8px a character; the field is 64px wide, so 8 characters fit: "Add a…", not "Add a no".
-    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation((() => ({ font: "", measureText: (text: string) => ({ width: text.length * 8 }) })) as never);
-    Object.defineProperty(HTMLTextAreaElement.prototype, "clientWidth", { configurable: true, get: () => 64 });
-    try {
-      await open();
-      await fieldReady();
-      await flush(2);
-      expect(area()!.getAttribute("placeholder")).toBe("Add a…");
-      await focusField();
-      expect(mode()).toBe("compose");
-      expect(area()!.getAttribute("placeholder")).toBe("Add a note…");
-    } finally { delete (HTMLTextAreaElement.prototype as unknown as Record<string, unknown>).clientWidth; vi.mocked(HTMLCanvasElement.prototype.getContext).mockRestore(); }
-  });
-
-  it("focus pauses the film and stamps the frame: compose mode with the hint, + and Cancel; the stamp holds while the film moves", async () => {
+  it("focus pauses the film and stamps the frame (P2, D10): compose mode, and the stamp holds while the film moves", async () => {
     await open();
     await atSeconds(2);
     await fieldReady();
     await focusField();
     expect(mode()).toBe("compose");
     expect(host.querySelector("video")!.paused).toBe(true);
-    expect(byId("guest-composer-stamp")!.textContent).toBe("Paused at 00:00:02:00 · the note is stamped here");
-    expect(byId("guest-composer-cancel")).not.toBeNull();
-    expect(byId("stub-pill")!.dataset.pillWrap).toBe("true");
+    expect(chip()!.textContent).toContain("00:00:02:00");
     await atSeconds(4);
     await typeInto(area(), "Too dark");
-    expect(byId("guest-composer-anchor")!.textContent).toContain("00:00:02:00");
+    expect(chip()!.textContent).toContain("00:00:02:00");
   });
 
-  it("blur keeps a draft with text (one line, browse mode); a pristine draft is released, so the chip follows the film again", async () => {
+  it("blur keeps a draft with text (browse mode); a pristine draft is released, so the chip follows the film again", async () => {
     await open();
     await atSeconds(2);
     await fieldReady();
@@ -1250,46 +1355,31 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     await blurField();
     expect(mode()).toBe("browse");
     expect(area()!.value).toBe("Keep me");
-    expect(area()!.className).toContain("[&_p]:text-ellipsis");
-    expect(byId("guest-composer-cancel")).toBeNull();
-    // The draft's anchor stays on the chip, and the range button takes the draft's marks.
     await atSeconds(4);
-    expect(byId("guest-composer-anchor")!.textContent).toContain("00:00:02:00");
+    expect(chip()!.textContent).toContain("00:00:02:00");
     await focusField();
     await typeInto(area(), "");
     await blurField();
     await atSeconds(5);
-    expect(byId("guest-composer-anchor")!.textContent).toContain("00:00:05:00");
-    expect(byId("guest-compose-strip")!.dataset.open).toBe("false");
+    expect(chip()!.textContent).toContain("00:00:05:00");
+    expect(box()!.dataset.open).toBe("false");
   });
 
-  it("+ opens the tray without taking the focus; the open tray holds compose after a blur; frame step moves an empty note's stamp; the toolbar is in the tray", async () => {
+  it("the in/out button keeps the focus in the field on press (the keyboard stays up, P3), and marks a range", async () => {
     await open();
     await atSeconds(2);
     await fieldReady();
     await focusField();
-    const plus = byId("guest-composer-extras")!;
-    expect(await press(plus)).toBe(true);
-    expect(plus.getAttribute("aria-expanded")).toBe("true");
-    expect(plus.getAttribute("aria-pressed")).toBe("true");
+    expect(await press(inBox("In and out points"))).toBe(true);
     expect(document.activeElement).toBe(area());
-    expect(tray().hasAttribute("inert")).toBe(false);
-    expect(byId("guest-composer-tray-toolbar")!.contains(byId("stub-toolbar"))).toBe(true);
-    expect(await press(byId("stub-bold"))).toBe(true);
-    expect(await press(byId("guest-composer-step-forward"))).toBe(true);
-    await atSeconds(2.04);
-    expect(byId("guest-composer-stamp")!.textContent).toContain("Paused at 00:00:02:01");
-    expect(byId("guest-composer-anchor")!.textContent).toContain("00:00:02:01");
-    await press(byId("guest-composer-mark-out"));
-    expect(byId("guest-composer-stamp")!.textContent).toBe("From 00:00:02:01 to 00:00:02:01");
-    await blurField();
+    await atSeconds(3);
+    expect(chip()!.textContent).toMatch(/00:00:02:00 → 00:00:03:00/);
+    expect(await press(inBox("In and out points"))).toBe(true);
+    expect(byId("note-composer-chip-live")).toBeNull();
     expect(mode()).toBe("compose");
-    expect(byId("guest-composer-cancel")).not.toBeNull();
-    await press(plus);
-    expect(mode()).toBe("browse");
   });
 
-  it("Send is disabled while the note is empty; a post holds compose until it lands, then the strip rests with the note listed", async () => {
+  it("Post note is off while the note is empty; a post holds compose until it lands, then the box rests with the note listed (P5)", async () => {
     let answer: (response: Response) => void = () => undefined;
     let posted: unknown = null;
     extra = (url, init) => {
@@ -1300,13 +1390,11 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     await atSeconds(2);
     await fieldReady();
     await focusField();
-    const send = () => byId("guest-composer-post") as HTMLButtonElement;
-    expect(send().disabled).toBe(true);
+    expect(off(inBox("Post note"))).toBe(true);
     await typeInto(area(), "Too dark here");
-    expect(send().disabled).toBe(false);
-    expect(await press(send())).toBe(true);
+    expect(off(inBox("Post note"))).toBe(false);
+    expect(await press(inBox("Post note"))).toBe(true);
     expect(posted).toEqual({ startFrame: 50, content: para("Too dark here") });
-    expect(send().getAttribute("aria-label")).toBe("Posting…");
     await blurField();
     expect(mode()).toBe("compose");
     await act(async () => { answer(json(mine(5, { startFrame: 50 }), 201)); });
@@ -1316,71 +1404,31 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     expect(allById("guest-note")).toHaveLength(1);
   });
 
-  it("a refused post keeps the draft and shows the problem in place of the hint", async () => {
+  it("a refused post keeps the draft and shows the problem in the box", async () => {
     extra = (url, init) => (url.endsWith("/notes") && init?.method === "POST" ? json({ error: "rate_limited" }, 429, { "retry-after": "30" }) : undefined);
     await open();
     await fieldReady();
     await focusField();
     await typeInto(area(), "Again");
-    await press(byId("guest-composer-post"));
+    await press(inBox("Post note"));
     expect(byId("guest-composer-problem")!.getAttribute("role")).toBe("alert");
     expect(byId("guest-composer-problem")!.textContent).toContain("too quickly");
-    expect(byId("guest-composer-stamp")).toBeNull();
     expect(area()!.value).toBe("Again");
   });
 
-  // Fix round 5 (iPhone at 8a03d404): + from rest, with the field not focused, did nothing. It opened a new draft and the tray in a commit still in browse mode (the tray's hold
-  // flips the sheet in an effect), and the at-rest release saw a pristine draft and closed it, tray and all. An open tray is not given back; the staff pill opens it the same way.
-  it("+ from rest, with the field not focused, opens the tray and enters compose; + again gives the untouched draft back", async () => {
-    await open();
-    await atSeconds(2);
-    await fieldReady();
-    expect(mode()).toBe("browse");
-    expect(document.activeElement).not.toBe(area());
-    const plus = byId("guest-composer-extras")!;
-    expect(await press(plus)).toBe(true);
-    await flush(2);
-    expect(plus.getAttribute("aria-expanded")).toBe("true");
-    expect(tray().hasAttribute("inert")).toBe(false);
-    expect(mode()).toBe("compose");
-    expect(byId("guest-compose-strip")!.dataset.open).toBe("true");
-    expect(await press(plus)).toBe(true);
-    await flush(2);
-    expect(tray().hasAttribute("inert")).toBe(true);
-    expect(mode()).toBe("browse");
-    expect(byId("guest-compose-strip")!.dataset.open).toBe("false");
-  });
-
-  it("Cancel keeps the focus on press, then discards the draft, closes the tray, remounts the field and returns to browse", async () => {
-    await open();
-    await fieldReady();
-    await focusField();
-    await typeInto(area(), "draft");
-    await press(byId("guest-composer-extras"));
-    const before = area();
-    expect(await press(byId("guest-composer-cancel"))).toBe(true);
-    expect(area()).not.toBe(before);
-    expect(area()!.value).toBe("");
-    expect(tray().hasAttribute("inert")).toBe(true);
-    expect(mode()).toBe("browse");
-  });
-
-  it("the pen blurs the field and puts the sheet in draw mode from the frame confirm on; pressing it again is Done and the field takes the focus back", async () => {
+  it("the pen blurs the field and puts the sheet in draw mode (P4); ‹ ends drawing and the field takes the focus back", async () => {
     await open();
     await atSeconds(2);
     await fieldReady();
     await focusField();
-    const pen = byId("guest-composer-draw")!;
-    await act(async () => { pen.click(); });
+    await act(async () => { inBox("Draw on the frame")!.click(); });
     expect(document.activeElement).not.toBe(area());
     expect(mode()).toBe("draw");
     await atSeconds(2);
-    expect(byId("guest-markup-toolbar")).not.toBeNull();
-    expect(byId("guest-composer-draw")!.getAttribute("aria-pressed")).toBe("true");
-    expect(area()!.getAttribute("placeholder")).toBe("Add a note with this drawing…");
-    await act(async () => { byId("guest-composer-draw")!.click(); });
+    expect(byId("note-draw-row")).not.toBeNull();
+    await act(async () => { labelled("Done drawing")!.click(); });
     await flush(2);
-    expect(byId("guest-markup-toolbar")).toBeNull();
+    expect(byId("note-draw-row")).toBeNull();
     expect(document.activeElement).toBe(area());
     expect(mode()).toBe("compose");
   });
@@ -1402,10 +1450,10 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     expect(area()!.value).toBe("My note");
     expect(document.activeElement).toBe(area());
     expect(mode()).toBe("compose");
-    expect(byId("guest-composer-stamp")!.textContent).toBe("Editing your note · at 00:00:02:00");
-    expect(byId("guest-composer-post")!.getAttribute("aria-label")).toBe("Save");
+    expect(box()!.getAttribute("data-variant")).toBe("edit");
+    expect(box()!.textContent).toContain("Client-visible");
     await typeInto(area(), "Reworded");
-    await press(byId("guest-composer-post"));
+    await press(button("Save") ?? null);
     expect(patched).toEqual({ expectedRevision: 3, content: para("Reworded") });
     expect(byId("guest-note-body")?.textContent).toBe("Reworded");
   });
@@ -1421,7 +1469,7 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     expect(area()).toBeNull();
     const shell = byId("guest-compose-shell-open")!;
     expect(shell.getAttribute("aria-label")).toBe("Add a note");
-    expect((byId("guest-composer-post") as HTMLButtonElement).disabled).toBe(true);
+    expect(off(inBox("Post note"))).toBe(true);
     await click(shell);
     expect(byId("guest-verify-dialog")).not.toBeNull();
     await typeInto(byId("guest-verify-email"), "sam@example.com");
@@ -1433,7 +1481,7 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     await vi.waitFor(() => { expect(document.activeElement).toBe(area()); });
     expect(byId("guest-verify-dialog")).toBeNull();
     expect(mode()).toBe("compose");
-    expect(byId("guest-compose-strip")!.dataset.open).toBe("true");
+    expect(box()!.dataset.open).toBe("true");
   });
 
   it("the identity and email-updates rows end the notes list's scroll; Copy my notes is a row of the ⋯ sheet", async () => {
@@ -1448,9 +1496,8 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     expect(byId("guest-paste-open")).not.toBeNull();
   });
 
-  // Fix round 2 (row 17): after Pen → Done → Cancel the scrubber's thumb was gone. Done lands in compose mode, where the transport is hidden, and the transport came back
-  // from under the markup toolbar as a new subtree: the slider was mounted (and its thumb measured) inside the hidden box, and nothing measured it again.
-  it("the scrubber's thumb is still drawn after Pen → Done → Cancel, and the slider is the same node throughout", async () => {
+  // Fix round 2 (row 17): after the pen and ‹ the scrubber's thumb was gone: the transport came back from under the drawing row as a new subtree. The slider stays the one node.
+  it("the scrubber's thumb is still drawn after pen → ‹ → blur, and the slider is the same node throughout", async () => {
     const restore = installSliderLayout();
     try {
       await open();
@@ -1459,21 +1506,19 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
       expect(scrubberThumbShown()).toBe(true);
       const slider = byId("video-scrubber")!.querySelector('[data-slot="slider"]');
       await focusField();
-      await act(async () => { byId("guest-composer-draw")!.click(); });
+      await act(async () => { inBox("Draw on the frame")!.click(); });
       await atSeconds(2);
-      expect(byId("guest-markup-toolbar")).not.toBeNull();
-      await act(async () => { byId("guest-composer-draw")!.click(); });
+      expect(byId("note-draw-row")).not.toBeNull();
+      await act(async () => { labelled("Done drawing")!.click(); });
       await flush(2);
       expect(mode()).toBe("compose");
-      expect(await press(byId("guest-composer-cancel"))).toBe(true);
+      await blurField();
       expect(mode()).toBe("browse");
       expect(byId("video-scrubber")!.querySelector('[data-slot="slider"]')).toBe(slider);
       expect(scrubberThumbShown()).toBe(true);
     } finally { restore(); }
   });
 
-  // Fix round 1 (row 2): the keyboard dropped about a second after the code was accepted, and the pill went back to rest. The code field was disabled while the code was
-  // checked, which blurred it and sent the keyboard down before the answer came; the pill's focus after the check (not a tap) could not bring it back.
   const verifyWithHeldAnswer = () => {
     let answer: (() => void) | null = null;
     session = ANON;
@@ -1524,7 +1569,7 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     expect(byId("guest-verify-dialog")).toBeNull();
     expect(document.activeElement).not.toBe(area());
     expect(mode()).toBe("browse");
-    expect(byId("guest-compose-strip")!.dataset.open).toBe("false");
+    expect(box()!.dataset.open).toBe("false");
     // One tap on the pill then starts the note as usual.
     await focusField();
     expect(mode()).toBe("compose");
@@ -1541,7 +1586,7 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     // The quiet line (Released, the hints and notices) scrolls with the notes rather than taking its own fixed band; Request changes is a ⋯ row now, not a list row (#879 PR 3b).
     expect(list!.contains(byId("guest-quiet-line"))).toBe(true);
     expect(byId("guest-request-changes")).toBeNull();
-    const strip = byId("guest-compose-strip")!;
+    const strip = box()!;
     expect(list!.contains(strip)).toBe(false);
     // The strip's part is the list's sibling in the panel's column, laid out after it: the list ends where the strip's top border begins.
     const composer = strip.closest<HTMLElement>('[data-sheet-part="composer"]')!;
@@ -1628,18 +1673,6 @@ describe("the phone sheet composer (#879 PR 2: the pill strip, P2 / P6 / P7 as g
     expect(byId("guest-video-screen")!.contains(menu)).toBe(true);
     expect(menu.closest('[data-surface="inverse"]')).not.toBeNull();
   });
-
-  it("the placeholder at rest is one line ending in an ellipsis, as typed text is (P7's 'Add a note with this drawing…')", async () => {
-    await open();
-    await fieldReady();
-    const names = area()!.className.split(" ");
-    for (const name of ["[&_[data-placeholder]]:before:overflow-hidden", "[&_[data-placeholder]]:before:text-ellipsis", "[&_[data-placeholder]]:before:whitespace-nowrap"]) expect(names).toContain(name);
-    // Fix round 2: app.css draws the placeholder as a zero-height float, and `overflow: hidden` on a zero-height box clips all of it (the iPhone showed no placeholder at all).
-    // So the clipped placeholder is a one-line box of its own: absolute at its static (first-line) top, so the caret's line never moves, across the content box (the root's
-    // inline padding inherited), with its height freed from app.css's `height: 0` (whose `:has()` selector outranks a utility, hence `!`).
-    for (const name of ["[&_[data-placeholder]]:relative", "[&_[data-placeholder]]:before:absolute", "[&_[data-placeholder]]:before:inset-x-0", "[&_[data-placeholder]]:before:[padding-inline:inherit]", "[&_[data-placeholder]]:before:h-auto!"]) expect(names).toContain(name);
-    expect(names).not.toContain("[&_[data-placeholder]]:before:top-0");
-  });
 });
 
 describe("delete revision", () => {
@@ -1696,7 +1729,7 @@ describe("the video step keys and modals", () => {
     session = ANON; videos = [videoOf(1), videoOf(2)];
     await open();
     await click(button("Film 1"));
-    await click(byId("guest-add-note"));
+    await click(byId("guest-compose-shell-open"));
     const dialog = document.body.querySelector('[role=dialog]');
     expect(dialog).not.toBeNull();
     const cancel = button("Cancel")!;
@@ -1716,32 +1749,31 @@ describe("rich notes (#835 C): pictures, no mentions", () => {
   const props = (testId: string) => field.props.get(testId)!;
   const typed = async (testId: string, text: string) => { await typeInto(byId(testId), text); };
   const uploading = async (testId: string, busy: boolean) => { await act(async () => { props(testId).onUploadingChange!(busy); }); await flush(); };
-  const post = () => byId("guest-composer-post") as HTMLButtonElement;
+  const post = () => inBox("Post note");
+  const save = () => [...box()!.querySelectorAll("button")].find((item) => item.textContent?.trim() === "Save") ?? null;
 
   it("every field (the composer, a reply, an edit) reads and uploads media through the link's own routes", async () => {
     notes = { [asset(10)]: [note(1), mine(2)] };
     await open();
-    await click(byId("guest-add-note"));
     const transport = props("guest-composer-body").media as { mediaUrl: (id: string) => string; posterUrl: (id: string) => string; heicEnabled: boolean };
     expect(transport.mediaUrl(MEDIA)).toBe(`${BASE}/media/${MEDIA}`);
     expect(transport.posterUrl(MEDIA)).toBe(`${BASE}/media/${MEDIA}/poster`);
     expect(transport.heicEnabled).toBe(false);
-    await click(byId("guest-composer-cancel"));
     await click(allById("guest-note-reply-button")[0]);
     expect(props("guest-reply-body").media).toBe(transport);
   });
 
   it("holds Post while a picture is still uploading, and releases it when it lands", async () => {
     await open();
-    await click(byId("guest-add-note"));
     await typed("guest-composer-body", "See the logo");
-    expect(post().disabled).toBe(false);
+    expect(off(post())).toBe(false);
     await uploading("guest-composer-body", true);
-    expect(post().disabled).toBe(true);
+    expect(off(post())).toBe(true);
+    expect(post()!.getAttribute("title")).toBe("Wait for the upload to finish");
     await submit("guest-composer");
     expect(requests("POST")).toEqual([]);
     await uploading("guest-composer-body", false);
-    expect(post().disabled).toBe(false);
+    expect(off(post())).toBe(false);
   });
 
   it("posts the document with its picture as content, and a picture alone is a note", async () => {
@@ -1752,16 +1784,14 @@ describe("rich notes (#835 C): pictures, no mentions", () => {
     };
     await open();
     await atSeconds(2);
-    await click(byId("guest-add-note"));
     await submit("guest-composer");
     expect(posted).toBeNull(); // nothing yet: an empty field is not a note
     await act(async () => { props("guest-composer-body").onChange(withImage("See the logo")); });
     await submit("guest-composer");
     expect(posted).toEqual({ startFrame: 50, content: withImage("See the logo") });
-    await click(byId("guest-add-note"));
     const only = { type: "doc", content: [{ type: "image", attrs: { mediaId: MEDIA } }] };
     await act(async () => { props("guest-composer-body").onChange(only); });
-    expect(post().disabled).toBe(false);
+    expect(off(post())).toBe(false);
     await submit("guest-composer");
     expect(posted).toEqual({ startFrame: 50, content: only });
   });
@@ -1772,18 +1802,18 @@ describe("rich notes (#835 C): pictures, no mentions", () => {
     await click(allById("guest-note-reply-button")[0]);
     await typed("guest-reply-body", "Will do");
     await uploading("guest-reply-body", true);
-    expect((byId("guest-reply-send") as HTMLButtonElement).disabled).toBe(true);
+    expect(off(labelled("Send reply"))).toBe(true);
     await submit("guest-reply-form");
     expect(requests("POST")).toEqual([]);
     await uploading("guest-reply-body", false);
-    expect((byId("guest-reply-send") as HTMLButtonElement).disabled).toBe(false);
-    await click(byId("guest-reply-cancel"));
+    expect(off(labelled("Send reply"))).toBe(false);
+    await click(labelled("Close reply"));
     // A reply to the guest's own note is edited inline; the root is edited in the composer.
     await click(allById("guest-note-actions")[0]);
     await click(menuItem("Edit"));
     await typed("guest-composer-body", "Reworded");
     await uploading("guest-composer-body", true);
-    expect(post().disabled).toBe(true);
+    expect(off(save())).toBe(true);
     await submit("guest-composer");
     expect(requests("PATCH")).toEqual([]);
   });
@@ -1818,7 +1848,7 @@ describe("collapsing the notes pane keeps its work (#859)", () => {
     await click(byId("guest-note-reply-button"));
     await typeInto(byId("guest-reply-body"), "On it");
     await submit("guest-reply-form");
-    expect((byId("guest-reply-send") as HTMLButtonElement).disabled).toBe(true);
+    expect(off(labelled("Send reply"))).toBe(true);
     await click(toggle());
     expect(byId("video-review-pane")!.hidden).toBe(true);
     await act(async () => { reject(); });
@@ -1833,14 +1863,15 @@ describe("collapsing the notes pane keeps its work (#859)", () => {
     notes = { [asset(10)]: [note(1)] };
     await open();
     await click(byId("guest-note-reply-button"));
+    await typeInto(byId("guest-reply-body"), "See this");
     await act(async () => { field.props.get("guest-reply-body")!.onUploadingChange!(true); });
-    expect((byId("guest-reply-send") as HTMLButtonElement).disabled).toBe(true);
+    expect(off(labelled("Send reply"))).toBe(true);
     await click(toggle());
     await click(toggle());
     expect(byId("guest-reply-form")).not.toBeNull();
-    expect((byId("guest-reply-send") as HTMLButtonElement).disabled).toBe(true);
+    expect(off(labelled("Send reply"))).toBe(true);
     await act(async () => { field.props.get("guest-reply-body")!.onUploadingChange!(false); });
-    expect((byId("guest-reply-send") as HTMLButtonElement).disabled).toBe(false);
+    expect(off(labelled("Send reply"))).toBe(false);
   });
 });
 
@@ -1864,8 +1895,7 @@ describe("the time format on the guest page (#860)", () => {
     expect(byId("guest-note-anchor")!.textContent).toBe("00:00:02:00");
     await choose("frames");
     expect(byId("guest-note-anchor")!.textContent).toBe("50");
-    await click(byId("guest-add-note"));
-    expect(byId("guest-composer-anchor")!.textContent).toBe("At 50");
+    expect(chip()!.textContent).toBe("Note at 50");
     expect(JSON.parse(shim.values.get(TIME_FORMAT_KEY)!)).toBe("frames");
   });
 
@@ -1883,21 +1913,24 @@ describe("In / Out range handles and keys, no player button (#861, #927)", () =>
   const handle = (kind: "in" | "out") => byId(`video-range-${kind}`);
   const keyOn = async (target: Element, k: string) => { await act(async () => { target.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); }); await flush(); };
 
-  it("with no open composer there is no range button, and the I key starts nothing", async () => {
+  it("there is no range button in the player, and with no draft the I key opens one at In (the box is always there, #927)", async () => {
     await open();
     expect(rangeButton()).toBeNull();
+    expect(box()!.getAttribute("data-open")).toBe("false");
+    await atSeconds(2);
     await keyDown("i");
-    expect(byId("guest-composer")).toBeNull();
+    expect(box()!.getAttribute("data-open")).toBe("true");
+    expect(chip()?.textContent).toContain("00:00:02:00 →");
   });
 
-  it("with an open composer the I and O keys set the range, and the anchor and pending band follow", async () => {
+  it("the I and O keys set the range, and the chip and pending band follow", async () => {
     await open();
     await atSeconds(2);
-    await click(byId("guest-add-note"));
+    await keyDown("i");
     expect(rangeButton()).toBeNull();
     await atSeconds(4);
     await keyDown("o");
-    expect(byId("guest-composer-anchor")?.textContent).toMatch(/00:00:02:00.*00:00:04:00/);
+    expect(chip()?.textContent).toMatch(/00:00:02:00.*00:00:04:00/);
     expect(byId("video-pending-band")).not.toBeNull();
   });
 
@@ -1909,26 +1942,27 @@ describe("In / Out range handles and keys, no player button (#861, #927)", () =>
     };
     await open();
     await atSeconds(2);
-    await click(byId("guest-add-note"));
+    await keyDown("i");
     await atSeconds(4);
     await keyDown("o");
     await keyOn(handle("in")!, "ArrowRight");
-    expect(byId("guest-composer-anchor")?.textContent).toMatch(/00:00:02:01.*00:00:04:00/);
+    expect(chip()?.textContent).toMatch(/00:00:02:01.*00:00:04:00/);
     await typeInto(byId("guest-composer-body"), "Nudged");
     await submit("guest-composer");
     expect(posted).toEqual({ startFrame: 51, endFrame: 101, content: para("Nudged") });
   });
 
-  it("the range controls give way to the pen while drawing, and a note with a drawing locks its frames", async () => {
+  it("the range gives way to the pen while drawing: the box's in/out is behind the drawing row, and the player has no range button", async () => {
     await open();
     await atSeconds(2);
-    await click(byId("guest-add-note"));
-    await click(byId("guest-composer-draw"));
-    // The transport stays mounted under the markup toolbar (PR 2 fix round 2), hidden; the player has no range button either way.
+    await pen();
+    await atSeconds(2);
+    expect(byId("note-draw-row")).not.toBeNull();
+    expect(inBox("In and out points")).toBeNull();
     expect(rangeButton()).toBeNull();
   });
 
-  it("With no Clear button, an In mark past the edit's Out clears the Out: the note becomes a point", async () => {
+  it("an In mark past the edit's Out clears the Out (the shipped crossing rule): Out follows the playhead again", async () => {
     notes = { [asset(10)]: [mine(2, { revision: 3, startFrame: 50, endFrame: 101 })] };
     await open();
     await click(byId("guest-note-actions"));
@@ -1936,7 +1970,9 @@ describe("In / Out range handles and keys, no player button (#861, #927)", () =>
     expect(rangeButton()).toBeNull();
     await atSeconds(5);
     await keyDown("i");
-    expect(byId("guest-composer-anchor")?.textContent).toMatch(/^At 00:00:05:00/);
+    expect(chip()?.textContent).toContain("00:00:05:00 →");
+    expect(chip()?.textContent).not.toContain("00:00:04:00");
+    expect(byId("note-composer-chip-live")).not.toBeNull();
   });
 
   it("a link that allows no comments has no range button", async () => {

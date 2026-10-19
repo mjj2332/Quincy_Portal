@@ -85,12 +85,13 @@ describe("GuestThreadItem: the whole card seeks to its frame (#901)", () => {
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
-  it("Reply, the reply field, ⋯, Edit, the edit form's gap, Delete and the delete dialog's Cancel and Delete never select", async () => {
+  it("Reply, the reply field, Reply again, ⋯, Edit, the edit form's gap, Delete and the delete dialog's Cancel and Delete never select", async () => {
     const t = thread({}, [reply(2)]);
     const { onSelect, writing } = await render(t);
     await tap(tid("guest-note-reply-button")!);
     await tap(tid("guest-reply-body")!);
-    await tap(tid("guest-reply-cancel")!);
+    await tap(tid("guest-note-reply-button")!); // open, the toggle dismisses the reply (R1)
+    expect(tid("guest-reply-form")).toBeNull();
     await tap(tid("guest-note-actions")!); // opens the root's menu
     await flush();
     expect(menuItem("Edit")).toBeDefined();
