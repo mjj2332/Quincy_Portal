@@ -118,8 +118,6 @@ export function ReviewSplit({ player, pane, strip, open, width, onWidth, onNarro
    * controls with only the composer showing while a note is written. Nothing is reparented, so the film's clock and the editor are the same nodes throughout.
    */
   immersive?: "off" | "watch" | "compose";
-  /** Accepted and unused (#927 T9): F1's box has no Cancel, Add note and Escape close it, so nothing reads the close any more. The staff viewer still passes it; T10 drops that pass, then this prop. */
-  onImmersiveCancel?: () => void;
   rowClassName?: string;
   playerClassName?: string;
 }) {

@@ -21,7 +21,7 @@ function ModeProbe() { const value = useContext(SheetModeContext); return <span 
 function Harness({ immersive, stacked, open = true, drawing = false }: { immersive?: Mode; stacked: boolean; open?: boolean; drawing?: boolean }) {
   const sheet = useReviewSheet({ drawing, filmAspect: 16 / 9 });
   return <ReviewSplit
-    open={open} width={360} onWidth={() => undefined} onNarrow={() => undefined} paneId="pane" handleLabel="Resize notes" stacked={stacked} {...(stacked ? { sheet } : {})} {...(immersive ? { immersive } : {})} onImmersiveCancel={() => undefined}
+    open={open} width={360} onWidth={() => undefined} onNarrow={() => undefined} paneId="pane" handleLabel="Resize notes" stacked={stacked} {...(stacked ? { sheet } : {})} {...(immersive ? { immersive } : {})}
     strip={<div data-testid="video-review-strip" />}
     rowClassName="overflow-y-auto" playerClassName="overflow-y-auto"
     player={<video data-testid="film" />}
