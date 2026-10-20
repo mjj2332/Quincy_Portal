@@ -19,6 +19,7 @@ import { IconButton } from "../quincy/icon-button";
 import type { VersionRemovalHandle } from "./VideoVersionMenu";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "../reui/dialog";
 import { IconTip } from "../quincy/IconTip";
+import { SafariEdgeTint } from "../quincy/SafariEdgeTint";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../reui/item";
 import { ACTION_ROW_BOX, ACTION_ROW_TITLE, ACTION_ROWS } from "../quincy/ReviewActionSheet";
 import { CopyTextButton } from "./CopyTextButton";
@@ -710,6 +711,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       </OverlayContainerContext.Provider>
       <div ref={setSlot} />
       <div ref={setToastSlot} />
+      {/* #927 follow-up: opened from inside the Project, Safari keeps the cream tint it loaded with until a new bar reaches each edge. */}
+      {phone ? <SafariEdgeTint paint="card" /> : null}
     </DialogContent>
   </Dialog>;
 }
