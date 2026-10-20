@@ -734,4 +734,61 @@ describe("Full screen on iPhone (#927 D1)", () => {
     expect(native).toHaveBeenCalledTimes(1);
     expect(tid("video-exit-fullscreen")).toBeNull();
   });
+
+  const REFUSAL = "The system player couldn't open this film on this device.";
+  function iPhone() {
+    Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: false });
+    const enter = vi.fn(); const exit = vi.fn();
+    Object.assign(HTMLVideoElement.prototype, { webkitEnterFullscreen: enter, webkitExitFullscreen: exit });
+    return { enter, exit };
+  }
+  afterEach(() => { delete (HTMLVideoElement.prototype as unknown as Record<string, unknown>).webkitExitFullscreen; });
+
+  it("a film that already failed to load shows the refusal notice on the press, and hands nothing over", async () => {
+    const { enter } = iPhone();
+    await mount();
+    const film = document.querySelector<HTMLElement>('[role="dialog"]')!.querySelector("video")!;
+    await act(async () => { stub.fireError(film); });
+    await act(async () => { tid("video-fullscreen")!.click(); await Promise.resolve(); });
+    expect(enter).not.toHaveBeenCalled();
+    expect(tid("video-native-failed")?.textContent).toBe(REFUSAL);
+    expect(tid("video-exit-fullscreen")).toBeNull();
+  });
+
+  it("a film with no data that fails when the press plays it shows the refusal notice and leaves the empty native layer", async () => {
+    const { enter, exit } = iPhone();
+    await mount();
+    const film = document.querySelector<HTMLElement>('[role="dialog"]')!.querySelector("video")!;
+    // iOS before a gesture: metadata at most, so the hand-off plays the film first, inside the press.
+    await act(async () => { stub.loadMetadata(film, { duration: 12, videoWidth: 1920, videoHeight: 1080, readyState: 1 }); });
+    await act(async () => { tid("video-fullscreen")!.click(); await Promise.resolve(); });
+    expect(enter).toHaveBeenCalledTimes(1);
+    expect(tid("video-native-failed")).toBeNull();
+    // The source turns out not to load (a missing file): iOS fires `error`, and its player never appears.
+    await act(async () => { stub.fireError(film); await Promise.resolve(); });
+    expect(tid("video-native-failed")?.textContent).toBe(REFUSAL);
+    expect(exit).toHaveBeenCalledTimes(1);
+  });
+
+  it("a play the device refuses during the hand-off shows the refusal notice too", async () => {
+    const { enter } = iPhone();
+    await mount();
+    const film = document.querySelector<HTMLElement>('[role="dialog"]')!.querySelector("video")!;
+    await act(async () => { stub.loadMetadata(film, { duration: 12, videoWidth: 1920, videoHeight: 1080, readyState: 1 }); });
+    stub.rejectNextPlay("NotSupportedError", film);
+    await act(async () => { tid("video-fullscreen")!.click(); await Promise.resolve(); await Promise.resolve(); });
+    expect(enter).toHaveBeenCalledTimes(1);
+    expect(tid("video-native-failed")?.textContent).toBe(REFUSAL);
+  });
+
+  it("a film whose data arrives after the press keeps no refusal: a later error is the stage's, not the hand-off's", async () => {
+    iPhone();
+    await mount();
+    const film = document.querySelector<HTMLElement>('[role="dialog"]')!.querySelector("video")!;
+    await act(async () => { stub.loadMetadata(film, { duration: 12, videoWidth: 1920, videoHeight: 1080, readyState: 1 }); });
+    await act(async () => { tid("video-fullscreen")!.click(); await Promise.resolve(); });
+    await act(async () => { stub.loadData(film); });
+    await act(async () => { stub.fireError(film); await Promise.resolve(); });
+    expect(tid("video-native-failed")).toBeNull();
+  });
 });

@@ -97,8 +97,9 @@ const EDITOR_CONTENT_UTILITIES =
 /**
  * The note preset's text (#927): no padding, ground or floor of its own, since the note box draws the field and sets its type and
  * 24px line. Block, so the box's floated anchor chip has the first line run beside it; lists clear the chip, as in the frame.
+ * `rich-text__editor-content--note` keys app.css's note placeholder, which stays in the text's flow beside the chip (C2).
  */
-const NOTE_CONTENT_UTILITIES = "min-h-[var(--space-5)] w-full min-w-0 bg-transparent focus-visible:!outline-none [&_ul]:clear-both [&_ol]:clear-both";
+const NOTE_CONTENT_UTILITIES = "rich-text__editor-content--note min-h-[var(--space-5)] w-full min-w-0 bg-transparent focus-visible:!outline-none [&_ul]:clear-both [&_ol]:clear-both";
 
 /** Room for the outline rail's dashes at the right edge (the rail is hidden on a phone). */
 // scroll-mt: an outline-rail jump (`scrollToRichTextHeading`) must land the heading clear of the shell header AND the stuck toolbar (#594).

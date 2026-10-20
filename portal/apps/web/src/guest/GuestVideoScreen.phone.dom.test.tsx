@@ -624,4 +624,16 @@ describe("Full screen on iPhone (#927 D1)", () => {
     expect(native).toHaveBeenCalledTimes(1);
     expect(byId("video-exit-fullscreen")).toBeNull();
   });
+
+  it("a film that cannot play shows the refusal notice on the press instead of nothing", async () => {
+    Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: false });
+    const native = vi.fn();
+    (HTMLVideoElement.prototype as unknown as { webkitEnterFullscreen: () => void }).webkitEnterFullscreen = native;
+    await openVideo();
+    const film = byId("guest-video-screen")!.querySelector("video")!;
+    await act(async () => { stub.fireError(film); });
+    await act(async () => { byId("video-fullscreen")!.click(); await Promise.resolve(); });
+    expect(native).not.toHaveBeenCalled();
+    expect(byId("video-native-failed")?.textContent).toBe("The system player couldn't open this film on this device.");
+  });
 });
