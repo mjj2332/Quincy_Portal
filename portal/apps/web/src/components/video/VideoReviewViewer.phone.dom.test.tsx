@@ -792,3 +792,19 @@ describe("Full screen on iPhone (#927 D1)", () => {
     expect(tid("video-native-failed")).toBeNull();
   });
 });
+
+// #927 follow-up: opened from inside the Project, Safari keeps the cream tint it loaded with unless a new bar-shaped fixed element
+// reaches each edge. The viewer mounts ink strips in its own header and sheet colour (--card) on a phone.
+describe("Safari edge tint on a phone", () => {
+  const strips = () => [...document.querySelectorAll<HTMLElement>('[data-testid="video-review-viewer"] [data-testid="safari-edge-tint"]')];
+  it("mounts --card strips inside the viewer on a phone", async () => {
+    await mount({});
+    expect(strips()).toHaveLength(2);
+    for (const strip of strips()) expect(strip.className.split(/\s+/)).toContain("bg-card");
+  });
+  it("does not on desktop", async () => {
+    await viewport.set({ width: 1280 });
+    await mount({});
+    expect(strips()).toHaveLength(0);
+  });
+});

@@ -1,7 +1,9 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { mockViewport, type MockViewport } from "../../testing/viewport";
+import { EDGE_TINT_HOLD_MS } from "./SafariEdgeTint";
 import { PROJECT_SHEET_PHONE_QUERY, ProjectSheet, useClaimSheetClose, useProjectSheet } from "./ProjectSheet";
 
 let root: Root | null = null;
@@ -104,5 +106,49 @@ describe("ProjectSheet Close claim (#914)", () => {
 
   it("names the phone query its own max-[721px]: variant compiles to", () => {
     expect(PROJECT_SHEET_PHONE_QUERY).toBe("(width < 721px)");
+  });
+});
+
+// #927 follow-up: Safari keeps the tint it took when a film was open. Closing the film re-tints it light with fresh strips.
+describe("ProjectSheet Safari edge tint when a film closes", () => {
+  const strips = () => [...document.querySelectorAll<HTMLElement>('[data-testid="project-sheet"] [data-testid="safari-edge-tint"]')];
+  async function renderFilm(filmOpen: boolean) {
+    await act(async () => {
+      root!.render(
+        <ProjectSheet open kind="project" sheetKey="p:1" backdropHref="/" onRequestClose={() => {}} filmOpen={filmOpen}>
+          <div>body</div>
+        </ProjectSheet>,
+      );
+      await Promise.resolve();
+    });
+  }
+  let viewport: MockViewport;
+  afterEach(() => { viewport.restore(); vi.useRealTimers(); });
+
+  it("on a phone, mounts light strips when a film closes and drops them after the hold", async () => {
+    viewport = mockViewport({ width: 390 });
+    await renderFilm(true);
+    expect(strips()).toHaveLength(0);
+    vi.useFakeTimers();
+    await renderFilm(false);
+    expect(strips()).toHaveLength(2);
+    for (const strip of strips()) expect(strip.className.split(/\s+/)).toContain("bg-background");
+    await act(async () => { vi.advanceTimersByTime(EDGE_TINT_HOLD_MS); });
+    expect(strips()).toHaveLength(0);
+  });
+
+  it("a Project opened with no film never mounts them, and a film opening does not either (the viewer owns the dark tint)", async () => {
+    viewport = mockViewport({ width: 390 });
+    await renderFilm(false);
+    expect(strips()).toHaveLength(0);
+    await renderFilm(true);
+    expect(strips()).toHaveLength(0);
+  });
+
+  it("desktop never mounts them", async () => {
+    viewport = mockViewport({ width: 1280 });
+    await renderFilm(true);
+    await renderFilm(false);
+    expect(strips()).toHaveLength(0);
   });
 });

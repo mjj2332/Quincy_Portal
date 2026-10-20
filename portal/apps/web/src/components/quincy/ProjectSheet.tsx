@@ -8,6 +8,7 @@ import { OverlayContainerContext } from "../OverlayContainerContext";
 import { useMediaQuery } from "../../lib/use-media-query";
 import { hasOpenInnerLayer } from "./project-sheet-layers";
 import { ToastViewport } from "./ToastViewport";
+import { SafariEdgeTint } from "./SafariEdgeTint";
 
 /**
  * The Project sheet — #366. The Project route floating over the live Dashboard: a right-anchored
@@ -188,6 +189,13 @@ export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClos
     setClaims((count) => count + 1);
     return () => { if (released) return; released = true; setClaims((count) => count - 1); };
   }, []);
+  // #927 follow-up: Safari keeps the ink tint it took while a film was open. When the film closes on a phone, fresh light strips re-tint it.
+  const [restoreTint, setRestoreTint] = useState(0);
+  const filmWasOpenRef = useRef(filmOpen);
+  useEffect(() => {
+    if (filmWasOpenRef.current && !filmOpen && phone) setRestoreTint((count) => count + 1);
+    filmWasOpenRef.current = filmOpen;
+  }, [filmOpen, phone]);
   const [body, setBody] = useState<HTMLDivElement | null>(null);
   const setBodyRef = useCallback((node: HTMLDivElement | null) => { bodyRef.current = node; setBody(node); }, []);
   const context = useMemo<ProjectSheetContextValue>(() => ({ close: onRequestClose, backdropHref, body, claimClose }), [onRequestClose, backdropHref, body, claimClose]);
@@ -232,6 +240,7 @@ export function ProjectSheet({ open, kind, sheetKey, backdropHref, onRequestClos
           </ProjectSheetContext.Provider>
           {kind === "edit" ? <ToastViewport testId="project-sheet-toast-viewport" /> : null}
         </div>
+        {restoreTint > 0 && phone && !filmOpen ? <SafariEdgeTint key={restoreTint} paint="background" /> : null}
         {/* §4.2a: every popover / select / menu portals here — inside the trap, above z-95's floor. */}
         <div ref={setSlot} data-testid="project-sheet-overlay-slot" />
       </SheetContent>
