@@ -6426,3 +6426,17 @@ Tags: testing-guards · #927
 - **What bit.** A boundary test for the note box read its sources with paths relative to `process.cwd()`. It passed from `portal/apps/web` and failed under `npm run verify`, which runs vitest from `portal/`, so the same file read different (or no) files depending on where it ran.
 - **Rule.** A test that reads repo files builds each path from `import.meta.url` (for example `fileURLToPath(new URL("./NoteComposerBox.tsx", import.meta.url))`), never from `process.cwd()`. Fixed in f53e6c2f.
 - **Gate.** `NoteComposerBox.dom.test.tsx` resolves its sources from the test file; `npm run verify` from `portal/` runs it.
+
+## A Tiptap effect must check isDestroyed: WebKit's slower lazy mount loses the race Chromium wins (#927)
+Tags: rich-text, qa-browser · #927
+
+- **What bit.** A direct load of a film URL on iPhone Safari sent the lazy viewer into its error boundary with "The editor view is not available". `RichTextBubbleBar`'s listener effect read `editor.view.dom` unguarded, and #927's `RichTextFormatBubble` mounts it for every note. Tiptap's `useEditor` can destroy the editor before a passive effect runs; after `destroy()` the `view` getter throws. Chromium's faster mount won that race in every earlier pass.
+- **Rule.** Any effect, handler or microtask that touches `editor.view` starts with `if (editor.isDestroyed) return`. The bar's microtask and `shouldShow` already did; the effect did not. The vendored file carries the edit as adaptation 8.
+- **Gate.** `rich-text-bubble-bar.dom.test.tsx` mounts the bar on a destroyed editor. The race itself only reproduces in a browser, so the iOS Simulator pass remains the check.
+
+## An inverse scope does not remap --bg-surface, so a bar painting it goes white under paper text (#927)
+Tags: css-tokens, qa-browser · #927
+
+- **What bit.** `ProjectSheet` takes `data-surface="inverse"` while a film URL is open (D6), but `.project-phone__bar`, `.project-phone__slim`, `.project-header` and `.project-header__tabbar` paint `var(--bg-surface)`, which inverse.css leaves alone: paper-050 text on paper-000.
+- **Rule.** Do not remap `--bg-surface` in the inverse block: the `[data-surface="default"]` restore reads it for `--card` and `--popover`, so a nested default scope would paint ink. Paint `--background` for those bars under `[data-surface="inverse"]` in app.css.
+- **Gate.** `styles/inverse-project-header.guard.test.ts`.

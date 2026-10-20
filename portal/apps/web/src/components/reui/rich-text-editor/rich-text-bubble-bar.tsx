@@ -16,6 +16,7 @@
 //    editor's own DOM, so "is this focus in MY bar" cannot be answered by containment alone (#535).
 // 7. While `inactive` that wrapper is ALSO inert, `aria-hidden` and `tabindex=-1` (restored to 0 when active again):
 //    otherwise reverse Tab lands on the empty wrapper, and focus held there across a tier change is unowned (#535).
+// 8. The listener effect returns early for a destroyed editor: reading `editor.view` then throws (#927, iOS lazy mount).
 import {
   useEffect,
   useLayoutEffect,
@@ -141,6 +142,8 @@ export function RichTextBubbleBar({
   }, [inactive])
 
   useEffect(() => {
+    // Tiptap's useEditor can destroy the editor before this passive effect runs; its view then throws.
+    if (editor.isDestroyed) return
     const { dom } = editor.view
 
     function release() {
