@@ -246,14 +246,16 @@ describe("Full screen and rotation on a phone (#880, D14)", () => {
 
 describe("Add note in a phone's Full screen (#880 S4, owner decision 1)", () => {
   beforeEach(() => { viewport = mockViewport({ width: 390, height: 844, coarse: true }); });
-  it("is P6's compose strip: the frame on screen is stamped and kept, the hint says so, and the editor has the focus inside the tap", async () => {
+  it("is the box (#927 F1): the frame on screen is stamped and kept, the chip says so, and the editor has the focus inside the tap", async () => {
     await mount();
     await act(async () => { stub.presentFrame(film(), 3); });
     await flush(2);
     await click(tid("video-fullscreen")!);
     await click(tid("video-immersive-add-note")!);
     expect(forms.slot(ids.asset2).composer.anchorFrame).toBe(75);
-    expect(tid("video-note-composer")!.textContent).toContain("the note is stamped here");
+    const chip = tid("video-note-composer")!.querySelector<HTMLElement>('[data-testid="note-composer-chip"]')!;
+    expect(chip.textContent).toContain("01:00:03:00");
+    expect(chip.title).toBe("The note is stamped here");
     expect(document.activeElement).toBe(document.getElementById("video-note-body"));
   });
   it("an untouched draft gives its stamp back when the composer goes", async () => {
@@ -387,9 +389,10 @@ describe("Add note from the Delivery tab (#880 Sol review)", () => {
   });
 });
 
-describe("Cancel in a phone's Full screen composer (#880 fix round 1, item 2)", () => {
+describe("closing a phone's Full screen box (#880 fix round 1, item 2; #927 F1)", () => {
   beforeEach(() => { viewport = mockViewport({ width: 390, height: 844, coarse: true }); });
-  it("discards the draft and closes the composer, as the Add note toggle does, with the keyboard up or down; the stamp goes back", async () => {
+  // F1 has no Cancel: Add note or Esc closes the box, and the draft and its stamp stay for the next open (#927 T9).
+  it("Add note closes the box with the keyboard up or down; the draft and its stamp stay", async () => {
     await mount();
     await click(tid("video-fullscreen")!);
     for (const keyboardUp of [true, false]) {
@@ -398,19 +401,18 @@ describe("Cancel in a phone's Full screen composer (#880 fix round 1, item 2)", 
       // The keyboard going away blurs the field and leaves the composer shown (S1).
       if (!keyboardUp) { await act(async () => { (document.activeElement as HTMLElement).blur(); }); await flush(2); }
       expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
-      await click(tid("video-note-cancel")!);
+      expect(tid("video-note-cancel")).toBeNull();
+      await click(tid("video-immersive-add-note")!);
       expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
-      expect(forms.slot(ids.asset2).composer.body).toBe("");
-      expect(forms.slot(ids.asset2).composer.anchorFrame).toBeNull();
+      expect(forms.slot(ids.asset2).composer.body).toBe("Lift the shadows");
+      expect(forms.slot(ids.asset2).composer.anchorFrame).not.toBeNull();
       expect(tid("video-immersive-add-note")!.getAttribute("aria-pressed")).toBe("false");
-      // A touch device's focus after Cancel is the player, not Add note: a scripted focus there opened Add note's tooltip and a heavy focus ring, both stuck (#880 review 4's family).
+      // A touch device's focus after the close is the player, not Add note: a scripted focus there opened Add note's tooltip and a heavy focus ring, both stuck (#880 review 4's family).
       expect(document.activeElement).toBe(tid("video-player"));
     }
   });
 });
 
-/** Whether Tailwind's compiled `in-data-[immersive=compose]:<utility>` rule (`:where([data-immersive=compose]) .<class>`) applies to `element` in the rendered tree: an ancestor carries the attribute AND the class is on it. */
-const composeRuleApplies = (element: Element, utility: string) => element.parentElement?.closest('[data-immersive="compose"]') != null && element.classList.contains(`in-data-[immersive=compose]:${utility}`);
 describe("the Full screen composer drops the notes panel's sheet chrome (#880 fix round 1, item 3)", () => {
   it.each([["portrait", { width: 390, height: 844, coarse: true }], ["a desktop width", { width: 1200, height: 800, coarse: false }]] as const)("on %s: no panel padding or side border, and the composer band has no top border or padding of its own", async (_name, size) => {
     viewport = mockViewport(size);
@@ -423,23 +425,19 @@ describe("the Full screen composer drops the notes panel's sheet chrome (#880 fi
     const band = tid("video-note-composer")!.closest<HTMLElement>("[data-sheet-part=composer]")!.className.split(/\s+/);
     for (const name of ["in-data-[immersive=compose]:border-t-0", "in-data-[immersive=compose]:pt-0"]) expect(band, name).toContain(name);
   });
-  it("on a phone, Cancel ends the strip's hint line in one head row spanning both columns, so the pill keeps its width and Send its edge (#880 review 6)", async () => {
+  it("on a phone, the Full screen composer is F1's one floating box: the chip, the tools and Send at its end, with no hint line or Cancel beside it (#880 review 6, #927 F1)", async () => {
     viewport = mockViewport({ width: 390, height: 844, coarse: true });
     await mount();
     await click(tid("video-fullscreen")!);
     await click(tid("video-immersive-add-note")!);
     const composer = tid("video-note-composer")!;
     expect(composer.closest('[data-immersive="compose"]')).toBe(tid("video-review-pane"));
-    // The rendered structure: the head row is a grid item spanning both columns, holding the hint line and then Cancel. Cancel is no grid item of its own, so it sizes no column.
-    const head = tid("video-note-head")!;
-    expect(head.parentElement).toBe(composer);
-    expect(head.classList.contains("col-span-2")).toBe(true);
-    expect(head.contains(tid("video-note-stamp"))).toBe(true);
-    expect(tid("video-note-cancel")!.parentElement).toBe(head);
-    expect(head.lastElementChild).toBe(tid("video-note-cancel"));
-    expect([...composer.children].some((child) => child.contains(tid("video-note-cancel")) && child !== head)).toBe(false);
-    // No fourth row: the grid drops its track, under the [data-immersive=compose] ancestor.
-    expect(composeRuleApplies(composer, "grid-rows-[auto_auto_auto]")).toBe(true);
+    expect(composer.dataset.floating).toBe("true");
+    const box = composer.querySelector<HTMLElement>('[data-testid="note-composer-box"]')!;
+    expect(box.contains(composer.querySelector('[data-testid="note-composer-chip"]'))).toBe(true);
+    // Send keeps the box's end edge: it is the tools row's last control.
+    expect(box.querySelector('[data-testid="note-composer-tools"]')!.lastElementChild).toBe(composer.querySelector('button[type="submit"]'));
+    for (const gone of ["video-note-head", "video-note-stamp", "video-note-cancel"]) expect(tid(gone), gone).toBeNull();
   });
 });
 
@@ -511,16 +509,18 @@ describe("entering Full screen from the sheet's modes (#880 S5)", () => {
     expect(forms.slot(ids.asset2).composer.body).toBe("Lift the shadows");
     expect(forms.slot(ids.asset2).composer.anchorFrame).toBe(stamp);
   });
-  it("a turn mid-compose with markup on puts no Draw in the sideways Full screen dock: F2 has none, and its composer is blocked sideways (#880 review 1)", async () => {
+  it("a turn mid-compose with markup on puts no pen in the sideways Full screen dock: F2 has none, and its composer is blocked sideways (#880 review 1)", async () => {
     await mount({ markup: true });
     await act(async () => { field().focus(); });
     await act(async () => { forms.setBody(ids.asset2, "Lift the shadows", 0); });
     await flush(2);
-    expect(tid("video-markup-toolbar-draw")).not.toBeNull();
+    // The pen is the box's (#927 C6), not a player toolbar's.
+    expect(tid("video-note-composer")!.querySelector('button[aria-label="Draw on the frame"]')).not.toBeNull();
     await viewport.set({ width: 750, height: 292 });
     await flush(2);
     expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(true);
-    expect(tid("video-immersive-dock")!.querySelector('[data-testid="video-markup-toolbar-draw"]')).toBeNull();
+    expect(tid("video-immersive-dock")!.querySelector('button[aria-label="Draw on the frame"]')).toBeNull();
+    expect(tid("video-markup-toolbar-draw")).toBeNull();
   });
   it("turning back with the field left in Full screen gives the sheet browse, not a stale compose", async () => {
     await mount();
@@ -604,5 +604,78 @@ describe("the system player row (#880, D15)", () => {
     expect(row.getAttribute("aria-disabled") === "true" || row.hasAttribute("data-disabled") || (row as HTMLButtonElement).disabled).toBe(true);
     const described = row.getAttribute("aria-describedby");
     expect(document.getElementById(described!)!.textContent).toBe("Only available in Safari on iPhone or iPad.");
+  });
+});
+
+describe("the Full screen box at a desktop width (#927 F1, T9)", () => {
+  beforeEach(() => { viewport = mockViewport({ width: 1200, height: 800, coarse: false }); });
+  const body = () => document.getElementById("video-note-body") as HTMLTextAreaElement;
+
+  it("Add note floats F1's box (the same composer node, no Cancel); Add note closes it with the draft and anchor kept; Add note again puts the focus back in the draft", async () => {
+    await mount();
+    const composerBefore = tid("video-note-composer");
+    await click(tid("video-fullscreen")!);
+    await click(tid("video-immersive-add-note")!);
+    const composer = tid("video-note-composer")!;
+    expect(composer).toBe(composerBefore);
+    expect(composer.closest('[data-immersive="compose"]')).toBe(tid("video-review-pane"));
+    expect(composer.dataset.floating).toBe("true");
+    expect(tid("video-note-cancel")).toBeNull();
+    expect(document.activeElement).toBe(body());
+    await act(async () => { forms.setBody(ids.asset2, "Lift the shadows", 0); });
+    const anchor = forms.slot(ids.asset2).composer.anchorFrame;
+    expect(anchor).not.toBeNull();
+    await click(tid("video-immersive-add-note")!);
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
+    expect(document.activeElement).toBe(tid("video-immersive-add-note"));
+    // The film moves on while the box is away; the draft's anchor does not.
+    await act(async () => { stub.presentFrame(film(), 120); });
+    await click(tid("video-immersive-add-note")!);
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    expect(document.activeElement).toBe(body());
+    expect(body().value).toBe("Lift the shadows");
+    expect(forms.slot(ids.asset2).composer.anchorFrame).toBe(anchor);
+  });
+
+  it("leaving Full screen gives the rail its own box back: not floating, with the draft", async () => {
+    await mount();
+    await click(tid("video-fullscreen")!);
+    await click(tid("video-immersive-add-note")!);
+    await act(async () => { forms.setBody(ids.asset2, "Lift the shadows", 0); });
+    await click(tid("video-exit-fullscreen")!);
+    expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(false);
+    expect(tid("video-note-composer")!.dataset.floating).toBeUndefined();
+    expect(body().value).toBe("Lift the shadows");
+  });
+
+  it("Escape goes the colour popover, then drawing, then the box (the draft kept), then Full screen (plan: Esc order)", async () => {
+    await mount({ markup: true });
+    await click(tid("video-fullscreen")!);
+    await click(tid("video-immersive-add-note")!);
+    await act(async () => { forms.setBody(ids.asset2, "Lift the shadows", 0); });
+    const composer = tid("video-note-composer")!;
+    await click(composer.querySelector<HTMLElement>('button[aria-label="Draw on the frame"]')!);
+    expect(tid("note-draw-row")).not.toBeNull();
+    await click(composer.querySelector<HTMLElement>('button[aria-label="Pen colour"]')!);
+    expect(tid("note-draw-palette")).not.toBeNull();
+    await escape();
+    expect(tid("note-draw-palette")).toBeNull();
+    expect(tid("note-draw-row")).not.toBeNull();
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    await escape();
+    expect(tid("note-draw-row")).toBeNull();
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    // Out of drawing the focus is on the pen. A draft with text holds the next Escape as it does anywhere (the form store's dirty hold): the focus goes back to the field, the box stays.
+    expect(document.activeElement).toBe(composer.querySelector('button[aria-label="Draw on the frame"]'));
+    await escape();
+    expect(document.activeElement).toBe(body());
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("compose");
+    await escape();
+    expect(tid("video-review-pane")!.getAttribute("data-immersive")).toBe("watch");
+    expect(forms.slot(ids.asset2).composer.body).toBe("Lift the shadows");
+    await escapeOutOfTooltip();
+    await escape();
+    expect(tid("video-player")!.hasAttribute("data-immersive")).toBe(false);
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

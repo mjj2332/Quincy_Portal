@@ -15,12 +15,12 @@ import { embeddedMediaPosterUrl, embeddedMediaUrl } from "./embedded-media-core"
 import { RICH_TEXT_HIGHLIGHT_COLORS, RICH_TEXT_MAX_NESTING, RICH_TEXT_TABLE_MAX_COLUMNS, RICH_TEXT_TABLE_MAX_ROWS, type RichTextDoc } from "@quincy/shared";
 
 // The Tiptap <-> stored RichTextDoc contract for `QuincyRichTextEditor`, in its two presets:
-// `"composer"` (Project discussion, #491) and `"document"` (Notice board, #492). The schema here is
+// `"composer"` (Project discussion, #491), `"document"` (Notice board, #492) and `"note"` (a note or reply on a Video, #927). The schema here is
 // the one `parseRichTextDoc` accepts (comment profile for the composer, notice profile for the
 // document), so the editor builds on it and never on a vendor extension set. Every attribute that
 // is stored has an explicit mapping in BOTH directions below: a mark or attribute with no mapping
 // collapses to `{ type }` and silently loses its value (docs/lessons.md, 2026-08-18).
-export type RichTextEditorPreset = "composer" | "document";
+export type RichTextEditorPreset = "composer" | "document" | "note";
 
 const DEFAULT_HIGHLIGHT = RICH_TEXT_HIGHLIGHT_COLORS[0];
 
@@ -270,12 +270,83 @@ function documentExtensions() {
   ];
 }
 
+/**
+ * A note (#927) cannot make a heading or a checklist, yet an old note keeps the ones it has: the nodes stay in the schema so it loads
+ * and round-trips unchanged (`parseRichTextDoc` still accepts them), but nothing new can be made. No input rule (`## `, `[ ] `), no
+ * shortcut (Mod-Alt-2, Mod-Shift-9), and the commands are kept but refuse (so `can()` answers false rather than throwing, which the
+ * shared `useRichTextState` selector would). No paste rule either: a pasted `<h2>` lands as a paragraph and a pasted checklist as a
+ * bulleted list, since the parser falls back to the paragraph and the bullet list's own `ul` / `li` rules.
+ */
+const refuse = () => () => false;
+const NoteHeading = TiptapNode.create({
+  name: "heading",
+  group: "block",
+  content: "inline*",
+  defining: true,
+  addAttributes() { return { level: { default: 2, rendered: false } }; },
+  parseHTML() { return []; },
+  renderHTML({ node, HTMLAttributes }) { return [`h${node.attrs.level === 3 ? 3 : 2}`, mergeAttributes(HTMLAttributes), 0]; },
+  addCommands() { return { setHeading: refuse, toggleHeading: refuse }; },
+});
+const NoteTaskList = TaskList.extend({
+  parseHTML() { return []; },
+  addInputRules() { return []; },
+  addKeyboardShortcuts() { return {}; },
+  addCommands() { return { toggleTaskList: refuse }; },
+});
+const noteTaskItem = (content: string) => TaskItem.extend({ content, parseHTML() { return []; }, addInputRules() { return []; } }).configure({ nested: true });
+
+const isMediaNode = (node: ProseMirrorNode) => node.type.name === "image" || node.type.name === "video";
+const mediaIdOf = (node: ProseMirrorNode) => String(node.attrs.mediaId ?? "");
+/** Where the run of media that ends the note starts (the document's size when it does not end with media). */
+export function noteMediaTailStart(doc: ProseMirrorNode): number {
+  let start = doc.content.size;
+  for (let index = doc.childCount - 1; index >= 0; index -= 1) {
+    const child = doc.child(index);
+    if (!isMediaNode(child)) break;
+    start -= child.nodeSize;
+  }
+  return start;
+}
+
+/**
+ * A note's photos and videos are a strip after its text (#927, frame C4), drawn outside the text (`QuincyRichTextEditorBase`), so the
+ * text holds them as invisible atoms. A photo or video new to the note that is not in the run that ends it is moved to the end: the
+ * editor's own upload already lands it there, and this is the backstop for anything else that inserts one (a paste, a drop).
+ * Removing one is the author's call (owner decision 2026-10-20, "Allow delete"): its chip's ×, a selection deleted over it, Backspace
+ * or Delete all remove it, and undo brings it back. Nothing here touches the host replacing the content (`preventUpdate`) or an undo /
+ * redo, and a photo an old note holds between paragraphs stays where it is: the stored order is never rewritten.
+ */
+export const NoteMediaTail = Extension.create({
+  name: "noteMediaTail",
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      appendTransaction(transactions, oldState, newState) {
+        if (!transactions.some((tr) => tr.docChanged)) return null;
+        if (transactions.some((tr) => tr.getMeta("preventUpdate") || tr.getMeta("history$"))) return null;
+        const known = new Set<string>();
+        oldState.doc.forEach((child) => { if (isMediaNode(child)) known.add(mediaIdOf(child)); });
+        // What is new to the note and landed before the run that ends it, in document order.
+        const tail = noteMediaTailStart(newState.doc);
+        const stray: { node: ProseMirrorNode; pos: number }[] = [];
+        newState.doc.forEach((child, offset) => { if (isMediaNode(child) && offset < tail && !known.has(mediaIdOf(child))) stray.push({ node: child, pos: offset }); });
+        if (stray.length === 0) return null;
+        const tr = newState.tr;
+        for (const { node, pos } of [...stray].reverse()) tr.delete(pos, pos + node.nodeSize);
+        tr.insert(tr.doc.content.size, stray.map(({ node }) => node));
+        return tr;
+      },
+    })];
+  },
+});
+
 /** The editor schema for a preset, shared with direct schema regression tests. */
 export function createRichTextEditorExtensions(preset: RichTextEditorPreset = "composer") {
   const itemContent = "paragraph (paragraph|bulletList|orderedList|taskList)*";
+  const note = preset === "note";
   return [
     StarterKit.configure({
-      heading: { levels: [2, 3] },
+      heading: note ? false : { levels: [2, 3] },
       blockquote: false,
       codeBlock: false,
       horizontalRule: false,
@@ -291,14 +362,14 @@ export function createRichTextEditorExtensions(preset: RichTextEditorPreset = "c
     }),
     ListItem.extend({ content: itemContent }),
     ListItemHardBreak,
-    TaskList.configure({}),
-    TaskItem.extend({ content: itemContent }).configure({ nested: true }),
+    ...(note ? [NoteHeading, NoteTaskList, noteTaskItem(itemContent)] : [TaskList.configure({}), TaskItem.extend({ content: itemContent }).configure({ nested: true })]),
     Mention.configure({ HTMLAttributes: { class: "rich-text__mention" }, suggestion: { items: () => [] } }),
     ListItemHeadingCommandBoundary,
     ListNestingBoundary,
     EmbeddedImage,
     LinkPreview,
-    ...(preset === "composer" ? [EmbeddedVideo] : []),
+    ...(preset === "composer" || note ? [EmbeddedVideo] : []),
+    ...(note ? [NoteMediaTail] : []),
     ...(preset === "document" ? documentExtensions() : []),
   ];
 }

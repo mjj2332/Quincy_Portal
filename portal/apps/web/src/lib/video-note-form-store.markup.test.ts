@@ -592,3 +592,27 @@ describe("review fixes (#741 6b-ui form store)", () => {
     });
   });
 });
+
+describe("the composer's anchor freezes on the first stroke (#927)", () => {
+  it("the first stroke stamps the drawing's frame as the anchor; Clear then leaves it frozen while the note has text, and releases it once nothing is left", async () => {
+    store.setBody(V2, "", 0);
+    await drawing("composer", 42);
+    expect(store.slot(V2).composer.anchorFrame).toBeNull();
+    store.setItems(V2, "composer", [stroke()]);
+    expect(store.slot(V2).composer.anchorFrame).toBe(42);
+    store.setBody(V2, "look", 60);
+    expect(store.slot(V2).composer.anchorFrame).toBe(42);
+    store.setItems(V2, "composer", []);
+    expect(store.slot(V2).composer.anchorFrame).toBe(42);
+    store.setBody(V2, "", 70);
+    expect(store.slot(V2).composer.anchorFrame).toBeNull();
+  });
+
+  it("erasing the text keeps the anchor while strokes remain", async () => {
+    await drawing("composer", 42);
+    store.setItems(V2, "composer", [stroke()]);
+    store.setBody(V2, "x", 60);
+    store.setBody(V2, "", 60);
+    expect(store.slot(V2).composer.anchorFrame).toBe(42);
+  });
+});

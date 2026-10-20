@@ -255,7 +255,6 @@ describe("Compare: entry and exit (#741 7c)", () => {
     await openViewer();
     await loadFilm(0);
     await flush(4);
-    expect(tid("video-markup-toolbar-draw")).not.toBeNull();
     await enterCompare(0);
     expect(tid("video-markup-toolbar-draw")).toBeNull();
   });
@@ -359,21 +358,11 @@ describe("Compare: time format (#860)", () => {
     expect(readoutA()).toBe("v3 0v2 0");
   });
 
-  it("in Frames the stage chips read 'frame N' with no repeated number", async () => {
+  it("draws no timecode chip on either stage, in Frames too (#927)", async () => {
     shim.values.set(TIME_FORMAT_KEY, JSON.stringify("frames"));
-    const original = Object.getOwnPropertyDescriptors(HTMLElement.prototype);
-    for (const [prop, value] of [["offsetWidth", 800], ["offsetHeight", 800], ["offsetLeft", 0], ["offsetTop", 0]] as const) Object.defineProperty(HTMLElement.prototype, prop, { configurable: true, get: () => value });
-    try {
-      await openCompare({}, 0);
-      await land(7);
-      const chips = [...document.querySelectorAll('[data-testid="video-timecode-chip"]')].map((c) => c.textContent);
-      expect(chips).toEqual(["frame 7", "frame 7"]);
-    } finally {
-      for (const prop of ["offsetWidth", "offsetHeight", "offsetLeft", "offsetTop"] as const) {
-        const d = original[prop];
-        if (d) Object.defineProperty(HTMLElement.prototype, prop, d); else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[prop];
-      }
-    }
+    await openCompare({}, 0);
+    await land(7);
+    expect(document.querySelector('[data-testid="video-timecode-chip"]')).toBeNull();
   });
 
   it("hosts the same menu beside its readout: picking Standard there rewrites the readout, and the choice is the shared one", async () => {
@@ -1020,7 +1009,7 @@ describe("Compare: notes, one column with a tab per side (#741 7c)", () => {
     const text = tid("video-note-composer")!.querySelector<HTMLTextAreaElement>("textarea")!;
     await type(text, "On the second cut");
     api.apiPost.mockResolvedValue(note({ assetId: ids.asset2, startFrame: 5, body: "On the second cut" }));
-    await click(tid("video-note-post")!);
+    await click(tid("video-note-composer")!.querySelector<HTMLButtonElement>('button[type="submit"]')!);
     await land(5);
     await flush(4);
     expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, { startFrame: 5, visibility: "internal", content: legacyBodyToRichTextDoc("On the second cut") });
@@ -1036,7 +1025,7 @@ describe("Compare: notes, one column with a tab per side (#741 7c)", () => {
     expect(stores.made[0]!.slot(ids.asset3).marks.touched).toBe(false);
     expect(tid("video-pending-band")).not.toBeNull();
     // B parked before its window: I and O are unbound.
-    await click(tid("video-note-clear-marks")!);
+    await click(tid("note-composer-chip")!.querySelector<HTMLButtonElement>('button[aria-label="Clear in and out"]')!);
     const offset = tid("video-compare-offset") as HTMLInputElement;
     offset.focus();
     await type(offset, "12");

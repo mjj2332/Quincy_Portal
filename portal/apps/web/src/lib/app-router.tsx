@@ -560,6 +560,7 @@ function DashboardLayer() {
           closeButton={!(route.kind === "project" && route.whiteboard === true)}
           impersonating={impersonating}
           finalFocus={finalFocus}
+          filmOpen={route.kind === "project" && route.video != null}
         >
           {isSheetRoute ? <Outlet /> : null}
         </ProjectSheet>

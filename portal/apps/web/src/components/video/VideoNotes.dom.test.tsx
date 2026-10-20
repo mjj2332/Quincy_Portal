@@ -89,6 +89,27 @@ const threads = () => [...document.querySelectorAll<HTMLElement>('[data-testid="
 const threadOf = (id: string) => document.querySelector<HTMLElement>(`[data-testid="video-note-thread"][data-note-id="${id}"]`)!;
 const noteIds = () => threads().map((t) => t.dataset.noteId!);
 const click = (el: Element) => act(async () => { (el as HTMLElement).click(); });
+/** The composer box's round Send (#927): icon-only and named by its phase; a lock with a reason is aria-disabled. */
+const postButton = () => document.querySelector<HTMLButtonElement>('[data-testid="video-note-composer"] button[type="submit"]');
+const postLabel = () => postButton()?.getAttribute("aria-label");
+const isOff = (button: HTMLElement) => (button as HTMLButtonElement).disabled || button.getAttribute("aria-disabled") === "true";
+/** The composer's one in/out button (In, then Out, then clear) and its chip. */
+const rangeButton = () => document.querySelector<HTMLButtonElement>('[data-testid="video-note-composer"] button[aria-label="In and out points"]');
+/** The composer's own anchor chip; an open edit box draws one too (#927 T7, E1). */
+const composerChip = () => document.querySelector<HTMLElement>('[data-testid="video-note-composer"] [data-testid="note-composer-chip"]');
+/** A root note's edit is the note composer box (#927 T7, E1): its in/out, its chip, Cancel and Save. */
+const editBox = () => document.querySelector<HTMLElement>('[data-notes-form="edit"]');
+const editSave = () => editBox()?.querySelector<HTMLButtonElement>('button[type="submit"]') ?? null;
+const editCancel = () => [...(editBox()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.textContent === "Cancel") ?? null;
+const editRange = () => editBox()?.querySelector<HTMLButtonElement>('button[aria-label="In and out points"]') ?? null;
+const editChip = () => editBox()?.querySelector<HTMLElement>('[data-testid="note-composer-chip"]') ?? null;
+const visibilityTrigger = () => document.querySelector<HTMLButtonElement>('[data-testid="video-note-composer"] button[aria-label^="Who can see this note"]')!;
+async function pickVisibility(value: "internal" | "public") {
+  await click(visibilityTrigger());
+  await act(async () => { await Promise.resolve(); });
+  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((candidate) => candidate.textContent!.startsWith(value === "public" ? "Client-visible" : "Internal"))!;
+  await click(item);
+}
 async function key(k: string, target: Element, init: KeyboardEventInit = {}) { await act(async () => { target.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init })); }); }
 async function type(el: HTMLTextAreaElement, text: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
@@ -248,18 +269,18 @@ describe("Video notes panel (#741 5b)", () => {
     expect(tomb.textContent).toContain("Still relevant");
   });
 
-  it("Reply posts only the body, names the inherited visibility, and shows the reply under the thread (story 35)", async () => {
+  it("Reply posts only the body, inherits the note's visibility (no menu, R1), and shows the reply under the thread (story 35)", async () => {
     const s = seed();
     await openFilm();
     const thread = threadOf(s.n1.id);
     await click(tid("video-note-reply-button", thread)!);
     const form = thread.querySelector<HTMLElement>('[data-notes-form="reply"]')!;
-    expect(form.textContent).toContain("Reply · Internal");
+    expect(form.querySelector('button[aria-label^="Who can see this note"]')).toBeNull();
     expect(form.querySelector<HTMLElement>('[role="group"]')).toBeNull();
     const added = { ...s.n1, replies: [replyTo(s.n1, { body: "On it", createdAt: T(20) })] } as VideoNoteThreadDto;
     api.apiPost.mockResolvedValue(commit(added));
     await type(form.querySelector<HTMLElement>("textarea") as HTMLTextAreaElement, "On it");
-    await click(tid("video-note-reply-post", form)!);
+    await click(form.querySelector<HTMLElement>('button[aria-label="Send reply"]')!);
     await flush(4);
     expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-notes/${s.n1.id}/replies`, { content: legacyBodyToRichTextDoc("On it") });
     expect(tid("video-note-body", [...threadOf(s.n1.id).querySelectorAll<HTMLElement>('[data-testid="video-note-reply"]')][0]!)!.textContent).toBe("On it");
@@ -370,7 +391,7 @@ describe("Composer through the player (tests 9-12, 25)", () => {
     expect(tid("video-pending-band")).not.toBeNull();
     api.apiPost.mockResolvedValue(commit(note({ startFrame: 12, endFrame: 21, body: "Range" })));
     await type(composerText(), "Range");
-    await click(tid("video-note-post")!);
+    await click(postButton()!);
     await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 12 / 25); });
     await flush(4);
     expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, { startFrame: 12, endFrame: 21, visibility: "internal", content: legacyBodyToRichTextDoc("Range") });
@@ -379,24 +400,24 @@ describe("Composer through the player (tests 9-12, 25)", () => {
 
   it("with no marks Post pauses on the frame composing began at, waits for it to be on screen, then posts a point; visibility goes back to Internal", async () => {
     await openFilm({}, 7);
-    await click(tid("video-note-visibility-public")!);
-    expect(tid("video-note-visibility-hint")!.textContent).toContain("Shown to the client");
+    await pickVisibility("public");
+    expect(visibilityTrigger().getAttribute("aria-label")).toBe("Who can see this note: Client-visible");
     await type(composerText(), "Point note");
     await present(40); // playback moved on: the anchor stays at 7
     api.apiPost.mockResolvedValue(note({ startFrame: 7, visibility: "public", body: "Point note" }));
-    await click(tid("video-note-post")!);
+    await click(postButton()!);
     expect(api.apiPost).not.toHaveBeenCalled();
     await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 7 / 25); });
     await flush(4);
     expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, { startFrame: 7, visibility: "public", content: legacyBodyToRichTextDoc("Point note") });
-    expect(tid("video-note-visibility-hint")!.textContent).toContain("Studio only");
+    expect(visibilityTrigger().getAttribute("aria-label")).toBe("Who can see this note: Internal");
   });
 
   it("a frame-0 note posts startFrame 0 (story 28)", async () => {
     await openFilm({}, 0);
     await type(composerText(), "At the start");
     api.apiPost.mockResolvedValue(note({ startFrame: 0 }));
-    await click(tid("video-note-post")!);
+    await click(postButton()!);
     await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 0); });
     await flush(4);
     expect(api.apiPost.mock.calls[0]![1]).toMatchObject({ startFrame: 0 });
@@ -479,10 +500,11 @@ describe("Edit frames through the player keys", () => {
     await dispatchKey(popup(), "i");
     await present(30);
     await dispatchKey(popup(), "o");
-    expect(tid("video-note-anchor")!.textContent).not.toContain("In ");
+    expect(composerChip()?.textContent ?? "").not.toContain("Note from");
+    expect(editChip()!.textContent).toContain("Note from");
     expect(tid("video-pending-band")).not.toBeNull();
     api.apiPatch.mockResolvedValue(commit({ ...s.n1, startFrame: 20, endFrame: 31, revision: 2 } as VideoNoteThreadDto));
-    await click(tid("video-note-edit-save")!);
+    await click(editSave()!);
     await flush(4);
     expect(api.apiPatch).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-notes/${s.n1.id}`, { expectedRevision: 1, startFrame: 20, endFrame: 31 });
   });
@@ -511,7 +533,7 @@ describe("Archived Project (test 21)", () => {
     queryClient!.setQueryData(projectDataKeys.collaborationSummary(PROJECT), undefined);
     await type(composerText(), "Too late");
     api.apiPost.mockRejectedValue(new ApiError("Project is archived", 409, { code: "project_archived" }));
-    await click(tid("video-note-post")!);
+    await click(postButton()!);
     await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 5 / 25); });
     await flush(6);
     expect(api.apiPost).toHaveBeenCalledTimes(1);
@@ -525,7 +547,7 @@ describe("Archive during a Post confirmation (#741 5b, Sol r15)", () => {
     await openFilm({ latch: true }, 5);
     await type(composerText(), "Almost sent"); // the anchor freezes at frame 5
     await present(9); // playback moves on, so Post has to seek back before it can send
-    await click(tid("video-note-post")!); // the seek is now in flight
+    await click(postButton()!); // the seek is now in flight
     expect(stores.made.at(-1)!.slot(ids.asset2).op?.phase).toBe("confirming");
     await act(async () => { queryClient!.setQueryData(projectDataKeys.detail(PROJECT), { archivedAt: "2026-10-10T00:00:00.000Z" }); });
     await flush(2);
@@ -546,7 +568,7 @@ describe("External role (test 22)", () => {
     expect(tid("video-note-visibility-badge", threadOf(s.n1.id))!.textContent).toContain("Internal");
     await type(composerText(), "External note");
     api.apiPost.mockResolvedValue(note({ startFrame: 5, body: "External note" }));
-    await click(tid("video-note-post")!);
+    await click(postButton()!);
     await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 5 / 25); });
     await flush(4);
     expect(api.apiPost.mock.calls[0]![1]).toMatchObject({ visibility: "internal", content: legacyBodyToRichTextDoc("External note") });
@@ -558,7 +580,7 @@ describe("External role (test 22)", () => {
     queryClient!.setQueryData(projectDataKeys.detail(PROJECT), { archivedAt: null });
     await type(composerText(), "Lost access");
     api.apiPost.mockRejectedValue(new ApiError("Project not found", 404, { error: "Project not found" }));
-    await click(tid("video-note-post")!);
+    await click(postButton()!);
     await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 5 / 25); });
     await flush(6);
     expect(queryClient!.getQueryState(projectDataKeys.videoReview(PROJECT))!.isInvalidated).toBe(true);
@@ -578,12 +600,17 @@ describe("Keyboard ownership (test 23)", () => {
     expect(stub.calls).toEqual([]);
   });
 
-  it("arrows, Home and End inside a filter group or the visibility switch do not move the film", async () => {
+  it("arrows, Home and End inside a filter group or the open visibility menu do not move the film", async () => {
     await openFilm({}, 12);
     stub.writes.length = 0;
-    for (const target of [tid("video-notes-filter-status-open")!, tid("video-notes-filter-visibility-all")!, tid("video-note-visibility-internal")!]) {
+    for (const target of [tid("video-notes-filter-status-open")!, tid("video-notes-filter-visibility-all")!]) {
       for (const k of ["ArrowLeft", "ArrowRight", "Home", "End"]) await dispatchKey(target, k);
     }
+    // The visibility menu (#927, C5) replaced the switch: its radio items own the arrows while it is open.
+    await click(visibilityTrigger());
+    await act(async () => { await Promise.resolve(); });
+    const item = document.querySelector<HTMLElement>('[role="menuitemradio"]')!;
+    for (const k of ["ArrowUp", "ArrowDown", "Home", "End"]) await dispatchKey(item, k);
     expect(stub.writes).toEqual([]);
   });
 
@@ -748,7 +775,7 @@ describe("Marker lane (test 26)", () => {
 
 describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", () => {
   const notesKey = () => projectDataKeys.videoNotes(PROJECT, ids.asset2);
-  const composerAnchor = () => tid("video-note-anchor")!.textContent ?? "";
+  const composerAnchor = () => composerChip()?.textContent ?? "";
   const editForms = () => [...document.querySelectorAll<HTMLElement>('[data-notes-form="edit"]')];
   const conflictOf = (note: VideoNoteThreadDto) => new ApiError("Conflict", 409, { code: "note_conflict", thread: note });
 
@@ -760,15 +787,15 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     await act(async () => { queryClient!.setQueryData(notesKey(), seed().all.map((n) => (n.id === s.n1.id ? elsewhere : n))); });
     await type(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>("textarea")!, "My edit");
     api.apiPatch.mockRejectedValueOnce(conflictOf(elsewhere));
-    await click(tid("video-note-edit-save")!);
+    await click(editSave()!);
     await flush(4);
     expect(api.apiPatch).toHaveBeenCalledTimes(1);
     expect(api.apiPatch.mock.calls[0]![1]).toEqual({ expectedRevision: 1, content: legacyBodyToRichTextDoc("My edit") });
     expect(tid("video-note-conflict")!.textContent).toContain("Changed in another tab");
     expect(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("My edit");
-    expect(tid("video-note-edit-save")!.textContent).toBe("Save anyway");
+    expect(editSave()!.textContent).toBe("Save anyway");
     api.apiPatch.mockResolvedValueOnce(commit({ ...elsewhere, body: "My edit", revision: 3 } as VideoNoteThreadDto));
-    await click(tid("video-note-edit-save")!);
+    await click(editSave()!);
     await flush(4);
     expect(api.apiPatch.mock.calls[1]![1]).toEqual({ expectedRevision: 2, content: legacyBodyToRichTextDoc("My edit") });
   });
@@ -785,7 +812,7 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     await dispatchKey(popup(), "i");
     await flush(2);
     api.apiPatch.mockResolvedValue(commit({ ...s.n4, startFrame: 20, endFrame: 251, revision: 2 } as VideoNoteThreadDto));
-    await click(tid("video-note-edit-save")!);
+    await click(editSave()!);
     await flush(4);
     expect(api.apiPatch).toHaveBeenCalledTimes(1);
     expect(api.apiPatch).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-notes/${s.n4.id}`, { expectedRevision: 1, startFrame: 20, endFrame: 251 });
@@ -800,11 +827,11 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     expect(document.querySelectorAll('[data-notes-form="reply"]').length).toBe(1);
     await dispatchKey(popup(), "i");
     await flush(2);
-    expect(composerAnchor()).not.toContain("In ");
-    await click(tid("video-note-reply-cancel")!);
+    expect(composerAnchor()).not.toContain("Note from");
+    await click(tid("video-note-reply-button", threadOf(s.n2.id))!); // the toggle closes the reply (R1: no Cancel)
     await dispatchKey(popup(), "i");
     await flush(2);
-    expect(composerAnchor()).toContain("In ");
+    expect(composerAnchor()).toContain("Note from");
   });
 
   it("finding 8 (reversed): filtering the edited note away keeps its form pinned and labelled, and I and O still go to it; counts and markers follow the filters", async () => {
@@ -819,8 +846,8 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     expect(editForms().length).toBe(1);
     expect(document.querySelector(`[data-marker-id="${s.n1.id}"]`)).toBeNull();
     await dispatchKey(popup(), "i");
-    expect(tid("video-note-edit-anchor")!.textContent).toContain("01:00:00:20");
-    expect(composerAnchor()).not.toContain("In ");
+    expect(editChip()!.textContent).toContain("01:00:00:20");
+    expect(composerAnchor()).not.toContain("Note from");
     await click(tid("video-notes-filter-visibility-all")!);
     expect(threadOf(s.n1.id).textContent).not.toContain("Outside current filters");
     expect(editForms().length).toBe(1);
@@ -831,12 +858,12 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     composerText().focus();
     await type(composerText(), "Hold this");
     await present(40);
-    await click(tid("video-note-post")!);
-    expect(tid("video-note-post")!.textContent).toBe("Confirming…");
+    await click(postButton()!);
+    expect(postLabel()).toBe("Confirming…");
     await dispatchKey(composerText(), "Escape");
     expect(dialog()).not.toBeNull();
-    expect(tid("video-note-post")!.textContent).toBe("Post");
-    expect((tid("video-note-post") as HTMLButtonElement).disabled).toBe(false);
+    expect(postLabel()).toBe("Post note");
+    expect(isOff(postButton()!)).toBe(false);
     expect(composerText().value).toBe("Hold this");
     await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 12 / 25); });
     await flush(4);
@@ -848,7 +875,7 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     await openFilm({}, 12);
     await type(composerText(), "Anchored at 12");
     await present(40);
-    await click(tid("video-note-post")!);
+    await click(postButton()!);
     expect(composerText().readOnly).toBe(true);
     await dispatchKey(popup(), "ArrowRight"); // a step supersedes the seek back to the anchor: the frame that lands is 13
     await act(async () => { stub.finishSeek(playerVideo()!); });
@@ -867,7 +894,7 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     stub.calls.length = 0;
     await dispatchKey(popup(), "i");
     expect(stub.calls).not.toContain("pause");
-    expect(composerAnchor()).toContain("In 01:00:01:05");
+    expect(composerAnchor()).toContain("Note from 01:00:01:05");
     expect(tid("video-pending-band")).not.toBeNull();
   });
 
@@ -904,13 +931,13 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     await openFilm({}, 20);
     await type(composerText(), "Draft");
     await chooseNoteAction(threadOf(s.n1.id), "Terry", "Edit");
-    expect((tid("video-note-post") as HTMLButtonElement).disabled).toBe(true);
-    expect((tid("video-note-set-in") as HTMLButtonElement).disabled).toBe(true);
+    expect(isOff(postButton()!)).toBe(true);
+    expect(isOff(rangeButton()!)).toBe(true);
     expect(tid("video-note-other-form-hint")!.textContent).toBe("Finish or cancel the open edit first.");
     expect(editForms().length).toBe(1);
-    await click(tid("video-note-edit-cancel")!);
+    await click(editCancel()!);
     expect(tid("video-note-other-form-hint")).toBeNull();
-    expect((tid("video-note-post") as HTMLButtonElement).disabled).toBe(false);
+    expect(isOff(postButton()!)).toBe(false);
     await click(tid("video-note-reply-button", threadOf(s.n2.id))!);
     expect(tid("video-note-other-form-hint")!.textContent).toBe("Finish or cancel the open reply first.");
   });
@@ -927,7 +954,7 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     await type(threadOf(n.id).querySelector<HTMLTextAreaElement>("textarea")!, "v1 edit");
     const pending = gate();
     api.apiPatch.mockReturnValueOnce(pending.promise);
-    await click(tid("video-note-edit-save")!);
+    await click(editSave()!);
     await pickVersion("v2");
     await chooseNoteAction(threadOf(s.n1.id), "Terry", "Edit");
     expect(editForms().length).toBe(1);
@@ -940,15 +967,15 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
   it("round 2 (5, reversed): a mark made while a seek is in flight is the frame it is bringing, at once; Clear marks leaves nothing for the landing to write", async () => {
     await openFilm({}, 20);
     await dispatchKey(popup(), "i");
-    expect(composerAnchor()).toContain("In ");
+    expect(composerAnchor()).toContain("Note from");
     await dispatchKey(popup(), "ArrowRight"); // a seek is now in flight, to 21
     await dispatchKey(popup(), "o");
-    expect(composerAnchor()).toContain("Out 01:00:00:21");
-    await click(tid("video-note-clear-marks")!);
-    expect(composerAnchor()).not.toContain("In ");
+    expect(composerAnchor()).toContain("to 01:00:00:21");
+    await click(document.querySelector<HTMLElement>('button[aria-label="Clear in and out"]')!);
+    expect(composerAnchor()).not.toContain("Note from");
     await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 21 / 25); });
     await flush(4);
-    expect(composerAnchor()).not.toContain("Out");
+    expect(composerAnchor()).not.toContain("Note from");
     expect(tid("video-pending-band")).toBeNull();
   });
 
@@ -957,7 +984,7 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     await type(composerText(), "Sent while away");
     const pending = gate();
     api.apiPost.mockReturnValueOnce(pending.promise);
-    await click(tid("video-note-post")!);
+    await click(postButton()!);
     await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 12 / 25); });
     await flush(4);
     await pickVersion("v1");
@@ -972,34 +999,34 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     await type(composerText(), "First");
     const pending = gate();
     api.apiPost.mockReturnValueOnce(pending.promise);
-    await click(tid("video-note-post")!);
+    await click(postButton()!);
     await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 12 / 25); });
     await flush(4);
     await pickVersion("v1");
     await pickVersion("v2");
     expect(composerText().value).toBe("First");
     expect(composerText().readOnly).toBe(true);
-    expect(tid("video-note-post")!.textContent).toBe("Posting…");
+    expect(postLabel()).toBe("Posting…");
     await act(async () => { pending.release(commit(note({ startFrame: 12, body: "First" }))); });
     await flush(6);
     expect(composerText().value).toBe("");
     expect(composerText().readOnly).toBe(false);
-    expect((tid("video-note-post") as HTMLButtonElement).disabled).toBe(true);
+    expect(isOff(postButton()!)).toBe(true);
   });
 
   it("form lifetime: a frame confirmation cancelled by a Version change posts nothing when the seek lands, and the text returns", async () => {
     await openFilm({}, 12);
     await type(composerText(), "Hold on");
     await present(40);
-    await click(tid("video-note-post")!);
-    expect(tid("video-note-post")!.textContent).toBe("Confirming…");
+    await click(postButton()!);
+    expect(postLabel()).toBe("Confirming…");
     await pickVersion("v1");
     await pickVersion("v2");
     await act(async () => { stub.finishSeek(playerVideo()!); });
     await flush(4);
     expect(api.apiPost).not.toHaveBeenCalled();
     expect(composerText().value).toBe("Hold on");
-    expect(tid("video-note-post")!.textContent).toBe("Post");
+    expect(postLabel()).toBe("Post note");
     expect(composerBox()!.textContent).not.toContain("Frame moved");
   });
 
@@ -1010,7 +1037,7 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     await type(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>("textarea")!, "My edit");
     const resolvedElsewhere = { ...s.n1, body: "Changed and resolved elsewhere", revision: 2, resolved: { at: T(30), by: me } } as VideoNoteThreadDto;
     api.apiPatch.mockRejectedValueOnce(conflictOf(resolvedElsewhere));
-    await click(tid("video-note-edit-save")!);
+    await click(editSave()!);
     await flush(6);
     expect(noteIds()).toContain(s.n1.id); // resolved, so the Open filter hides it: the open form pins it
     expect(threadOf(s.n1.id).textContent).toContain("Outside current filters");
@@ -1018,7 +1045,7 @@ describe("Sol round 1: one active form, frozen submits, revisions (#741 5b)", ()
     expect(threadOf(s.n1.id).querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("My edit");
     await act(async () => { queryClient!.setQueryData(notesKey(), seed().all.map((n) => (n.id === s.n1.id ? { ...resolvedElsewhere, body: "And again", revision: 3 } as VideoNoteThreadDto : n))); });
     api.apiPatch.mockResolvedValueOnce(commit({ ...resolvedElsewhere, body: "My edit", revision: 4 } as VideoNoteThreadDto));
-    await click(tid("video-note-edit-save")!);
+    await click(editSave()!);
     await flush(6);
     expect(api.apiPatch.mock.calls[1]![1]).toEqual({ expectedRevision: 2, content: legacyBodyToRichTextDoc("My edit") });
   });
@@ -1512,12 +1539,12 @@ describe("Time format in the notes (#860)", () => {
   it("picking Standard in the player rewrites the notes' anchors and the composer's anchor in the same tab, and the choice survives a Version switch", async () => {
     const s = seed();
     await openFilm({}, 25);
-    expect(tid("video-note-anchor", document)!.textContent).toContain("01:00:01:00");
+    expect(tid("note-composer-chip", document)!.textContent).toContain("01:00:01:00");
     await choose("standard");
     expect(tid("video-note-anchor-button", threadOf(s.n1.id))!.textContent).toContain("0:00");
     expect(tid("video-note-anchor-button", threadOf(s.n1.id))!.textContent).not.toContain("01:00");
     expect(tid("video-note-anchor-button", threadOf(s.n3.id))!.textContent).toContain("0:04 → 0:05");
-    expect(tid("video-note-anchor")!.textContent).toContain("0:01");
+    expect(tid("note-composer-chip")!.textContent).toContain("0:01");
     await pickVersion("v1");
     expect(trigger().getAttribute("aria-label")).toBe("Time format: Standard");
     expect(threads().map((t) => tid("video-note-anchor-button", t)!.textContent)).toEqual(["0:00"]);
@@ -1544,10 +1571,55 @@ describe("Time format in the notes (#860)", () => {
   });
 });
 
-describe("In / Out range button and handles (#861)", () => {
+describe("The staff composer box end to end (#927 T6: C1, C2, C4)", () => {
+  const chip = () => tid("note-composer-chip")?.textContent ?? "";
+  const pressed = () => rangeButton()!.getAttribute("aria-pressed");
+
+  it("the in/out button is three presses: In at the frame on screen, Out at the next, then back to a point; the chip and the band follow", async () => {
+    await openFilm({}, 12);
+    expect(chip()).toContain("Note at 01:00:00:12");
+    expect(pressed()).toBe("false");
+    await click(rangeButton()!);
+    expect(chip()).toContain("Note from 01:00:00:12");
+    expect(pressed()).toBe("true");
+    await present(20);
+    await click(rangeButton()!);
+    expect(chip()).toContain("to 01:00:00:20");
+    expect(tid("video-pending-band")).not.toBeNull();
+    await click(rangeButton()!);
+    expect(tid("video-pending-band")).toBeNull();
+    expect(chip()).not.toContain("Note from");
+    expect(pressed()).toBe("false");
+  });
+
+  it("⌘↵ in the field posts what the button would: the range made with the in/out button, as Internal", async () => {
+    await openFilm({}, 12);
+    await click(rangeButton()!);
+    await present(20);
+    await click(rangeButton()!);
+    await type(composerText(), "Range by button");
+    api.apiPost.mockResolvedValue(commit(note({ startFrame: 12, endFrame: 21, body: "Range by button" })));
+    await dispatchKey(composerText(), "Enter", { metaKey: true });
+    await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 12 / 25); });
+    await flush(4);
+    expect(api.apiPost).toHaveBeenCalledTimes(1);
+    expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, { startFrame: 12, endFrame: 21, visibility: "internal", content: legacyBodyToRichTextDoc("Range by button") });
+  });
+
+  it("an empty box does not post on ⌘↵, and its Send says why (C2)", async () => {
+    await openFilm({}, 12);
+    expect(isOff(postButton()!)).toBe(true);
+    await dispatchKey(composerText(), "Enter", { metaKey: true });
+    await flush(2);
+    expect(api.apiPost).not.toHaveBeenCalled();
+  });
+});
+
+describe("In / Out range handles and keys, no player button (#861, #927)", () => {
   const rangeButton = () => tid("video-range-button", popup()) as HTMLButtonElement | null;
+  const clearMarks = () => document.querySelector<HTMLButtonElement>('[data-testid="note-composer-chip"] button[aria-label="Clear in and out"]');
   const handle = (kind: "in" | "out") => tid(`video-range-${kind}`, popup());
-  const anchor = () => tid("video-note-anchor")!.textContent ?? "";
+  const anchor = () => tid("note-composer-chip")!.textContent ?? "";
   const trackRect = (width = 311) => { tid("video-range-handles", popup())!.getBoundingClientRect = () => ({ left: 0, top: 0, width, height: 12, right: width, bottom: 12, x: 0, y: 0, toJSON: () => ({}) }); };
   async function pointer(type: string, target: Element, clientX: number) {
     const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX, button: 0 });
@@ -1555,63 +1627,63 @@ describe("In / Out range button and handles (#861)", () => {
     await act(async () => { target.dispatchEvent(event); });
   }
 
-  it("the button cycles the composer's marks In -> Out -> cleared, and the keys and the button agree", async () => {
+  it("the I and O keys set the composer's marks, the chip's × drops them, and the player has no range button", async () => {
     await openFilm({}, 12);
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set in point");
-    await click(rangeButton()!);
-    expect(anchor()).toContain("In 01:00:00:12");
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set out point");
+    expect(rangeButton()).toBeNull();
+    await dispatchKey(popup(), "i");
+    expect(anchor()).toContain("Note from 01:00:00:12");
     await present(20);
-    await click(rangeButton()!);
-    expect(anchor()).toContain("Out 01:00:00:20");
+    await dispatchKey(popup(), "o");
+    expect(anchor()).toContain("to 01:00:00:20");
     expect(tid("video-pending-band")).not.toBeNull();
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Clear in and out");
-    await click(rangeButton()!);
-    expect(tid("video-note-clear-marks")).toBeNull();
+    await click(clearMarks()!);
+    expect(clearMarks()).toBeNull();
     expect(tid("video-pending-band")).toBeNull();
     await dispatchKey(popup(), "i");
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set out point");
+    expect(anchor()).toContain("Note from 01:00:00:20");
   });
 
   it("a handle moves its own end only, the pending band follows, and Post sends the exclusive end", async () => {
     await openFilm({}, 12);
-    await click(rangeButton()!);
+    await dispatchKey(popup(), "i");
     await present(20);
-    await click(rangeButton()!);
+    await dispatchKey(popup(), "o");
     trackRect();
     await key("ArrowRight", handle("in")!);
-    expect(anchor()).toContain("In 01:00:00:13");
-    expect(anchor()).toContain("Out 01:00:00:20");
+    expect(anchor()).toContain("Note from 01:00:00:13");
+    expect(anchor()).toContain("to 01:00:00:20");
     await pointer("pointerdown", handle("out")!, 6 + 20);
     await pointer("pointermove", handle("out")!, 6 + 30);
     await pointer("pointerup", handle("out")!, 6 + 30);
-    expect(anchor()).toContain("Out 01:00:01:05");
+    expect(anchor()).toContain("to 01:00:01:05");
     api.apiPost.mockResolvedValue(commit(note({ startFrame: 13, endFrame: 31, body: "Dragged" })));
     await type(composerText(), "Dragged");
-    await click(tid("video-note-post")!);
+    await click(postButton()!);
     await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 13 / 25); });
     await flush(4);
     expect(api.apiPost).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-versions/${ids.asset2}/notes`, { startFrame: 13, endFrame: 31, visibility: "internal", content: legacyBodyToRichTextDoc("Dragged") });
   });
 
-  it("while editing a note the controls drive the edit's marks, and Clear makes it a point note, never frameless", async () => {
+  it("while editing a note its own in/out drives the edit's marks: a range's third press makes it a point at its In, never frameless", async () => {
     const s = seed();
     await openFilm({}, 20);
     await click(tid("video-notes-filter-status-all")!);
     await chooseNoteAction(threadOf(s.n4.id), "Terry", "Edit");
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Clear in and out");
-    await click(rangeButton()!);
-    expect(tid("video-note-edit-anchor")!.textContent).not.toContain("→");
-    expect(rangeButton()!.getAttribute("aria-label")).toBe("Set out point");
-    api.apiPatch.mockResolvedValue(commit({ ...s.n4, endFrame: null, revision: 2 } as VideoNoteThreadDto));
-    await click(tid("video-note-edit-save")!);
+    expect(rangeButton()).toBeNull();
+    expect(editChip()!.textContent).toContain("→");
+    // The edit box's three-press button (#927 E1): a range's next press is the third, which keeps its In as a point.
+    await present(230);
+    await click(editRange()!);
+    expect(editChip()!.textContent).not.toContain("→");
+    api.apiPatch.mockResolvedValue(commit({ ...s.n4, startFrame: 200, endFrame: null, revision: 2 } as VideoNoteThreadDto));
+    await click(editSave()!);
     await flush(4);
     expect(api.apiPatch).toHaveBeenCalledWith(`/api/projects/${PROJECT}/video-notes/${s.n4.id}`, { expectedRevision: 1, startFrame: 200, endFrame: null });
   });
 
-  it("is present but disabled on an archived Project, and I / O stay inert", async () => {
+  it("on an archived Project I / O stay inert, and there is no range button", async () => {
     await openFilm({ archivedProject: true }, 12);
-    expect(rangeButton()!.disabled).toBe(true);
+    expect(rangeButton()).toBeNull();
     await dispatchKey(popup(), "i");
     expect(tid("video-pending-band")).toBeNull();
   });
@@ -1620,7 +1692,8 @@ describe("In / Out range button and handles (#861)", () => {
     const s = seed();
     await openFilm({}, 12);
     await click(tid("video-note-reply-button", threadOf(s.n2.id))!);
-    expect(rangeButton()!.disabled).toBe(true);
+    await dispatchKey(popup(), "i");
+    expect(tid("video-pending-band")).toBeNull();
   });
 
   it("with the notes part off there is no range button", async () => {
@@ -1788,7 +1861,7 @@ describe("the phone notes head (#879 PR 3b, P1)", () => {
     await search("client");
     api.apiPost.mockResolvedValue(commit(note({ startFrame: 12, body: "Posted on a phone" })));
     await type(composerText(), "Posted on a phone");
-    await click(tid("video-note-post")!);
+    await click(postButton()!);
     await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 12 / 25); });
     await flush(6);
     expect(api.apiPost).toHaveBeenCalled();

@@ -18,6 +18,7 @@ import { ScrollArea } from "../reui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "../reui/toggle-group";
 import { EXPORT_PANEL_WIDTH, MarkerExportMenuItems, MarkerExportNotices, type MarkerExport } from "./VideoMarkerExportMenu";
 import { VideoNoteComposer } from "./VideoNoteComposer";
+import type { NoteDrawControls } from "./VideoMarkupOverlay";
 import { VideoNoteThread } from "./VideoNoteThread";
 import { VideoVersionDetails } from "./VideoVersionDetails";
 import type { VideoNotesSession } from "./use-video-notes";
@@ -45,7 +46,7 @@ function deleteCopy(tombstone: boolean, conflicted: boolean) {
  * 721px) nothing inside scrolls on its own: the whole dialog scrolls, with the composer directly under the player ahead of the list.
  * It holds no data of its own: `session` (from `useVideoNotes`) is shared with the player, which draws the markers and takes I and O.
  */
-export function VideoNotesPanel({ session, detailsRows, exp, clipboard, pen, phone = false, onSearchChange }: { session: VideoNotesSession; detailsRows: ReactNode; /** Copy and paste (#741 5c-ui), owned by the notes host (#879 PR 3b) so the phone header's ⋯ sheet drives the same controller and the paste dialog outlives this panel. */ clipboard: NotesClipboard; /** The marker export (#741 9), owned by the notes host so the phone header can reach it: `enabled` is the Project's `export` part and the role. */ exp: MarkerExport; /** The Draw button, handed to the composer on a phone (D11). */ pen?: ReactNode; /** The phone layout (#879): the panel is the sheet's body, its composer the sheet's foot. */ phone?: boolean; /** The phone head's search opened or closed (#879 PR 3b). */ onSearchChange?: (state: NotesSearchState) => void; }) {
+export function VideoNotesPanel({ session, detailsRows, exp, clipboard, draw, phone = false, onSearchChange }: { session: VideoNotesSession; detailsRows: ReactNode; /** Copy and paste (#741 5c-ui), owned by the notes host (#879 PR 3b) so the phone header's ⋯ sheet drives the same controller and the paste dialog outlives this panel. */ clipboard: NotesClipboard; /** The marker export (#741 9), owned by the notes host so the phone header can reach it: `enabled` is the Project's `export` part and the role. */ exp: MarkerExport; /** The note forms' pens and drawing rows (#927, `useVideoMarkup`); absent with the markup part off. */ draw?: { composer: NoteDrawControls; edit: NoteDrawControls }; /** The phone layout (#879): the panel is the sheet's body, its composer the sheet's foot. */ phone?: boolean; /** The phone head's search opened or closed (#879 PR 3b). */ onSearchChange?: (state: NotesSearchState) => void; }) {
   const { query, threads, shown, filters, setFilters, selectedId, version } = session;
   const archived = session.readOnly;
   const readOnly = archived;
@@ -243,16 +244,17 @@ export function VideoNotesPanel({ session, detailsRows, exp, clipboard, pen, pho
             clock={session.clock}
             drawings={{ on: session.markup, canAnnotate: session.canAnnotate, projectId: session.projectId, role: session.role }}
             rich={{ projectId: session.projectId, role: session.role }}
+            {...(draw ? { draw: draw.edit } : {})}
           />)}
         </div>
       </ScrollArea>
     </div>
 
-    {/* In compose mode the composer is the strip: it may shrink (only its + tray gives way), and the sheet's own top border is the strip's. */}
+    {/* In compose mode the composer is the sheet's foot: it may shrink (its text region gives way), and the sheet's own top border is the box's. */}
     <div ref={composerRef} data-sheet-part="composer" className="shrink-0 border-t border-border data-[head-cut=true]:border-t-transparent pt-[var(--space-3)] in-data-[mode=browse]:py-[var(--space-2)] in-data-[mode=compose]:flex in-data-[mode=compose]:min-h-0 in-data-[mode=compose]:shrink in-data-[mode=compose]:flex-col in-data-[mode=compose]:border-t-0 in-data-[mode=compose]:pt-0 in-data-[immersive=compose]:flex in-data-[immersive=compose]:min-h-0 in-data-[immersive=compose]:shrink in-data-[immersive=compose]:flex-col in-data-[immersive=compose]:border-t-0 in-data-[immersive=compose]:pt-0">
       {archived
         ? <p data-testid="video-notes-archived" className={ARCHIVED_NOTICE_CLASS}>Read-only while archived. Restore the project before adding or changing notes.</p>
-        : <VideoNoteComposer store={session.forms} assetId={session.assetId} clock={session.clock} frameCount={session.frameCount} timecode={session.timecode} post={session.post} onRefresh={session.refresh} markup={session.markup} rich={{ projectId: session.projectId, role: session.role }} {...(pen !== undefined ? { pen } : {})} />}
+        : <VideoNoteComposer store={session.forms} assetId={session.assetId} clock={session.clock} frameCount={session.frameCount} timecode={session.timecode} post={session.post} onRefresh={session.refresh} markup={session.markup} rich={{ projectId: session.projectId, role: session.role }} {...(draw ? { draw: draw.composer } : {})} />}
     </div>
 
     <ConfirmDeleteDialog

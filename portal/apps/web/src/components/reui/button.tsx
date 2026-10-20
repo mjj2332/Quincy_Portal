@@ -52,10 +52,12 @@ import { cn } from "@/lib/utils"
 //    it) imports the contract instead of copying its literal. `size.default` renders the same
 //    classes it did before.
 //
-// 7. `size["icon-round"]` (owner decision C5, 2026-10-15): the phone note composer's round Send.
+// 7. `size["icon-round"]` (owner decision C5, 2026-10-15): the note composer's round Send.
 //    A 44px circle on the pill radius token, used by that one call site only; every other size and
-//    every variant renders exactly as before. Disabled it keeps the full primary fill and dims only its icon
-//    (P6 `.send` is always primary), where `default` on an inverse surface would draw an outline.
+//    every variant renders exactly as before. Disabled it keeps the primary fill (P6 `.send` is always
+//    primary), where `default` on an inverse surface would draw an outline, and dims as a whole with the
+//    base's own `opacity-50` (#927 prototype `.cmp-send:disabled`), the focusable lock (`aria-disabled`,
+//    no native `disabled`) included.
 //
 // 8. `size.chip` (#879 PR 3b, prototype `.chip` in P1/P2's notes head): a 28px pill in the label
 //    type, sentence case, with a 44px-tall hit area drawn by `after:` so the 28px it shows still
@@ -100,7 +102,7 @@ const buttonVariants = cva(
         chip: "relative h-7 gap-[var(--space-1)] rounded-[var(--radius-pill)] px-[var(--space-3)] normal-case tracking-normal [font:var(--type-label)] after:absolute after:inset-x-0 after:-inset-y-[var(--space-2)] [&_svg:not([class*='size-'])]:size-3",
         header: "min-h-[44px] gap-[var(--space-2)] px-[var(--space-3)] rounded-[var(--radius-sm)] normal-case tracking-normal [font:var(--type-label)] [&_svg:not([class*='size-'])]:size-4",
         "icon-header": "size-11 rounded-[var(--radius-sm)]",
-        "icon-round": "size-11 rounded-[var(--radius-pill)] disabled:opacity-100 [&:disabled_svg]:opacity-50 in-data-[surface=inverse]:disabled:border-transparent in-data-[surface=inverse]:disabled:bg-primary in-data-[surface=inverse]:disabled:!text-primary-foreground",
+        "icon-round": "size-11 rounded-[var(--radius-pill)] aria-disabled:opacity-50 in-data-[surface=inverse]:disabled:border-transparent in-data-[surface=inverse]:disabled:bg-primary in-data-[surface=inverse]:disabled:!text-primary-foreground",
       },
     },
     defaultVariants: {

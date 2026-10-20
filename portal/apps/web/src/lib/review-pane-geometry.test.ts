@@ -41,6 +41,16 @@ describe("review sheet geometry (#879)", () => {
     expect(s.full).toBeLessThanOrEqual(150);
   });
 
+  it("the browse stops never cut the two-row box (#927 P1): short of room for the film's floor, the film gives way and the collapsed bar stays whole", () => {
+    // A 344pt split (a short window under 721px): the film's floor (200) would leave the sheet 144, less than the bar's 175 (grabber, head, two-row box).
+    const s = sheetStops({ ...base, available: 344, collapsed: 175 });
+    expect(s.collapsed).toBe(175);
+    expect(s.half).toBe(175);
+    expect(s.full).toBe(175);
+    // Only the whole split bounds it.
+    expect(sheetStops({ ...base, available: 120, collapsed: 175 }).full).toBe(120);
+  });
+
   const stops = { collapsed: 127, half: 391, full: 500 };
   it("a slow release settles at the nearest stop; a tap stays at its origin", () => {
     expect(settleSheet({ stops, height: 200, velocity: 0.1 })).toBe("collapsed");

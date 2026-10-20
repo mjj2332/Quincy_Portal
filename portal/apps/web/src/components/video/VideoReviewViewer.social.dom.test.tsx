@@ -230,7 +230,7 @@ describe("Social preview in the staff viewer (#871, #877)", () => {
     expect(overlayImg()!.getAttribute("src")).toBe(OA.imageUrl);
   });
 
-  it("is not view-only: the composer, the marker lane and the range button stay, I marks, and the typed draft is untouched", async () => {
+  it("is not view-only: the composer, the marker lane stays, there is no range button, I marks, and the typed draft is untouched", async () => {
     await openFilm({}, 12);
     await type(composerText(), "keep me");
     await startSocial();
@@ -238,7 +238,7 @@ describe("Social preview in the staff viewer (#871, #877)", () => {
     expect(composerBox()!.closest("[inert]")).toBeNull();
     expect(tid("video-notes-social-paused")).toBeNull();
     expect(tid("video-marker-lane")).not.toBeNull();
-    expect(tid("video-range-button")).not.toBeNull();
+    expect(tid("video-range-button")).toBeNull();
     await key("i", popup());
     expect(tid("video-pending-band")).not.toBeNull();
     await click(socialToggle()); await flush(2);
@@ -262,7 +262,7 @@ describe("Social preview in the staff viewer (#871, #877)", () => {
     await type(composerText(), "Point note");
     await present(40);
     api.apiPost.mockResolvedValue(note({ startFrame: 7, body: "Point note" }));
-    await click(tid("video-note-post")!);
+    await click(document.querySelector<HTMLButtonElement>('[data-testid="video-note-composer"] button[type="submit"]')!);
     await startSocial();
     await act(async () => { stub.finishSeek(playerVideo()!); stub.presentFrame(playerVideo()!, 7 / 25); });
     await flush(6);
@@ -362,7 +362,9 @@ describe("Drawing with Social on (#877)", () => {
     for (const [prop, value] of [["offsetWidth", 800], ["offsetHeight", 800], ["offsetLeft", 0], ["offsetTop", 0]] as const) Object.defineProperty(HTMLElement.prototype, prop, { configurable: true, get: () => value });
   });
   afterEach(() => { for (const prop of ["offsetWidth", "offsetHeight", "offsetLeft", "offsetTop"] as const) delete (HTMLElement.prototype as unknown as Record<string, unknown>)[prop]; });
-  const drawButton = () => tid("video-markup-toolbar-draw") as HTMLButtonElement | null;
+  // #927: the pen is the composer box's at every width, so these cases draw at the desktop width the Social toggle lives at.
+  const drawButton = () => tid("video-note-composer")?.querySelector<HTMLButtonElement>('button[aria-label="Draw on the frame"]') ?? null;
+  const doneButton = () => tid("video-markup-done") ?? document.querySelector<HTMLElement>('[data-testid="note-draw-row"] button[aria-label="Done drawing"]');
   const layer = () => tid("video-markup-layer") as unknown as SVGSVGElement;
   async function startDrawing(frame = 12) {
     await click(drawButton()!);
@@ -398,7 +400,7 @@ describe("Drawing with Social on (#877)", () => {
     let svg = await startDrawing();
     const offBox = tid("video-markup")!.style.cssText;
     await stroke(svg, [500, 425], [600, 500]);
-    await click(tid("video-markup-done")!);
+    await click(doneButton()!);
     await startSocial();
     svg = await startDrawing();
     expect(tid("video-markup")!.style.cssText).toBe(offBox);

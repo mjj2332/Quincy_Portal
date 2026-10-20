@@ -6,7 +6,7 @@ import { resetUiPrefMemory } from "../../lib/ui-prefs";
 import "../../testing/dom-polyfills";
 import { ReviewSplit } from "./ReviewPane";
 import { useContext } from "react";
-import { SheetModeContext, useReviewSheet } from "./ReviewSheet";
+import { SheetModeContext, useReviewSheet, useSheetMode } from "./ReviewSheet";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -17,9 +17,9 @@ afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); r
 
 type Mode = "off" | "watch" | "compose";
 /** What the composer reads of the sheet (#880 S4): the mode it is given, or "none" off a phone sheet. */
-function ModeProbe() { const value = useContext(SheetModeContext); return <span data-testid="mode-probe" data-mode={value?.mode ?? "none"} />; }
+function ModeProbe() { const value = useContext(SheetModeContext); return <span data-testid="mode-probe" data-mode={value?.mode ?? "none"} data-floating={value?.floating === true ? "true" : "false"} data-cancel={value && "onCancel" in value ? "true" : "false"} />; }
 function Harness({ immersive, stacked, open = true, drawing = false }: { immersive?: Mode; stacked: boolean; open?: boolean; drawing?: boolean }) {
-  const sheet = useReviewSheet({ drawing, filmAspect: 16 / 9 });
+  const sheet = useSheetMode(useReviewSheet({ filmAspect: 16 / 9 }), drawing);
   return <ReviewSplit
     open={open} width={360} onWidth={() => undefined} onNarrow={() => undefined} paneId="pane" handleLabel="Resize notes" stacked={stacked} {...(stacked ? { sheet } : {})} {...(immersive ? { immersive } : {})}
     strip={<div data-testid="video-review-strip" />}
@@ -62,11 +62,12 @@ describe.each([["a phone (stacked, with the sheet)", true], ["a desktop width", 
     expect(q("video-review-handle")).toBeNull();
   });
 
-  it("compose is F1's composer (fix round 1, item 3): inside the dock's scrim, inset like the dock, a space above the scrubber; its own surface, rounded, with no border or padded panel", async () => {
+  it("compose is F1's box (#927 T9): inside the dock's scrim, a space above the scrubber, centred at most the frame's ~560px (from the token scale) inside the dock's insets; the pane draws no surface or padding of its own, the box does", async () => {
     await render({ stacked, immersive: "compose", open: false });
     const classes = q("video-review-pane")!.className.split(/\s+/);
-    for (const name of ["left-[max(var(--space-3),env(safe-area-inset-left))]", "right-[max(var(--space-3),env(safe-area-inset-right))]", "rounded-[var(--radius-lg)]", "bg-card", "px-[var(--space-3)]", "py-[var(--space-2)]", "overflow-y-auto"]) expect(classes, name).toContain(name);
-    for (const name of ["border", "border-border", "p-[var(--space-3)]", "mb-[var(--space-2)]", "inset-x-[var(--space-3)]"]) expect(classes, name).not.toContain(name);
+    for (const name of ["left-[max(var(--space-3),env(safe-area-inset-left))]", "right-[max(var(--space-3),env(safe-area-inset-right))]", "mx-auto", "max-w-[var(--note-float-width)]", "overflow-y-auto"]) expect(classes, name).toContain(name);
+    for (const name of ["bg-card", "px-[var(--space-3)]", "py-[var(--space-2)]", "border", "border-border", "p-[var(--space-3)]", "mb-[var(--space-2)]", "inset-x-[var(--space-3)]", "w-[var(--review-pane-w)]"]) expect(classes, name).not.toContain(name);
+    expect(q("video-review-pane")!.style.getPropertyValue("--review-pane-w")).toBe("");
   });
 
   it("publishes the composer's height on the row while it shows, so the dock's scrim grows behind it", async () => {
@@ -112,10 +113,22 @@ describe("ReviewSplit Full screen gives the composer its mode (#880 S4, owner de
     await render({ stacked: true, immersive: "compose", open: false, drawing: true });
     expect(mode()).toBe("draw");
   });
-  it("watch gives none (the composer is hidden at rest), and a desktop width's Full screen keeps the desktop form", async () => {
+  it("watch gives none (the composer is hidden at rest)", async () => {
     await render({ stacked: true, immersive: "watch", open: false });
     expect(mode()).toBe("none");
-    await render({ stacked: false, immersive: "compose", open: false });
+    await render({ stacked: false, immersive: "watch", open: false });
     expect(mode()).toBe("none");
+  });
+  it.each([["a phone", true], ["a desktop width", false]] as const)("on %s the Full screen composer is told it floats (#927 F1), and is handed no Cancel of its own: Add note and Escape close the box", async (_name, stacked) => {
+    await render({ stacked, immersive: "compose", open: false });
+    expect(q("mode-probe")!.dataset.floating).toBe("true");
+    expect(q("mode-probe")!.dataset.cancel).toBe("false");
+  });
+  it("off Full screen nothing floats: the desktop rail gives no mode, and the phone sheet's is its own", async () => {
+    await render({ stacked: false, open: true });
+    expect(mode()).toBe("none");
+    await render({ stacked: true, open: true });
+    expect(mode()).toBe("browse");
+    expect(q("mode-probe")!.dataset.floating).toBe("false");
   });
 });

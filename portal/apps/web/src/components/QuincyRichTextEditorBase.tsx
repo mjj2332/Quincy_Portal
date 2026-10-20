@@ -1,17 +1,19 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type Ref, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import { exitSuggestion } from "@tiptap/suggestion";
-import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon, VideoIcon } from "lucide-react";
-import { RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_LINK_PREVIEWS, imageAltFromFileName, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc } from "@quincy/shared";
+import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon, VideoIcon, XIcon } from "lucide-react";
+import { RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_LINK_PREVIEWS, imageAltFromFileName, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc, type RichTextMediaNode } from "@quincy/shared";
 import { cn } from "../lib/utils";
 import { useMediaQuery } from "../lib/use-media-query";
 import { EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_VIDEO_ACCEPT, RenditionFailedError, embeddedImageAccept, embeddedImageProblem, embeddedVideoProblem, type EditorMediaTransport, type LinkPreviewRequest } from "../lib/embedded-media-core";
+import { splitNoteMedia } from "../lib/note-media-strip";
 import {
   EmbeddedImage,
   EmbeddedVideo,
   LinkPreview,
   createRichTextEditorExtensions,
+  noteMediaTailStart,
   type RichTextEditorPreset,
   itemContainerDepth,
   mentionQuery,
@@ -25,8 +27,12 @@ import { Button } from "./reui/button";
 import { Input } from "./reui/input";
 import { EmbeddedUploadTray, type EmbeddedUpload } from "./quincy/EmbeddedUploadTray";
 import { LinkPreviewWithView } from "./quincy/LinkPreviewEditorNode";
-import { EmbeddedImageWithView } from "./quincy/EmbeddedImageEditorNode";
-import { EmbeddedVideoWithView } from "./quincy/EmbeddedVideoEditorNode";
+import { EmbeddedImageAltPopover, EmbeddedImageNoteNode, EmbeddedImageWithView } from "./quincy/EmbeddedImageEditorNode";
+import { EmbeddedVideoNoteNode, EmbeddedVideoWithView } from "./quincy/EmbeddedVideoEditorNode";
+import { EmbeddedImage as EmbeddedImageThumb } from "./quincy/EmbeddedImage";
+import { EmbeddedVideo as EmbeddedVideoThumb } from "./quincy/EmbeddedVideo";
+import { Spinner } from "./reui/spinner";
+import { RichTextFormatBubble, showRichTextFormatBubble } from "./reui/rich-text-editor/rich-text-format-bubble";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -47,6 +53,7 @@ import { RICH_TEXT_TABLE_SLASH_ITEM, RichTextTableBubble, RichTextTableMenu, Ric
 import type { TableBubbleTier } from "./reui/rich-text-editor/rich-text-table-position";
 import {
   RICH_TEXT_PHONE_QUERY,
+  keepEditorFocus,
   RichTextButton,
   RichTextToggle,
   RichTextToolbar,
@@ -60,7 +67,10 @@ import {
  * Project-discussion comment box: one `InputGroup` field with a roving-tabindex toolbar inside it.
  * `preset="document"` is the Notice board's page editor (#492): the same field plus alignment,
  * highlight and tables, a "/" block menu, a table bubble and an outline rail. The legacy
- * `RichTextEditor` is retired.
+ * `RichTextEditor` is retired. `preset="note"` (#927) is a note or reply on a Video, inside the note box (`quincy/NoteComposerBox`):
+ * no fixed toolbar but a formatting bubble over a selection (`reui/rich-text-editor/rich-text-format-bubble`, docked to the box on a
+ * phone), no field chrome (the box draws it), one picker for photos and videos that the box's paperclip opens through the handle, and
+ * every photo or video added landing at the end of the note, drawn as a strip of chips after the text rather than in it (frame C4).
  *
  * What is deliberately NOT the vendor's:
  * - The extension set. The composer builds on `createRichTextEditorExtensions()` (the schema
@@ -83,6 +93,13 @@ import {
 const EDITOR_CONTENT_UTILITIES =
   "min-h-[var(--space-8)] w-full min-w-0 px-[var(--space-3)] py-[var(--space-2)] text-base md:text-sm " +
   "bg-transparent focus-visible:!outline-none ";
+
+/**
+ * The note preset's text (#927): no padding, ground or floor of its own, since the note box draws the field and sets its type and
+ * 24px line. Block, so the box's floated anchor chip has the first line run beside it; lists clear the chip, as in the frame.
+ * `rich-text__editor-content--note` keys app.css's note placeholder, which stays in the text's flow beside the chip (C2).
+ */
+const NOTE_CONTENT_UTILITIES = "rich-text__editor-content--note min-h-[var(--space-5)] w-full min-w-0 bg-transparent focus-visible:!outline-none [&_ul]:clear-both [&_ol]:clear-both";
 
 /** Room for the outline rail's dashes at the right edge (the rail is hidden on a phone). */
 // scroll-mt: an outline-rail jump (`scrollToRichTextHeading`) must land the heading clear of the shell header AND the stuck toolbar (#594).
@@ -174,7 +191,22 @@ export type QuincyRichTextEditorBaseProps = {
   /** Whether the pill may take its wrapped layout (#879 fix r10; default true). The phone composer passes false at rest: browse shows the inline row
    * with the draft clamped to its first line, and the wrapped layout comes back when compose mode does. */
   pillWrap?: boolean;
+  /** The note preset's handle (#927): the box's paperclip opens the picker through it. */
+  ref?: Ref<RichTextEditorHandle>;
+  /**
+   * Where the note preset's draft strip renders (#927, the box's strip slot under its scrolling text). Absent: right after the text. An
+   * element: portalled into it. `null`: that element is not mounted yet, so no strip for now. Other presets have no strip.
+   */
+  stripContainer?: HTMLElement | null;
+  /** On a phone, the element the note preset's bubble docks to (the box, frame P2); the field when absent. */
+  bubbleDockTo?: () => Element | null;
+  /** Whether the note preset's bubble docks (frame P2) rather than floating over the selection. The host's phone layout says so (a phone
+   * held sideways is wider than the editor's own phone width); absent, below 721px. */
+  bubbleDocked?: boolean;
 };
+
+/** What a host can ask of the editor without owning its state (#927): open the picker, or put the caret back in the text. */
+export type RichTextEditorHandle = { pickMedia: () => void; focus: () => void };
 
 type UploadingMedia = EmbeddedUpload;
 
@@ -207,6 +239,10 @@ export function QuincyRichTextEditorBase({
   contentAttributes,
   pill = false,
   pillWrap = true,
+  ref,
+  stripContainer,
+  bubbleDockTo,
+  bubbleDocked,
 }: QuincyRichTextEditorBaseProps) {
   const valueRef = useRef(JSON.stringify(value));
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
@@ -214,6 +250,7 @@ export function QuincyRichTextEditorBase({
   const limitRef = useRef(limit); limitRef.current = limit;
   const maxBytesRef = useRef(maxBytes); maxBytesRef.current = maxBytes;
   const isDocument = preset === "document";
+  const isNote = preset === "note";
   const disabledRef = useRef(disabled); disabledRef.current = disabled;
   const editorRef = useRef<Editor | null>(null);
   const menu = useRef<MentionAutocompleteHandle>(null);
@@ -261,14 +298,23 @@ export function QuincyRichTextEditorBase({
   const heicRef = useRef(heicEnabled); heicRef.current = heicEnabled;
   // Where each running upload will land: captured when it starts and mapped through every later transaction.
   const insertAt = useRef(new Map<number, number>());
-  const [picking, setPicking] = useState<{ n: number; kind: "image" | "video" } | null>(null);
+  const [picking, setPicking] = useState<{ n: number; kind: "image" | "video" | "media" } | null>(null);
+  // The note preset's strip (#927): the upload each landed file came from (its place in the order the files were chosen), the file's
+  // name (a video stores none; an image's alt is its name by default) and each running upload's size, which only the local File knows.
+  const landedSeq = useRef(new Map<string, number>());
+  const fileNames = useRef(new Map<string, string>());
+  const uploadSizes = useRef(new Map<number, number>());
   const pickerRef = useRef<HTMLInputElement>(null);
   // The nodes show a medium from where the host says it is read (the staff route by default, a Review link's own for a guest, #835).
   const mediaUrl = media?.mediaUrl; const posterUrl = media?.posterUrl;
   const extensions = useMemo(() => [
     ...createRichTextEditorExtensions(preset)
       .filter((extension) => mentionsOn || extension.name !== "mention")
-      .map((extension) => extension === LinkPreview ? LinkPreviewWithView : extension === EmbeddedImage ? (mediaUrl ? EmbeddedImageWithView.configure({ mediaUrl }) : EmbeddedImageWithView) : extension === EmbeddedVideo ? (mediaUrl && posterUrl ? EmbeddedVideoWithView.configure({ mediaUrl, posterUrl }) : EmbeddedVideoWithView) : extension),
+      .map((extension) => extension === LinkPreview ? LinkPreviewWithView
+        // A note's media is drawn by its strip, so in the text it is an invisible atom (#927).
+        : extension === EmbeddedImage ? (preset === "note" ? EmbeddedImageNoteNode : mediaUrl ? EmbeddedImageWithView.configure({ mediaUrl }) : EmbeddedImageWithView)
+        : extension === EmbeddedVideo ? (preset === "note" ? EmbeddedVideoNoteNode : mediaUrl && posterUrl ? EmbeddedVideoWithView.configure({ mediaUrl, posterUrl }) : EmbeddedVideoWithView)
+        : extension),
     ...(preset === "document" ? [RichTextSlashCommand.configure({ items: [...RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_TABLE_SLASH_ITEM] })] : []),
   ], [preset, mentionsOn, mediaUrl, posterUrl]);
   const created = useEditor({
@@ -279,7 +325,7 @@ export function QuincyRichTextEditorBase({
     content: toTiptap(value),
     editable: !disabled,
     editorProps: {
-      attributes: { class: "rich-text__editor-content " + EDITOR_CONTENT_UTILITIES + (preset === "document" ? DOCUMENT_CONTENT_UTILITIES : ""), "data-placeholder": placeholder, ...(id ? { id } : {}), ...(ariaLabel ? { "aria-label": ariaLabel } : {}) },
+      attributes: { class: "rich-text__editor-content " + (preset === "note" ? NOTE_CONTENT_UTILITIES : EDITOR_CONTENT_UTILITIES + (preset === "document" ? DOCUMENT_CONTENT_UTILITIES : "")), "data-placeholder": placeholder, ...(id ? { id } : {}), ...(ariaLabel ? { "aria-label": ariaLabel } : {}) },
       // A file dropped or pasted into the editor is ours to handle: letting the browser have it would
       // navigate away from the page (and the unsaved comment) or paste a foreign <img>.
       handlePaste: (_view, event) => {
@@ -292,8 +338,8 @@ export function QuincyRichTextEditorBase({
         const files = Array.from(event.dataTransfer?.files ?? []);
         if (!files.length) return false;
         event.preventDefault();
-        // The drop lands where it was released, not wherever the selection is by the time the upload finishes.
-        if (mediaRef.current && !disabledRef.current) addImagesRef.current(files, view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos);
+        // The drop lands where it was released, not wherever the selection is by the time the upload finishes. A note's lands at its end (#927).
+        if (mediaRef.current && !disabledRef.current) addImagesRef.current(files, preset === "note" ? undefined : view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos);
         return true;
       },
       // In the pill (#879 fix r3) the caret is kept in view inside the field's own clamped box only: a scroll of any outer box, or of the page, is
@@ -328,7 +374,9 @@ export function QuincyRichTextEditorBase({
           const plainText = richTextPlainText(doc);
           // Never submit while an image is still uploading: the post would go without it.
           if (inFlight.current > 0) { event.preventDefault(); return true; }
-          if (plainText.trim().length > 0 && plainText.length <= limitRef.current && richTextDocByteLength(stripEmbeddedDisplay(doc)) <= maxBytesRef.current && !disabledRef.current) {
+          // A note posts with text or media (#927 D2); the other presets need text.
+          const hasContent = plainText.trim().length > 0 || (preset === "note" && richTextMediaIds(doc).length > 0);
+          if (hasContent && plainText.length <= limitRef.current && richTextDocByteLength(stripEmbeddedDisplay(doc)) <= maxBytesRef.current && !disabledRef.current) {
             event.preventDefault();
             onSubmitRef.current?.();
             return true;
@@ -410,6 +458,16 @@ export function QuincyRichTextEditorBase({
     editor.on("transaction", follow);
     return () => { editor.off("transaction", follow); };
   }, [editor]);
+  // A note's file lands at its end, ahead of any file chosen after it that has already landed, so the strip keeps the order the files
+  // were chosen in however their uploads finish (#927).
+  const noteInsertPosition = (doc: Editor["state"]["doc"], key: number) => {
+    const tail = noteMediaTailStart(doc);
+    let at = doc.content.size;
+    doc.forEach((child, offset) => {
+      if (at === doc.content.size && offset >= tail && (landedSeq.current.get(String(child.attrs.mediaId ?? "")) ?? 0) > key) at = offset;
+    });
+    return at;
+  };
   // Each file uploads on its own; its node enters the document only once the server has accepted it, so
   // a failed, cancelled or abandoned upload leaves nothing behind. A video can be cancelled from its tray row, and an
   // upload still running when the editor unmounts is cancelled (the server is told, so no reservation is left).
@@ -432,7 +490,7 @@ export function QuincyRichTextEditorBase({
       let preparedId: string | null = null; let keepRow = false;
       const release = () => {
         if (released) return; released = true;
-        insertAt.current.delete(key); running.current.delete(key);
+        insertAt.current.delete(key); running.current.delete(key); uploadSizes.current.delete(key);
         inFlight.current -= 1;
         // An editor that has unmounted has already told its host it is no longer uploading, and the host may
         // since be running a different editor's uploads: a late callback from this one must not touch that.
@@ -447,9 +505,12 @@ export function QuincyRichTextEditorBase({
       const insert = (mediaId: string) => {
         const live = editorRef.current;
         if (cancelled || !mountedRef.current || !live) return;
-        const position = Math.min(insertAt.current.get(key) ?? live.state.doc.content.size, live.state.doc.content.size);
+        if (isNote) { landedSeq.current.set(mediaId, key); fileNames.current.set(mediaId, file.name || (kind === "video" ? "Video" : "Image")); }
+        const position = isNote ? noteInsertPosition(live.state.doc, key) : Math.min(insertAt.current.get(key) ?? live.state.doc.content.size, live.state.doc.content.size);
         // insertContentAt selects inserted content by default; an async insert must leave the caret where the author is typing.
         live.chain().command(({ tr }) => { tr.setMeta(UPLOAD_INSERT_META, true); return true; }).insertContentAt(position, { type: kind, attrs: kind === "image" ? { mediaId, alt: imageAltFromFileName(file.name) || null } : { mediaId, ...(posterStored === undefined ? {} : { hasPoster: posterStored }) } }, { updateSelection: false }).run();
+        // The chip that was uploading becomes the landed one in the same render, not a tick later (#927).
+        if (isNote) release();
       };
       const follow = (work: Promise<string>) => {
         keepRow = false;
@@ -470,6 +531,7 @@ export function QuincyRichTextEditorBase({
         discard,
         retry: () => { if (!preparedId || released || !transport.retryRendition) return; setPhase("preparing"); follow(transport.retryRendition(preparedId, { signal: controller.signal, onPhase })); },
       });
+      uploadSizes.current.set(key, file.size);
       setUploads((entries) => [...entries, { key, name: file.name || (kind === "video" ? "Video" : "Image"), percent: 0, kind }]);
       const onProgress = (percent: number) => { if (mountedRef.current && !released) setUploads((entries) => entries.map((entry) => entry.key === key ? { ...entry, percent } : entry)); };
       follow(kind === "video" && videos ? transport.uploadVideo(file, { signal: controller.signal, onProgress, onPoster: (stored) => { posterStored = stored; } }) : transport.uploadImage(file, onProgress, { signal: controller.signal, onPhase }));
@@ -605,6 +667,12 @@ export function QuincyRichTextEditorBase({
     if (mentionA11y.activeId) dom.setAttribute("aria-activedescendant", mentionA11y.activeId);
     else dom.removeAttribute("aria-activedescendant");
   }, [editor, mentionA11y]);
+  useImperativeHandle(ref, () => ({
+    pickMedia: () => { if (mediaRef.current && !disabledRef.current) setPicking((previous) => ({ n: (previous?.n ?? 0) + 1, kind: "media" })); },
+    focus: () => { if (editorRef.current && !editorRef.current.isDestroyed) editorRef.current.commands.focus(); },
+  }), []);
+  // ⌘K opens the link field, which lives in a note's bubble: raise the bubble to show it (#927).
+  useEffect(() => { if (isNote && linkOpen && editor && !editor.isDestroyed) showRichTextFormatBubble(editor); }, [isNote, linkOpen, editor]);
   if (!editor) return null;
 
   const plainText = richTextPlainText(value);
@@ -623,6 +691,28 @@ export function QuincyRichTextEditorBase({
   // The picker is mounted only while a choice is being made: a standing file input would be a second upload control on
   // every Project surface that renders the composer. It is the installed ReUI `Input`, clicked as soon as it mounts.
   const choose = (kind: "image" | "video") => setPicking((previous) => ({ n: (previous?.n ?? 0) + 1, kind }));
+  // The note preset's one picker takes photos and videos together, each file sorted by what it is (#927).
+  const pickerAccept = picking?.kind === "video" ? EMBEDDED_VIDEO_ACCEPT : picking?.kind === "media" && media?.video ? `${embeddedImageAccept(heicEnabled)},${EMBEDDED_VIDEO_ACCEPT}` : embeddedImageAccept(heicEnabled);
+  const pickerName = picking?.kind === "video" ? "Choose videos" : picking?.kind === "media" ? (media?.video ? "Choose photos or videos" : "Choose photos") : "Choose images";
+
+  // The note preset's draft strip (#927, C4): every photo and video the note holds, landed or still uploading, in the order chosen.
+  const findMedia = (mediaId: string) => {
+    let found: { pos: number; size: number; attrs: Record<string, unknown> } | null = null;
+    editor.state.doc.forEach((child, offset) => { if (!found && (child.type.name === "image" || child.type.name === "video") && child.attrs.mediaId === mediaId) found = { pos: offset, size: child.nodeSize, attrs: child.attrs }; });
+    return found as { pos: number; size: number; attrs: Record<string, unknown> } | null;
+  };
+  const stripItems: NoteStripItem[] = isNote ? [
+    ...splitNoteMedia(value).media.map((node): NoteStripItem => ({ state: "ready", seq: landedSeq.current.get(node.attrs.mediaId) ?? 0, node })),
+    ...uploads.filter((entry) => (entry.phase ?? "uploading") === "uploading").map((entry): NoteStripItem => ({ state: "uploading", seq: entry.key, entry, size: uploadSizes.current.get(entry.key) })),
+  ].sort((a, b) => a.seq - b.seq) : [];
+  const strip = stripItems.length > 0 ? <NoteDraftStrip
+    items={stripItems} disabled={disabled} phone={phone} inline={stripContainer === undefined} mediaUrl={mediaUrl} posterUrl={posterUrl}
+    nameOf={(node) => node.type === "image" ? node.attrs.alt?.trim() || fileNames.current.get(node.attrs.mediaId) || "Image" : fileNames.current.get(node.attrs.mediaId) ?? "Video"}
+    onRemove={(mediaId) => { const at = findMedia(mediaId); if (at) editor.view.dispatch(editor.state.tr.delete(at.pos, at.pos + at.size)); }}
+    onCancel={(key) => { running.current.get(key)?.release(); announceCancelled(); }}
+    onAlt={(mediaId, alt) => { const at = findMedia(mediaId); if (at) editor.view.dispatch(editor.state.tr.setNodeMarkup(at.pos, undefined, { ...at.attrs, alt })); }}
+    onFocusText={() => editor.commands.focus()}
+  /> : null;
   // The live region stays mounted so screen readers announce a message when it appears, but it takes no space while empty.
   const CANCELLED_MESSAGE = "Upload cancelled";
   const liveMessage = overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : uploadCancelled ? CANCELLED_MESSAGE : "";
@@ -685,33 +775,105 @@ export function QuincyRichTextEditorBase({
           </RichTextToolbarGroup>
         </RichTextToolbar>;
 
-  return <div ref={wrapperRef} className="group grid gap-[var(--space-2)]" data-disabled={disabled || undefined}>
-    <InputGroup ref={fieldRef} data-testid="rich-text-field" variant={pill ? "pill" : "default"} className={pill ? PILL_GROUP : FIELD_GROUP} data-disabled={disabled || undefined}>
-      {toolbarContainer === undefined ? <InputGroupAddon ref={addonRef} align="block-start" className={cn("p-[var(--space-1)] cursor-default", isDocument && "rich-text-toolbar-sticky")}>
+  // The note box (#927) draws the field, so outside the phone pill a note is the bare text. Block, not grid: the box's anchor chip floats
+  // beside the first line, which a grid's own formatting context would push the whole editor away from.
+  const bareNote = isNote && !pill;
+  const content = <div ref={pageRef} {...contentAttributes} className={cn("relative min-w-0", pill ? PILL_TEXT : "w-full", contentClassName)}>
+    <EditorContent editor={editor} className={pill ? PILL_SCROLLER : "w-full min-w-0"} />
+    {isDocument && outline.length >= 2 && <RichTextOutlineRail outline={outline} activeIndex={activeHeading} onSelect={(index) => scrollToRichTextHeading(editor, index)} className="absolute end-1 top-2 z-[1] max-[721px]:hidden" />}
+  </div>;
+  return <div ref={wrapperRef} className={bareNote ? "group block min-w-0" : "group grid gap-[var(--space-2)]"} data-disabled={disabled || undefined}>
+    {bareNote ? <div ref={fieldRef} data-testid="rich-text-field" className="min-w-0">{content}</div> : <InputGroup ref={fieldRef} data-testid="rich-text-field" variant={pill ? "pill" : "default"} className={pill ? PILL_GROUP : FIELD_GROUP} data-disabled={disabled || undefined}>
+      {toolbarContainer === undefined && !isNote ? <InputGroupAddon ref={addonRef} align="block-start" className={cn("p-[var(--space-1)] cursor-default", isDocument && "rich-text-toolbar-sticky")}>
         {toolbar}
       </InputGroupAddon> : null}
       {inlineStart !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-start" className={cn("cursor-default", pill && "gap-[var(--space-1)] pb-[calc(var(--space-1)*1.5)] pl-[var(--space-1)] has-[>button]:ml-0 group-data-[wrapped=true]/input-group:order-none")}>{inlineStart}</InputGroupAddon> : null}
-      <div ref={pageRef} {...contentAttributes} className={cn("relative min-w-0", pill ? PILL_TEXT : "w-full", contentClassName)}>
-        <EditorContent editor={editor} className={pill ? PILL_SCROLLER : "w-full min-w-0"} />
-        {isDocument && outline.length >= 2 && <RichTextOutlineRail outline={outline} activeIndex={activeHeading} onSelect={(index) => scrollToRichTextHeading(editor, index)} className="absolute end-1 top-2 z-[1] max-[721px]:hidden" />}
-      </div>
+      {content}
       {inlineEnd !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-end" className={cn("cursor-default", pill && "pb-[calc(var(--space-1)*1.5)] pr-[var(--space-1)] group-data-[wrapped=true]/input-group:ms-auto")}>{inlineEnd}</InputGroupAddon> : null}
-    </InputGroup>
-    {toolbarContainer ? createPortal(toolbar, toolbarContainer) : null}
+    </InputGroup>}
+    {isNote && <RichTextFormatBubble editor={editor} linkOpen={linkOpen} onLinkOpenChange={setLinkOpen} onLinkApplied={offerLinkPreview} disabled={disabled} docked={bubbleDocked ?? phone} dockTo={bubbleDockTo} />}
+    {isNote && (stripContainer === undefined ? strip : stripContainer ? createPortal(strip, stripContainer) : null)}
+    {toolbarContainer && !isNote ? createPortal(toolbar, toolbarContainer) : null}
     {isDocument && <>
       {!phone && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tier={tableTier} onTierChange={setTableTier} ceiling={() => addonRef.current?.getBoundingClientRect().bottom ?? 0} />}
       <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
     </>}
     {picking !== null && <Input
-      key={picking.n} ref={pickerRef} type="file" multiple accept={picking.kind === "video" ? EMBEDDED_VIDEO_ACCEPT : embeddedImageAccept(heicEnabled)} tabIndex={-1} aria-hidden="true" aria-label={picking.kind === "video" ? "Choose videos" : "Choose images"} data-testid={picking.kind === "video" ? "rich-text-video-picker" : "rich-text-image-picker"} className="sr-only"
-      onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); const kind = picking.kind; setPicking(null); if (files.length) addImagesRef.current(files, editor.state.selection.to, kind); }}
+      key={picking.n} ref={pickerRef} type="file" multiple accept={pickerAccept} tabIndex={-1} aria-hidden="true" aria-label={pickerName} data-testid={picking.kind === "video" ? "rich-text-video-picker" : picking.kind === "media" ? "rich-text-media-picker" : "rich-text-image-picker"} className="sr-only"
+      onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); const kind = picking.kind; setPicking(null); if (files.length) addImagesRef.current(files, editor.state.selection.to, kind === "media" ? undefined : kind); }}
       {...{ onCancel: () => setPicking(null) }}
     />}
-    <EmbeddedUploadTray uploads={uploads} errors={uploadErrors} onCancel={(key) => { running.current.get(key)?.release(); announceCancelled(); editorRef.current?.commands.focus(); }} onRemove={(key) => { running.current.get(key)?.release(); editorRef.current?.commands.focus(); }} onRetry={(key) => running.current.get(key)?.retry()} />
+    <EmbeddedUploadTray uploads={isNote ? uploads.filter((entry) => (entry.phase ?? "uploading") !== "uploading") : uploads} errors={uploadErrors} onCancel={(key) => { running.current.get(key)?.release(); announceCancelled(); editorRef.current?.commands.focus(); }} onRemove={(key) => { running.current.get(key)?.release(); editorRef.current?.commands.focus(); }} onRetry={(key) => running.current.get(key)?.retry()} />
     {mentionsOn && <MentionAutocomplete ref={menu} query={query} loadMentionables={loadMentionables} onSelect={selectMention} onDismiss={() => setMentionDismissed(true)} onAccessibilityChange={setMentionA11y} />}
     {plainText.length >= limit * COUNTER_THRESHOLD && <div ref={counterRef} data-testid="rich-text-counter" className={cn("text-right [font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-foreground-secondary", plainText.length > limit && "!text-destructive")}>{plainText.length}/{limit}</div>}
     <div className={liveMessage && liveMessage !== CANCELLED_MESSAGE ? "[font:var(--weight-regular)_var(--text-xs)/var(--leading-normal)_var(--font-sans)] text-destructive" : "sr-only"} aria-live="polite">{liveMessage}</div>
   </div>;
+}
+
+type NoteStripItem =
+  | { state: "ready"; seq: number; node: RichTextMediaNode }
+  | { state: "uploading"; seq: number; entry: UploadingMedia; size: number | undefined };
+
+/** A file's size as the frame writes it (C4): one decimal in MB, whole KB below that. */
+const fileSize = (bytes: number) => bytes >= 1_000_000 ? `${(bytes / 1_000_000).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1000))} KB`;
+
+/** The chip's frame (C4 `.cmp-file`): 40px (--space-6 + --space-2) on the raised chrome, a softened hairline, 4px in from its ends. */
+const NOTE_CHIP = "inline-flex h-[calc(var(--space-6)+var(--space-2))] max-w-full items-center gap-[var(--space-2)] rounded-[var(--radius-md)] border border-[color-mix(in_srgb,var(--border)_55%,transparent)] bg-card px-[var(--space-1)] text-foreground";
+const NOTE_CHIP_NAME = "min-w-0 max-w-[15ch] truncate [font:var(--type-label)]";
+
+/**
+ * The note preset's draft strip (#927, frame C4): one chip per photo or video, with its thumb (the posted tile's dialog, at 32px), its
+ * name and ×. While a file uploads its chip shows a spinner and the file's size, which only the local File knows; a landed photo's name
+ * opens its alt text (the alt is the cleaned file name by default, so the name a chip shows is the alt). A HEIC being prepared or a
+ * failure stays in the upload tray, with its Retry.
+ *
+ * × keeps the focus where it was on a press (a phone keeps its keyboard), and gives a keyboard user's focus back to the text.
+ */
+function NoteDraftStrip({ items, disabled, phone, inline, mediaUrl, posterUrl, nameOf, onRemove, onCancel, onAlt, onFocusText }: {
+  items: readonly NoteStripItem[];
+  disabled: boolean;
+  phone: boolean;
+  /** Right after the text (no host slot), so it keeps the box's row gap itself. */
+  inline: boolean;
+  mediaUrl?: (mediaId: string) => string;
+  posterUrl?: (mediaId: string) => string;
+  nameOf: (node: RichTextMediaNode) => string;
+  onRemove: (mediaId: string) => void;
+  onCancel: (key: number) => void;
+  onAlt: (mediaId: string, alt: string | null) => void;
+  onFocusText: () => void;
+}) {
+  // A phone's × reaches 44px around its 24px glyph button, as the box's own small controls do.
+  const remove = cn("text-foreground-secondary hover:text-foreground", phone && "relative after:absolute after:-inset-[calc(var(--space-2)+var(--space-1)/2)] after:content-['']");
+  const press = (event: ReactMouseEvent<HTMLButtonElement>, run: () => void) => { const hadFocus = document.activeElement === event.currentTarget; run(); if (hadFocus) onFocusText(); };
+  return <ul data-testid="note-draft-strip" role="list" aria-label="Attached media" className={cn("m-0 flex list-none flex-wrap gap-[calc(var(--space-1)*1.5)] p-0", inline && "mt-[var(--space-2)]")}>
+    {items.map((item) => {
+      if (item.state === "uploading") {
+        const { entry } = item;
+        return <li key={`uploading-${entry.key}`} data-testid="note-draft-chip" data-state="uploading" title={entry.name} className={NOTE_CHIP}>
+          <span className="grid size-[var(--space-6)] shrink-0 place-items-center rounded-[var(--radius-sm)] bg-muted text-foreground-secondary"><Spinner aria-hidden="true" role="presentation" className="size-3.5" /></span>
+          <span className={NOTE_CHIP_NAME}>{entry.name}</span>
+          {item.size !== undefined && <span className="whitespace-nowrap [font:var(--type-eyebrow)] text-foreground-secondary">{fileSize(item.size)}</span>}
+          <span className="sr-only">Uploading, {Math.round(entry.percent)}%</span>
+          <Button type="button" variant="ghost" size="icon-xs" aria-label={`Remove ${entry.name}`} title="Remove" className={remove} onMouseDown={keepEditorFocus} onClick={(event) => press(event, () => onCancel(entry.key))}><XIcon aria-hidden="true" /></Button>
+        </li>;
+      }
+      const { node } = item;
+      const name = nameOf(node);
+      const id = node.attrs.mediaId;
+      return <li key={`${node.type}-${id}`} data-testid="note-draft-chip" data-state="ready" title={name} className={NOTE_CHIP}>
+        {node.type === "image"
+          ? <EmbeddedImageThumb size="chip" mediaId={id} alt={node.attrs.alt} mediaUrl={mediaUrl} />
+          : <EmbeddedVideoThumb size="chip" mediaId={id} hasPoster={node.attrs.hasPoster} mediaUrl={mediaUrl} posterUrl={posterUrl} />}
+        {node.type === "image" && !disabled
+          ? <EmbeddedImageAltPopover alt={node.attrs.alt ?? ""} onApply={(alt) => onAlt(id, alt)} trigger={<Button type="button" variant="ghost" size="xs" title="Edit alt text" aria-label={`${name}, edit alt text`} className="h-auto min-w-0 max-w-[15ch] justify-start px-0 py-0 text-foreground hover:bg-transparent hover:underline [font:var(--type-label)]" />}>
+            <span className="truncate">{name}</span>
+          </EmbeddedImageAltPopover>
+          : <span className={NOTE_CHIP_NAME}>{name}</span>}
+        <Button type="button" variant="ghost" size="icon-xs" aria-label={`Remove ${name}`} title="Remove" disabled={disabled} className={remove} onMouseDown={keepEditorFocus} onClick={(event) => press(event, () => onRemove(id))}><XIcon aria-hidden="true" /></Button>
+      </li>;
+    })}
+  </ul>;
 }
 
 /**

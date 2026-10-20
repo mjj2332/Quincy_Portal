@@ -1,36 +1,30 @@
-import { useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { PencilIcon, StepBack, StepForward } from "lucide-react";
+import { useContext, useEffect, useId, useRef, useState } from "react";
 import type { EditorMediaTransport } from "../lib/embedded-media-core";
 import { useFrameClockSelector, type VideoFrameClock } from "../lib/video-frame-clock";
-import { cn } from "../lib/utils";
-import { Button } from "../components/quincy/Button";
-import { Button as ReuiButton } from "../components/reui/button";
-import { InputGroup, InputGroupAddon } from "../components/reui/input-group";
-import { SheetModeContext } from "../components/quincy/ReviewSheet";
-import { PILL_ICON } from "../components/quincy/VideoPlayer";
-import { SELECTED_HAIRLINE_PRESSED } from "../components/quincy/markup-toolbar";
-import { COMPOSE_CLAMP, ComposeTray, PHONE_LINE, PILL_CHIP, PILL_SHELL, PILL_SHELL_TEXT, PillPlus, PillSend, REST_CLAMP, SHEET_TEXT, STRIP_CANCEL_ROW, STRIP_GRID, STRIP_HEAD_LINE, STRIP_HEAD_ROW, STRIP_TEXT_BUTTON, keepFocus, shortRange, useRestPlaceholder } from "../components/quincy/compose-strip";
+import type { RichTextEditorHandle } from "../components/QuincyRichTextEditorBase";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
+import { SHEET_TEXT, SheetModeContext, usePostHold } from "../components/quincy/ReviewSheet";
+import { DRAWING_NEEDS_WORDS, NoteComposerBox, rangeChip, type NoteAnchorChip } from "../components/quincy/NoteComposerBox";
 import { GuestNoteField } from "./GuestNoteField";
 import type { GuestStrip } from "./use-guest-compose";
 
-/** A text control in the tray, as the staff tray draws its Set in / Set out: 44px tall on a phone. */
-const SMALL_BUTTON = "min-h-8 px-[var(--space-2)] pointer-coarse:min-h-11 max-[721px]:min-h-11";
-const STRIP = '[data-testid="guest-compose-strip"]';
 const EDITABLE = 'textarea, [contenteditable]:not([contenteditable="false"])';
-const PILL_ADDON_START = "cursor-default gap-[var(--space-1)] pb-[calc(var(--space-1)*1.5)] pl-[var(--space-1)] has-[>button]:ml-0";
-const PILL_ADDON_END = "cursor-default pb-[calc(var(--space-1)*1.5)] pr-[var(--space-1)]";
+/** On a phone the box's text region gives way to the film's floor first (#879 fix r9): the sheet publishes `--sheet-text-room`, rounded down to whole 24px lines, one line at least, seven at most. */
+const PHONE_TEXT_ROOM = "max-h-[clamp(var(--space-5),round(down,var(--sheet-text-room,calc(var(--space-5)*7)),var(--space-5)),calc(var(--space-5)*7))]";
+const PHONE_TEXT_ATTRS: Record<`data-${string}`, string> = { ...SHEET_TEXT };
 
 /**
- * The guest's note composer on a phone (#879 PR 2, the prototype's P2 / P6 / P7 as guest): the staff phone strip, built from the same Quincy pieces (`quincy/compose-strip.tsx`),
- * on the guest's own draft (`useGuestCompose`'s `strip`), since the staff composer is bound to the staff form store and `lib/api` (`guest-boundary.guard.test.ts`).
+ * The guest's note composer (#927 G1 / E1, P1–P5 on a phone): the one note box (`quincy/NoteComposerBox`), `guest` for a new note (no visibility: a guest's note is always
+ * public; the pen only where the link allows drawing) and `edit` for the guest's own root note (Cancel and Save, the D4 lock, and no visibility: owner decision 2026-10-20). It renders the
+ * guest's own draft (`useGuestCompose`'s `strip`), since the staff composer is bound to the staff form store and `lib/api` (`guest-boundary.guard.test.ts`).
  *
- * - At rest (browse, draw) the pill: +, the timecode chip, the field and the pen in one row, with the round Send beside it. In compose mode (the sheet's mode alone) a hint line above
- *   it, the + tray (frame step, Mark in / out, the drawing, the formatting toolbar) and Cancel under it. The field is mounted at rest for a verified guest, so the first tap raises
- *   the keyboard; while its chunk loads, and for a guest who has not verified, a shell of the same size stands in (a tap on the unverified shell asks for verification).
- * - Focus stamps the frame on screen; a draft with text keeps its anchor; an untouched one is given back at rest. An open tray and a post that is out hold compose mode. A draft
- *   that closes (posted, cancelled, another Version) blurs the field, so the sheet returns to browse with the note listed.
+ * - The same box at every width: the rail's foot on a desktop, the review sheet's foot on a phone, floating over the film in Full screen (`floating`).
+ * - The chip follows the film until the note starts (the first text, an upload, a mark, a stroke); one in/out button marks In, then Out, then clears. On a phone the focus pauses
+ *   and stamps a pristine draft (D10), an untouched one is given back at rest, and a post that is out holds compose mode. A draft that closes blurs the field.
+ * - The field is mounted for a verified guest, so the first tap raises the keyboard. While its chunk loads a same-size placeholder stands in; for a guest who has not verified, the
+ *   field's place is one button that asks for verification.
  */
-export function GuestNoteComposer({ strip, clock, timecode, media, verified, onShellPress }: {
+export function GuestNoteComposer({ strip, clock, timecode, media, verified, onShellPress, phone = false, floating = false }: {
   strip: GuestStrip;
   clock: VideoFrameClock | null;
   timecode: (frame: number) => string;
@@ -38,31 +32,31 @@ export function GuestNoteComposer({ strip, clock, timecode, media, verified, onS
   /** A verified guest gets the field; one who is not gets the shell, which asks for verification. */
   verified: boolean;
   onShellPress: () => void;
+  phone?: boolean;
+  /** Full screen's box over the film. */
+  floating?: boolean;
 }) {
   const sheet = useContext(SheetModeContext);
+  const inSheet = phone && sheet !== null;
   const mode = sheet?.mode ?? "browse";
-  const composing = mode === "compose";
-  const trayId = useId();
   const fieldId = useId();
-  const [trayToolbar, setTrayToolbar] = useState<HTMLDivElement | null>(null);
+  const editor = useRef<RichTextEditorHandle | null>(null);
+  const [stripHost, setStripHost] = useState<HTMLDivElement | null>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
   const liveFrame = useFrameClockSelector(clock, (state) => state.targetFrame ?? state.frame, 0);
-  // By the strip's mark, as the staff strip finds its form (`closest`), not by node identity.
-  const blurInStrip = () => { const active = document.activeElement; if (active instanceof HTMLElement && active.closest(STRIP) !== null) active.blur(); };
+  const blurInBox = () => { const active = document.activeElement; if (active instanceof HTMLElement && boxRef.current?.contains(active)) active.blur(); };
 
-  // A post sent from the strip holds compose mode until it settles (the strip shows its phase), as the staff strip does (C7).
+  // A post sent from compose mode holds it until it settles, as the staff phone composer does (C7).
   const fromCompose = useRef(false);
   useEffect(() => { if (!strip.pending) fromCompose.current = false; }, [strip.pending]);
   const postHold = strip.pending && fromCompose.current;
-  const setHold = sheet?.setHold;
-  useEffect(() => { setHold?.("tray", strip.tray); }, [setHold, strip.tray]);
-  useEffect(() => { setHold?.("post", postHold); }, [setHold, postHold]);
-  useEffect(() => () => { setHold?.("tray", false); setHold?.("post", false); }, [setHold]);
-  // A draft that closes (a post landed, an unchanged edit, another Version) gives the focus up, so compose mode ends the ordinary way.
+  usePostHold(inSheet ? sheet.setHold : undefined, postHold);
+  // A draft that closes (a post landed, an unchanged edit, another Version) gives the focus up, so a phone's compose mode ends the ordinary way.
   const wasOpen = useRef(strip.open);
-  useEffect(() => { if (wasOpen.current && !strip.open) blurInStrip(); wasOpen.current = strip.open; });
-  // An untouched new draft is given back at rest: the chip follows the film again and the range button asks for a note first.
+  useEffect(() => { if (wasOpen.current && !strip.open && phone) blurInBox(); wasOpen.current = strip.open; });
+  // An untouched new draft is given back at rest on a phone: the chip follows the film again.
   const { releaseIfPristine } = strip;
-  useEffect(() => { if (mode === "browse") releaseIfPristine(); });
+  useEffect(() => { if (inSheet && mode === "browse") releaseIfPristine(); });
   // An edit's text lands through the field's own content sync (a child effect, so before this one): the caret goes to its end.
   useEffect(() => {
     if (!strip.editing) return;
@@ -74,104 +68,61 @@ export function GuestNoteComposer({ strip, clock, timecode, media, verified, onS
     selection?.collapseToEnd();
   }, [strip.editing, fieldId]);
 
-  // The pill's placeholder at rest ends at a word (#879 PR 3a); compose mode shows it whole. The field's host is also the compose hook's (`strip.fieldHost`).
-  const restPlaceholder = useRestPlaceholder(strip.penDown ? "Add a note with this drawing…" : "Add a note…", !composing);
-  const { fieldHost } = strip;
-  const restRef = restPlaceholder.ref;
-  const fieldRef = useCallback((element: HTMLDivElement | null) => { fieldHost(element); restRef(element); }, [fieldHost, restRef]);
+  const send = () => { fromCompose.current = mode === "compose"; strip.send(); };
+  const cancel = () => { if (phone) blurInBox(); strip.cancel(); };
 
-  const send = () => { fromCompose.current = composing; strip.send(); };
-  const cancel = () => { blurInStrip(); strip.cancel(); };
+  const { frames, rangeMarks } = strip;
+  const chip: NoteAnchorChip = rangeChip(rangeMarks, liveFrame, timecode, { onClear: strip.clearRange, disabled: strip.pending || strip.marksLocked })
+    ?? { kind: "point", at: timecode(strip.following || frames === null ? liveFrame : frames.startFrame), following: strip.following };
+  const busy = strip.pending || !strip.clockReady;
+  const range = {
+    marks: rangeMarks, onPress: (step: "in" | "out" | "clear") => { if (step === "clear") strip.clearRange(); else strip.mark(step); },
+    disabled: busy || strip.penDown || strip.marksLocked || !verified, ...(strip.marksLocked && strip.lockHint ? { reason: strip.lockHint } : {}),
+  };
+  // D4: editing the range locks the pen (and a drawing locks the range, above), each with the reason as its title.
+  const pen = strip.canDraw ? { onPress: strip.pen, disabled: !verified || (strip.penDisabled && !strip.penDown), ...(strip.penDisabled && strip.lockHint ? { reason: strip.lockHint } : {}) } : undefined;
+  const attach = { onPick: () => { editor.current?.pickMedia(); }, disabled: strip.pending || !verified };
+  // D2: a drawing alone is not a note.
+  const reason = strip.empty && strip.strokes > 0 ? DRAWING_NEEDS_WORDS : strip.uploading ? "Wait for the upload to finish" : undefined;
+  const blocked = busy || strip.uploading || strip.empty;
 
-  const { frames, ranged } = strip;
-  const from = frames ? timecode(frames.startFrame) : "";
-  const to = ranged && frames?.endFrame != null ? timecode(frames.endFrame - 1) : "";
-  const point = strip.open && frames ? frames.startFrame : liveFrame;
-  const merged = strip.strokes > 0 && !ranged && frames !== null && strip.drawFrame === frames.startFrame;
-  const hint = !strip.clockReady ? "Loading the film…"
-    : strip.editing ? (strip.lockHint ?? `Editing your note · ${ranged ? `from ${from} to ${to}` : `at ${timecode(point)}`}`)
-    : strip.open && frames === null ? "No frame marked · Mark in from the + options"
-    : ranged ? `From ${from} to ${to}`
-    : `Paused at ${timecode(point)} · the note is stamped here`;
-  const lineShown = composing || strip.problem !== null || (strip.open && strip.editing) || !strip.clockReady || strip.latest !== null;
-  const floating = sheet?.floating === true;
-  // Cancel keeps the field's focus on press like Send: a blur first would drop the keyboard and move the strip under the finger, and the tap would miss.
-  const cancelButton = <Button type="button" variant="text" data-testid="guest-composer-cancel" className={STRIP_TEXT_BUTTON} disabled={strip.pending} onPointerDown={keepFocus} onMouseDown={keepFocus} onClick={cancel}>Cancel</Button>;
-  const line = !lineShown ? null : <div className={cn(PHONE_LINE, floating && STRIP_HEAD_LINE, "grid gap-[var(--space-1)]")}>
-    {strip.problem !== null
-      ? <p role="alert" data-testid="guest-composer-problem" className="m-0 max-h-[var(--space-9)] overflow-y-auto text-destructive-wash-foreground">{strip.problem}</p>
-      : <p data-testid="guest-composer-stamp" className="m-0 line-clamp-2 text-foreground-secondary">{hint}</p>}
-    {strip.latest !== null && <p data-testid="guest-composer-latest" className="m-0 max-h-[var(--space-9)] overflow-y-auto whitespace-pre-wrap text-foreground-secondary [overflow-wrap:anywhere]">{`Latest saved version: ${strip.latest}`}</p>}
-  </div>;
-
-  const chip = <span data-testid="guest-composer-anchor" aria-live="off" className={PILL_CHIP}>
-    <span className="sr-only">{ranged ? `Note from ${from} to ${to}: ` : merged ? "Note with a drawing at " : "Note at "}</span>
-    {merged && <PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" />}
-    <span aria-hidden={ranged ? true : undefined}>{ranged ? shortRange(from, to) : timecode(point)}</span>
+  const placeholder = phone ? "Add a note…" : "Add a note at this frame…";
+  const shell = (loading: boolean) => <span data-testid="guest-compose-shell" aria-busy={loading || undefined} className="relative block min-h-[var(--space-5)]">
+    <span aria-hidden="true" className="text-muted-foreground">{placeholder}</span>
+    {loading && <span className="sr-only">Loading the note field…</span>}
+    {/* Only a hit area over the placeholder, so Base UI's unstyled button rather than a styled Button whose height and hover it would undo. */}
+    {!loading && <ButtonPrimitive type="button" data-testid="guest-compose-shell-open" aria-label="Add a note" className="absolute inset-0 cursor-text" onClick={onShellPress} />}
   </span>;
-  const plus = (disabled: boolean) => <PillPlus testId="guest-composer-extras" open={strip.tray} controls={trayId} disabled={disabled} onToggle={() => { strip.setTray(!strip.tray); }} />;
-  const pen = (disabled: boolean): ReactNode => (strip.canDraw
-    ? <ReuiButton
-      type="button" variant="ghost" size="icon" data-testid="guest-composer-draw" aria-label={strip.drawLabel} aria-pressed={strip.penDown} disabled={disabled}
-      className={cn("aria-pressed:bg-secondary", SELECTED_HAIRLINE_PRESSED, PILL_ICON)} onClick={strip.pen}
-    ><PencilIcon aria-hidden="true" /></ReuiButton>
-    : undefined);
-  const shell = (loading: boolean) => <PillShell start={<>{plus(true)}{chip}</>} end={pen(true)} loading={loading} {...(loading ? {} : { onPress: onShellPress })} />;
-
-  const stepDisabled = !strip.clockReady || strip.pending || strip.penDown;
-  const markDisabled = stepDisabled || strip.marksLocked;
-  const sendLabel = strip.editing ? (strip.pending ? "Saving…" : "Save") : (strip.pending ? "Posting…" : "Post note");
-
-  return <form
-    data-testid="guest-compose-strip" data-open={strip.open ? "true" : "false"} data-compose={composing ? "true" : "false"}
-    aria-label={strip.editing ? "Edit note" : "New note"} noValidate className={STRIP_GRID}
-    onSubmit={(event) => { event.preventDefault(); send(); }}
+  const field = <div
+    ref={strip.fieldHost} data-testid="guest-composer-field" className="min-w-0"
+    // A phone note is stamped when typing begins (D10): focusing the field pauses the film and stamps the frame on screen. A desktop's focus alone leaves the chip following (#927).
+    onFocusCapture={phone ? (event) => { if (event.target instanceof Element && event.target.matches(EDITABLE)) strip.focusStamp(); } : undefined}
   >
-    {/* The line above the pill. A problem takes its place (and shows at rest too); after an edit conflict the latest saved text follows it, whole, in its own scroll. In Full
-        screen the strip floats over the film (F1, #880 review 6): the line and Cancel share one head row there, so Cancel never sizes the pill's columns. */}
-    {floating && (line !== null || composing) ? <div data-testid="guest-composer-head" className={STRIP_HEAD_ROW}>{line}{composing && cancelButton}</div> : line}
-    {/* The + tray (C1), inline above the pill, so it is always above the keyboard. Mounted for the whole phone layout: the toolbar's portal target stays put. */}
-    <ComposeTray open={strip.tray} id={trayId} testId="guest-composer-tray" toolbarRef={setTrayToolbar}>
-      <Button type="button" variant="secondary" data-testid="guest-composer-step-back" aria-label="Back one frame" className="min-h-11 min-w-11" disabled={stepDisabled} onClick={() => { strip.step(-1); }}><StepBack aria-hidden="true" /></Button>
-      <Button type="button" variant="secondary" data-testid="guest-composer-step-forward" aria-label="Forward one frame" className="min-h-11 min-w-11" disabled={stepDisabled} onClick={() => { strip.step(1); }}><StepForward aria-hidden="true" /></Button>
-      <Button type="button" variant="secondary" data-testid="guest-composer-mark-in" className={SMALL_BUTTON} disabled={markDisabled} onClick={() => { strip.mark("in"); }}>Mark in</Button>
-      <Button type="button" variant="secondary" data-testid="guest-composer-mark-out" className={SMALL_BUTTON} disabled={markDisabled} onClick={() => { strip.mark("out"); }}>Mark out</Button>
-      {strip.marks.out !== null && <Button type="button" variant="text" data-testid="guest-composer-clear-marks" className={SMALL_BUTTON} disabled={markDisabled} onClick={strip.clearMarks}>Clear marks</Button>}
-      {strip.strokes > 0 && !merged && strip.drawFrame !== null && <span data-testid="guest-composer-drawing" className={PILL_CHIP}><span className="sr-only">Drawing on </span><PencilIcon aria-hidden="true" className="me-[var(--space-1)] inline size-3" />{timecode(strip.drawFrame)}</span>}
-      {(strip.keptDrawing || strip.drawingRemoved) && <span data-testid="guest-composer-drawing" className="text-foreground-secondary [font:var(--type-label)]">{strip.keptDrawing ? "This note has a drawing" : "The drawing will be removed when you save"}</span>}
-      {strip.canDraw && (strip.strokes > 0 || strip.keptDrawing) && <Button type="button" variant="text" data-testid="guest-composer-remove-drawing" className={SMALL_BUTTON} disabled={strip.pending || strip.penDown} onClick={strip.removeDrawing}>Remove drawing</Button>}
-    </ComposeTray>
-    <div
-      ref={fieldRef} data-testid="guest-composer-field" className="col-start-1 row-start-3 min-w-0 [&_[contenteditable]]:text-[length:var(--text-base)]"
-      // A phone note is stamped when typing begins (D10): focusing the field pauses the film and stamps the frame on screen, so nothing moves it before the first keystroke.
-      onFocusCapture={(event) => { if (event.target instanceof Element && event.target.matches(EDITABLE)) strip.focusStamp(); }}
-    >
-      {verified
-        ? <GuestNoteField
-          key={strip.editorKey} testId="guest-composer-body" id={fieldId} label="Your note" placeholder={restPlaceholder.text}
-          media={media} value={strip.doc} disabled={strip.pending} onChange={strip.setDoc} onUploadingChange={strip.setUploading} onSubmit={send}
-          pill pillWrap={composing} toolbarContainer={trayToolbar} inlineStart={<>{plus(strip.pending || strip.penDown)}{chip}</>} inlineEnd={pen(strip.penDisabled)}
-          contentClassName={composing ? COMPOSE_CLAMP : REST_CLAMP} contentAttributes={SHEET_TEXT} fallback={shell(true)}
-        />
-        : shell(false)}
+    {verified
+      ? <GuestNoteField
+        key={strip.editorKey} ref={editor} testId="guest-composer-body" id={fieldId} label={strip.editing ? "Edit your note" : "Your note"} placeholder={placeholder}
+        media={media} value={strip.doc} disabled={strip.pending} onChange={strip.setDoc} onUploadingChange={strip.setUploading} onSubmit={send}
+        stripContainer={stripHost} bubbleDocked={phone} bubbleDockTo={() => boxRef.current?.querySelector('[data-testid="note-composer-box"]') ?? null} fallback={shell(true)}
+      />
+      : shell(false)}
+  </div>;
+  const notice = strip.problem !== null || strip.latest !== null || strip.refused || !strip.clockReady
+    ? <div className="flex flex-col gap-[var(--space-1)] text-foreground-secondary [font:var(--type-label)]">
+      {!strip.clockReady && <p data-testid="guest-composer-stamp" className="m-0">Loading the film…</p>}
+      {strip.refused && <p role="status" className="m-0">That is as much drawing as one note can hold. Undo a stroke to add more.</p>}
+      {strip.problem !== null && <p role="alert" data-testid="guest-composer-problem" className="m-0 max-h-[var(--space-9)] overflow-y-auto text-destructive-wash-foreground">{strip.problem}</p>}
+      {strip.latest !== null && <p data-testid="guest-composer-latest" className="m-0 max-h-[var(--space-9)] overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere]">{`Latest saved version: ${strip.latest}`}</p>}
     </div>
-    <PillSend testId="guest-composer-post" label={sendLabel} disabled={strip.pending || strip.penDown || strip.uploading || strip.empty || !strip.clockReady} pending={strip.pending} />
-    {composing && !floating && <div className={STRIP_CANCEL_ROW}>{cancelButton}</div>}
-  </form>;
-}
+    : null;
 
-/**
- * The pill without its editor (#879 PR 2): the same input-group pill, chip and pen at the same size, standing in while the editor's chunk loads (busy), and for a guest who has not
- * verified, where the field's place is one button that asks for verification.
- */
-function PillShell({ start, end, loading, onPress }: { start: ReactNode; end: ReactNode; loading: boolean; onPress?: () => void }) {
-  return <InputGroup variant="pill" data-testid="guest-compose-shell" aria-busy={loading || undefined} className={PILL_SHELL}>
-    <InputGroupAddon align="inline-start" className={PILL_ADDON_START}>{start}</InputGroupAddon>
-    <div className="relative flex min-w-0 flex-1 py-[var(--space-2)]">
-      <span aria-hidden="true" className={PILL_SHELL_TEXT}>Add a note…</span>
-      {loading && <span className="sr-only">Loading the note field…</span>}
-      {onPress && <ReuiButton type="button" variant="ghost" data-testid="guest-compose-shell-open" aria-label="Add a note" className="absolute inset-0 h-auto min-h-0 max-[721px]:min-h-0 hover:bg-transparent" onClick={onPress} />}
-    </div>
-    {end !== undefined && <InputGroupAddon align="inline-end" className={PILL_ADDON_END}>{end}</InputGroupAddon>}
-  </InputGroup>;
+  const common = {
+    field, strip: <div ref={setStripHost} className="empty:hidden" />, notice, attach, phone, floating, foot: true, chip, drawn: strip.strokes > 0 || strip.keptDrawing, range, ...(pen ? { pen } : {}), draw: strip.draw,
+    testId: "guest-composer", formAttributes: { "data-open": strip.open ? "true" : "false" } as Record<`data-${string}`, string>,
+    ...(phone ? { textClassName: PHONE_TEXT_ROOM, textAttributes: PHONE_TEXT_ATTRS } : {}),
+  };
+  return <div ref={boxRef} className="contents">
+    {strip.editing
+      ? <NoteComposerBox {...common} variant="edit" label="Edit note" save={{ onSave: send, onCancel: cancel, disabled: blocked, ...(reason ? { reason } : {}), pending: strip.pending }} />
+      : <NoteComposerBox {...common} variant="guest" label="Add a note" send={{ label: "Post note", onSend: send, disabled: blocked, ...(reason ? { reason } : {}), pending: strip.pending }} />}
+  </div>;
 }

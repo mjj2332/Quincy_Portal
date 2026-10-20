@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 import type { ImmersiveState } from "../../lib/immersive";
+import { fullScreenHandsOver } from "../../lib/video-native-player";
 
 const EDITABLE = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
 
@@ -21,11 +22,21 @@ export function focusInImmersive(root: ParentNode | null, preferred: string): vo
  *
  * - **Element full screen** (button entry only, where the browser has one: desktop, Android): the whole page, not the player, so every portalled popup and toast stays visible. A rotation never
  *   asks for it. A rejected request leaves the in-app layer working; the browser's own Escape arrives as `fullscreenchange` and leaves the mode, so nothing ever double-leaves.
+ * - **iPhone hands over** (#927 D1): where the page has no element full screen and the stage's film has WebKit's player (`fullScreenHandsOver`), the button and the F key call
+ *   `handoff` (the player's own system-player path, with its play-first guard and its refusal notice) and the mode stays `null`: notes, drawing and Add note are not there. A
+ *   turn cannot hand over (it is no user gesture), so it still enters the in-app layer, and Exit full screen leaves that layer as before. A screen that passes no `handoff`
+ *   keeps the in-app layer everywhere.
  * - **Focus**: entering moves it to Exit full screen (unless the person is typing: a turn mid-note keeps the keyboard up); leaving puts it back, synchronously in the commit that drops the
  *   layer (lesson P3: never a timer), on what had it if that is still there, else on the Full screen button. On a touch device the entry focus goes to the player instead (#880
  *   review 4): a focus placed by script there opened Exit full screen's tooltip and drew WebKit's focus ring, both stuck until the next tap. The player is what the keys serve.
  */
-export function useImmersive({ rootRef, state, setState }: { rootRef: RefObject<HTMLElement | null>; state: ImmersiveState; setState: (next: ImmersiveState) => void }): {
+export function useImmersive({ rootRef, state, setState, handoff }: {
+  rootRef: RefObject<HTMLElement | null>;
+  state: ImmersiveState;
+  setState: (next: ImmersiveState) => void;
+  /** The native handoff (#927 D1), called synchronously inside the press on iPhone in place of entering. */
+  handoff?: () => void;
+}): {
   /** The button or the F key: enter, or leave if already in. */
   toggle(): void;
   enter(): void;
@@ -35,6 +46,8 @@ export function useImmersive({ rootRef, state, setState }: { rootRef: RefObject<
   stateRef.current = state;
   const setStateRef = useRef(setState);
   setStateRef.current = setState;
+  const handoffRef = useRef(handoff);
+  handoffRef.current = handoff;
   const recorded = useRef<Element | null>(null);
   // The page's element full screen is ours (we asked, and it was granted).
   const ours = useRef(false);
@@ -47,6 +60,10 @@ export function useImmersive({ rootRef, state, setState }: { rootRef: RefObject<
 
   const enter = useCallback(() => {
     if (stateRef.current !== null) return;
+    // The stage's own film, never a note's embedded video.
+    const film = rootRef.current?.querySelector<HTMLVideoElement>('[data-testid="video-stage"] video') ?? null;
+    const hand = handoffRef.current;
+    if (hand && fullScreenHandsOver(film)) { hand(); return; }
     recorded.current = document.activeElement;
     setStateRef.current("button");
     // Inside the press: a user gesture. Rejected (or unsupported): the in-app layer is the full screen.
@@ -57,7 +74,7 @@ export function useImmersive({ rootRef, state, setState }: { rootRef: RefObject<
         void Promise.resolve(page.requestFullscreen()).catch(() => { ours.current = false; });
       } catch { ours.current = false; }
     }
-  }, []);
+  }, [rootRef]);
 
   const leave = useCallback(() => {
     if (stateRef.current === null) return;

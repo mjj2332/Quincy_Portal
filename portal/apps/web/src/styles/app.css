@@ -297,6 +297,12 @@
 .project-phone__bar { display: grid; min-height: 62px; padding-block: var(--space-2); padding-inline: var(--space-4) var(--space-1); background: var(--bg-surface); }
 .project-header__tabbar--phone { top: calc(var(--shell-header-height) + var(--space-7)); }
 .project-header__tabbar--phone[data-stuck] { box-shadow: var(--shadow-sm); }
+/* #927: the sheet is an inverse scope while a film URL is open (Safari's bar tint). inverse.css does not remap --bg-surface, so the
+   header bars take the scope's own ground; remapping --bg-surface there would paint a nested default scope ink. */
+[data-surface="inverse"] .project-phone__bar,
+[data-surface="inverse"] .project-phone__slim,
+[data-surface="inverse"] .project-header,
+[data-surface="inverse"] .project-header__tabbar { background: var(--background); }
 .worktools { position: sticky; top: var(--shell-header-height); z-index: 20; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-6); background: color-mix(in srgb, var(--paper-050) 90%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border-hairline); flex-wrap: wrap; }
 /* #594: the Notice board composer's toolbar (the InputGroupAddon, whose containing block is the whole field) sticks under the
    shell header while a long document scrolls. z-index 2 sits above .tableWrapper and the outline rail (1), below the header and popovers. */
@@ -434,6 +440,12 @@
    was never set and the old utilities matched nothing: an empty doc is one paragraph holding only the
    ProseMirror trailing break, and the editor root carries `data-placeholder`. */
 .rich-text__editor-content:has(> p:only-child > br.ProseMirror-trailingBreak:only-child)::before { content: attr(data-placeholder); color: var(--foreground-secondary); float: left; height: 0; pointer-events: none; }
+/* #927 C2: the note box floats its anchor chip before the first line, and a floated placeholder longer than the room beside the chip
+   drops under it, out of the one-line box (the desktop box showed none). The note's placeholder is in the text's flow instead: a block
+   after the empty paragraph, raised by that paragraph's one line, so it starts where the caret is, wraps beside and under the chip as
+   the frame's does, and the box grows to hold it. */
+.rich-text__editor-content--note:has(> p:only-child > br.ProseMirror-trailingBreak:only-child)::before { content: none; }
+.rich-text__editor-content--note:has(> p:only-child > br.ProseMirror-trailingBreak:only-child)::after { content: attr(data-placeholder); display: block; margin-block-start: -1lh; color: var(--foreground-secondary); pointer-events: none; }
 .rich-text u { color: inherit; text-decoration: underline; text-decoration-color: var(--muted-foreground); text-underline-offset: 2px; }
 .rich-text s { text-decoration: line-through; text-decoration-color: var(--muted-foreground); }
 .rich-text__mention { display: inline-block; padding: 0 4px; border-radius: var(--radius-xs); background: color-mix(in srgb, var(--signal-info) 12%, var(--field-bg)); color: var(--signal-info); font-weight: 600; white-space: nowrap; }
@@ -453,6 +465,8 @@
 .rich-text__embedded-video { display: block; width: 100%; aspect-ratio: 16 / 9; max-width: min(100%, calc(24rem * 16 / 9)); max-height: 24rem; height: auto; margin: 0; border-radius: var(--radius-xs); border: var(--border-width-hair) solid var(--border); object-fit: contain; background: var(--surface-sunken); }
 /* #592 — the playback-failure panel is the same box as the player (shared width/aspect-ratio/clamp above); it only centres its content. No own aspect-ratio or max-height, so the two cannot drift. */
 .rich-text__embedded-video.rich-text__embedded-video--unavailable { display: grid; place-content: center; justify-items: center; gap: var(--space-2); padding: var(--space-3); text-align: center; }
+/* #927 review — the player on a dialog's stage (`EmbeddedVideo size="stage"`: its tile dialog and `EmbeddedVideoDialog`): edge to edge, as tall as the dialog allows (its 90dvh cap), no frame. The unavailable panel takes it too. A modifier here, not `!` utilities, because this file is unlayered. */
+.rich-text__embedded-video.rich-text__embedded-video--stage { width: 100%; max-width: none; max-height: 90dvh; aspect-ratio: auto; border: 0; border-radius: var(--radius-none); }
 .rich-text__editor-content video.rich-text__embedded-video { margin: var(--space-2) 0; }
 .rich-text__embedded-video-node { position: relative; width: 100%; max-width: min(100%, calc(24rem * 16 / 9)); margin: var(--space-2) 0; }
 .rich-text__editor-content .rich-text__embedded-video-node > .rich-text__embedded-video { margin: 0; }

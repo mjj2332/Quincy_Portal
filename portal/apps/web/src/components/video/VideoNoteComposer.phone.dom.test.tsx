@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { VideoFrameClock, FrameClockState } from "../../lib/video-frame-clock";
 import { ApiError } from "../../lib/api";
 import { createNoteFormStore, type NoteFormStore } from "../../lib/video-note-form-store";
-import { SheetModeContext, isInComposer, useReviewSheet, type SheetModeValue } from "../quincy/ReviewSheet";
+import { SheetModeContext, isInComposer, useReviewSheet, useSheetMode, type SheetModeValue } from "../quincy/ReviewSheet";
 import "../../testing/dom-polyfills";
 import { mockViewport, type MockViewport } from "../../testing/viewport";
 vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
@@ -13,8 +13,8 @@ import { VideoNoteComposer } from "./VideoNoteComposer";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 /**
- * The phone composer (#879, fixed to the prototype's P1 / P6 / P7): a pill at rest (chip, field, pen, round Send); the compose strip (hint line, +, Cancel) only in the
- * sheet's compose mode; the + tray inline above the pill. The layout follows the sheet's mode alone, which the harness below computes as `useReviewSheet` does.
+ * The phone composer (#879; the note box since #927, frames P1, P3, P4): the same box as the desktop at 44px, two rows at rest (the text, then the tools), the whole draft
+ * in the sheet's compose mode. No + tray, frame step, hint line or Cancel. The layout follows the sheet's mode alone, which the harness below computes as `useSheetMode` does.
  */
 let frameNow = 12;
 function fakeClock() {
@@ -33,7 +33,7 @@ function fakeClock() {
 /** The sheet the composer sits in: its mode follows the field's focus and the composer's holds, and is handed down the way `ReviewSplit` hands it. */
 let sheetMode: () => string = () => "none";
 function Sheet({ drawing, children }: { drawing: boolean; children: ReactNode }) {
-  const sheet = useReviewSheet({ drawing, filmAspect: 16 / 9 });
+  const sheet = useSheetMode(useReviewSheet({ filmAspect: 16 / 9 }), drawing);
   sheetMode = () => sheet.mode;
   const value = useMemo<SheetModeValue>(() => ({ mode: sheet.mode, setHold: sheet.setHold }), [sheet.mode, sheet.setHold]);
   return <div data-sheet-part="composer" data-testid="sheet"
@@ -43,333 +43,148 @@ function Sheet({ drawing, children }: { drawing: boolean; children: ReactNode })
 }
 
 let root: Root | null = null; let host: HTMLElement; let store: NoteFormStore; let viewport: MockViewport;
-type Over = { width?: number; pen?: boolean; post?: ReturnType<typeof vi.fn>; sheet?: boolean };
+type Over = { width?: number; pen?: boolean; post?: ReturnType<typeof vi.fn>; sheet?: boolean; row?: boolean };
 let drawing = false;
-async function render({ width = 390, pen = true, post = vi.fn(async () => ({})), sheet = true }: Over = {}) {
+const onPen = vi.fn();
+const row = { tool: "freehand" as const, color: "#e64b3c", onToolChange: vi.fn(), onColorChange: vi.fn(), canUndo: true, canRedo: false, canClear: true, onUndo: vi.fn(), onRedo: vi.fn(), onClear: vi.fn(), onDone: vi.fn() };
+async function render({ width = 390, pen = true, post = vi.fn(async () => ({})), sheet = true, row: rowShown = false }: Over = {}) {
   viewport = mockViewport({ width });
   const f = fakeClock();
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
-  const composer = () => <VideoNoteComposer store={store} assetId="a" clock={f.clock} frameCount={300} timecode={(n) => `TC${n}`} post={post as never} onRefresh={() => {}} rich={{ projectId: "p", role: "editor" }} {...(pen ? { pen: <button type="button" data-testid="pen-stub">Draw</button> } : {})} />;
+  const state = { rowShown };
+  const composer = () => <VideoNoteComposer store={store} assetId="a" clock={f.clock} frameCount={300} timecode={(n) => `TC${n}`} post={post as never} onRefresh={() => {}} rich={{ projectId: "p", role: "editor" }} markup {...(pen ? { draw: { pen: { onPress: onPen }, row: state.rowShown ? row : null, full: false } } : {})} />;
   const tree = () => sheet ? <Sheet drawing={drawing}>{composer()}</Sheet> : composer();
   await act(async () => { root!.render(tree()); });
-  return { ...f, post, rerender: async () => { await act(async () => { root!.render(tree()); }); } };
+  return { ...f, post, rerender: async (next: { row?: boolean } = {}) => { if (next.row !== undefined) state.rowShown = next.row; await act(async () => { root!.render(tree()); }); } };
 }
 const by = (id: string) => host.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+const byLabel = (label: string) => host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
 const area = () => host.querySelector<HTMLTextAreaElement>("textarea")!;
-const tray = () => by("video-note-tray")!;
-const trayOpen = () => !tray().hasAttribute("hidden");
-async function type(text: string) {
+const send = () => host.querySelector<HTMLButtonElement>('[data-testid="video-note-composer"] button[type="submit"]')!;
+const text = () => by("note-composer-text")!;
+const chip = () => by("note-composer-chip")!;
+async function type(value: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-  await act(async () => { setter.call(area(), text); area().dispatchEvent(new Event("input", { bubbles: true })); });
+  await act(async () => { setter.call(area(), value); area().dispatchEvent(new Event("input", { bubbles: true })); });
 }
 const focusField = () => act(async () => { area().focus(); });
 const blurTo = (outside: HTMLElement) => act(async () => { outside.focus(); });
 /** A press the way a finger makes one: the pointerdown (whose default decides whether the focus moves), then the click. */
 async function press(el: HTMLElement): Promise<boolean> {
   const down = new MouseEvent("pointerdown", { bubbles: true, cancelable: true });
-  await act(async () => { el.dispatchEvent(down); el.click(); });
+  await act(async () => { el.dispatchEvent(down); el.click(); await Promise.resolve(); });
   return down.defaultPrevented;
 }
 const aNote = { id: "00000000-0000-4000-8000-000000000001", body: "A note", revision: 1, startFrame: 10, endFrame: null, hasMarkup: false } as never;
 let outside: HTMLButtonElement;
-beforeEach(() => { store = createNoteFormStore("t"); drawing = false; outside = document.createElement("button"); outside.textContent = "film"; document.body.appendChild(outside); });
+beforeEach(() => { store = createNoteFormStore("t"); drawing = false; onPen.mockClear(); outside = document.createElement("button"); outside.textContent = "film"; document.body.appendChild(outside); });
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; viewport.restore(); document.body.replaceChildren(); });
 
-describe("VideoNoteComposer on a phone: the rest placeholder (#879 PR 3a)", () => {
-  it("at rest a placeholder too wide for the field ends at a word with one ellipsis; compose mode shows it whole", async () => {
-    // 8px a character; the field is 64px wide, so 8 characters fit: "Add a…", not "Add a no".
-    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation((() => ({ font: "", measureText: (text: string) => ({ width: text.length * 8 }) })) as never);
-    Object.defineProperty(HTMLTextAreaElement.prototype, "clientWidth", { configurable: true, get: () => 64 });
-    try {
-      await render();
-      expect(area().getAttribute("placeholder")).toBe("Add a…");
-      await focusField();
-      expect(sheetMode()).toBe("compose");
-      expect(area().getAttribute("placeholder")).toBe("Add a note…");
-    } finally { delete (HTMLTextAreaElement.prototype as unknown as Record<string, unknown>).clientWidth; vi.mocked(HTMLCanvasElement.prototype.getContext).mockRestore(); }
-  });
-});
-
-describe("VideoNoteComposer on a phone: the pill at rest (P1)", () => {
-  it("rests as the pill: +, chip, field, pen and a round Send, with no hint line, Cancel, visibility or toolbar on show", async () => {
+describe("VideoNoteComposer on a phone: at rest (P1)", () => {
+  it("rests as two rows: the chip and the field, then in/out, paperclip, pen, visibility and a round Send, every target 44px; no +, tray, frame step, hint line or Cancel", async () => {
     await render();
-    expect(by("video-note-anchor")!.textContent).toContain("TC12");
-    expect(by("stub-inline-start")!.contains(by("video-note-anchor"))).toBe(true);
-    expect(by("stub-inline-end")!.contains(by("pen-stub"))).toBe(true);
-    expect(by("stub-field")!.dataset.pill).toBe("true");
-    const send = by("video-note-post")!;
-    expect(send.getAttribute("aria-label")).toBe("Post");
-    expect(send.className).toContain("rounded-[var(--radius-pill)]");
-    expect(send.textContent).toBe("");
-    // + rests in the pill too (#879 fix r4), ahead of the chip, so nothing inside the pill moves when the field takes the focus.
-    const plus = by("video-note-extras")!;
-    expect(by("stub-inline-start")!.contains(plus)).toBe(true);
-    expect(plus.compareDocumentPosition(by("video-note-anchor")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(by("video-note-stamp")).toBeNull();
-    expect(by("video-note-cancel")).toBeNull();
-    expect(by("video-note-marks")).toBeNull();
-    // The tray stays mounted (the toolbar's portal target) but is hidden and inert, with visibility and the toolbar inside it.
-    expect(trayOpen()).toBe(false);
-    expect(tray().hasAttribute("inert")).toBe(true);
-    expect(tray().contains(by("video-note-visibility-internal"))).toBe(true);
-    expect(tray().contains(by("stub-toolbar"))).toBe(true);
+    const form = by("video-note-composer")!;
+    expect(form.dataset.compose).toBe("false");
+    expect(chip().textContent).toBe("Note at TC12");
+    expect(text().contains(chip())).toBe(true);
+    expect(text().contains(area())).toBe(true);
+    expect([...by("note-composer-tools")!.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))).toEqual(["In and out points", "Add photos or videos", "Draw on the frame", "Who can see this note: Internal", "Post note"]);
+    for (const label of ["In and out points", "Add photos or videos", "Draw on the frame"]) expect(byLabel(label)!.className).toContain("size-11");
+    expect(send().className).toContain("size-11");
+    expect(send().textContent).toBe("");
+    for (const removed of ["video-note-extras", "video-note-tray", "video-note-step-back", "video-note-step-forward", "video-note-stamp", "video-note-cancel", "video-note-marks", "video-note-pen"]) expect(by(removed)).toBeNull();
     expect(area().getAttribute("placeholder")).toBe("Add a note…");
-    expect(by("video-note-composer")!.dataset.compose).toBe("false");
+    expect(by("stub-field")!.dataset.pill).toBeUndefined();
   });
 
-  it("a draft left behind after the keyboard goes stays in the one-line pill: the strip does not come back for it", async () => {
+  it("the text region is the sheet's marked box: one line at rest, the room the sheet publishes in compose mode (seven lines at most)", async () => {
+    await render();
+    expect(text().hasAttribute("data-sheet-text")).toBe(true);
+    expect(text().className).toContain("max-h-[var(--space-5)]");
+    expect(text().className).toContain("overflow-hidden");
+    await focusField();
+    expect(by("video-note-composer")!.dataset.compose).toBe("true");
+    expect(text().className).toContain("max-h-[clamp(var(--space-5),var(--sheet-text-room,calc(var(--space-5)*7)),calc(var(--space-5)*7))]");
+    expect(text().className).not.toContain("max-h-[var(--space-5)] ");
+  });
+
+  it("a draft left behind after the keyboard goes stays one line at rest, with its text kept", async () => {
     await render();
     await focusField(); await type("first line\nsecond line");
-    // The wrapped layout is compose mode's alone (#879 fix r10): at rest the pill is the inline row, so it never outgrows the browse stop and squeezes the notes' head row away.
-    expect(by("stub-field")!.dataset.pillWrap).toBe("true");
     await blurTo(outside);
     expect(sheetMode()).toBe("browse");
-    expect(by("stub-field")!.dataset.pillWrap).toBe("false");
-    // One unwrapped line ending in an ellipsis at the field's edge (#879 fix r11), not a cut at a word break.
-    for (const rule of ["[&_p]:overflow-hidden", "[&_p]:text-ellipsis", "[&_p]:whitespace-pre"]) expect(area().className).toContain(rule);
     expect(by("video-note-composer")!.dataset.compose).toBe("false");
-    expect(by("video-note-stamp")).toBeNull();
-    expect(by("video-note-cancel")).toBeNull();
+    expect(text().className).toContain("max-h-[var(--space-5)]");
     expect(area().value).toBe("first line\nsecond line");
-    expect(area().className).toContain("overflow-hidden");
   });
 });
 
-describe("VideoNoteComposer on a phone: the rest band (#879 PR 3a round 2)", () => {
-  it("at rest the strip's grid has no row gap, so its empty rows add nothing around the pill; the rows that can show at rest carry their own space", async () => {
-    await render();
-    const strip = by("video-note-composer")!;
-    expect(strip.dataset.compose).toBe("false");
-    // The empty line, tray and Cancel tracks rendered 16px above the pill and 8px below it (85pt band, Simulator); at rest the row gap is gone.
-    expect(strip.className).toContain("data-[compose=false]:gap-y-0");
-    // The + tray can open at rest (round 5 of PR 2): its own bottom padding keeps it off the pill.
-    expect(tray().className).toContain("in-data-[compose=false]:pb-[var(--space-2)]");
-    await focusField();
-    // Compose mode keeps its row gap (P6 unchanged).
-    expect(strip.dataset.compose).toBe("true");
-    expect(strip.className).toContain("gap-y-[var(--space-2)]");
-  });
-});
-
-describe("VideoNoteComposer on a phone: the compose strip (P6)", () => {
-  it("focusing the field pauses the film and stamps the frame; the strip shows the hint with visibility, the +, and Cancel", async () => {
+describe("VideoNoteComposer on a phone: compose mode (P3)", () => {
+  it("focusing the field pauses the film and stamps the frame (D10); the chip stops following", async () => {
     const f = await render();
     await focusField();
     expect(sheetMode()).toBe("compose");
     expect(f.raw.pause).toHaveBeenCalledTimes(1);
     expect(store.slot("a").composer.anchorFrame).toBe(12);
-    expect(by("video-note-stamp")!.textContent).toBe("Internal · paused at TC12 · the note is stamped here");
-    expect(by("video-note-extras")!.getAttribute("aria-expanded")).toBe("false");
-    expect(by("video-note-cancel")).not.toBeNull();
-    expect(area().className).toContain("overflow-y-auto");
-    // The scroll is the text box's child, inside the box's padding (#879 fix r9).
-    expect(area().className).toContain("[&>*]:overflow-y-auto");
-    // The text gives way to the film's floor first (#879 fix r9): it is the sheet's marked box, and its four lines are capped by the room the sheet publishes, one line at least.
-    expect(area().hasAttribute("data-sheet-text")).toBe(true);
-    // Rounded down to whole 24px lines (--space-5) inside the 16px of padding (#879 fix r10).
-    expect(area().className).toContain("max-h-[clamp(calc(var(--space-6)+var(--space-2)),calc(round(down,calc(var(--sheet-text-room,calc(var(--space-9)+var(--space-4)))-var(--space-4)),var(--space-5))+var(--space-4)),calc(var(--space-9)+var(--space-4)))]");
-    // Compose mode wraps as before: the rest line's ellipsis does not follow it in (#879 fix r11).
-    expect(area().className).not.toContain("[&_p]:whitespace-pre");
-    expect(by("video-note-composer")!.dataset.compose).toBe("true");
+    expect(chip().title).toBe("The note is stamped here");
   });
 
   it("the focus stamp holds: the film moving before the first keystroke does not move the anchor", async () => {
     const f = await render();
     await focusField();
     f.move(40);
-    await type("hello");
+    expect(chip().textContent).toBe("Note at TC12");
+    await type("x");
     expect(store.slot("a").composer.anchorFrame).toBe(12);
-    expect(by("video-note-anchor")!.textContent).toContain("TC12");
   });
 
-  it("the hint line names Client-visible once it is chosen in the tray", async () => {
-    await render();
+  it("an empty draft abandoned at rest gives its stamp back, so the chip follows the film again; a draft with a stroke keeps it", async () => {
+    const f = await render();
     await focusField();
-    await press(by("video-note-extras")!);
-    await press(by("video-note-visibility-public")!);
-    expect(by("video-note-stamp")!.textContent).toBe("Client-visible · paused at TC12 · the note is stamped here");
-  });
-
-  it("+ at rest opens the tray and enters compose mode, the field and chip staying where they were (#879 fix r4)", async () => {
-    await render();
-    const before = by("stub-inline-start")!.innerHTML;
-    expect(await press(by("video-note-extras")!)).toBe(true);
-    expect(trayOpen()).toBe(true);
-    expect(sheetMode()).toBe("compose");
-    expect(by("stub-inline-start")!.innerHTML.replace(/aria-expanded="true"/, 'aria-expanded="false"').replace(/aria-pressed="true"/, 'aria-pressed="false"')).toBe(before);
-  });
-
-  it("Send sits on the pill's last line, and keeps its primary fill when there is nothing to post: only the icon dims (#879 fix r4)", async () => {
-    await render();
-    const send = by("video-note-post")!;
-    expect(send.className).toContain("self-end");
-    expect(send.className).toContain("disabled:opacity-100");
-    expect(send.className).toContain("[&:disabled_svg]:opacity-50");
-    expect(send.className).toContain("in-data-[surface=inverse]:disabled:bg-primary");
-  });
-
-  it("+ opens and closes the tray without taking the focus from the field, so the keyboard stays up", async () => {
-    await render();
-    await focusField();
-    const plus = by("video-note-extras")!;
-    expect(await press(plus)).toBe(true);
-    expect(document.activeElement).toBe(area());
-    expect(plus.getAttribute("aria-expanded")).toBe("true");
-    // Pressed while the tray is open (#879 fix r9): aria-pressed, with the pill's pressed treatment (the fill is the pill's own ink-700 on the inverse surface, so the --border-hover hairline carries it).
-    expect(plus.getAttribute("aria-pressed")).toBe("true");
-    expect(plus.className).toContain("aria-pressed:bg-secondary");
-    expect(plus.className).toContain("aria-pressed:shadow-[inset_0_0_0_var(--border-width-hair)_var(--border-hover)]");
-    expect(plus.getAttribute("aria-controls")).toBe(tray().id);
-    expect(tray().getAttribute("role")).toBe("region");
-    expect(tray().getAttribute("aria-label")).toBe("Note options");
-    expect(trayOpen()).toBe(true);
-    expect(tray().hasAttribute("inert")).toBe(false);
-    // A press inside the tray (the portalled toolbar included) keeps the focus too.
-    expect(await press(by("stub-bold")!)).toBe(true);
-    expect(by("video-note-tray-toolbar")!.contains(by("stub-toolbar"))).toBe(true);
-    await press(plus);
-    expect(plus.getAttribute("aria-expanded")).toBe("false");
-    expect(plus.getAttribute("aria-pressed")).toBe("false");
-    expect(trayOpen()).toBe(false);
-    expect(document.activeElement).toBe(area());
-  });
-
-  it("the open tray holds compose mode when the field blurs (an OS file picker), and closing it then returns to browse", async () => {
-    await render();
-    await focusField();
-    await press(by("video-note-extras")!);
     await blurTo(outside);
-    expect(sheetMode()).toBe("compose");
-    expect(by("video-note-cancel")).not.toBeNull();
-    await press(by("video-note-extras")!);
-    expect(sheetMode()).toBe("browse");
-    expect(by("video-note-cancel")).toBeNull();
+    expect(store.slot("a").composer.anchorFrame).toBeNull();
+    f.move(30);
+    expect(chip().textContent).toBe("Note at TC30");
+    await focusField();
+    let entering: Promise<unknown> = Promise.resolve();
+    act(() => { entering = store.enterDraw("a", { clock: f.clock, form: "composer", frameCount: 300 }); });
+    await act(async () => { await entering; });
+    await act(async () => { store.setItems("a", "composer", [{ color: "#e64b3c", width: 4, points: [{ x: 0.1, y: 0.1 }, { x: 0.2, y: 0.2 }] }] as never); store.exitDraw("a"); });
+    await blurTo(outside);
+    expect(store.slot("a").composer.anchorFrame).toBe(30);
   });
 
-  it("Set in, Set out and the frame steps live in the tray; a frame step moves the stamp of an empty note", async () => {
-    const f = await render();
-    await focusField();
-    await press(by("video-note-extras")!);
-    await press(by("video-note-step-forward")!);
-    expect(f.raw.step).toHaveBeenCalledWith(1);
-    expect(store.slot("a").composer.anchorFrame).toBe(13);
-    expect(by("video-note-stamp")!.textContent).toContain("paused at TC13");
-    await press(by("video-note-set-in")!);
-    f.move(20);
-    await press(by("video-note-set-out")!);
-    expect(by("video-note-anchor")!.textContent).toContain("TC13 – TC20");
-    expect(by("video-note-stamp")!.textContent).toBe("Internal · In TC13 → Out TC20");
+  it("in/out, the chip's × and Send keep the field's focus on press, so the keyboard stays up; the pen does not", async () => {
+    await render();
+    await focusField(); await type("ranged");
+    expect(await press(byLabel("In and out points")!)).toBe(true);
     expect(document.activeElement).toBe(area());
+    expect(await press(byLabel("Clear in and out")!)).toBe(true);
+    expect(document.activeElement).toBe(area());
+    expect(await press(byLabel("Draw on the frame")!)).toBe(false);
+    expect(onPen).toHaveBeenCalledTimes(1);
   });
 
-  it("Escape with the tray open closes only the tray", async () => {
+  it("the visibility menu's choice shows on its trigger (P3 Client-visible)", async () => {
     await render();
-    await focusField(); await type("draft");
-    await press(by("video-note-extras")!);
-    let result: ReturnType<NoteFormStore["escape"]> | undefined;
-    await act(async () => { result = store.escape("a", { focusInForm: true }); });
-    expect(result).toEqual({ consumed: true, focus: "textarea" });
-    expect(trayOpen()).toBe(false);
-    expect(area().value).toBe("draft");
-    expect(sheetMode()).toBe("compose");
+    await focusField(); await type("for the client");
+    await press(byLabel("Who can see this note: Internal")!);
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((candidate) => candidate.textContent!.startsWith("Client-visible"))!;
+    expect(item.className).toContain("min-h-11");
+    await press(item);
+    expect(byLabel("Who can see this note: Client-visible")).not.toBeNull();
+    expect(store.slot("a").composer.visibility).toBe("public");
   });
 
-  it("Cancel throws the draft away, closes the tray, remounts the field (which aborts its uploads) and returns to browse", async () => {
-    await render();
-    await focusField(); await type("draft");
-    await press(by("video-note-extras")!);
-    const before = area();
-    await act(async () => { by("video-note-cancel")!.click(); });
-    expect(store.slot("a").composer.body).toBe("");
-    expect(store.slot("a").extras).toBe(false);
-    expect(area()).not.toBe(before);
-    expect(sheetMode()).toBe("browse");
-    expect(by("video-note-cancel")).toBeNull();
-  });
-
-  it("Cancel with the tray open is one press: it keeps the field's focus on press, so the keyboard and the strip stay put until it discards (#879 fix)", async () => {
-    await render();
-    await focusField(); await type("draft");
-    await press(by("video-note-extras")!);
-    expect(await press(by("video-note-cancel")!)).toBe(true);
-    expect(store.slot("a").composer.body).toBe("");
-    expect(store.slot("a").extras).toBe(false);
-    expect(sheetMode()).toBe("browse");
-    expect(by("video-note-cancel")).toBeNull();
-  });
-
-  it("the tray is one row: visibility, frame steps, Set in / out, then the formatting toolbar, in one sideways scroller that never clips the row's height; no visibility description on a phone (#879 fix r3)", async () => {
-    await render();
-    await focusField();
-    await press(by("video-note-extras")!);
-    const scroller = by("video-note-tray-scroller")!;
-    expect([...tray().children]).toEqual([scroller]);
-    const row = by("video-note-tray-row")!;
-    expect(row.parentElement).toBe(scroller);
-    const order = ["video-note-visibility-internal", "video-note-step-back", "video-note-step-forward", "video-note-set-in", "video-note-set-out", "video-note-tray-toolbar"].map((id) => by(id)!);
-    for (const el of order) expect(row.contains(el)).toBe(true);
-    for (let i = 1; i < order.length; i += 1) expect(order[i - 1]!.compareDocumentPosition(order[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(by("video-note-tray-toolbar")!.contains(by("stub-toolbar"))).toBe(true);
-    expect(scroller.className).toContain("overflow-x-auto");
-    expect(scroller.getAttribute("data-fade")).not.toBeNull();
-    expect(row.className).toContain("flex-nowrap");
-    expect(row.className).toContain("py-px");
-    expect(row.className).not.toContain("overflow");
-    expect(by("video-note-visibility-hint")).toBeNull();
-    expect(by("video-note-stamp")!.textContent).toMatch(/^Internal · /);
-  });
-
-  it("the pill leaves the text its width: a small mono chip and a 32px + with a 44px hit area; the hint's clamp sits inside its row so it never clips (#879 fix)", async () => {
-    await render();
-    await focusField();
-    const chip = by("video-note-anchor")!;
-    expect(chip.className).toContain("[font:var(--weight-regular)_var(--text-xs)/1_var(--font-mono)]");
-    expect(chip.className).toContain("text-warning-foreground");
-    expect(chip.className).not.toContain("bg-muted");
-    expect(chip.className).toContain("whitespace-nowrap");
-    const plus = by("video-note-extras")!;
-    expect(plus.className).toContain("size-8");
-    expect(plus.className).toContain("after:-inset-1.5");
-    expect(plus.className).not.toContain("min-h-11");
-    const stamp = by("video-note-stamp")!;
-    expect(stamp.parentElement).not.toBe(by("video-note-composer"));
-    expect(stamp.parentElement!.className).not.toContain("line-clamp");
-    expect(by("video-note-cancel")!.className).toContain("after:-inset-y-1.5");
-    // Send (P6 `.send`): disabled with nothing typed, it keeps the primary fill at reduced opacity on the viewer's inverse surface rather than turning into an outline.
-    const send = by("video-note-post")!;
-    expect(send.hasAttribute("disabled")).toBe(true);
-    expect(send.className).toContain("in-data-[surface=inverse]:disabled:bg-primary");
-    expect(send.className).not.toContain("in-data-[surface=inverse]:disabled:bg-transparent");
-  });
-
-  it("Cancel throws the whole draft away: the next note starts clean, with no old drawing and its own anchor frame", async () => {
-    const f = await render();
-    await focusField();
-    await act(async () => { await store.enterDraw("a", { clock: f.clock, form: "composer", frameCount: 300 }); });
-    await act(async () => { store.setItems("a", "composer", [{ kind: "pen" } as never]); store.exitDraw("a"); });
-    await focusField();
-    expect(store.slot("a").markup.drawingFrame).toBe(12);
-    await act(async () => { by("video-note-cancel")!.click(); });
-    const held = store.slot("a");
-    expect(held.markup.items).toEqual([]);
-    expect(held.markup.drawingFrame).toBeNull();
-    expect(held.composer.problem).toBeNull();
-    expect(held.composer.anchorFrame).toBeNull();
-    frameNow = 100;
-    await act(async () => { store.setContent("a", { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "second" }] }] } as never, 100); });
-    expect(store.slot("a").composer.anchorFrame).toBe(100);
-  });
-
-  it("Send keeps the focus on press, holds the strip while the post is out, then returns to browse with the draft cleared", async () => {
+  it("Send keeps the focus on press, holds compose mode while the post is out, then returns to browse with the draft cleared", async () => {
     let settle!: () => void;
     const post = vi.fn(() => new Promise((resolve) => { settle = () => { resolve({}); }; }));
     await render({ post });
     await focusField(); await type("ship it");
-    const send = by("video-note-post")!;
-    expect(await press(send)).toBe(true);
+    expect(await press(send())).toBe(true);
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(post).toHaveBeenCalledTimes(1);
-    expect(by("video-note-post")!.getAttribute("aria-label")).toBe("Posting…");
+    expect(send().getAttribute("aria-label")).toBe("Posting…");
     await blurTo(outside);
     expect(sheetMode()).toBe("compose");
     await focusField();
@@ -378,75 +193,71 @@ describe("VideoNoteComposer on a phone: the compose strip (P6)", () => {
     expect(sheetMode()).toBe("browse");
   });
 
-  it("a failed post shows its problem on the line above the pill, in compose and at rest", async () => {
+  it("a failed post shows its problem in the box, in compose and at rest", async () => {
     const post = vi.fn(async () => { throw new ApiError("Failed to fetch", 0); });
     await render({ post });
     await focusField(); await type("maybe");
-    await press(by("video-note-post")!);
+    await press(send());
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
     expect(by("video-note-problem")!.textContent).toContain("may or may not have posted");
-    expect(by("video-note-stamp")).toBeNull();
     await blurTo(outside);
     expect(sheetMode()).toBe("browse");
     expect(by("video-note-problem")!.textContent).toContain("may or may not have posted");
-    expect(by("video-note-refresh")).not.toBeNull();
+    expect(by("video-note-refresh")!.className).toContain("max-[721px]:min-h-11");
   });
 
-  it("with an edit open the lock hint shows on the phone, and + is disabled", async () => {
+  it("with an edit open the lock line shows on the phone, and in/out and the paperclip are locked", async () => {
     await render();
     await act(async () => { store.openEdit("a", aNote, (aNote as { id: string }).id); });
-    expect(by("video-note-stamp")!.textContent).toBe("Finish or cancel the open edit first.");
-    await focusField();
-    expect((by("video-note-extras") as HTMLButtonElement).disabled).toBe(true);
+    expect(by("video-note-other-form-hint")!.textContent).toBe("Finish or cancel the open edit first.");
+    expect(byLabel("In and out points")!.getAttribute("aria-disabled") === "true" || byLabel("In and out points")!.disabled).toBe(true);
+    expect(byLabel("Add photos or videos")!.getAttribute("aria-disabled") === "true" || byLabel("Add photos or videos")!.disabled).toBe(true);
   });
 });
 
-describe("VideoNoteComposer on a phone: draw (P7) and the field's identity", () => {
-  it("pressing the pen closes the tray and blurs the field so the keyboard goes away", async () => {
-    await render();
-    await focusField();
-    await press(by("video-note-extras")!);
-    await act(async () => { by("pen-stub")!.click(); });
-    expect(document.activeElement).not.toBe(area());
-    expect(store.slot("a").extras).toBe(false);
+describe("VideoNoteComposer on a phone: drawing (P4) and the field's identity", () => {
+  it("while drawing the phone row takes the tools' place at 44px, with Clear in the colour popover, and the field stays", async () => {
+    const r = await render();
+    await r.rerender({ row: true });
+    const drawRow = by("note-draw-row")!;
+    expect(drawRow).not.toBeNull();
+    expect(byLabel("Clear drawing")).toBeNull();
+    expect(byLabel("Done drawing")!.className).toContain("size-11");
+    expect(send()).toBeNull();
+    expect(area()).not.toBeNull();
   });
 
-  it("the field is one node across browse, compose, the tray, draw and back, and across the 721px crossing", async () => {
+  it("the field is one node across browse, compose, draw and back, and across the 721px crossing", async () => {
     const r = await render();
     const node = area();
     await focusField();
     expect(area()).toBe(node);
-    await press(by("video-note-extras")!);
-    expect(area()).toBe(node);
-    await press(by("video-note-extras")!);
-    drawing = true; await blurTo(outside); await r.rerender();
+    drawing = true; await blurTo(outside); await r.rerender({ row: true });
     expect(sheetMode()).toBe("draw");
-    expect(by("video-note-cancel")).toBeNull();
     expect(area()).toBe(node);
-    drawing = false; await r.rerender(); await focusField();
+    drawing = false; await r.rerender({ row: false }); await focusField();
     expect(sheetMode()).toBe("compose");
     expect(area()).toBe(node);
     await viewport.set({ width: 1280 });
     expect(area()).toBe(node);
-    expect(by("video-note-marks")).not.toBeNull();
+    expect(by("video-note-composer")!.dataset.compose).toBeUndefined();
     await viewport.set({ width: 390 });
     expect(area()).toBe(node);
   });
 
-  it("on a desktop width nothing pauses on focus, there is no pill, and the composer is whole at rest", async () => {
+  it("on a desktop width nothing pauses on focus, the targets are 32px and the placeholder is the long one", async () => {
     const f = await render({ width: 1280, pen: false });
     await focusField();
     expect(f.raw.pause).not.toHaveBeenCalled();
-    expect(by("video-note-marks")).not.toBeNull();
-    expect(by("video-note-tray")).toBeNull();
-    expect(by("stub-field")!.dataset.pill).toBeUndefined();
-    expect(by("video-note-post")!.textContent).toBe("Post");
+    expect(byLabel("In and out points")!.className).toContain("size-8");
+    expect(text().hasAttribute("data-sheet-text")).toBe(false);
+    expect(area().getAttribute("placeholder")).toBe("Add a note at this frame… Use @ to mention a colleague.");
   });
 
   it("outside a sheet (no mode handed down) the field's focus stands in for compose mode", async () => {
     await render({ sheet: false });
-    expect(by("video-note-cancel")).toBeNull();
+    expect(by("video-note-composer")!.dataset.compose).toBe("false");
     await focusField();
-    expect(by("video-note-cancel")).not.toBeNull();
+    expect(by("video-note-composer")!.dataset.compose).toBe("true");
   });
 });

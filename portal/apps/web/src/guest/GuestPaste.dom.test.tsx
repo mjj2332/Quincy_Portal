@@ -133,7 +133,7 @@ describe("the Copy my notes entry", () => {
   it("is not offered when only one Version is granted", async () => {
     videos = [videoOf(1, [versionOf(2)])];
     await open();
-    expect(byId("guest-add-note")).not.toBeNull();
+    expect(byId("guest-composer")).not.toBeNull();
     expect(byId("guest-paste-open")).toBeNull();
   });
   it("is not offered when the link does not allow comments", async () => {
@@ -525,7 +525,7 @@ describe("committing a paste", () => {
     expect(byId("guest-paste-dialog")).toBeNull();
     expect(byId("guest-archived-notice")).not.toBeNull();
     expect(byId("guest-paste-open")).toBeNull();
-    expect(byId("guest-add-note")).toBeNull();
+    expect(byId("guest-composer")).toBeNull();
   });
   it("tells the guest to wait, and keeps the dialog, on a 429", async () => {
     withPlan([mapped(1)]);

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { createContext, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import { releaseVelocity, settleSheet, sheetStops, type SheetStop, type SheetStops } from "../../lib/review-pane-geometry";
 import { TAP_SLOP } from "../../lib/tap-slop";
 
@@ -10,28 +10,37 @@ import { TAP_SLOP } from "../../lib/tap-slop";
  *
  * - collapsed: the head (tab row) and the composer show; the body is `inert`.
  * - half / full: all three show.
- * - compose (the editor has focus, the keyboard is up) and draw (the picture is the canvas): only the composer shows; the sheet takes its own height.
+ * - compose (the composer's field has the focus, the keyboard is up) and draw (the pen is down, the keyboard is down: the picture is the canvas): only the composer shows; the sheet
+ *   takes its own height. Compose wins over draw: tapping the text while drawing raises the keyboard with the drawing row still in the box (#927 P4), so the sheet is laid out for the
+ *   keyboard (the film flexes down to its floor, the transport is put away) and the box keeps whichever row the pen gives it. The pen going down lowers the keyboard on purpose, so it
+ *   ends compose at once (`useSheetMode`), whatever the focus does next.
  * - search (#879 PR 3b, F1: the notes search field has the focus, the keyboard is up): the head and the body show, the composer does not; the sheet takes the split less
  *   compose's film floor. The full stop cannot hold the field and a result above a keyboard (with the viewport at ~384pt the stop is the collapsed floor), so the film gives
  *   way as it does for compose. The composer is not composing: its field never had the focus.
  *
- * The mode is the one switch for the phone composer's layout too (#879 fix): `useReviewSheet` computes it from the field's focus and the composer's holds (its + tray is
- * open, a post is out), and `ReviewSplit` hands it to the composer through `SheetModeContext`. Nothing else decides whether the composer is the compose strip or the pill
- * at rest, so the sheet and the composer can never disagree (the bug where the composer stayed tall after the keyboard went and the tab row slid under the play bar).
+ * The mode is the one switch for the phone composer's layout too (#879 fix; lesson "A layout switched by two flags will disagree…"): `sheetMode` computes it, once, from the pen,
+ * the field's focus, the composer's hold (a post that is out) and the search field, and `ReviewSplit` hands it to the composer through `SheetModeContext`. A screen reads the mode
+ * from the control `useSheetMode` returns and never overrides it, so the sheet, the composer and the screen's transport can never disagree (the bug where the composer stayed tall
+ * after the keyboard went and the tab row slid under the play bar).
  *
  * The stop is the screen's state (`useReviewSheet`), opens at half every time and is never persisted (D6). The numbers live in `lib/review-pane-geometry.ts` (#881 adds the rail clamp there).
  */
 export type SheetMode = "browse" | "compose" | "draw" | "search";
 
+/** The sheet's mode (the one switch): the keyboard up for the composer, then the pen down, then the keyboard up for the search, else browse. */
+export function sheetMode({ drawing, composing, searching }: { drawing: boolean; composing: boolean; searching: boolean }): SheetMode {
+  return composing ? "compose" : drawing ? "draw" : searching ? "search" : "browse";
+}
+
 export type ReviewSheetControl = {
   stop: SheetStop;
   onStop: (next: SheetStop) => void;
   mode: SheetMode;
-  /** Compose mode: the editor has focus (the keyboard is up) or the composer holds it. What the screen sizes its root to the visual viewport for. */
+  /** Compose mode: the composer's field has focus (the keyboard is up) or the composer holds it. What the screen sizes its root to the visual viewport for. */
   composing: boolean;
   /** The composer's field took or lost the focus. */
   onComposing: (composing: boolean) => void;
-  /** Whether something other than the field's focus keeps compose mode on (the + tray, a post that is out). */
+  /** Whether something other than the field's focus keeps compose mode on (a post that is out). */
   held: boolean;
   /** Takes or releases a hold on compose mode, by name. */
   setHold: (reason: string, on: boolean) => void;
@@ -44,9 +53,11 @@ export type ReviewSheetControl = {
   /** Names the grabber: "Notes". */
   label: string;
 };
+/** The sheet's state before the pen is known: everything but the mode. A screen turns it into the control with `useSheetMode`, where it knows whether the pen is down. */
+export type ReviewSheetState = Omit<ReviewSheetControl, "mode">;
 
-/** The screen's sheet state: opens at half, never persisted, and `mode` follows drawing, the editor's focus and the composer's holds. */
-export function useReviewSheet({ drawing, filmAspect, label = "Notes" }: { drawing: boolean; filmAspect: number; label?: string }): ReviewSheetControl {
+/** The screen's sheet state: opens at half, never persisted. */
+export function useReviewSheet({ filmAspect, label = "Notes" }: { filmAspect: number; label?: string }): ReviewSheetState {
   const [stop, setStop] = useState<SheetStop>("half");
   const [focused, setFocused] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -63,21 +74,40 @@ export function useReviewSheet({ drawing, filmAspect, label = "Notes" }: { drawi
     });
   }, []);
   const held = holds.size > 0;
-  const composing = focused || held;
-  return { stop, onStop, mode: drawing ? "draw" : composing ? "compose" : searching ? "search" : "browse", composing, onComposing, held, setHold, searching, onSearching, filmAspect, label };
+  return { stop, onStop, composing: focused || held, onComposing, held, setHold, searching, onSearching, filmAspect, label };
+}
+
+/**
+ * The sheet's control with its mode, for a screen that now knows whether its composer's pen is down (from the press, its frame confirmation included, so the sheet never
+ * flashes back to its stop meanwhile). The pen going down lowers the keyboard (P4: the film is the canvas), so it ends compose here, in the same render: the pen's own focus
+ * move (to the drawing row) can land inside the composer before the pane's blur check runs, and must not keep compose on. A later tap on the text is compose again.
+ */
+export function useSheetMode(sheet: ReviewSheetState, drawing: boolean): ReviewSheetControl {
+  const [pen, setPen] = useState(drawing);
+  const lowered = drawing && !pen;
+  // Adjusting state while rendering (this component's own): React re-renders before anything commits, so nothing ever sees compose with the pen just down.
+  if (pen !== drawing) { setPen(drawing); if (drawing) sheet.onComposing(false); }
+  const composing = lowered ? sheet.held : sheet.composing;
+  return { ...sheet, composing, mode: sheetMode({ drawing, composing, searching: sheet.searching }) };
 }
 const NO_HOLDS: ReadonlySet<string> = new Set();
 
 /** What the phone composer reads of the sheet it sits in: the mode, and its own holds. Absent (null) outside a phone sheet: the composer is the desktop form. */
 export type SheetModeValue = {
   mode: SheetMode; setHold: (reason: string, on: boolean) => void;
-  /** A phone's Full screen compose only (#880 review 6): the strip floats over the film (F1), so Cancel ends the hint row instead of taking a row under the pill. */
+  /** Full screen compose (#880 review 6, #927 F1): the box floats over the film. */
   floating?: true;
-  /** A phone's Full screen compose only (#880 fix round 1): the screen's close for the floating composer, the Add note toggle's own. Cancel calls it after discarding, since a blur
-   *  there leaves the composer shown (the keyboard going away blurs the field too). Absent in the sheet, where Cancel's blur ends compose mode. */
-  onCancel?: () => void;
 };
 export const SheetModeContext = createContext<SheetModeValue | null>(null);
+
+/**
+ * The composer's post hold (#879, C7): a post sent from compose mode holds the sheet in compose mode until it settles, and the hold goes
+ * when the composer unmounts. One hook for the staff and Guest composers; `setHold` is absent outside a phone sheet.
+ */
+export function usePostHold(setHold: SheetModeValue["setHold"] | undefined, held: boolean) {
+  useEffect(() => { setHold?.("post", held); }, [setHold, held]);
+  useEffect(() => () => { setHold?.("post", false); }, [setHold]);
+}
 
 export const SHEET_COLLAPSED_MIN = 127;
 const PART = "[data-sheet-part]";
@@ -117,15 +147,17 @@ export function useSheetPane({ enabled, control, room, paneRef, immersive = "off
   return { active, stop, mode, stops, drag, setDrag, height };
 }
 
-/** The film's floor in compose mode (#879 fix r9; the plan's K1 / K3 rows: film > 96px with the keyboard up and the tray open). */
+/** The film's floor in compose mode (#879 fix r9; the plan's K1 / K3 rows: film > 96px with the keyboard up and the box at its tallest). */
 export const SHEET_FILM_FLOOR = "var(--space-9)";
-/** Marks the box in the composer that gives up height first (the pill's text, which scrolls), so the film keeps its floor. */
+/** Marks the box in the composer that gives up height first (the box's text, which scrolls), so the film keeps its floor. */
 export const SHEET_TEXT_ATTR = "data-sheet-text";
+/** The attribute itself, for a composer to spread on its box's text region. */
+export const SHEET_TEXT = { [SHEET_TEXT_ATTR]: "" } as const;
 /** The room the marked box may take, published on the pane in compose mode; the composer's clamp reads it (`var(--sheet-text-room, …)`). */
 export const SHEET_TEXT_ROOM_VAR = "--sheet-text-room";
 
 /**
- * Compose mode (#879 fix r9): the sheet takes its own height and the film flexes, so a tall strip (the tray open, a long draft) would squeeze
+ * Compose mode (#879 fix r9): the sheet takes its own height and the film flexes, so a tall box (a media strip, a long draft) would squeeze
  * the film to a sliver. The text gives way first: the room it may take is the row's height, less the film's floor, less everything else in
  * the sheet (`pane.scrollHeight` minus the text box), published as a CSS variable the composer's clamp reads. Shrinking the box shrinks the
  * pane by the same amount, so the result is stable. The clamp keeps one line at least; below that the film yields.
@@ -240,7 +272,7 @@ export function isComposerField(target: EventTarget | null): boolean {
   return target instanceof Element && target.matches(EDITABLE) && target.closest('[data-sheet-part="composer"]') !== null;
 }
 
-/** Whether a node is inside the composer part (its field, its + tray, Send, Cancel): focus moving there keeps compose mode. */
+/** Whether a node is inside the composer part (its field, its tools, Send): focus moving there keeps compose mode. */
 export function isInComposer(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest('[data-sheet-part="composer"]') !== null;
 }

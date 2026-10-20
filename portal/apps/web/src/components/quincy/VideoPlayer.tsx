@@ -20,24 +20,21 @@ import { useLandscape } from "../../lib/use-device-orientation";
 import { liftRemotePlayback, nativePlayerNeedsPlay, nativePlayerSupported, openNativePlayer } from "../../lib/video-native-player";
 import { Notice } from "./Notice";
 import { PHONE_QUERY } from "../../lib/review-pane-geometry";
-import { rangeStep, type NoteMarks } from "../../lib/video-note-marks";
+import { type NoteMarks } from "../../lib/video-note-marks";
 import { VideoPendingRangeBand, VideoRangeHandles, VideoTimelineMarkers, type TimelineMarker } from "./VideoTimelineMarkers";
 
 /** What the player reads of a Version: where it streams, how it is timed, and how its timecode is labelled. */
 export type VideoPlayerVersion = Pick<VideoVersionDto, "streamUrl" | "fps" | "frameCount" | "width" | "height" | "tcNominalFps" | "tcDropFrame" | "startTimecodeFrames" | "hasAudio">;
 
 /**
- * The composer's in / out range as the player draws and edits it (#861): the marks to show, whether the host takes changes right now, and how to
- * clear them. Marking itself goes through `onMark`, the path I and O use, so a host's wrappers run for the button and the handles too.
- * Absent, the player has no range button and no handles.
+ * The composer's in / out range as the player draws and edits it (#861): the marks to show and whether the host takes changes right now.
+ * Marking itself goes through `onMark`, the path I and O use, so a host's wrappers run for the handles too. Since #927 the in / out button
+ * (and its clear) is the composer box's. Absent, the player has no handles.
  */
 export type VideoRangeControl = {
   marks: NoteMarks;
   /** The host takes no change to the marks right now (archived Project, a reply open, a request out, no open composer). The controls stay, disabled. */
   locked: boolean;
-  /** Why it is locked, for the disabled button's tooltip. */
-  hint?: string;
-  clear(): void;
 };
 
 /** For a host that owns the keyboard scope (the review dialog): hands it the player's shortcut handler. True when the key was the player's. */
@@ -110,7 +107,7 @@ const LEGEND = "flex flex-wrap items-center gap-x-[var(--space-3)] gap-y-[var(--
  * surface (`data-surface="inverse"`) around it, like the Lightbox. `keyboard="self"` listens on the player; `"host"` leaves the
  * scope to the caller, who forwards events to `controlRef.handleKeyDown`.
  */
-export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, range, onClockChange, overlay, watermark, onMediaError, transportLocked = false, transportActions, transportReplacement, social, phoneFrameStep = false, transportHidden = false, immersive }: {
+export function VideoPlayer({ version, title, controlRef, keyboard = "self", className, initialFrame, initialMuted = false, onMutedChange, markers, pendingRange, onMarkerSelect, onMark, range, onClockChange, overlay, watermark, onMediaError, transportLocked = false, social, transportHidden = false, immersive }: {
   version: VideoPlayerVersion;
   title: string;
   controlRef?: Ref<VideoPlayerControl>;
@@ -141,17 +138,11 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   onMediaError?: () => void;
   /** Drawing: the transport, the scrubber and the player's keys are inert, so nothing moves the frame under the pen. */
   transportLocked?: boolean;
-  /** Extra transport buttons, in the right-hand group before volume and full screen (the notes host puts "Draw" here). Built by the host, so this module never imports markup code. */
-  transportActions?: ReactNode;
-  /** Replaces the whole transport block (scrubber, controls, key legend) in place, under the picture, while the host needs the room (drawing). Never overlaid on the picture. */
-  transportReplacement?: ReactNode;
   /**
    * Social preview (#871): the film framed 9:16 under an overlay. Nothing else changes (#877): markers, the range, I and O, Draw and the markup overlay all work, the overlay slot drawn inside the frame
    * on the letterboxed picture, so a stroke is the same fraction of the film with Social on or off. Playback, the scrubber, the keys, mute, the time format and full screen work as ever.
    */
   social?: SocialPreviewMode;
-  /** The phone control bar drops frame step because the notes composer carries it (#879). A host with no such composer (the guest screen, a staff edit in progress) turns it back on. */
-  phoneFrameStep?: boolean;
   /** The phone compose mode (#879 fix, P6): the transport block is hidden (still mounted), so the film takes the room above the compose strip. Ignored in Full screen, where F1 keeps the controls under the composer. */
   transportHidden?: boolean;
   /** Quincy's Full screen (#880). */
@@ -160,10 +151,6 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [muted, setMutedState] = useState(initialMuted);
   const playerRef = useRef<HTMLElement | null>(null);
-  // The transport block's height, kept while it shows so its replacement (drawing) takes at least the same room: the picture above never moves when Draw is pressed.
-  const transportRef = useRef<HTMLDivElement | null>(null);
-  const transportHeight = useRef<number | null>(null);
-  useLayoutEffect(() => { if (transportReplacement == null && !transportHidden && transportRef.current) transportHeight.current = transportRef.current.offsetHeight; });
   const clock = useVideoFrameClock(video, version, initialFrame === undefined ? {} : { initialFrame });
 
   const timecode = useFrameLabel(version);
@@ -225,7 +212,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const [scrubbing, setScrubbing] = useState(false);
   const composing = immersive?.addNote?.pressed === true;
   const cardOpen = immersive?.card != null;
-  const drawing = transportReplacement != null || transportLocked;
+  const drawing = transportLocked;
   const paused = !clock.playing;
   const held = chromeHeld({ playing: clock.playing, composing, drawing, card: cardOpen, focusWithin: focusHeld, popupOpen, scrubbing });
   const lastWake = useRef(0);
@@ -306,35 +293,60 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     restoreRemotePlayback();
     if (pauseOnReturn.current) { pauseOnReturn.current = false; pauseRef.current(); }
   }, [restoreRemotePlayback]);
+  // A hand-off that had to play the film first (#927, iPhone Full screen on a film that cannot play): until the data arrives, a load error or a refused play means iOS's player
+  // will never appear, so the press ends in the refusal notice (and the empty native layer is left) rather than in nothing. The watch ends with the data, the player's exit or the film.
+  const handOffWatch = useRef<(() => void) | null>(null);
+  // Whether this press's hand-off was refused already (a play refused before the native player's own answer comes back): that answer must not clear the notice.
+  const handOffRefused = useRef(false);
+  const stopHandOffWatch = useCallback(() => { handOffWatch.current?.(); handOffWatch.current = null; }, []);
+  const watchHandOff = useCallback((film: HTMLVideoElement) => {
+    stopHandOffWatch();
+    const refuse = () => {
+      stopHandOffWatch();
+      handOffRefused.current = true;
+      setNativeFailed((count) => count + 1);
+      try { (film as HTMLVideoElement & { webkitExitFullscreen?: () => void }).webkitExitFullscreen?.(); } catch { /* not in the native layer: nothing to leave */ }
+      returnFromSystemPlayer();
+    };
+    const settle = () => { stopHandOffWatch(); };
+    film.addEventListener("error", refuse);
+    film.addEventListener("loadeddata", settle);
+    film.addEventListener("webkitendfullscreen", settle);
+    const offRejected = instance?.onPlayRejected(refuse);
+    handOffWatch.current = () => { film.removeEventListener("error", refuse); film.removeEventListener("loadeddata", settle); film.removeEventListener("webkitendfullscreen", settle); offRejected?.(); };
+  }, [instance, stopHandOffWatch, returnFromSystemPlayer]);
   const openSystemPlayer = useCallback(() => {
+    // A film whose source already failed cannot play anywhere: iOS's player would open on nothing, so the press shows the refusal instead of handing over.
+    if (video?.error) { setNativeFailed((count) => count + 1); return; }
     if (video) { restoreRemotePlayback(); restoreRemote.current = liftRemotePlayback(video); }
     // Synchronously, before the native player is entered, inside the press: iOS shows nothing for a film with no data (see `nativePlayerNeedsPlay`).
-    pauseOnReturn.current = nativePlayerNeedsPlay(video) && !clock.playing;
+    handOffRefused.current = false;
+    const needsPlay = nativePlayerNeedsPlay(video);
+    if (needsPlay && video) watchHandOff(video);
+    pauseOnReturn.current = needsPlay && !clock.playing;
     if (pauseOnReturn.current) clock.play();
-    void openNativePlayer(video).then((started) => { setNativeFailed((count) => (started ? 0 : count + 1)); if (!started) returnFromSystemPlayer(); });
-  }, [video, restoreRemotePlayback, returnFromSystemPlayer, clock]);
+    void openNativePlayer(video).then((started) => {
+      if (started) { if (!handOffRefused.current) setNativeFailed(0); return; }
+      stopHandOffWatch();
+      setNativeFailed((count) => count + 1);
+      returnFromSystemPlayer();
+    });
+  }, [video, restoreRemotePlayback, returnFromSystemPlayer, clock, watchHandOff, stopHandOffWatch]);
   useEffect(() => {
     if (!video) return undefined;
     const onFullscreenChange = () => { if (document.fullscreenElement !== video) returnFromSystemPlayer(); };
     video.addEventListener("webkitendfullscreen", returnFromSystemPlayer);
     document.addEventListener("fullscreenchange", onFullscreenChange);
-    return () => { video.removeEventListener("webkitendfullscreen", returnFromSystemPlayer); document.removeEventListener("fullscreenchange", onFullscreenChange); restoreRemotePlayback(); };
-  }, [video, restoreRemotePlayback, returnFromSystemPlayer]);
+    return () => { video.removeEventListener("webkitendfullscreen", returnFromSystemPlayer); document.removeEventListener("fullscreenchange", onFullscreenChange); stopHandOffWatch(); restoreRemotePlayback(); };
+  }, [video, restoreRemotePlayback, returnFromSystemPlayer, stopHandOffWatch]);
   const nativeSupported = useCallback(() => nativePlayerSupported(video), [video]);
   useImperativeHandle(controlRef, () => ({ handleKeyDown: keyDown, currentFrame, openSystemPlayer, nativePlayerSupported: nativeSupported }), [keyDown, currentFrame, openSystemPlayer, nativeSupported]);
   const chromeVisible = !imm || chromeShown;
 
-  const step = range ? rangeStep(range.marks) : "in";
   const rangeLocked = transportLocked || (range?.locked ?? true);
   const marksTaken = !rangeLocked && onMark !== undefined;
-  const pressRange = () => {
-    if (!range || rangeLocked) return;
-    if (step === "clear") range.clear();
-    else onMark?.(step, markFrame());
-  };
   // A handle moved: it marks its own end, and the paused playhead follows so the frame under the handle is the one on screen.
   const moveHandle = (kind: "in" | "out", frame: number) => { onMark?.(kind, frame); clock.seekToFrame(frame); };
-  const stepLabel = step === "in" ? "Set in point" : step === "out" ? "Set out point" : "Clear in and out";
 
   // A phone gets the single-row control bar (#879, the prototype's ControlBar): scrubber, play, timecode, mute, full screen. Frame step and in / out live in the composer there.
   // #879 PR 3a: the bar is P1's 78pt band: the scrubber band, a 44px row of plain (ghost) 32px icons with 44px hit areas (`PILL_ICON`), the current time only. `handheld` (#880) is the
@@ -347,7 +359,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
   const FADE = "motion-safe:transition-opacity motion-safe:duration-[var(--dur-base)] motion-safe:ease-[var(--ease-entrance)]";
   // In Full screen (#880) the badge is F1's centre Play, on every width, and it fades with the rest of the controls.
   // P1's centre Play is a phone's (owner decision, #880 review 10): a desktop's Full screen has none; Play stays in the controls row and on Space.
-  const badge = handheld && !clock.playing && !hidesTransport && !transportLocked && transportReplacement == null
+  const badge = handheld && !clock.playing && !hidesTransport && !transportLocked
     ? <Button type="button" variant="ghost" size="icon" tabIndex={-1} aria-hidden="true" data-testid="video-play-badge" data-immersive-chrome="" inert={!chromeVisible} className={cn(PLAY_BADGE, imm && FADE, imm && fade)} onClick={() => { parkFocus(); clock.play(); }}><Play aria-hidden="true" className="size-6" /></Button>
     : null;
   // The press target for Full screen: the host's mode, else the browser's element full screen where it has one (Compare and every other host).
@@ -387,7 +399,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(write);
     if (observer && dockRef.current) observer.observe(dockRef.current);
     return () => { observer?.disconnect(); target.style.removeProperty("--immersive-controls-h"); };
-  }, [imm, section, transportReplacement != null, composing]); // eslint-disable-line react-hooks/exhaustive-deps -- the dock is one node; the replacement changes its height, the composer its top padding
+  }, [imm, section, composing]); // eslint-disable-line react-hooks/exhaustive-deps -- the dock is one node; the composer changes its top padding
   const markerSelect = imm && immersive?.onMarkerTap ? immersive.onMarkerTap : onMarkerSelect;
   const noticeClass = imm ? "absolute inset-x-[var(--space-3)] top-[var(--space-7)] z-20" : "";
 
@@ -417,7 +429,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     } : undefined}
     className={cn("group/player @container flex min-h-0 min-w-0 flex-col gap-[var(--space-3)] max-[721px]:gap-0 focus-visible:!outline-none [&:fullscreen]:bg-background [&:fullscreen]:p-[var(--space-4)]", imm && "relative flex-1 gap-0 bg-invert", className)}
   >
-    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} timecode={timecode(clock.frame)} frame={clock.frame} frameSuffix={timeFormat !== "frames"} onVideo={setVideo} overlay={overlay} watermark={watermark} onMediaError={onMediaError} badge={badge} chip={!imm} {...(social ? { social: { imageUrl: socialImage.imageUrl, onImageError: socialImage.onImageError, onImageLoad: socialImage.onImageLoad } } : {})} />
+    <VideoStage streamUrl={version.streamUrl} title={title} width={version.width} height={version.height} onVideo={setVideo} overlay={overlay} watermark={watermark} onMediaError={onMediaError} badge={badge} {...(social ? { social: { imageUrl: socialImage.imageUrl, onImageError: socialImage.onImageError, onImageLoad: socialImage.onImageLoad } } : {})} />
 
     {imm && immersive && <div data-testid="video-immersive-bar" data-immersive-chrome="" inert={!chromeVisible} className={cn("absolute inset-x-0 top-0 z-10 flex items-center gap-[var(--space-2)] bg-[image:var(--scrim-chrome-top)] pt-[max(var(--space-2),env(safe-area-inset-top))] pr-[max(var(--space-3),env(safe-area-inset-right))] pb-[var(--space-5)] pl-[max(var(--space-3),env(safe-area-inset-left))] text-invert-foreground", FADE, fade)}>
       <IconTip label="Exit full screen">
@@ -432,8 +444,7 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     {/* The replacement sits ABOVE the transport, which stays mounted and hidden under it (#879 PR 2): unmounted, the slider came back as a new node, measured its thumb inside whatever
         box hid it next (a phone's Done lands in compose mode, where the transport is hidden) and drew no thumb until the frame moved. */}
     <div ref={dockRef} {...dockProps} className={dockClass}>
-    {transportReplacement != null && <div className="flex flex-col justify-center" style={transportHeight.current !== null ? { minHeight: transportHeight.current } : undefined}>{transportReplacement}</div>}
-    <div ref={transportRef} hidden={hidesTransport || transportReplacement != null} className={cn(transportClass, "[&[hidden]]:hidden")}>
+    <div hidden={hidesTransport} className={cn(transportClass, "[&[hidden]]:hidden")}>
     {/* The scrubber: the slider owns its step (one frame) and its keys. The pending band sits BEFORE it (the slider's Control paints over it, so the thumb stays on top); the marker lane sits under the track.
         A phone draws it as P1's `.scrub` band (#879 PR 3a): `--space-6` tall, the marker lane laid inside it along the top, the track through its middle, a 44px touch band from the slider's `band` size. */}
     <div data-testid="video-scrubber" className={handheld ? "relative h-[var(--space-6)]" : undefined} onPointerDownCapture={imm ? startScrub : undefined}>
@@ -457,13 +468,13 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     </div>
 
     <div data-testid="video-controls-row" className={cn("flex flex-wrap items-center gap-[var(--space-2)] max-[721px]:h-11 max-[721px]:flex-nowrap max-[721px]:gap-[var(--space-1)]", handheld && "h-11 flex-nowrap gap-[var(--space-1)]")}>
-      {!compact && (!handheld || phoneFrameStep) && <IconTip label="Previous frame" keys="←">
+      {!compact && !handheld && <IconTip label="Previous frame" keys="←">
         <Button type="button" variant={handheld ? "ghost" : "outline"} size="icon" aria-label="Previous frame" className={handheld ? PILL_ICON : COARSE} disabled={transportLocked} onClick={() => { clock.step(-1); }}><StepBack aria-hidden="true" /></Button>
       </IconTip>}
       <IconTip label={playLabel} keys="Space">
         <Button type="button" variant={handheld ? "ghost" : "default"} size="icon" aria-label={playLabel} className={handheld ? cn(PILL_ICON, PHONE_PLAY_SLOT) : cn("w-[var(--space-7)]", COARSE)} disabled={transportLocked} onClick={() => { if (clock.playing) clock.pause(); else clock.play(); }}>{clock.playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}</Button>
       </IconTip>
-      {!compact && (!handheld || phoneFrameStep) && <IconTip label="Next frame" keys="→">
+      {!compact && !handheld && <IconTip label="Next frame" keys="→">
         <Button type="button" variant={handheld ? "ghost" : "outline"} size="icon" aria-label="Next frame" className={handheld ? PILL_ICON : COARSE} disabled={transportLocked} onClick={() => { clock.step(1); }}><StepForward aria-hidden="true" /></Button>
       </IconTip>}
       <output data-testid="video-readout" aria-live={clock.playing || !clock.confirmed ? "off" : "polite"} className={cn("px-[var(--space-2)] max-[721px]:min-w-0 max-[721px]:px-0 max-[721px]:text-xs max-[721px]:whitespace-nowrap", handheld && "min-w-0 px-0 text-xs whitespace-nowrap", MONO)}>
@@ -471,14 +482,6 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
       </output>
       {!phone && !compact && <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><TimeFormatMenu /></OverlayContainerContext.Provider>}
       {social && !handheld && <OverlayContainerContext.Provider value={isFullscreen ? section : inheritedOverlay}><SocialPreviewControls social={social} imageFailed={socialImage.failed} /></OverlayContainerContext.Provider>}
-      {!phone && !compact && range !== undefined && (() => {
-        const rangeButton = <Button type="button" variant="outline" size="icon" aria-label={stepLabel} data-testid="video-range-button" data-step={step} className={COARSE} disabled={rangeLocked} onClick={pressRange}>
-          {step === "in" ? <ArrowRightFromLine aria-hidden="true" /> : step === "out" ? <ArrowRightToLine aria-hidden="true" /> : <X aria-hidden="true" />}
-        </Button>;
-        // A disabled button gets no hover or focus, so its reason hangs on an enabled wrapper the tooltip can open from.
-        if (rangeLocked && range.hint) return <IconTip label={range.hint}><span tabIndex={0} data-testid="video-range-tip" className="inline-flex rounded-[var(--radius-md)] focus-visible:ring-2 focus-visible:ring-ring">{rangeButton}</span></IconTip>;
-        return <IconTip label={stepLabel} {...(rangeLocked ? {} : { keys: step === "clear" ? "I / O" : step === "in" ? "I" : "O" })}>{rangeButton}</IconTip>;
-      })()}
       {!phone && !compact && <div data-testid="video-key-legend" className={LEGEND}>
         <span className="inline-flex items-center gap-[var(--space-1)]"><KbdGroup><Kbd className={LEGEND_KBD}>J</Kbd><Kbd className={LEGEND_KBD}>K</Kbd><Kbd className={LEGEND_KBD}>L</Kbd></KbdGroup>shuttle</span>
         <span className="inline-flex items-center gap-[var(--space-1)]"><KbdGroup><Kbd className={LEGEND_KBD}>←</Kbd><Kbd className={LEGEND_KBD}>→</Kbd></KbdGroup>frame</span>
@@ -488,7 +491,6 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
       </div>}
       {/* On a phone the 32px icons sit --space-3 apart, so their 44px hit areas meet without overlapping. */}
       <div className={cn("ml-auto flex items-center gap-[var(--space-1)] max-[721px]:gap-[var(--space-3)]", handheld && "gap-[var(--space-3)]")}>
-        {transportActions}
         <IconTip label={muted ? "Unmute" : "Mute"}>
           <Toggle variant="default" size="default" pressed={muted} onPressedChange={toggleMuted} aria-label="Mute" className={handheld ? PILL_ICON : cn("size-8", COARSE)}>{muted ? <VolumeX aria-hidden="true" /> : <Volume2 aria-hidden="true" />}</Toggle>
         </IconTip>

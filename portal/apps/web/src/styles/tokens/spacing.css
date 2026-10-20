@@ -54,6 +54,7 @@
   --container-md:  860px;
   --collab-rail-width: 360px;  /* @kind other */ /* Collaboration checklist rail column (#377) */
   --note-card-width: 420px;  /* @kind other */ /* F3: the Full screen note card's widest (#880) */
+  --note-float-width: calc(var(--container-sm) - var(--space-8) - var(--space-4));  /* @kind other */ /* F1: the Full screen composer box's widest, 560px (#927 T9) */
   --container-lg: 1100px;
   --container-xl: 1320px;
   --container-page: 1480px;

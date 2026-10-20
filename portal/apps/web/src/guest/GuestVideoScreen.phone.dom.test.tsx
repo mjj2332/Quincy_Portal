@@ -110,7 +110,7 @@ describe("the guest phone page and the keyboard (#879 PR 2)", () => {
     expect(byId("guest-video-screen")!.className).not.toContain("min-h-dvh");
   });
 
-  it("the keyboard going away without a blur ends compose mode, unless the open tray holds it", async () => {
+  it("the keyboard going away without a blur ends compose mode, every time", async () => {
     await openVideo();
     await act(async () => { area()!.focus(); });
     await act(async () => { fake.height = window.innerHeight - 320; fake.dispatchEvent(new Event("resize")); });
@@ -119,12 +119,13 @@ describe("the guest phone page and the keyboard (#879 PR 2)", () => {
     await flush(4);
     expect(document.activeElement).not.toBe(area());
     expect(mode()).toBe("browse");
+    // The box has no tray to hold compose open (#927): the next keyboard-gone ends it again.
     await act(async () => { area()!.focus(); });
-    await act(async () => { byId("guest-composer-extras")!.click(); });
     await act(async () => { fake.height = window.innerHeight - 320; fake.dispatchEvent(new Event("resize")); });
+    expect(mode()).toBe("compose");
     await act(async () => { fake.height = window.innerHeight; fake.dispatchEvent(new Event("resize")); });
     await flush(4);
-    expect(mode()).toBe("compose");
+    expect(mode()).toBe("browse");
   });
 
   it("paints the document canvas ink while the phone video screen is up, and clears both the canvas and the box when it crosses to a desktop", async () => {
@@ -176,26 +177,26 @@ describe("the guest phone chrome (#879 PR 3a, P2)", () => {
     expect(count.textContent).toBe("0");
   });
 
-  it("the composer band is tight in browse mode: no wrapper padding above or below, the composer owns one border and --space-2 around the pill", async () => {
+  it("the composer band is tight in browse mode: no wrapper padding, the box owns its one top border and --space-2 around it (P1)", async () => {
     await openVideo();
     const composer = byId("guest-notes-panel")!.querySelector<HTMLElement>('[data-sheet-part="composer"]')!;
-    expect(composer.className).toContain("in-data-[mode=browse]:py-[var(--space-2)]");
+    expect(composer.className).not.toMatch(/(?:^|\s)(?:in-data-\[mode=browse\]:)?(?:py|pt|pb|p)-/);
+    expect(composer.className).not.toContain("border-t");
     expect(byId("guest-notes-panel")!.className).toContain("in-data-[mode=browse]:gap-0");
     expect(byId("guest-notes-panel")!.parentElement!.className).toContain("in-data-[mode=browse]:py-0");
-    // The strip's empty rows add no gap around the pill at rest (#879 PR 3a round 2: 85pt band on the Simulator, P1/P2's is 61).
-    const strip = byId("guest-compose-strip")!;
-    expect(strip.dataset.compose).toBe("false");
-    expect(strip.className).toContain("data-[compose=false]:gap-y-0");
+    const box = byId("guest-composer")!.className.split(/\s+/);
+    expect(box).toContain("border-t");
+    expect(box).toContain("p-[var(--space-2)]");
   });
 
-  it("the transport drops frame step where the composer carries it, and keeps it for a guest who cannot write (C14)", async () => {
+  it("the phone transport has no frame step, for a guest who can write or not (#927 T4)", async () => {
     await openVideo();
     expect(document.body.querySelector('[aria-label="Previous frame"]')).toBeNull();
     await act(async () => { root!.unmount(); }); root = null; host.remove();
     withAllow({ comments: false });
     await open();
     await vi.waitFor(() => { expect(byId("video-player")).not.toBeNull(); });
-    expect(document.body.querySelector('[aria-label="Previous frame"]')).not.toBeNull();
+    expect(document.body.querySelector('[aria-label="Previous frame"]')).toBeNull();
   });
 });
 
@@ -268,7 +269,7 @@ describe("the guest phone notes head (#879 PR 3b, P2)", () => {
     // Typing is search mode, never compose (#879 PR 3b, F1): the head, the field and the results stay; the pill goes until the keyboard does.
     expect(mode()).toBe("search");
     expect(byId("guest-notes-list")!.closest("[inert]")).toBeNull();
-    expect(byId("guest-compose-strip")!.closest("[inert]")).not.toBeNull();
+    expect(byId("guest-composer")!.closest("[inert]")).not.toBeNull();
     await act(async () => { byId("notes-search-field")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
     await flush(2);
     expect(byId("notes-search-field")).toBeNull();
@@ -567,5 +568,72 @@ describe("the guest phone notes list: the whole card seeks (#901)", () => {
     });
     await flush(2);
     expect(stop()).not.toBe(before);
+  });
+});
+
+describe("the guest phone sheet while drawing (#927 P4)", () => {
+  const film = () => byId("guest-video-screen")!.querySelector("video")!;
+  const pen = () => document.body.querySelector<HTMLButtonElement>('button[aria-label="Draw on the frame"]')!;
+  const transport = () => byId("video-scrubber")!.parentElement!;
+  async function ready() {
+    await openVideo();
+    await act(async () => { stub.loadMetadata(film(), { duration: 120, videoWidth: 1920, videoHeight: 1080 }); });
+    await act(async () => { stub.finishSeek(film()); stub.presentFrame(film(), 0); });
+    await flush(2);
+  }
+  const penDown = async () => {
+    await act(async () => { pen().click(); });
+    await act(async () => { stub.finishSeek(film()); stub.presentFrame(film(), 0); });
+    await flush(4);
+  };
+
+  it("the pen lowers the keyboard into draw mode; tapping the text raises it into compose with the drawing row still in the box, the transport put away; leaving the field is draw again", async () => {
+    await ready();
+    await act(async () => { area()!.focus(); });
+    expect(mode()).toBe("compose");
+    await penDown();
+    expect(document.activeElement).not.toBe(area());
+    expect(mode()).toBe("draw");
+    expect(byId("note-draw-row")).not.toBeNull();
+    expect(transport().hasAttribute("hidden")).toBe(false);
+    await act(async () => { area()!.focus(); });
+    await flush(2);
+    expect(mode()).toBe("compose");
+    expect(byId("note-draw-row")).not.toBeNull();
+    expect(transport().hasAttribute("hidden")).toBe(true);
+    await act(async () => { area()!.blur(); });
+    await flush(4);
+    expect(mode()).toBe("draw");
+    expect(transport().hasAttribute("hidden")).toBe(false);
+  });
+});
+
+describe("Full screen on iPhone (#927 D1)", () => {
+  afterEach(() => {
+    delete (document as unknown as Record<string, unknown>).fullscreenEnabled;
+    delete (HTMLVideoElement.prototype as unknown as Record<string, unknown>).webkitEnterFullscreen;
+  });
+  it("the Full screen button hands the film to the native player, in the press, and the in-app layer never opens", async () => {
+    Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: false });
+    const native = vi.fn();
+    (HTMLVideoElement.prototype as unknown as { webkitEnterFullscreen: () => void }).webkitEnterFullscreen = native;
+    await openVideo();
+    const film = byId("guest-video-screen")!.querySelector("video")!;
+    await act(async () => { stub.loadMetadata(film, { duration: 120, videoWidth: 1920, videoHeight: 1080 }); });
+    await act(async () => { byId("video-fullscreen")!.click(); });
+    expect(native).toHaveBeenCalledTimes(1);
+    expect(byId("video-exit-fullscreen")).toBeNull();
+  });
+
+  it("a film that cannot play shows the refusal notice on the press instead of nothing", async () => {
+    Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: false });
+    const native = vi.fn();
+    (HTMLVideoElement.prototype as unknown as { webkitEnterFullscreen: () => void }).webkitEnterFullscreen = native;
+    await openVideo();
+    const film = byId("guest-video-screen")!.querySelector("video")!;
+    await act(async () => { stub.fireError(film); });
+    await act(async () => { byId("video-fullscreen")!.click(); await Promise.resolve(); });
+    expect(native).not.toHaveBeenCalled();
+    expect(byId("video-native-failed")?.textContent).toBe("The system player couldn't open this film on this device.");
   });
 });

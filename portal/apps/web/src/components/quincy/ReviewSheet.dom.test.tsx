@@ -5,7 +5,7 @@ import { installLocalStorageShim } from "../../testing/local-storage";
 import { resetUiPrefMemory } from "../../lib/ui-prefs";
 import "../../testing/dom-polyfills";
 import { ReviewSplit } from "./ReviewPane";
-import { SheetModeContext, blurComposerField, useReviewSheet } from "./ReviewSheet";
+import { SheetModeContext, blurComposerField, useReviewSheet, useSheetMode } from "./ReviewSheet";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,14 +14,14 @@ let root: Root | null = null; let host: HTMLElement; let shim: ReturnType<typeof
 beforeEach(() => { shim = installLocalStorageShim(); resetUiPrefMemory(); host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); });
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; shim.restore(); document.body.replaceChildren(); });
 
-/** Stands in for the composer's holds (its + tray, a post that is out): it reads the mode and takes a hold the way the composer does. */
+/** Stands in for the composer's hold (a post that is out): it reads the mode and takes a hold the way the composer does. */
 function HoldButton() {
   const sheet = useContext(SheetModeContext);
   const [held, setHeld] = useState(false);
-  return <button type="button" data-testid="hold" data-mode={sheet?.mode ?? "none"} onMouseDown={(e) => { e.preventDefault(); }} onClick={() => { sheet?.setHold("tray", !held); setHeld(!held); }}>Hold</button>;
+  return <button type="button" data-testid="hold" data-mode={sheet?.mode ?? "none"} onMouseDown={(e) => { e.preventDefault(); }} onClick={() => { sheet?.setHold("post", !held); setHeld(!held); }}>Hold</button>;
 }
 function Harness({ drawing = false, stacked = true }: { drawing?: boolean; stacked?: boolean }) {
-  const sheet = useReviewSheet({ drawing, filmAspect: 16 / 9 });
+  const sheet = useSheetMode(useReviewSheet({ filmAspect: 16 / 9 }), drawing);
   const [tick, setTick] = useState(0);
   return <ReviewSplit
     open width={360} onWidth={() => undefined} onNarrow={() => undefined} paneId="pane" handleLabel="Resize notes" stacked={stacked} sheet={sheet}
@@ -122,7 +122,7 @@ describe("ReviewSheet (#879)", () => {
       expect(pane().getAttribute("data-mode")).toBe("compose");
       // 400 - (250 - 112) = 262, less the floor token.
       expect(pane().style.getPropertyValue("--sheet-text-room")).toBe("calc(262px - var(--space-9))");
-      // The tray opens: the rest of the sheet grows by 54, the room shrinks by as much.
+      // A media chip lands under the text: the rest of the sheet grows by 54, the room shrinks by as much.
       size(pane(), "scrollHeight", 304);
       await act(async () => { observed.forEach((cb) => { cb(); }); });
       expect(pane().style.getPropertyValue("--sheet-text-room")).toBe("calc(208px - var(--space-9))");
@@ -169,7 +169,7 @@ describe("ReviewSheet (#879)", () => {
     expect(pane().getAttribute("data-mode")).toBe("compose");
   });
 
-  it("a hold (the + tray, a post that is out) keeps compose mode after the field blurs, and releasing it returns to browse", async () => {
+  it("a hold (a post that is out) keeps compose mode after the field blurs, and releasing it returns to browse", async () => {
     await mount();
     await act(async () => { q("editor").focus(); });
     await act(async () => { q("hold").click(); });
@@ -194,7 +194,7 @@ describe("ReviewSheet (#879)", () => {
     await mount();
     await act(async () => { q("editor").focus(); });
     expect(pane().getAttribute("data-mode")).toBe("compose");
-    // The sheet never shrinks (flex-none) and may take the whole split, so the hint, tray, pill and Cancel always fit whole.
+    // The sheet never shrinks (flex-none) and may take the whole split, so the whole box always fits.
     expect(pane().className).toContain("flex-none");
     expect(pane().className).toContain("data-[mode=compose]:max-h-full");
     expect(pane().className).not.toContain("max-h-[60%]");
@@ -241,6 +241,47 @@ describe("ReviewSheet (#879)", () => {
     expect(pane().getAttribute("data-mode")).toBe("draw");
     expect(q("body").hasAttribute("inert")).toBe(true);
     expect(q("editor")).toBe(editor);
+  });
+
+  it("the pen going down lowers the keyboard (P4): compose ends at once, even while the focus is still in the composer, and the sheet is in draw mode", async () => {
+    await mount();
+    await act(async () => { q("editor").focus(); });
+    expect(pane().getAttribute("data-mode")).toBe("compose");
+    // The pen's own focus move (to the drawing row's ‹) lands inside the composer before the blur check runs: it must not keep compose on.
+    await act(async () => { q("post").focus(); root!.render(<Harness drawing />); });
+    await frame();
+    expect(pane().getAttribute("data-mode")).toBe("draw");
+    expect(q("hold").dataset.mode).toBe("draw");
+    expect(q("head").hasAttribute("inert")).toBe(true);
+    expect(q("body").hasAttribute("inert")).toBe(true);
+    expect(q("composer").hasAttribute("inert")).toBe(false);
+  });
+
+  it("tapping the text while drawing raises the keyboard into compose mode, the pen still down (P4): one mode, the film flexes and keeps its floor, and leaving the field is draw mode again", async () => {
+    const observed: Array<() => void> = [];
+    vi.stubGlobal("ResizeObserver", class { constructor(cb: () => void) { observed.push(cb); } observe() {} unobserve() {} disconnect() {} });
+    try {
+      await mount({ drawing: true });
+      expect(pane().getAttribute("data-mode")).toBe("draw");
+      const size = (el: HTMLElement, key: "clientHeight" | "scrollHeight" | "offsetHeight", value: number) => { Object.defineProperty(el, key, { configurable: true, get: () => value }); };
+      size(q("video-review-split"), "clientHeight", 400);
+      size(pane(), "scrollHeight", 250);
+      size(q("text-box"), "offsetHeight", 112);
+      await act(async () => { q("editor").focus(); });
+      expect(pane().getAttribute("data-mode")).toBe("compose");
+      expect(q("hold").dataset.mode).toBe("compose");
+      expect(q("head").hasAttribute("inert")).toBe(true);
+      expect(q("body").hasAttribute("inert")).toBe(true);
+      expect(q("video-review-player").className).toContain("overflow-hidden");
+      expect(pane().style.getPropertyValue("--sheet-text-room")).toBe("calc(262px - var(--space-9))");
+      await act(async () => { q("editor").blur(); });
+      await frame();
+      expect(pane().getAttribute("data-mode")).toBe("draw");
+      expect(q("video-review-player").className).not.toContain("overflow-hidden");
+      // The pen coming up with the focus elsewhere is browse.
+      await act(async () => { root!.render(<Harness />); });
+      expect(pane().getAttribute("data-mode")).toBe("browse");
+    } finally { vi.unstubAllGlobals(); }
   });
 
   it("a wide window has no grabber and no inert part, and the pane children are the nodes they were", async () => {

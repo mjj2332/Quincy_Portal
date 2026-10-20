@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import type { RichTextEditorHandle } from "../components/QuincyRichTextEditorBase";
+import { NoteComposerBox } from "../components/quincy/NoteComposerBox";
 import { useNoteDraft, type GuestDrafts } from "./guest-drafts";
 import { PencilIcon } from "lucide-react";
 import { legacyBodyToRichTextDoc, type GuestNoteDto, type GuestNoteThreadDto, type RichTextDoc } from "@quincy/shared";
 import type { EditorMediaTransport } from "../lib/embedded-media-core";
-import { RichTextContent } from "../components/RichTextContent";
+import { NoteBody } from "../components/quincy/NoteMediaStrip";
 import { noteAnchorLabel } from "../lib/video-note-view";
 import { cn } from "../lib/utils";
 import { useNoteCardSeek } from "../lib/note-card-seek";
@@ -64,7 +66,7 @@ function Author({ note }: { note: GuestNoteDto }) {
 /** The note as the guest reads it: the rich document when the note has one (pictures from the link's media routes; a mention is already the plain "@Name"), else its text. */
 export function NoteText({ note, media }: { note: GuestNoteDto; media: EditorMediaTransport }) {
   if (note.deleted) return <p data-testid="guest-note-tombstone" className="m-0 text-foreground-secondary italic [font:var(--type-body-sm)]">Note deleted</p>;
-  if (note.content) return <div data-testid="guest-note-body" className="text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [overflow-wrap:anywhere]"><RichTextContent content={note.content} mediaUrl={media.mediaUrl} posterUrl={media.posterUrl} /></div>;
+  if (note.content) return <div data-testid="guest-note-body" className="text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [overflow-wrap:anywhere]"><NoteBody content={note.content} mediaUrl={media.mediaUrl} posterUrl={media.posterUrl} /></div>;
   return <p data-testid="guest-note-body" className={BODY}>{note.body}</p>;
 }
 
@@ -92,6 +94,10 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
   // A picture still going up holds Send / Save: the note would go without it.
   const [editUploading, setEditUploading] = useState(false);
   const [replyUploading, setReplyUploading] = useState(false);
+  const replyEditor = useRef<RichTextEditorHandle | null>(null);
+  const [replyStrip, setReplyStrip] = useState<HTMLDivElement | null>(null);
+  /** The reply is dismissed (the toggle, Esc); its draft goes with it. A reply being sent stays. */
+  const dismissReply = () => { if (replyStatus.pending) return; drafts.clear(replyKey); setReplyStatus(IDLE); };
   const busy = (editDraft !== null && editStatus.pending) || (replyDraft !== null && replyStatus.pending) || (deleting?.pending ?? false);
 
   const own = (note: GuestNoteDto) => writing.canWrite && !note.deleted && note.author.kind === "guest" && note.author.self;
@@ -113,8 +119,7 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
     if (shown !== undefined) { const current = drafts.get(editKey); if (current !== null && current.rev === sent.rev) drafts.set(editKey, { ...current, ackRevision: shown.revision }); }
     setEditStatus({ pending: false, problem: outcome.message });
   };
-  const sendReply = async (event: FormEvent) => {
-    event.preventDefault();
+  const sendReply = async () => {
     if (!writing.canWrite || replyDraft === null || replyStatus.pending || replyUploading) return;
     if (noteText(replyDraft.doc) === "") { setReplyStatus({ pending: false, problem: "Write a reply first." }); return; }
     setReplyStatus({ pending: true, problem: null });
@@ -148,9 +153,9 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
   /**
    * Where focus lands when the delete confirm closes. Base UI would restore it to the "..." trigger that opened the menu, but a hard-deleted
    * root takes its thread (and that trigger) with it, so focus would fall to `body`. If the same menu triggers are still there (a reply
-   * deleted, or a delete refused), return to the one that opened the confirm; otherwise to "Add a note", else the notes panel itself.
+   * deleted, or a delete refused), return to the one that opened the confirm; otherwise to the notes panel itself.
    */
-  const deleteFallbackFocus = () => () => document.querySelector<HTMLElement>('[data-testid="guest-add-note"]') ?? document.querySelector<HTMLElement>('[data-testid="guest-notes-panel"]');
+  const deleteFallbackFocus = () => () => document.querySelector<HTMLElement>('[data-testid="guest-notes-panel"]');
   const deleteFinalFocus = () => {
     const triggers = [...(document.querySelector(`[data-note-id="${thread.id}"]`)?.querySelectorAll<HTMLElement>('[data-testid="guest-note-actions"]') ?? [])];
     const ownBefore = all.filter(own);
@@ -203,16 +208,24 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
         <div className="flex min-w-0 items-center gap-[var(--space-2)]"><Author note={reply} />{menu(reply)}</div>
         {body(reply)}
       </div>)}
-      {writing.canWrite && !thread.deleted && (replyDraft === null
-        ? <div className="flex min-h-8 items-center"><Button type="button" variant="ghost" size="sm" data-testid="guest-note-reply-button" className={TOUCH} disabled={busy} onClick={() => { if (!writing.verified) writing.onNeedVerify(); else { setReplyStatus(IDLE); drafts.set(replyKey, { noteId: null, baseRevision: null, baseDoc: EMPTY_DOC, ackRevision: null, doc: EMPTY_DOC }); } }}>Reply</Button>{thread.resolved && <ResolvedTick data-testid="guest-note-resolved" className="ms-auto" />}</div>
-        : <form data-testid="guest-reply-form" aria-label="Reply" onSubmit={(event) => { void sendReply(event); }} noValidate className="flex flex-col gap-[var(--space-2)]">
-          <GuestNoteField testId="guest-reply-body" label="Your reply" media={writing.media} value={replyDraft.doc} disabled={replyStatus.pending || !writing.canWrite} onChange={(doc) => { drafts.set(replyKey, { ...replyDraft, doc }); }} onUploadingChange={setReplyUploading} />
-          {replyStatus.problem !== null && <p role="alert" data-testid="guest-reply-problem" className={PROBLEM}>{replyStatus.problem}</p>}
-          <div className="flex flex-wrap justify-end gap-[var(--space-2)]">
-            <Button type="button" variant="ghost" size="sm" data-testid="guest-reply-cancel" className={TOUCH} disabled={replyStatus.pending} onClick={() => { drafts.clear(replyKey); setReplyStatus(IDLE); }}>Cancel</Button>
-            <Button type="submit" size="sm" data-testid="guest-reply-send" className={TOUCH} disabled={replyStatus.pending || !writing.canWrite || replyUploading}>Send reply</Button>
-          </div>
-        </form>)}
+      {/* The Reply toggle opens the reply box and, open, dismisses it (R1: no visible Cancel); Esc in the box dismisses it too. */}
+      {writing.canWrite && !thread.deleted && <div className="flex min-h-8 items-center">
+        <Button
+          type="button" variant="ghost" size="sm" data-testid="guest-note-reply-button" className={TOUCH} disabled={busy}
+          aria-expanded={replyDraft !== null} {...(replyDraft !== null ? { "aria-label": "Close reply", title: "Close reply (Esc)", "aria-keyshortcuts": "Escape" } : {})}
+          onClick={() => { if (replyDraft !== null) { dismissReply(); return; } if (!writing.verified) writing.onNeedVerify(); else { setReplyStatus(IDLE); drafts.set(replyKey, { noteId: null, baseRevision: null, baseDoc: EMPTY_DOC, ackRevision: null, doc: EMPTY_DOC }); } }}
+        >Reply</Button>
+        {thread.resolved && replyDraft === null && <ResolvedTick data-testid="guest-note-resolved" className="ms-auto" />}
+      </div>}
+      {writing.canWrite && !thread.deleted && replyDraft !== null && <NoteComposerBox
+        variant="reply" label="Reply" testId="guest-reply-form"
+        field={<GuestNoteField ref={replyEditor} testId="guest-reply-body" label="Your reply" placeholder="Reply…" media={writing.media} value={replyDraft.doc} disabled={replyStatus.pending || !writing.canWrite} onChange={(doc) => { drafts.set(replyKey, { ...replyDraft, doc }); }} onUploadingChange={setReplyUploading} onSubmit={() => { void sendReply(); }} stripContainer={replyStrip} />}
+        strip={<div ref={setReplyStrip} className="empty:hidden" />}
+        notice={replyStatus.problem !== null ? <p role="alert" data-testid="guest-reply-problem" className={PROBLEM}>{replyStatus.problem}</p> : null}
+        attach={{ onPick: () => { replyEditor.current?.pickMedia(); }, disabled: replyStatus.pending || !writing.canWrite }}
+        send={{ label: "Send reply", onSend: () => { void sendReply(); }, disabled: replyStatus.pending || !writing.canWrite || replyUploading || noteText(replyDraft.doc) === "", pending: replyStatus.pending }}
+        onEscape={dismissReply}
+      />}
       {thread.resolved && (!writing.canWrite || thread.deleted || replyDraft !== null) && <div className="flex justify-end"><ResolvedTick data-testid="guest-note-resolved" /></div>}
     </ItemContent>
     <AlertDialog open={deleting !== null && deletingNote !== null} onOpenChange={(next) => { if (!next && !busy) setDeleting(null); }}>

@@ -25,7 +25,7 @@ import { CopyTextButton } from "./CopyTextButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
 import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet-layers";
 import { ReviewPaneHideContext, ReviewSplit, useReviewPane, useReviewPaneControls } from "../quincy/ReviewPane";
-import { blurComposerField, isComposerField, useReviewSheet } from "../quincy/ReviewSheet";
+import { blurComposerField, isComposerField, useReviewSheet, useSheetMode } from "../quincy/ReviewSheet";
 import { useVisualViewport } from "../../lib/use-visual-viewport";
 import { useInkCanvas } from "../../lib/use-ink-canvas";
 import type { SheetStop } from "../../lib/review-pane-geometry";
@@ -172,7 +172,11 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   /** An I/O mark, a marker or a note link needs the notes where the person can see them: show the pane on its first tab (`revealNotes`, never saved). */
   const setPaneOpen = pane.setOpen;
   const shown = video.versions.find((candidate) => candidate.assetId === assetId) ?? video.versions[0]!;
-  const sheetControl = useReviewSheet({ drawing: false, filmAspect: shown.height > 0 ? shown.width / shown.height : 16 / 9 });
+  const forms = notes?.forms;
+  // The sheet's one mode (#927; lesson "A layout switched by two flags will disagree…"): the pen is down from its press, its frame confirmation included, so the sheet never
+  // flashes back to its stop meanwhile. Everything below reads `sheetControl.mode` and nothing overrides it.
+  const penDown = useSyncExternalStore(forms ? forms.subscribe : noSubscribe, () => (forms ? forms.slot(assetId).draw !== null : false));
+  const sheetControl = useSheetMode(useReviewSheet({ filmAspect: shown.height > 0 ? shown.width / shown.height : 16 / 9 }), penDown);
   const sheetStopRef = useRef(sheetControl.stop);
   sheetStopRef.current = sheetControl.stop;
   const setSheetStop = sheetControl.onStop;
@@ -200,7 +204,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const canCompare = liveStore !== undefined && video.versions.length >= 2 && !phone;
   // Focus opens on the dialog itself, not its first button: Space on the Video button would close it (and the player leaves Space to a focused button).
   const popupRef = useRef<HTMLDivElement | null>(null);
-  const full = useImmersive({ rootRef: popupRef, state: immersive, setState: setImmersive });
+  const full = useImmersive({ rootRef: popupRef, state: immersive, setState: setImmersive, handoff: () => playerRef.current?.openSystemPlayer?.() });
   const imm = immersive !== null && mode === "single";
   // The phone's handling (#880 S1): a phone width, or a phone device in Full screen. A sideways iPhone is 844pt wide, so `phone` is off, yet its keyboard still pans the
   // page: the root follows the visual viewport and the canvas is ink there too. In Full screen the keyboard going away blurs the composer's field and leaves the composer shown.
@@ -245,9 +249,6 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   // 1. an open menu, popover, list, confirm or modal dialog owns it; 2. the form store decides for the Version's form (draw mode first: a confirmation is cancelled, or
   // drawing ends and the strokes stay; then a frame confirmation is cancelled, a clean edit or reply closes, a dirty form or the composer keeps its text on the first Escape);
   // 3. only then does it close the viewer.
-  const forms = notes?.forms;
-  // The phone control bar leaves frame step to the composer; with no composer, or an edit or reply open (the composer's step buttons are off then), the player keeps its own.
-  const formOpen = useSyncExternalStore(forms ? forms.subscribe : noSubscribe, () => (forms ? forms.slot(assetId).open !== null : false));
   // Social preview (#871): the Project's resolved overlays are read only while it is on (so a viewer that never uses it makes no request), and the choice lives in this opening alone.
   const preview = useSocialPreview(social?.initialOn ?? false);
   const socialOn = social !== undefined && preview.on;
@@ -299,6 +300,8 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
         const formAsset = modeRef.current === "compare" && pair ? pair[formSide] : assetId;
         const result = forms.escape(formAsset, { focusInForm: inForm });
         consumed = result.consumed;
+        // The ladder has ended drawing: the box's own Escape (its ‹) must not run it again (#927 review), so the key is marked handled for it.
+        if (result.focus === "draw") event.preventDefault();
         if (result.focus === "dialog") popup.focus({ preventScroll: true });
         // focus === "draw": the pill is still expanded here, so the overlay returns focus to its Draw button itself once drawing has ended.
         else if (result.focus === "textarea") (popup.querySelector<HTMLElement>('[data-notes-form="edit"] :is(textarea, [contenteditable="true"]), [data-notes-form="reply"] :is(textarea, [contenteditable="true"])') ?? popup.querySelector<HTMLElement>("#video-note-body"))?.focus({ preventScroll: true });
@@ -660,11 +663,10 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       handleLabel="Resize notes"
       stacked={phone}
       immersive={imm ? (composeOpen ? "compose" : "watch") : "off"}
-      onImmersiveCancel={closeCompose}
-      {...(phone ? { sheet: { ...sheetControl, mode: slots?.drawing ? "draw" as const : sheetControl.mode } } : {})}
+      {...(phone ? { sheet: sheetControl } : {})}
       {...(phone ? {} : { rowClassName: "overflow-y-auto", playerClassName: "overflow-y-auto" })}
       player={<>
-        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" phoneFrameStep={forms === undefined || formOpen} transportHidden={phone && (sheetControl.mode === "search" || (sheetControl.mode === "compose" && !slots?.drawing))} initialMuted={muted} onMutedChange={setMuted} className={imm ? "flex-1" : "min-h-[20rem] flex-1 max-[721px]:min-h-0"} {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} immersive={immersiveHost} />
+        <VideoPlayer key={version.assetId} version={version} title={`${video.title}, version ${version.version}`} controlRef={playerRef} keyboard="host" transportHidden={phone && (sheetControl.mode === "search" || sheetControl.mode === "compose")} initialMuted={muted} onMutedChange={setMuted} className={imm ? "flex-1" : "min-h-[20rem] flex-1 max-[721px]:min-h-0"} {...(resume && resume.assetId === version.assetId ? { initialFrame: resume.frame } : {})} {...playerProps} {...(socialMode ? { social: socialMode } : {})} immersive={immersiveHost} />
         <CloseCardOnPlay clock={imm && slots ? slots.immersive.clock : null} active={cardId !== null} onClose={closeCard} />
       </>}
       pane={sidePane}

@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { VideoFrameClock, FrameClockState } from "../../lib/video-frame-clock";
+import { VIDEO_NOTE_BODY_MAX } from "@quincy/shared";
 import { ApiError } from "../../lib/api";
 import { createNoteFormStore, type NoteFormStore } from "../../lib/video-note-form-store";
 vi.mock("./VideoNoteEditor", async () => await import("../../testing/video-note-editor-stub"));
@@ -47,42 +48,86 @@ async function render(over: Partial<Props> = {}) {
 const aNote = { id: "00000000-0000-4000-8000-000000000001", body: "A note", revision: 1, startFrame: 10, endFrame: null, hasMarkup: false } as never;
 const textarea = () => host.querySelector<HTMLTextAreaElement>("textarea")!;
 const byTestId = (id: string) => host.querySelector<HTMLElement>(`[data-testid="${id}"]`);
-const postButton = () => byTestId("video-note-post") as HTMLButtonElement;
-const visibilityItem = (value: string) => host.querySelector<HTMLElement>(`[data-testid="video-note-visibility-${value}"]`)!;
+/** The box's round Send (#927): icon-only, named by its phase. A lock with a reason is aria-disabled (it stays focusable for its title). */
+const postButton = () => host.querySelector<HTMLButtonElement>('[data-testid="video-note-composer"] button[type="submit"]')!;
+const postLabel = () => postButton().getAttribute("aria-label");
+const off = (button: HTMLElement) => (button as HTMLButtonElement).disabled || button.getAttribute("aria-disabled") === "true";
+const byLabel = (label: string) => host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+const rangeButton = () => byLabel("In and out points")!;
+const chip = () => byTestId("note-composer-chip")!;
+/** The visibility menu's trigger names the current choice. */
+const visibilityTrigger = () => host.querySelector<HTMLButtonElement>('button[aria-label^="Who can see this note"]')!;
+const visibility = () => (visibilityTrigger().getAttribute("aria-label")!.endsWith("Client-visible") ? "public" : "internal");
+async function pickVisibility(value: "internal" | "public") {
+  await click(visibilityTrigger());
+  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((candidate) => candidate.textContent!.startsWith(value === "public" ? "Client-visible" : "Internal"));
+  if (item) await click(item);
+}
 async function type(text: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
   await act(async () => { setter.call(textarea(), text); textarea().dispatchEvent(new Event("input", { bubbles: true })); });
 }
-const click = (el: HTMLElement) => act(async () => { el.click(); });
+/** One stroke drawn the way the pen makes it: draw mode confirms the frame, the stroke lands, ‹ leaves. */
+async function drawStroke(f: ReturnType<typeof fakeClock>, frame: number) {
+  let entering: Promise<unknown> = Promise.resolve();
+  act(() => { entering = store.enterDraw(A, { clock: f.clock, form: "composer", frameCount: 300 }); });
+  f.confirm(frame);
+  await act(async () => { await entering; });
+  await act(async () => { store.setItems(A, "composer", [{ color: "#e64b3c", width: 4, points: [{ x: 0.1, y: 0.1 }, { x: 0.2, y: 0.2 }] }] as never); store.exitDraw(A); });
+}
+const click = (el: HTMLElement) => act(async () => { el.click(); await Promise.resolve(); await Promise.resolve(); });
 const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
 beforeEach(() => { vi.useRealTimers(); store = createNoteFormStore("test"); });
 afterEach(async () => { if (root) await act(async () => { root!.unmount(); }); root = null; vi.useRealTimers(); document.body.replaceChildren(); });
 
-describe("VideoNoteComposer (#741 5b)", () => {
-  it("without a clock, Post is disabled and says the film is loading", async () => {
+describe("VideoNoteComposer (#741 5b; the note box, #927)", () => {
+  it("is the staff box (C2): the chip before the field, in/out and the paperclip on the left, visibility and a round Send on the right; no Set in / Set out, hint line or toggle group", async () => {
+    const f = fakeClock();
+    await render({ clock: f.clock });
+    const form = byTestId("video-note-composer")!;
+    expect(form.tagName).toBe("FORM");
+    expect(form.getAttribute("aria-label")).toBe("Add a note");
+    expect(form.dataset.variant).toBe("staff");
+    expect([...form.querySelectorAll("button:not([hidden])")].map((b) => b.getAttribute("aria-label"))).toEqual(["In and out points", "Add photos or videos", "Who can see this note: Internal", "Post note"]);
+    expect(textarea().placeholder).toBe("Add a note at this frame… Use @ to mention a colleague.");
+    for (const removed of ["video-note-set-in", "video-note-set-out", "video-note-clear-marks", "video-note-visibility-hint", "video-note-visibility-internal", "video-note-anchor", "video-note-remove-drawing", "video-note-drawing-chip"]) expect(byTestId(removed)).toBeNull();
+    expect(host.querySelector('[role="group"][aria-label="Who can see this note"]')).toBeNull();
+  });
+
+  it("without a clock, Send is locked and says the film is loading", async () => {
     await render({ clock: null });
     await type("hello");
-    expect(postButton().disabled).toBe(true);
+    expect(off(postButton())).toBe(true);
+    expect(postButton().title).toBe("Loading the film…");
     expect(host.textContent).toContain("Loading the film…");
   });
 
-  it("starts Internal with its hint; Client-visible posts as public with its own hint; after a post it is Internal again", async () => {
+  it("Send needs text (C2, D2): empty it is disabled; a drawing alone says to add a few words; text enables it", async () => {
+    const f = fakeClock();
+    await render({ clock: f.clock, markup: true });
+    expect(off(postButton())).toBe(true);
+    expect(postButton().title).toBe("Post (⌘↵)");
+    await drawStroke(f, 12);
+    expect(off(postButton())).toBe(true);
+    expect(postButton().title).toBe("Add a few words to post the drawing");
+    await type("with words");
+    expect(off(postButton())).toBe(false);
+  });
+
+  it("starts Internal; the menu's Client-visible posts as public; after a post it is Internal again (C5)", async () => {
     const f = fakeClock();
     const { props } = await render({ clock: f.clock });
-    expect(visibilityItem("internal").getAttribute("aria-pressed")).toBe("true");
-    expect(visibilityItem("public").getAttribute("aria-pressed")).toBe("false");
-    expect(byTestId("video-note-visibility-hint")!.textContent).toBe("Studio only — never shown on the client link.");
-    await click(visibilityItem("public"));
-    expect(visibilityItem("public").getAttribute("aria-pressed")).toBe("true");
-    expect(byTestId("video-note-visibility-hint")!.textContent).toBe("Shown to the client on the review link.");
+    expect(visibility()).toBe("internal");
+    await pickVisibility("public");
+    expect(visibility()).toBe("public");
     await type("for the client");
     await click(postButton());
     f.confirm(12);
     await flush();
     expect(props.post).toHaveBeenCalledWith({ startFrame: 12, visibility: "public", content: para("for the client") });
     expect(textarea().value).toBe("");
-    expect(visibilityItem("internal").getAttribute("aria-pressed")).toBe("true");
+    expect(visibility()).toBe("internal");
   });
 
   it("posts Internal by default", async () => {
@@ -92,30 +137,49 @@ describe("VideoNoteComposer (#741 5b)", () => {
     expect(props.post).toHaveBeenCalledWith(expect.objectContaining({ visibility: "internal" }));
   });
 
-  it("an empty visibility choice is refused: one option is always pressed", async () => {
-    const f = fakeClock();
-    await render({ clock: f.clock });
-    await click(visibilityItem("internal"));
-    expect(visibilityItem("internal").getAttribute("aria-pressed")).toBe("true");
-  });
-
-  it("the anchor freezes where composing started: playback moves on, Post seeks back and waits for the frame before posting it", async () => {
+  it("the chip follows the playhead until the first text, then freezes: playback moves on, Send seeks back and waits for the frame before posting it", async () => {
     const f = fakeClock({ frame: 12 });
     const { props } = await render({ clock: f.clock });
-    expect(byTestId("video-note-anchor")!.textContent).toContain("TC12");
+    expect(chip().textContent).toBe("Note at TC12");
+    expect(chip().title).toBe("Follows the playhead until you start the note");
     f.set({ frame: 20 });
-    expect(byTestId("video-note-anchor")!.textContent).toContain("TC20");
+    expect(chip().textContent).toBe("Note at TC20");
     await type("a");
+    expect(chip().title).toBe("The note is stamped here");
     f.set({ frame: 40, playing: true, rate: 1 });
-    expect(byTestId("video-note-anchor")!.textContent).toContain("TC20");
+    expect(chip().textContent).toBe("Note at TC20");
     await click(postButton());
     expect(f.raw.seekToFrame).toHaveBeenCalledWith(20);
-    expect(postButton().textContent).toBe("Confirming…");
-    expect(postButton().disabled).toBe(true);
+    expect(postLabel()).toBe("Confirming…");
+    expect(off(postButton())).toBe(true);
     expect(props.post).not.toHaveBeenCalled();
     f.confirm(20);
     await flush();
     expect(props.post).toHaveBeenCalledWith({ startFrame: 20, visibility: "internal", content: para("a") });
+  });
+
+  it("the first upload freezes the chip too (the paperclip), so scrubbing no longer moves it, and Send waits for the upload", async () => {
+    const f = fakeClock({ frame: 30 });
+    await render({ clock: f.clock });
+    await click(byLabel("Add photos or videos")!);
+    expect(store.slot(A).composer.anchorFrame).toBe(30);
+    f.set({ frame: 55 });
+    expect(chip().textContent).toBe("Note at TC30");
+    await type("ref attached");
+    expect(off(postButton())).toBe(true);
+    expect(postButton().title).toBe("Wait for the uploads to finish.");
+    await click(byTestId("stub-upload-done")!);
+    expect(off(postButton())).toBe(false);
+    expect(chip().textContent).toBe("Note at TC30");
+  });
+
+  it("focus alone does not freeze the chip on a desktop", async () => {
+    const f = fakeClock({ frame: 12 });
+    await render({ clock: f.clock });
+    await act(async () => { textarea().focus(); });
+    f.set({ frame: 44 });
+    expect(chip().textContent).toBe("Note at TC44");
+    expect(store.slot(A).composer.anchorFrame).toBeNull();
   });
 
   it("posts frame 0 as startFrame 0", async () => {
@@ -135,8 +199,8 @@ describe("VideoNoteComposer (#741 5b)", () => {
     expect(props.post).not.toHaveBeenCalled();
     expect(textarea().value).toBe("slow");
     expect(host.textContent).toContain("The frame took too long to show.");
-    expect(postButton().disabled).toBe(false);
-    expect(postButton().textContent).toBe("Retry");
+    expect(off(postButton())).toBe(false);
+    expect(postLabel()).toBe("Retry");
   });
 
   it("a clock disposed mid-confirmation (Version change) posts nothing", async () => {
@@ -148,36 +212,48 @@ describe("VideoNoteComposer (#741 5b)", () => {
     expect(host.textContent).not.toContain("went wrong");
   });
 
-  it("with both marks it pauses on the range start, confirms it, then posts the half-open range; Set in, Set out and Clear marks write the store", async () => {
+  it("in/out is one button, three presses (In, then Out, then clear), and the chip reads In → Out with ×; both marks post the half-open range", async () => {
     const f = fakeClock({ frame: 33 });
     const { props } = await render({ clock: f.clock });
-    await act(async () => { store.mark(A, "in", 10, f.clock); store.mark(A, "out", 20, f.clock); });
-    expect(byTestId("video-note-anchor")!.textContent).toContain("TC10");
-    expect(byTestId("video-note-anchor")!.textContent).toContain("TC20");
+    expect(rangeButton().title).toBe("Set in (I)");
+    expect(rangeButton().getAttribute("aria-pressed")).toBe("false");
+    expect(rangeButton().getAttribute("aria-keyshortcuts")).toBe("I O");
+    f.set({ frame: 10 });
+    await click(rangeButton());
+    expect(store.slot(A).marks.value).toMatchObject({ in: 10, out: null });
+    expect(rangeButton().title).toBe("Set out (O)");
+    expect(rangeButton().getAttribute("aria-pressed")).toBe("true");
+    // Out follows the playhead until it is marked.
+    f.set({ frame: 18 });
+    expect(chip().textContent).toContain("TC10 → TC18");
+    expect(byTestId("note-composer-chip-live")).not.toBeNull();
+    f.set({ frame: 20 });
+    await click(rangeButton());
+    expect(chip().textContent).toContain("Note from TC10 to TC20");
+    expect(byTestId("note-composer-chip-live")).toBeNull();
+    expect(rangeButton().title).toBe("Clear in / out");
     await type("range");
     await click(postButton());
     f.confirm(10);
     await flush();
     expect(props.post).toHaveBeenCalledWith({ startFrame: 10, endFrame: 21, visibility: "internal", content: para("range") });
     f.set({ frame: 40 });
-    await click(byTestId("video-note-set-in")!);
-    expect(byTestId("video-note-anchor")!.textContent).toBe("In TC40");
-    await click(byTestId("video-note-set-out")!);
-    expect(byTestId("video-note-anchor")!.textContent).toBe("In TC40 → Out TC40");
-    // The readout sits on its own line; the mark buttons stay together in one row beneath it.
-    const buttons = byTestId("video-note-set-in")!.parentElement!;
-    expect(buttons).not.toContain(byTestId("video-note-anchor"));
-    expect(buttons).toBe(byTestId("video-note-set-out")!.parentElement);
-    expect(buttons).toBe(byTestId("video-note-clear-marks")!.parentElement);
-    await click(byTestId("video-note-clear-marks")!);
-    expect(byTestId("video-note-anchor")!.textContent).toBe("Note at TC40");
+    await click(rangeButton());
+    await click(rangeButton());
+    expect(chip().textContent).toContain("TC40 → TC40");
+    await click(rangeButton());
+    expect(chip().textContent).toBe("Note at TC40");
+    await click(rangeButton());
+    await click(byLabel("Clear in and out")!);
+    expect(chip().textContent).toBe("Note at TC40");
+    expect(rangeButton().getAttribute("aria-pressed")).toBe("false");
   });
 
   it("Ctrl/Cmd+Enter posts; plain Enter is a newline; typing i and o sets no marks", async () => {
     const f = fakeClock();
     const { props } = await render({ clock: f.clock });
     await type("io");
-    expect(byTestId("video-note-anchor")!.textContent).not.toContain("In ");
+    expect(rangeButton().getAttribute("aria-pressed")).toBe("false");
     await act(async () => { textarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); });
     expect(props.post).not.toHaveBeenCalled();
     await act(async () => { textarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true })); });
@@ -192,6 +268,7 @@ describe("VideoNoteComposer (#741 5b)", () => {
     await type("maybe posted"); await click(postButton()); f.confirm(12); await flush();
     expect(post).toHaveBeenCalledTimes(1);
     expect(textarea().value).toBe("maybe posted");
+    expect(byTestId("video-note-problem")!.getAttribute("role")).toBe("alert");
     expect(host.textContent).toContain("may or may not have posted");
     await click(byTestId("video-note-refresh")!);
     expect(props.onRefresh).toHaveBeenCalled();
@@ -212,21 +289,29 @@ describe("VideoNoteComposer (#741 5b)", () => {
     expect(textarea().value).toBe("x");
   });
 
+  it("too long: Send is locked and the box says the cap", async () => {
+    const f = fakeClock();
+    await render({ clock: f.clock });
+    await type("x".repeat(VIDEO_NOTE_BODY_MAX + 1));
+    expect(off(postButton())).toBe(true);
+    expect(byTestId("video-note-problem")!.textContent).toContain("characters at most");
+  });
+
   it("keeps its text, choice and anchor in the store, and a remounted composer shows them", async () => {
     const f = fakeClock({ frame: 7 });
     await render({ clock: f.clock });
-    await click(visibilityItem("public"));
+    await pickVisibility("public");
     await type("keep me");
     expect(store.slot(A).composer).toMatchObject({ body: "keep me", visibility: "public", anchorFrame: 7 });
     await type("");
     expect(store.slot(A).composer).toMatchObject({ body: "", visibility: "internal", anchorFrame: null });
-    await click(visibilityItem("public"));
+    await pickVisibility("public");
     await type("back again");
     await act(async () => { root!.unmount(); }); root = null; document.body.replaceChildren();
     await render({ clock: f.clock });
     expect(textarea().value).toBe("back again");
-    expect(visibilityItem("public").getAttribute("aria-pressed")).toBe("true");
-    expect(byTestId("video-note-anchor")!.textContent).toContain("TC7");
+    expect(visibility()).toBe("public");
+    expect(chip().textContent).toBe("Note at TC7");
   });
 
   it("marks its form for the viewer's focus lookup", async () => {
@@ -236,19 +321,59 @@ describe("VideoNoteComposer (#741 5b)", () => {
   });
 });
 
+describe("VideoNoteComposer: the pen and the drawing row (#927, C6)", () => {
+  const row = { tool: "freehand" as const, color: "#e64b3c", onToolChange: vi.fn(), onColorChange: vi.fn(), canUndo: true, canRedo: false, canClear: true, onUndo: vi.fn(), onRedo: vi.fn(), onClear: vi.fn(), onDone: vi.fn() };
+
+  it("shows the pen only when it is handed one, and a press goes to it", async () => {
+    const f = fakeClock();
+    const onPress = vi.fn();
+    const { rerender } = await render({ clock: f.clock });
+    expect(byLabel("Draw on the frame")).toBeNull();
+    await rerender({ draw: { pen: { onPress }, row: null, full: false } });
+    await click(byLabel("Draw on the frame")!);
+    expect(onPress).toHaveBeenCalledTimes(1);
+    await rerender({ draw: { pen: { onPress, disabled: true, reason: "Finish or cancel the open edit first." }, row: null, full: false } });
+    expect(off(byLabel("Draw on the frame")!)).toBe(true);
+    expect(byLabel("Draw on the frame")!.title).toBe("Finish or cancel the open edit first.");
+  });
+
+  it("while drawing the row takes the tools' place: visibility and Send hide, the field stays; the stroke cap shows its line", async () => {
+    const f = fakeClock();
+    await render({ clock: f.clock, draw: { pen: { onPress: vi.fn() }, row, full: true } });
+    expect(byTestId("video-note-composer")!.dataset.drawing).toBe("true");
+    expect(byTestId("note-draw-row")).not.toBeNull();
+    expect(visibilityTrigger()).toBeNull();
+    expect(host.querySelector('button[type="submit"]')).toBeNull();
+    expect(textarea()).not.toBeNull();
+    expect(byTestId("video-markup-full")!.textContent).toBe("That is as much markup as one note can hold. Undo a stroke to add more.");
+    await click(byLabel("Done drawing")!);
+    expect(row.onDone).toHaveBeenCalled();
+  });
+
+  it("a drawing in the draft puts the pencil on the chip; there is no separate drawing chip or Remove drawing", async () => {
+    const f = fakeClock();
+    await render({ clock: f.clock, markup: true });
+    await drawStroke(f, 12);
+    expect(chip().textContent).toBe("Note with a drawing at TC12");
+    expect(chip().querySelector("svg")).not.toBeNull();
+    expect(byTestId("video-note-drawing-chip")).toBeNull();
+    expect(byTestId("video-note-remove-drawing")).toBeNull();
+  });
+});
+
 describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
-  it("finding 3: from Post until the request settles, the text, the visibility and the marks are read-only", async () => {
+  it("finding 3: from Send until the request settles, the text, the visibility and the marks are read-only", async () => {
     const f = fakeClock();
     const { props } = await render({ clock: f.clock });
     await type("first");
     await click(postButton());
-    expect(postButton().textContent).toBe("Confirming…");
+    expect(postLabel()).toBe("Confirming…");
     expect(textarea().readOnly).toBe(true);
-    expect((visibilityItem("public") as HTMLButtonElement).disabled).toBe(true);
-    expect((byTestId("video-note-set-in") as HTMLButtonElement).disabled).toBe(true);
-    expect((byTestId("video-note-set-out") as HTMLButtonElement).disabled).toBe(true);
+    expect(visibilityTrigger().disabled || visibilityTrigger().getAttribute("aria-disabled") === "true" || visibilityTrigger().hasAttribute("data-disabled")).toBe(true);
+    expect(off(rangeButton())).toBe(true);
+    expect(off(byLabel("Add photos or videos")!)).toBe(true);
     await type("first and a late correction");
-    await click(visibilityItem("public"));
+    await pickVisibility("public");
     expect(textarea().value).toBe("first");
     f.confirm(12);
     await flush();
@@ -261,7 +386,7 @@ describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
     const post = vi.fn(() => new Promise<unknown>((resolve) => { settle = resolve; }));
     await render({ clock: f.clock, post });
     await type("sent"); await click(postButton()); f.confirm(12); await flush();
-    expect(postButton().textContent).toBe("Posting…");
+    expect(postLabel()).toBe("Posting…");
     expect(textarea().readOnly).toBe(true);
     await act(async () => { settle({}); });
     await flush();
@@ -280,8 +405,8 @@ describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
     expect(props.post).not.toHaveBeenCalled();
     expect(host.textContent).toContain("Frame moved — Post again");
     expect(textarea().value).toBe("anchored at 20");
-    expect(postButton().disabled).toBe(false);
-    expect(postButton().textContent).toBe("Post");
+    expect(off(postButton())).toBe(false);
+    expect(postLabel()).toBe("Post note");
     await click(postButton());
     f.confirm(20);
     await flush();
@@ -293,11 +418,11 @@ describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
     const { props } = await render({ clock: f.clock });
     await type("keep this");
     await click(postButton());
-    expect(postButton().textContent).toBe("Confirming…");
+    expect(postLabel()).toBe("Confirming…");
     await act(async () => { store.cancelConfirmation(A); });
-    expect(postButton().textContent).toBe("Post");
+    expect(postLabel()).toBe("Post note");
     expect(textarea().value).toBe("keep this");
-    expect(postButton().disabled).toBe(false);
+    expect(off(postButton())).toBe(false);
     f.confirm(12);
     await flush();
     expect(props.post).not.toHaveBeenCalled();
@@ -310,7 +435,7 @@ describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
     await render({ clock: f.clock, post });
     await type("sent"); await click(postButton()); f.confirm(12); await flush();
     await act(async () => { store.cancelConfirmation(A); });
-    expect(postButton().textContent).toBe("Posting…");
+    expect(postLabel()).toBe("Posting…");
     expect(textarea().readOnly).toBe(true);
     await act(async () => { settle({}); });
     await flush();
@@ -321,7 +446,7 @@ describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
     const f = fakeClock();
     const { props } = await render({ clock: f.clock });
     await type("parked"); await click(postButton());
-    expect(postButton().textContent).toBe("Confirming…");
+    expect(postLabel()).toBe("Confirming…");
     await act(async () => { store.openReply(A, "00000000-0000-4000-8000-000000000009"); });
     f.confirm(12); await flush();
     expect(props.post).not.toHaveBeenCalled();
@@ -332,39 +457,38 @@ describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
     const f = fakeClock();
     await render({ clock: f.clock });
     await type("public draft");
-    await click(visibilityItem("public"));
-    expect(visibilityItem("public").getAttribute("aria-pressed")).toBe("true");
+    await pickVisibility("public");
+    expect(visibility()).toBe("public");
     await type("");
-    expect(visibilityItem("internal").getAttribute("aria-pressed")).toBe("true");
-    expect(byTestId("video-note-visibility-hint")!.textContent).toBe("Studio only — never shown on the client link.");
+    expect(visibility()).toBe("internal");
   });
 
   it("finding 9: a choice made on an empty composer stays until text is typed and erased", async () => {
     const f = fakeClock();
     await render({ clock: f.clock });
-    await click(visibilityItem("public"));
-    expect(visibilityItem("public").getAttribute("aria-pressed")).toBe("true");
+    await pickVisibility("public");
+    expect(visibility()).toBe("public");
   });
 
-  it("another form open: Post, Set in and Set out are disabled with a hint, typing still works; the hint names the form", async () => {
+  it("another form open: Send, in/out and the paperclip are locked with the reason, typing still works; the line names the form", async () => {
     const f = fakeClock();
     await render({ clock: f.clock });
     await act(async () => { store.openEdit(A, aNote, (aNote as { id: string }).id); });
     await type("still typing");
     expect(textarea().value).toBe("still typing");
-    expect(postButton().disabled).toBe(true);
-    expect((byTestId("video-note-set-in") as HTMLButtonElement).disabled).toBe(true);
-    expect((byTestId("video-note-set-out") as HTMLButtonElement).disabled).toBe(true);
+    expect(off(postButton())).toBe(true);
+    expect(postButton().title).toBe("Finish or cancel the open edit first.");
+    expect(off(rangeButton())).toBe(true);
+    expect(rangeButton().title).toBe("Finish or cancel the open edit first.");
+    expect(off(byLabel("Add photos or videos")!)).toBe(true);
     expect(byTestId("video-note-other-form-hint")!.textContent).toBe("Finish or cancel the open edit first.");
     expect(byTestId("video-note-composer")!.dataset.locked).toBe("true");
-    expect(byTestId("video-note-composer")!.className).toContain("opacity-60");
-    expect(postButton().nextElementSibling).toBe(byTestId("video-note-other-form-hint")); // Post stays first (left); the hint follows it
     await act(async () => { store.openReply(A, "00000000-0000-4000-8000-000000000009"); });
     expect(byTestId("video-note-other-form-hint")!.textContent).toBe("Finish or cancel the open reply first.");
     await act(async () => { store.close(A); });
     expect(byTestId("video-note-other-form-hint")).toBeNull();
     expect(byTestId("video-note-composer")!.dataset.locked).toBe("false");
-    expect(postButton().disabled).toBe(false);
+    expect(off(postButton())).toBe(false);
   });
 
   it("round 2 (4): a marked note seeks to its range start and posts only once that frame is confirmed", async () => {
@@ -374,7 +498,7 @@ describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
     await type("marked");
     await click(postButton());
     expect(f.raw.seekToFrame).toHaveBeenCalledWith(10);
-    expect(postButton().textContent).toBe("Confirming…");
+    expect(postLabel()).toBe("Confirming…");
     expect(props.post).not.toHaveBeenCalled();
     f.confirm(10); await flush();
     expect(props.post).toHaveBeenCalledWith({ startFrame: 10, endFrame: 21, visibility: "internal", content: para("marked") });
@@ -391,7 +515,7 @@ describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
     expect(textarea().value).toBe("marked");
     await click(postButton());
     await act(async () => { store.cancelConfirmation(A); });
-    expect(postButton().textContent).toBe("Post");
+    expect(postLabel()).toBe("Post note");
     f.confirm(10); await flush();
     expect(props.post).not.toHaveBeenCalled();
   });
@@ -404,23 +528,6 @@ describe("VideoNoteComposer: Sol round 1 (#741 5b)", () => {
     await type("slow marked"); await click(postButton());
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
     expect(props.post).not.toHaveBeenCalled();
-    expect(postButton().textContent).toBe("Retry");
-  });
-
-  it("design r4: the form is a size container, the key hints collapse (sr-only, still readable) below 280px, and Post keeps its place in both states", async () => {
-    const f = fakeClock();
-    await render({ clock: f.clock });
-    expect(byTestId("video-note-composer")!.dataset.sizeContainer).toBe("true"); // carries the @container class the Kbd queries (the guard bars class assertions for it)
-    for (const id of ["video-note-set-in", "video-note-set-out"]) {
-      const kbd = byTestId(id)!.querySelector("kbd")!;
-      expect(kbd.className).toContain("@max-[280px]:sr-only");
-      expect(kbd.textContent).toMatch(/^[IO]$/);
-      expect(byTestId(id)!.getAttribute("aria-keyshortcuts")).toMatch(/^[IO]$/);
-    }
-    const before = postButton().parentElement!.firstElementChild;
-    expect(before).toBe(postButton());
-    await act(async () => { store.openEdit(A, aNote, (aNote as { id: string }).id); });
-    expect(postButton().parentElement!.firstElementChild).toBe(postButton());
-    expect(postButton().parentElement!.className).toContain("justify-start");
+    expect(postLabel()).toBe("Retry");
   });
 });

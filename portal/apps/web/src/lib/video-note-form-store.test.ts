@@ -772,45 +772,26 @@ describe("hasUnsent: what Remove would discard (#776 E)", () => {
   });
 });
 
-describe("the phone composer's + tray and focus stamp (#879 fix)", () => {
-  it("extras opens and closes the tray, and is no part of the draft: hasUnsent ignores it", () => {
-    store.setExtras(V2, true);
-    expect(store.slot(V2).extras).toBe(true);
-    expect(store.hasUnsent(V2)).toBe(false);
-    store.setExtras(V2, false);
-    expect(store.slot(V2).extras).toBe(false);
+describe("the composer's anchor freeze and the phone's focus stamp (#879 fix, #927)", () => {
+  it("the slot has no tray state any more (#927: the + tray is gone)", () => {
+    expect("extras" in store.slot(V2)).toBe(false);
+    expect("setExtras" in store).toBe(false);
   });
 
-  it("leaving the Version, Cancel and a post that lands each close the tray", async () => {
-    store.setExtras(V2, true); store.leave(V2);
-    expect(store.slot(V2).extras).toBe(false);
-    store.setExtras(V2, true); store.discardComposer(V2);
-    expect(store.slot(V2).extras).toBe(false);
-    const { fc, sent, done } = await startPost(V2, "ship it");
-    store.setExtras(V2, true);
-    fc.confirm(12); await tick();
-    expect(store.slot(V2).extras).toBe(true);
-    sent.resolve({}); await done;
-    expect(store.slot(V2).extras).toBe(false);
+  it("freeze stamps the frame an upload started on; the first keystroke keeps it, and a later freeze moves nothing", () => {
+    store.freeze(V2, 30);
+    expect(store.slot(V2).composer.anchorFrame).toBe(30);
+    store.freeze(V2, 40);
+    expect(store.slot(V2).composer.anchorFrame).toBe(30);
+    store.setBody(V2, "ref attached", 55);
+    expect(store.slot(V2).composer.anchorFrame).toBe(30);
   });
 
-  it("a failed post keeps the tray as it was", async () => {
-    const { fc, sent, done } = await startPost(V2, "maybe");
-    store.setExtras(V2, true);
-    fc.confirm(12); await tick();
-    sent.reject(new ApiError("Failed to fetch", 0)); await done;
-    expect(store.slot(V2).extras).toBe(true);
-  });
-
-  it("Escape: draw mode and a frame confirmation go first, then the tray closes alone, then the dirty-form hold", async () => {
+  it("Escape: draw mode and a frame confirmation go first, then the dirty-form hold", async () => {
     store.setBody(V2, "draft", 12);
-    store.setExtras(V2, true);
-    expect(store.escape(V2, { focusInForm: true })).toEqual({ consumed: true, focus: "textarea" });
-    expect(store.slot(V2).extras).toBe(false);
-    expect(store.slot(V2).spent).toBe(false);
-    expect(store.slot(V2).composer.body).toBe("draft");
     expect(store.escape(V2, { focusInForm: true })).toEqual({ consumed: true, focus: "textarea" });
     expect(store.slot(V2).spent).toBe(true);
+    expect(store.slot(V2).composer.body).toBe("draft");
   });
 
   it("stamp sets the anchor of an empty draft, and the first keystroke keeps it; once there is text it no longer moves", () => {
