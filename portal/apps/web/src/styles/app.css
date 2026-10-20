@@ -297,6 +297,12 @@
 .project-phone__bar { display: grid; min-height: 62px; padding-block: var(--space-2); padding-inline: var(--space-4) var(--space-1); background: var(--bg-surface); }
 .project-header__tabbar--phone { top: calc(var(--shell-header-height) + var(--space-7)); }
 .project-header__tabbar--phone[data-stuck] { box-shadow: var(--shadow-sm); }
+/* #927: the sheet is an inverse scope while a film URL is open (Safari's bar tint). inverse.css does not remap --bg-surface, so the
+   header bars take the scope's own ground; remapping --bg-surface there would paint a nested default scope ink. */
+[data-surface="inverse"] .project-phone__bar,
+[data-surface="inverse"] .project-phone__slim,
+[data-surface="inverse"] .project-header,
+[data-surface="inverse"] .project-header__tabbar { background: var(--background); }
 .worktools { position: sticky; top: var(--shell-header-height); z-index: 20; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-6); background: color-mix(in srgb, var(--paper-050) 90%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border-hairline); flex-wrap: wrap; }
 /* #594: the Notice board composer's toolbar (the InputGroupAddon, whose containing block is the whole field) sticks under the
    shell header while a long document scrolls. z-index 2 sits above .tableWrapper and the outline rail (1), below the header and popovers. */
