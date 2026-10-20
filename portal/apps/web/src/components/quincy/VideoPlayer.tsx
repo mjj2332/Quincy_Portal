@@ -293,20 +293,52 @@ export function VideoPlayer({ version, title, controlRef, keyboard = "self", cla
     restoreRemotePlayback();
     if (pauseOnReturn.current) { pauseOnReturn.current = false; pauseRef.current(); }
   }, [restoreRemotePlayback]);
+  // A hand-off that had to play the film first (#927, iPhone Full screen on a film that cannot play): until the data arrives, a load error or a refused play means iOS's player
+  // will never appear, so the press ends in the refusal notice (and the empty native layer is left) rather than in nothing. The watch ends with the data, the player's exit or the film.
+  const handOffWatch = useRef<(() => void) | null>(null);
+  // Whether this press's hand-off was refused already (a play refused before the native player's own answer comes back): that answer must not clear the notice.
+  const handOffRefused = useRef(false);
+  const stopHandOffWatch = useCallback(() => { handOffWatch.current?.(); handOffWatch.current = null; }, []);
+  const watchHandOff = useCallback((film: HTMLVideoElement) => {
+    stopHandOffWatch();
+    const refuse = () => {
+      stopHandOffWatch();
+      handOffRefused.current = true;
+      setNativeFailed((count) => count + 1);
+      try { (film as HTMLVideoElement & { webkitExitFullscreen?: () => void }).webkitExitFullscreen?.(); } catch { /* not in the native layer: nothing to leave */ }
+      returnFromSystemPlayer();
+    };
+    const settle = () => { stopHandOffWatch(); };
+    film.addEventListener("error", refuse);
+    film.addEventListener("loadeddata", settle);
+    film.addEventListener("webkitendfullscreen", settle);
+    const offRejected = instance?.onPlayRejected(refuse);
+    handOffWatch.current = () => { film.removeEventListener("error", refuse); film.removeEventListener("loadeddata", settle); film.removeEventListener("webkitendfullscreen", settle); offRejected?.(); };
+  }, [instance, stopHandOffWatch, returnFromSystemPlayer]);
   const openSystemPlayer = useCallback(() => {
+    // A film whose source already failed cannot play anywhere: iOS's player would open on nothing, so the press shows the refusal instead of handing over.
+    if (video?.error) { setNativeFailed((count) => count + 1); return; }
     if (video) { restoreRemotePlayback(); restoreRemote.current = liftRemotePlayback(video); }
     // Synchronously, before the native player is entered, inside the press: iOS shows nothing for a film with no data (see `nativePlayerNeedsPlay`).
-    pauseOnReturn.current = nativePlayerNeedsPlay(video) && !clock.playing;
+    handOffRefused.current = false;
+    const needsPlay = nativePlayerNeedsPlay(video);
+    if (needsPlay && video) watchHandOff(video);
+    pauseOnReturn.current = needsPlay && !clock.playing;
     if (pauseOnReturn.current) clock.play();
-    void openNativePlayer(video).then((started) => { setNativeFailed((count) => (started ? 0 : count + 1)); if (!started) returnFromSystemPlayer(); });
-  }, [video, restoreRemotePlayback, returnFromSystemPlayer, clock]);
+    void openNativePlayer(video).then((started) => {
+      if (started) { if (!handOffRefused.current) setNativeFailed(0); return; }
+      stopHandOffWatch();
+      setNativeFailed((count) => count + 1);
+      returnFromSystemPlayer();
+    });
+  }, [video, restoreRemotePlayback, returnFromSystemPlayer, clock, watchHandOff, stopHandOffWatch]);
   useEffect(() => {
     if (!video) return undefined;
     const onFullscreenChange = () => { if (document.fullscreenElement !== video) returnFromSystemPlayer(); };
     video.addEventListener("webkitendfullscreen", returnFromSystemPlayer);
     document.addEventListener("fullscreenchange", onFullscreenChange);
-    return () => { video.removeEventListener("webkitendfullscreen", returnFromSystemPlayer); document.removeEventListener("fullscreenchange", onFullscreenChange); restoreRemotePlayback(); };
-  }, [video, restoreRemotePlayback, returnFromSystemPlayer]);
+    return () => { video.removeEventListener("webkitendfullscreen", returnFromSystemPlayer); document.removeEventListener("fullscreenchange", onFullscreenChange); stopHandOffWatch(); restoreRemotePlayback(); };
+  }, [video, restoreRemotePlayback, returnFromSystemPlayer, stopHandOffWatch]);
   const nativeSupported = useCallback(() => nativePlayerSupported(video), [video]);
   useImperativeHandle(controlRef, () => ({ handleKeyDown: keyDown, currentFrame, openSystemPlayer, nativePlayerSupported: nativeSupported }), [keyDown, currentFrame, openSystemPlayer, nativeSupported]);
   const chromeVisible = !imm || chromeShown;

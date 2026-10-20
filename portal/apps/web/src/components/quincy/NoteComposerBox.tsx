@@ -168,8 +168,8 @@ export function NoteComposerBox(props: NoteComposerBoxProps) {
     {variant === "edit" && props.visibility !== undefined && <FixedVisibility value={props.visibility} phone={phone} />}
     {send && <Button
       type="submit" size="icon-round" aria-label={send.label} title={send.disabled && send.reason ? send.reason : variant === "reply" ? "Send reply (⌘↵)" : "Post (⌘↵)"} aria-keyshortcuts="Meta+Enter Control+Enter"
-      // icon-round is the 44px circle (dimming only its glyph when disabled); off a phone it is the prototype's 32px, 44px on a touch tablet. A lock with a reason is aria-disabled, so it dims the same way.
-      className={cn("ms-[var(--space-1)] aria-disabled:[&_svg]:opacity-50", phone ? "size-11" : NOTE_TARGET)}
+      // icon-round is the 44px circle, dimmed as a whole when disabled (a lock with a reason is aria-disabled, and dims the same way); off a phone it is the prototype's 32px, 44px on a touch tablet.
+      className={cn("ms-[var(--space-1)]", phone ? "size-11" : NOTE_TARGET)}
       {...(send.disabled ? { disabled: true, focusableWhenDisabled: true } : {})} {...KEEP_FOCUS_MARKER}
     >{send.pending ? <Spinner aria-hidden="true" role={undefined} aria-label={undefined} /> : <SendIcon aria-hidden="true" className={phone ? "size-4.5" : "size-4"} />}</Button>}
     {save && <>

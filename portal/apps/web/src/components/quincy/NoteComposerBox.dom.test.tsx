@@ -91,6 +91,21 @@ describe("NoteComposerBox, staff (C2)", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
+  it("a disabled Send dims as a whole at every width, as the frame's `.cmp-send:disabled` does, and keeps the phone's 44px target", async () => {
+    const locked = { label: "Post note", onSend: vi.fn(), disabled: true, reason: "Add a few words to post the drawing" };
+    await mount(staff({ send: locked }));
+    for (const phone of [false, true]) {
+      await act(async () => { root!.render(<NoteComposerBox {...staff({ phone, send: locked })} />); });
+      const send = byLabel("Post note")!;
+      const classes = send.className.split(/\s+/);
+      expect(send.getAttribute("aria-disabled"), `phone ${phone}`).toBe("true");
+      // The Button's own disabled dim, for the focusable lock too (aria-disabled, no native disabled), on the whole circle: not only its glyph.
+      expect(classes, `phone ${phone}`).toContain("aria-disabled:opacity-50");
+      expect(classes.filter((name) => /opacity-100|svg\]?:opacity|svg_?\]?:opacity/.test(name)), `phone ${phone}`).toEqual([]);
+      if (phone) expect(classes).toContain("size-11");
+    }
+  });
+
   it("a pending Send shows its phase by name and keeps the field's focus on press", async () => {
     await mount(staff({ send: { label: "Posting…", onSend: vi.fn(), disabled: true, pending: true } }));
     const send = byLabel("Posting…")!;

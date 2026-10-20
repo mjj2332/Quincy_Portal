@@ -22,6 +22,7 @@ Paths are relative to `portal/apps/web/src/` unless they say otherwise.
   - Opening a film from inside the Portal (an in-app navigation) keeps whatever tint the page loaded with. The owner has accepted this.
   - Dropped: the `use-review-chrome` hook, `viewport-fit=cover` and `theme-color`, which were measured to do nothing.
 - **D5 The bubble is dark.** The formatting bubble uses the viewer's semantic popover tokens (ADR 0024), not the light bubble of C3/P2.
+- **D7 Drawing on a phone keeps the bigger film** (2026-10-20). While the pen is down (P4) the phone collapses the notes list and gives the film the room, so the canvas is as large as it can be. P4 draws the notes list still showing above the box, as at rest; the build keeps its own layout on purpose (owner decision), so a design review should not flag it.
 
 ## Session defaults (both plans agree)
 

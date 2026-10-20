@@ -440,6 +440,12 @@
    was never set and the old utilities matched nothing: an empty doc is one paragraph holding only the
    ProseMirror trailing break, and the editor root carries `data-placeholder`. */
 .rich-text__editor-content:has(> p:only-child > br.ProseMirror-trailingBreak:only-child)::before { content: attr(data-placeholder); color: var(--foreground-secondary); float: left; height: 0; pointer-events: none; }
+/* #927 C2: the note box floats its anchor chip before the first line, and a floated placeholder longer than the room beside the chip
+   drops under it, out of the one-line box (the desktop box showed none). The note's placeholder is in the text's flow instead: a block
+   after the empty paragraph, raised by that paragraph's one line, so it starts where the caret is, wraps beside and under the chip as
+   the frame's does, and the box grows to hold it. */
+.rich-text__editor-content--note:has(> p:only-child > br.ProseMirror-trailingBreak:only-child)::before { content: none; }
+.rich-text__editor-content--note:has(> p:only-child > br.ProseMirror-trailingBreak:only-child)::after { content: attr(data-placeholder); display: block; margin-block-start: -1lh; color: var(--foreground-secondary); pointer-events: none; }
 .rich-text u { color: inherit; text-decoration: underline; text-decoration-color: var(--muted-foreground); text-underline-offset: 2px; }
 .rich-text s { text-decoration: line-through; text-decoration-color: var(--muted-foreground); }
 .rich-text__mention { display: inline-block; padding: 0 4px; border-radius: var(--radius-xs); background: color-mix(in srgb, var(--signal-info) 12%, var(--field-bg)); color: var(--signal-info); font-weight: 600; white-space: nowrap; }
