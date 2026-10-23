@@ -8,6 +8,7 @@ import { formatDuration } from "../video/video-format";
 import { Checkbox } from "./Checkbox";
 import { FileDropzone } from "./FileDropzone";
 import type { StatusTone } from "./StatusPill";
+import { TruncatedTitleTip } from "./TruncatedTitleTip";
 
 /**
  * The one poster-first Video tile (#884; prototype T1-T5, D20-D28), staff and guest. It takes plain values rather than a DTO, so the Delivery page (#882) can hand it a published Version.
@@ -20,6 +21,8 @@ import type { StatusTone } from "./StatusPill";
  * `<button>`, for a tile whose open is an action rather than a navigation (a screen state, the plain player, an unlock request). `openLabel` renames it when the action is not "open this film".
  * `caption` (#882, V1/V3) is a line under the title that belongs to that one control: unlike `footer` it is not raised above the stretched control, so a tap on it is a tap on the tile, and it must hold
  * no control of its own (the locked film's "Request unlock" line). `openDisabled` makes the button inert but keeps it focusable (`aria-disabled`, not `disabled`), so focus stays where the viewer pressed.
+ * A cut-off title shows in full in a tooltip on hover and keyboard focus of the open control (#934, `TruncatedTitleTip`; none on a coarse pointer). The node that truncates carries
+ * `data-title-text` (the button itself, the link's inner span) and is what the tooltip measures; the tooltip shows the title even where `openLabel` renames the control.
  */
 export type VideoTileStatus = { tone: StatusTone; /** Drawn beside the dot. */ short: string; /** Read aloud and in the tile's summary. */ full: string };
 
@@ -109,13 +112,15 @@ export function VideoTile({ title, posterUrl, version, durationMs, openNotes, hr
         <Checkbox aria-label={`Select ${title}`} checked={select.selected} onChange={select.onToggle} className={TICK} />
       </label>}
       <div className="flex items-center gap-[var(--space-2)] px-[var(--space-3)] py-[var(--space-2)]">
-        {href !== undefined
-          ? <a href={href} data-testid={openTestId} data-video-id={dataVideoId} aria-describedby={summaryId} aria-label={openLabel} className={cn(OPEN, "flex items-center no-underline")}><span className="min-w-0 truncate">{title}</span></a>
-          : <button
-            type="button" data-testid={openTestId} data-video-id={dataVideoId} aria-describedby={summaryId} aria-label={openLabel} aria-disabled={openDisabled ? true : undefined}
-            onClick={(event) => { if (!openDisabled) onOpen?.(event.currentTarget); }}
-            className={cn(OPEN, "cursor-pointer truncate border-0 bg-transparent p-0 text-left aria-disabled:cursor-default")}
-          >{title}</button>}
+        <TruncatedTitleTip text={title}>
+          {href !== undefined
+            ? <a href={href} data-testid={openTestId} data-video-id={dataVideoId} aria-describedby={summaryId} aria-label={openLabel} className={cn(OPEN, "flex items-center no-underline")}><span data-title-text="" className="min-w-0 truncate">{title}</span></a>
+            : <button
+              type="button" data-testid={openTestId} data-video-id={dataVideoId} data-title-text="" aria-describedby={summaryId} aria-label={openLabel} aria-disabled={openDisabled ? true : undefined}
+              onClick={(event) => { if (!openDisabled) onOpen?.(event.currentTarget); }}
+              className={cn(OPEN, "cursor-pointer truncate border-0 bg-transparent p-0 text-left aria-disabled:cursor-default")}
+            >{title}</button>}
+        </TruncatedTitleTip>
         <span id={summaryId} className="sr-only">{summary}</span>
         {menu && <div className="relative z-10 shrink-0">{menu}</div>}
       </div>
