@@ -5,7 +5,8 @@ import { Button } from "../quincy/Button";
 import { IconButton } from "../quincy/icon-button";
 import { Label } from "../reui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
-import type { VideoGridPrefs, VideoGridSort } from "../../lib/video-grid-prefs";
+import { NATURAL_DIR, type VideoGridPrefs, type VideoGridSort } from "../../lib/video-grid-prefs";
+import { VideoLayoutToggle } from "../quincy/VideoLayoutToggle";
 import { REVIEW_STATUS_LABEL } from "./VideoReviewStatusPill";
 
 const TOOL = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
@@ -13,8 +14,6 @@ const BAR = cn(TOOL, "h-8");
 const LABEL = "text-foreground-secondary [font:var(--type-label)]";
 
 const SORT_LABEL: Record<VideoGridSort, string> = { uploaded: "Upload date", name: "Name", status: "Review status" };
-/** The direction a key reads naturally in when it is first picked. */
-const NATURAL_DIR: Record<VideoGridSort, VideoGridPrefs["dir"]> = { uploaded: "desc", name: "asc", status: "asc" };
 const DIR_LABEL: Record<VideoGridSort, Record<VideoGridPrefs["dir"], string>> = {
   uploaded: { desc: "Newest first", asc: "Oldest first" },
   name: { asc: "A–Z", desc: "Z–A" },
@@ -24,7 +23,7 @@ const STATUS_OPTIONS: Array<VideoGridPrefs["status"]> = ["all", "in_review", "ap
 const statusLabel = (status: VideoGridPrefs["status"]): string => status === "all" ? "All films" : REVIEW_STATUS_LABEL[status as VideoReviewStatus];
 
 /**
- * The Video collection's toolbar (#865; Appearance left with #884's single tile size): Sort (key and direction) and the Review status filter. The behaviour is FreeFrame's
+ * The Video collection's toolbar (#865; Appearance left with #884's single tile size): Sort (key and direction), the Review status filter and (#938) the tiles / list layout. The behaviour is FreeFrame's
  * sort popover (MIT, see THIRD_PARTY_NOTICES) on ReUI parts. `shown` of `total` is the filter's footprint, so a filter that hides films never hides that it does.
  */
 export function VideoGridToolbar({ prefs, onChange, shown, total }: { prefs: VideoGridPrefs; onChange: (next: VideoGridPrefs) => void; shown: number; total: number }) {
@@ -61,5 +60,8 @@ export function VideoGridToolbar({ prefs, onChange, shown, total }: { prefs: Vid
       <p role="status" data-testid="video-grid-count" className={LABEL}>{`Showing ${shown} of ${total} films`}</p>
       <Button type="button" variant="text" data-testid="video-grid-show-all" className={TOOL} onClick={() => { set({ status: "all" }); }}>Show all films</Button>
     </div>}
+
+    {/* #938: tiles or Video rows, at the trailing end. */}
+    <VideoLayoutToggle className="ms-auto" value={prefs.layout} onChange={(layout) => { set({ layout }); }} />
   </div>;
 }

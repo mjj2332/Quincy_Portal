@@ -5,7 +5,7 @@ import { Button } from "../quincy/Button";
 import { Spinner } from "../reui/spinner";
 import { Notice } from "../quincy/Notice";
 import { useFilePick } from "../quincy/FileDropzone";
-import { VideoTile } from "../quincy/VideoTile";
+import { VideoTile, type VideoTileStatus } from "../quincy/VideoTile";
 import type { VideoUploadState } from "../../lib/video-upload";
 import { IconButton } from "../quincy/icon-button";
 import { MENU_ITEM, Menu, MenuPrimitive, PANEL } from "../quincy/menu";
@@ -28,6 +28,18 @@ function Submenu({ label, testId, trigger, children }: { label: string; testId: 
       </MenuPrimitive.Positioner>
     </MenuPrimitive.Portal>
   </MenuPrimitive.SubmenuRoot>;
+}
+
+/**
+ * What a Video's tile and its Video row (#938) both draw, worked out once so the two cannot drift: the newest live Version (its poster, number, duration, upload date and
+ * uploader), the next Version's number, and the Review status as the tile and row show it.
+ */
+export function videoCardFacts(video: VideoDto): { newest: VideoDto["versions"][number]; nextNumber: number; status: VideoTileStatus } {
+  return {
+    newest: video.versions.find((version) => version.current) ?? video.versions[0]!,
+    nextNumber: Math.max(...video.versions.map((version) => version.version)) + 1,
+    status: { tone: REVIEW_STATUS_TONE[video.reviewStatus], short: REVIEW_STATUS_SHORT[video.reviewStatus], full: `${REVIEW_STATUS_LABEL[video.reviewStatus]}${video.olderPublishedVersion !== null ? `, v${video.olderPublishedVersion} published` : ""}` },
+  };
 }
 
 /**
@@ -66,8 +78,7 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
   const [cancelling, setCancelling] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
-  const newest = video.versions.find((version) => version.current) ?? video.versions[0]!;
-  const nextNumber = Math.max(...video.versions.map((version) => version.version)) + 1;
+  const { newest, nextNumber, status } = videoCardFacts(video);
   // The server says an upload is in flight and this tab has no job for it: someone else's, or mine that this tab lost (a reload, another device). Only its owner may cancel it.
   const uploadingElsewhere = !myUpload && video.uploading;
   const cancellable = uploadingElsewhere && currentUserId !== null && uploadingElsewhere.uploader.id === currentUserId ? uploadingElsewhere : null;
@@ -122,7 +133,7 @@ export function VideoCard({ video, canUpload, currentUserId, myUpload, onVersion
   return <VideoTile
     testId="video-card" openTestId="video-card-open" dataVideoId={video.id}
     title={video.title} posterUrl={newest.posterUrl} version={newest.version} durationMs={newest.durationMs} openNotes={video.latestNoteCount}
-    status={{ tone: REVIEW_STATUS_TONE[video.reviewStatus], short: REVIEW_STATUS_SHORT[video.reviewStatus], full: `${REVIEW_STATUS_LABEL[video.reviewStatus]}${video.olderPublishedVersion !== null ? `, v${video.olderPublishedVersion} published` : ""}` }}
+    status={status}
     {...(video.premium ? { premium: true } : {})}
     {...(activeLinks.length > 0 ? { linked: true } : {})}
     onOpen={(trigger) => { onOpen(video, trigger); }}
