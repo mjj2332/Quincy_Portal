@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { VideoDto } from "@quincy/shared";
-import { arrangeVideos, GRID_CLASS, DEFAULT_VIDEO_GRID_PREFS, normalizeVideoGridPrefs, videoGridKey, type VideoGridPrefs } from "./video-grid-prefs";
+import { arrangeVideos, GRID_CLASS, DEFAULT_VIDEO_GRID_PREFS, NATURAL_DIR, normalizeVideoGridPrefs, videoGridKey, type VideoGridPrefs } from "./video-grid-prefs";
 
 const video = (id: string, title: string, status: VideoDto["reviewStatus"], current: string, older = "2026-01-01T00:00:00.000Z"): VideoDto => ({
   id, title, reviewStatus: status,
@@ -11,14 +11,23 @@ const ids = (list: VideoDto[]) => list.map((v) => v.id);
 
 describe("normalizeVideoGridPrefs", () => {
   it("defaults: upload date newest first, all statuses", () => {
-    expect(normalizeVideoGridPrefs(undefined)).toEqual({ sort: "uploaded", dir: "desc", status: "all" });
+    expect(normalizeVideoGridPrefs(undefined)).toEqual({ sort: "uploaded", dir: "desc", status: "all", layout: "tiles" });
   });
   it("keeps the good fields when one is junk", () => {
     expect(normalizeVideoGridPrefs({ sort: "name", dir: "sideways", status: "published" }))
-      .toEqual({ sort: "name", dir: "desc", status: "published" });
+      .toEqual({ sort: "name", dir: "desc", status: "published", layout: "tiles" });
   });
   it("ignores the old Appearance keys (size, thumb, info) a browser may still hold (#884)", () => {
-    expect(normalizeVideoGridPrefs({ size: "L", thumb: "fill", info: false, sort: "name", dir: "asc", status: "all" })).toEqual({ sort: "name", dir: "asc", status: "all" });
+    expect(normalizeVideoGridPrefs({ size: "L", thumb: "fill", info: false, sort: "name", dir: "asc", status: "all" })).toEqual({ sort: "name", dir: "asc", status: "all", layout: "tiles" });
+  });
+  it("round-trips the list layout (#938)", () => {
+    expect(normalizeVideoGridPrefs({ sort: "status", dir: "asc", status: "in_review", layout: "rows" })).toEqual({ sort: "status", dir: "asc", status: "in_review", layout: "rows" });
+  });
+  it("a junk layout falls back to tiles and keeps sort, direction and status (#938)", () => {
+    expect(normalizeVideoGridPrefs({ sort: "name", dir: "asc", status: "published", layout: "masonry" })).toEqual({ sort: "name", dir: "asc", status: "published", layout: "tiles" });
+  });
+  it("starts each sort key in the direction it reads naturally (moved here from the toolbar for #939's header sort)", () => {
+    expect(NATURAL_DIR).toEqual({ uploaded: "desc", name: "asc", status: "asc" });
   });
   it.each([null, 7, "x", []])("falls back to defaults for %j", (raw) => {
     expect(normalizeVideoGridPrefs(raw)).toEqual(DEFAULT_VIDEO_GRID_PREFS);

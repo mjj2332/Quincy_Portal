@@ -33,11 +33,42 @@ const TICK = "appearance-none relative rounded-[var(--radius-sm)] border-[length
 const MONO = "[font-family:var(--font-mono)]";
 // The open control, link or button: 44px tall, one line of body type (truncated: the button's own text, the link's inner span, since a flex box does not ellipsize), stretched over the whole tile by its ::after.
 const OPEN = "min-h-11 min-w-0 flex-1 text-foreground [font:var(--weight-regular)_var(--text-base)/var(--leading-normal)_var(--font-sans)] after:absolute after:inset-0 after:content-['']";
+// The Video row's (#938): body type at the table's 14px, as the Dashboard Table's row link; it stretches over the row (`tr`/`li` are `relative`) and draws its focus ring on that
+// stretched box, inset, since the row's cells would clip an outset one.
+const OPEN_ROW = "min-w-0 text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] after:absolute after:inset-0 after:content-[''] focus-visible:outline-none focus-visible:after:outline-[length:var(--border-width-bold)] focus-visible:after:outline-solid focus-visible:after:outline-ring after:-outline-offset-2 focus-visible:after:-outline-offset-2";
 
-/** How the tile opens: a link (`href`, same tab) or an action (`onOpen`); never both. */
-type VideoTileOpen =
+/** How a Video tile or row opens: a link (`href`, same tab) or an action (`onOpen`); never both. */
+export type VideoTileOpen =
   | { /** A same-tab address: the open control is a native `<a>`. */ href: string; onOpen?: undefined }
   | { /** `trigger` is the open control, where focus returns when the viewer closes. */ onOpen: (trigger: HTMLElement) => void; href?: undefined };
+
+/** What the open control's description reads (#938: the tile's and the row's are one string): Version, duration, open notes, status; a locked film says only that. */
+export function videoTileSummary({ locked = false, version, durationMs, openNotes, status }: { locked?: boolean; version: number | null; durationMs: number | null; openNotes: number | null; status?: VideoTileStatus | undefined }): string {
+  const noteWords = !locked && version !== null && openNotes !== null && openNotes > 0 ? `${openNotes} open ${openNotes === 1 ? "note" : "notes"} on v${version}` : null;
+  return [locked ? "Film, locked: Premium" : null, !locked && version !== null ? `v${version}` : null, !locked && durationMs !== null ? formatDuration(durationMs) : null, noteWords, status?.full].filter((part): part is string => part !== null && part !== undefined).join(", ");
+}
+
+/**
+ * The one open control of a Video tile and a Video row (#938, settled plan S10): a same-tab `<a>` with `href`, else a `<button>`, wrapped in the truncated-title tooltip, its
+ * accessible name the title (or `openLabel`) and its description `describedBy` (the summary). Tile and row render this same control, so they cannot drift, and the raw `<button>`
+ * stays here in `components/quincy/` (the UI primitive ratchet). `variant="row"` is the row's 14px type and stretched focus ring.
+ */
+export function VideoOpenControl({ title, href, onOpen, openLabel, openDisabled = false, testId, dataVideoId, describedBy, variant = "tile", className }: VideoTileOpen & {
+  title: string; openLabel?: string | undefined; openDisabled?: boolean | undefined; testId: string; dataVideoId?: string | undefined;
+  /** The id of the element whose text is the control's description (the summary). */ describedBy: string;
+  variant?: "tile" | "row"; className?: string;
+}) {
+  const base = variant === "row" ? OPEN_ROW : OPEN;
+  return <TruncatedTitleTip text={title}>
+    {href !== undefined
+      ? <a href={href} data-testid={testId} data-video-id={dataVideoId} aria-describedby={describedBy} aria-label={openLabel} className={cn(base, "flex items-center no-underline", className)}><span data-title-text="" className="min-w-0 truncate">{title}</span></a>
+      : <button
+        type="button" data-testid={testId} data-video-id={dataVideoId} data-title-text="" aria-describedby={describedBy} aria-label={openLabel} aria-disabled={openDisabled ? true : undefined}
+        onClick={(event) => { if (!openDisabled) onOpen?.(event.currentTarget); }}
+        className={cn(base, "cursor-pointer truncate border-0 bg-transparent p-0 text-left aria-disabled:cursor-default", className)}
+      >{title}</button>}
+  </TruncatedTitleTip>;
+}
 
 export function VideoTile({ title, posterUrl, version, durationMs, openNotes, href, onOpen, openLabel, openDisabled = false, tone = "ink", locked = false, status, linked, premium, select, menu, drop, footer, caption, testId = "video-tile", openTestId = "video-tile-open", dataVideoId }: VideoTileOpen & {
   title: string;
@@ -72,8 +103,7 @@ export function VideoTile({ title, posterUrl, version, durationMs, openNotes, hr
   dataVideoId?: string;
 }) {
   const summaryId = useId();
-  const noteWords = !locked && version !== null && openNotes !== null && openNotes > 0 ? `${openNotes} open ${openNotes === 1 ? "note" : "notes"} on v${version}` : null;
-  const summary = [locked ? "Film, locked: Premium" : null, !locked && version !== null ? `v${version}` : null, !locked && durationMs !== null ? formatDuration(durationMs) : null, noteWords, status?.full].filter((part): part is string => part !== null && part !== undefined).join(", ");
+  const summary = videoTileSummary({ locked, version, durationMs, openNotes, status });
   const lockedBody = <div data-testid={`${testId}-locked`} className="flex h-full w-full flex-col items-center justify-center gap-[var(--space-2)] bg-surface-sunken text-foreground-secondary">
     <Lock aria-hidden="true" className="size-6" /><span className="[font:var(--type-label)]">Film · locked</span>
   </div>;
@@ -112,15 +142,9 @@ export function VideoTile({ title, posterUrl, version, durationMs, openNotes, hr
         <Checkbox aria-label={`Select ${title}`} checked={select.selected} onChange={select.onToggle} className={TICK} />
       </label>}
       <div className="flex items-center gap-[var(--space-2)] px-[var(--space-3)] py-[var(--space-2)]">
-        <TruncatedTitleTip text={title}>
-          {href !== undefined
-            ? <a href={href} data-testid={openTestId} data-video-id={dataVideoId} aria-describedby={summaryId} aria-label={openLabel} className={cn(OPEN, "flex items-center no-underline")}><span data-title-text="" className="min-w-0 truncate">{title}</span></a>
-            : <button
-              type="button" data-testid={openTestId} data-video-id={dataVideoId} data-title-text="" aria-describedby={summaryId} aria-label={openLabel} aria-disabled={openDisabled ? true : undefined}
-              onClick={(event) => { if (!openDisabled) onOpen?.(event.currentTarget); }}
-              className={cn(OPEN, "cursor-pointer truncate border-0 bg-transparent p-0 text-left aria-disabled:cursor-default")}
-            >{title}</button>}
-        </TruncatedTitleTip>
+        {href !== undefined
+          ? <VideoOpenControl href={href} title={title} openLabel={openLabel} testId={openTestId} dataVideoId={dataVideoId} describedBy={summaryId} />
+          : <VideoOpenControl onOpen={onOpen} title={title} openLabel={openLabel} openDisabled={openDisabled} testId={openTestId} dataVideoId={dataVideoId} describedBy={summaryId} />}
         <span id={summaryId} className="sr-only">{summary}</span>
         {menu && <div className="relative z-10 shrink-0">{menu}</div>}
       </div>
