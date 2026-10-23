@@ -297,7 +297,12 @@ strip on black, never cropped), with small badges for the Version, duration and 
 for staff only, the Review status and a link icon while it is on an active Review link. The title is
 one line under it. A tap anywhere on the tile opens the review; for staff "⋯" is its only button.
 A Guest reviewer's tile shows the Version, duration, title and the open public-note count, nothing else.
+A title too long for its line is shown in full on hover or focus. A collection can show Video rows instead.
 _Avoid_: Video card (the pre-#884 tile with buttons), thumbnail (that is just the poster)
+
+**Video row**:
+How a Video appears when a collection is shown as a list rather than as tiles: one row with a small poster, the title and the same facts its Video tile carries, plus, for staff only, the uploader of its latest live Version. It opens the review and offers the same staff actions as the tile. Each person's choice of tiles or rows is remembered per browser.
+_Avoid_: List item, table row, Video card
 
 **Review status**:
 Where a Video stands inside the studio: In review or Approved (internal), held by its latest Version,
