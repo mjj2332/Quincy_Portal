@@ -333,3 +333,40 @@ describe("on a phone", () => {
     expect(inViewer("review-phone-bar-position")?.textContent).toBe("2 of 3");
   });
 });
+
+describe("in the list layout (#939)", () => {
+  const rowOpen = (video: VideoDto) => document.querySelector<HTMLElement>(`[data-testid="video-row-open"][data-video-id="${video.id}"]`)!;
+  const header = (label: string) => [...document.querySelectorAll("th")].find((th) => th.textContent?.trim() === label)!.querySelector<HTMLElement>("button")!;
+  async function openRow(video: VideoDto) {
+    await act(async () => { rowOpen(video).focus(); rowOpen(video).click(); });
+    await until(() => title() === video.title && viewer()!.querySelector("video") !== null, `${video.title} in the viewer`);
+  }
+  beforeEach(() => { storage.values.set(`quincy:ui:video-grid:${auth.userId}`, JSON.stringify({ layout: "rows" })); });
+
+  it("steps in the order a column header chose", async () => {
+    await mount();
+    await act(async () => { header("Status").click(); });
+    await flush();
+    // Status, in review first (newest upload first among them), then Published: Alpha, Charlie, Bravo, not the upload order Alpha, Bravo, Charlie.
+    await openRow(ALPHA);
+    expect(position()).toBe("1 of 3");
+    await step(next());
+    expect(title()).toBe("Charlie");
+    await step(next());
+    expect(title()).toBe("Bravo");
+    expect(position()).toBe("3 of 3");
+    expect(next()!.disabled).toBe(true);
+  });
+
+  it("steps from a viewer opened from a Video row, and closing returns focus to the current film's row", async () => {
+    await mount();
+    await openRow(CHARLIE);
+    expect(position()).toBe("3 of 3");
+    await step(previous());
+    expect(title()).toBe("Bravo");
+    const close = [...viewer()!.querySelectorAll<HTMLElement>("button")].find((b) => b.textContent === "Video")!;
+    await act(async () => { close.click(); });
+    await until(() => viewer() === null, "the viewer to close");
+    expect(document.activeElement).toBe(rowOpen(BRAVO));
+  });
+});
