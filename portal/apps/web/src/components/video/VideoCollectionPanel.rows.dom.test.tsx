@@ -228,14 +228,16 @@ describe("the Video rows", () => {
 describe("the Video rows on a phone", () => {
   beforeEach(() => { storage.values.set(KEY, JSON.stringify({ layout: "rows" })); });
 
-  it("are two-line rows: poster, title, then Version · duration · status; no uploader, date or notes", async () => {
+  it("are two-line rows: poster, title, then Version · duration · status · open notes; no uploader or date", async () => {
     viewport = mockViewport({ width: 390, height: 844, coarse: true });
     await mount();
     expect(q('[data-testid="video-rows"] table')).toBeNull();
     const kitchen = rows().find((row) => row.textContent?.includes("Kitchen walkthrough"))!;
     expect(kitchen.tagName).toBe("LI");
     expect(kitchen.querySelector("img")).not.toBeNull();
-    expect(kitchen.querySelector('[data-testid="video-row-meta"]')!.textContent).toBe("v2 · 1:32 · In review");
+    // F9: the open-note count the tile shows, drawn "3" and read "3 open notes on v2".
+    expect(kitchen.querySelector('[data-testid="video-row-meta"]')!.textContent).toBe("v2 · 1:32 · In review · 33 open notes on v2");
+    expect(kitchen.querySelector('[data-testid="video-row-open-notes"]')!.textContent).toBe("33 open notes on v2");
     expect(kitchen.textContent).not.toContain("Sam Okafor");
     expect(kitchen.textContent).not.toContain("5 Oct 2026");
   });

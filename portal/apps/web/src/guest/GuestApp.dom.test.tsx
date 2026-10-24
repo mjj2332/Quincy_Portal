@@ -1591,7 +1591,10 @@ describe("the list layout: Video rows (#940, #933 stories 49–52)", () => {
     await toList();
     const row = allById("guest-video-list-row")[0]!;
     expect(row.tagName).toBe("LI");
-    expect(row.querySelector('[data-testid="video-row-meta"]')?.textContent).toBe("v10 · 2:00");
+    // F9: the open-note count its tile shows, drawn "2" and read "2 open notes on v10".
+    expect(row.querySelector('[data-testid="video-row-meta"]')?.textContent).toBe("v10 · 2:00 · 22 open notes on v10");
+    expect(row.querySelector('[data-testid="guest-video-list-row-open-notes"]')?.textContent).toBe("22 open notes on v10");
+    expect(allById("guest-video-list-row")[1]!.querySelector('[data-testid="guest-video-list-row-open-notes"]')).toBeNull();
     expect(host.querySelector('[data-testid="video-rows"] table')).toBeNull();
     await click(row.querySelector<HTMLElement>('[data-testid="guest-video-list-open"]') ?? undefined);
     expect(title()).toBe("Film 1");

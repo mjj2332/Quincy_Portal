@@ -199,8 +199,8 @@ describe("VideoRows — the sort header (#938 for #939)", () => {
 });
 
 describe("VideoRows — compact (phone)", () => {
-  it("is a list of two-line rows: poster, title, then Version · duration · status, with the tick and menu; no uploader, date or notes", async () => {
-    await mount(<VideoRows compact items={[film({ select: { selected: false, onToggle: () => undefined }, menu: <button type="button">Film actions</button> })]} columns={STAFF} label="Films" testIds={TEST_IDS} />);
+  it("is a list of two-line rows: poster, title, then Version · duration · status, with the tick and menu; no uploader or date", async () => {
+    await mount(<VideoRows compact items={[film({ openNotes: 0, select: { selected: false, onToggle: () => undefined }, menu: <button type="button">Film actions</button> })]} columns={STAFF} label="Films" testIds={TEST_IDS} />);
     expect(document.querySelector("table")).toBeNull();
     expect(document.querySelector('section[aria-label="Films"] ul')).not.toBeNull();
     const row = rows()[0]!;
@@ -215,8 +215,50 @@ describe("VideoRows — compact (phone)", () => {
   });
 
   it("leaves status out of the meta line when the screen has no status column (guest, delivery)", async () => {
-    await mount(<VideoRows compact items={[film()]} columns={GUEST} label="Films" testIds={TEST_IDS} />);
+    await mount(<VideoRows compact items={[film({ openNotes: null })]} columns={GUEST} label="Films" testIds={TEST_IDS} />);
     expect(rows()[0]!.querySelector('[data-testid="video-row-meta"]')!.textContent).toBe("v3 · 1:32");
+  });
+
+  // F9: the row carries the facts its tile does, and the guest and staff tiles show the open-note count.
+  const openNotesOf = (row: Element) => row.querySelector('[data-testid="video-row-open-notes"]');
+  it("ends the meta line with the open-note count, drawn and read as the table's Notes cell does", async () => {
+    await mount(<VideoRows compact items={[film()]} columns={STAFF} label="Films" testIds={TEST_IDS} />);
+    const meta = rows()[0]!.querySelector('[data-testid="video-row-meta"]')!;
+    const notes = openNotesOf(meta)!;
+    expect(notes.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+    expect(notes.querySelector('span[aria-hidden="true"]')!.textContent).toBe("2");
+    // Drawn "2", read "2 open notes on v3".
+    expect(notes.textContent).toBe("22 open notes on v3");
+    expect(meta.textContent).toBe("v3 · 1:32 · In review · 22 open notes on v3");
+    // The very pieces of the table's Notes cell: icon, number and words.
+    const compactPieces = notes.innerHTML;
+    await rerender(<VideoRows items={[film()]} columns={STAFF} label="Films" testIds={TEST_IDS} />);
+    expect(openNotesOf(cellsOf(rows()[0]!)[4]!)!.innerHTML).toBe(compactPieces);
+  });
+
+  it("shows the count in the guest and delivery set too, one note in the singular", async () => {
+    await mount(<VideoRows compact items={[film({ version: 1, durationMs: 3_000, openNotes: 1 })]} columns={GUEST} label="Films" testIds={TEST_IDS} />);
+    const meta = rows()[0]!.querySelector('[data-testid="video-row-meta"]')!;
+    expect(openNotesOf(meta)!.textContent).toBe("11 open note on v1");
+    expect(meta.textContent).toBe("v1 · 0:03 · 11 open note on v1");
+  });
+
+  it("shows no count at zero or unknown notes, on a locked film, or where the screen has no notes column", async () => {
+    await mount(<VideoRows compact items={[
+      film({ id: "a", openNotes: 0 }),
+      film({ id: "b", openNotes: null }),
+      film({ id: "c", locked: true, version: null, durationMs: null }),
+    ]} columns={GUEST} label="Films" testIds={TEST_IDS} />);
+    expect(rows().map((row) => openNotesOf(row))).toEqual([null, null, null]);
+    await rerender(<VideoRows compact items={[film()]} columns={["poster", "title", "duration"]} label="Films" testIds={TEST_IDS} />);
+    expect(openNotesOf(rows()[0]!)).toBeNull();
+    expect(rows()[0]!.querySelector('[data-testid="video-row-meta"]')!.textContent).toBe("v3 · 1:32");
+  });
+
+  it("shows the count alone when the row has no Version or duration to show", async () => {
+    await mount(<VideoRows compact items={[film({ version: null, durationMs: null, openNotes: 3 })]} columns={GUEST} label="Films" testIds={TEST_IDS} />);
+    const meta = rows()[0]!.querySelector('[data-testid="video-row-meta"]')!;
+    expect(meta.textContent).toBe("33 open notes");
   });
 });
 

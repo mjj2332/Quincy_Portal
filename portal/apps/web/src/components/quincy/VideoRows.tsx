@@ -38,7 +38,8 @@ import { VideoOpenControl, videoTileSummary, type VideoTileOpen, type VideoTileS
  *
  * ## Compact
  * `compact` (the phone: staff and guest pass `PHONE_VIEWPORT_QUERY`, delivery its container width, S9) draws a list of two-line rows instead of the table, as the Dashboard's phone
- * list (`TablePhoneList.tsx`): [tick] poster, the title, then "v3 · 1:24 · In review" (the status only when the set has a status column), and "⋯". No uploader, date or notes.
+ * list (`TablePhoneList.tsx`): [tick] poster, the title, then "v3 · 1:24 · In review · [note] 2" (the status only when the set has a status column, the open-note count only when it
+ * has a notes column and the count is above zero, drawn and read as the Notes cell: F9, a row carries its tile's facts), and "⋯". No uploader or date.
  *
  * ## Slots
  * `select` (the tick), `menu` ("⋯"), `footer` (upload progress and refusals), `caption`, `drop` (a file dropped anywhere on the row is the next Version, through FileDropzone's
@@ -212,13 +213,22 @@ function StatusCell({ row }: CellProps) {
   return <><StatusPill tone={status.tone} aria-hidden="true">{status.short}</StatusPill><span className="sr-only">{status.full}</span></>;
 }
 
-function NotesCell({ row }: CellProps) {
-  const { openNotes, version, locked } = row.original;
-  if (locked || openNotes === null || openNotes <= 0) return null;
-  return <span className={cn(META, "inline-flex items-center gap-[var(--space-1)] text-sm text-foreground")}>
-    <MessageSquare aria-hidden="true" className="size-3.5 text-foreground-secondary" /><span aria-hidden="true">{openNotes}</span>
-    <span className="sr-only">{`${openNotes} open ${openNotes === 1 ? "note" : "notes"}${version !== null ? ` on v${version}` : ""}`}</span>
+/** The open-note count to show, or null: above zero, and never on a locked film. */
+const openNotesShown = ({ openNotes, locked }: VideoRowItem) => (!locked && openNotes !== null && openNotes > 0 ? openNotes : null);
+
+/** The open-note count, the Notes cell's and the compact meta line's alike: the note icon and the number drawn, "2 open notes on v3" read. */
+function OpenNotes({ item, className }: { item: VideoRowItem; className?: string }) {
+  const { testIds } = useContext(SettingsContext);
+  const count = openNotesShown(item);
+  if (count === null) return null;
+  return <span data-testid={`${testIds.row}-open-notes`} className={cn(META, "inline-flex items-center gap-[var(--space-1)]", className)}>
+    <MessageSquare aria-hidden="true" className="size-3.5 text-foreground-secondary" /><span aria-hidden="true">{count}</span>
+    <span className="sr-only">{`${count} open ${count === 1 ? "note" : "notes"}${item.version !== null ? ` on v${item.version}` : ""}`}</span>
   </span>;
+}
+
+function NotesCell({ row }: CellProps) {
+  return <OpenNotes item={row.original} className="text-sm text-foreground" />;
 }
 
 function DurationCell({ row }: CellProps) {
@@ -377,11 +387,14 @@ function CompactRow({ item, columns, attributes }: { item: VideoRowItem; columns
   const { showStatus } = useContext(SettingsContext);
   const { className, ...rest } = attributes;
   const meta = item.locked ? [] : [item.version !== null ? `v${item.version}` : null, item.durationMs !== null ? formatDuration(item.durationMs) : null, showStatus && item.status ? item.status.short : null].filter((part): part is string => part !== null);
+  const notes = columns.includes("notes") && openNotesShown(item) !== null;
   return <li {...rest} className={cn(className, "relative flex items-start gap-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-3)] last:border-b-0")}>
     {columns.includes("select") && item.select && <div className="-my-[var(--space-2)] -ms-[var(--space-2)]"><Tick item={item} /></div>}
     {columns.includes("poster") && <Thumb item={item} />}
     <div className="flex min-w-0 flex-1 flex-col gap-[var(--space-1)]">
-      <TitleBlock item={item} withVersion={false} meta={meta.length > 0 ? <span data-testid="video-row-meta" className={META}>{meta.join(" · ")}</span> : null} />
+      <TitleBlock item={item} withVersion={false} meta={meta.length > 0 || notes
+        ? <span data-testid="video-row-meta" className={META}>{meta.join(" · ")}{notes && <>{meta.length > 0 && " · "}<OpenNotes item={item} className="align-bottom" /></>}</span>
+        : null} />
     </div>
     {columns.includes("menu") && <div className="-my-[var(--space-2)]"><Menu item={item} /></div>}
   </li>;

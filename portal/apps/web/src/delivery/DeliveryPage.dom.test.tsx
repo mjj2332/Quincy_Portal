@@ -1031,10 +1031,13 @@ describe("the Film tab as a list (#941)", () => {
         const viewport = mockViewport({ width: 1440 });
         try {
           containerAt(720);
-          await showRows([film(1, { review: { url: REVIEW }, version: 3 })]);
+          await showRows([film(1, { review: { url: REVIEW }, version: 3 }), film(2, { review: { url: REVIEW }, version: 1, openNotes: 1 })]);
           expect(rows()!.querySelector("table")).toBeNull();
           expect(rowOf(1).tagName).toBe("LI");
           expect(rowOf(1).querySelector('[data-testid="video-row-meta"]')!.textContent).toBe("v3 · 1:02");
+          expect(rowOf(1).querySelector('[data-testid="delivery-film-item-open-notes"]')).toBeNull();
+          // F9: the open-note count the tile shows, drawn "1" and read "1 open note on v1".
+          expect(rowOf(2).querySelector('[data-testid="delivery-film-item-open-notes"]')!.textContent).toBe("11 open note on v1");
         } finally { viewport.restore(); }
       });
       it("at 721 px they are the table", async () => {
