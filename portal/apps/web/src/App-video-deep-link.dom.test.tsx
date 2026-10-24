@@ -230,6 +230,27 @@ describe("#819: a link to a film and Version", () => {
     expect(currentLocation()).toBe(location);
   });
 
+  it("#936: a step to the next film replaces the URL with that film's newest Version, and Back leaves the viewer", async () => {
+    const second = { ...videoOf(), id: OTHER_VIDEO, title: "Second", createdAt: "2026-10-08T01:00:00.000Z", currentAssetId: "44444444-4444-4444-8444-444444444442",
+      versions: [{ ...videoOf().versions[0]!, assetId: "44444444-4444-4444-8444-444444444442", version: 3, createdAt: "2026-10-01T01:00:00.000Z" }, { ...videoOf().versions[1]!, assetId: "44444444-4444-4444-8444-444444444441", createdAt: "2026-09-01T01:00:00.000Z" }] };
+    list.videos = [videoOf(), second];
+    // A known entry under the Project, so Back has somewhere to go that is not a film.
+    window.history.replaceState(null, "", "/");
+    window.history.pushState(null, "", `${base}?tab=video`);
+    await mountAt(`${base}?tab=video`);
+    await flushUntil(() => cardOpen() !== null, "the film card");
+    const depth = window.history.length;
+    await click(cardOpen()!);
+    await flushUntil(() => viewerEl()?.querySelector('[data-testid="video-step-next"]') != null, "the viewer with its step control");
+    await click(viewerEl()!.querySelector('[data-testid="video-step-next"]')!);
+    await flushUntil(() => document.getElementById(viewerEl()?.getAttribute("aria-labelledby") ?? "")?.textContent === "Second", "the second film");
+    expect(currentLocation()).toBe(`${base}?tab=video&video=${OTHER_VIDEO}&version=3`);
+    expect(window.history.length).toBe(depth);
+    await act(async () => { window.history.back(); });
+    await flushUntil(() => viewerEl() === null, "Back to leave the viewer");
+    expect(currentLocation()).toBe("/");
+  });
+
   it("Back and Forward render the entry's selection", async () => {
     await mountAt(`${base}?tab=video&video=${VIDEO_ID}&version=1`);
     await flushUntil(() => viewerEl() !== null && shownVersion() !== null, "the viewer");
