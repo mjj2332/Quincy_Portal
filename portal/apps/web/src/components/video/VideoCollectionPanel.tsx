@@ -11,7 +11,8 @@ import { createVideoApprovalStore, type VideoApprovalStore } from "../../lib/vid
 import { abortVideoReservation, cancelVideoUpload, removeVideoUpload, retryVideoUpload, startVideoUpload, uploadIdentityGeneration, useVideoUploads } from "../../lib/video-upload-store";
 import { checkVideoFile, pluralCaution } from "../../lib/video-upload";
 import { useUiPref } from "../../lib/ui-prefs";
-import { arrangeVideos, DEFAULT_VIDEO_GRID_PREFS, GRID_CLASS, normalizeVideoGridPrefs, videoGridKey, type VideoGridPrefs } from "../../lib/video-grid-prefs";
+import { arrangeVideos, DEFAULT_VIDEO_GRID_PREFS, GRID_CLASS, headerSort, normalizeVideoGridPrefs, videoGridKey, type VideoGridPrefs } from "../../lib/video-grid-prefs";
+import { createVersionFileState, type VersionFileStore } from "../../lib/version-file-state";
 import { ViewLoadBoundary } from "../ViewLoadBoundary";
 import { Button } from "../quincy/Button";
 import { EmbeddedUploadTray, type EmbeddedUpload } from "../quincy/EmbeddedUploadTray";
@@ -22,6 +23,7 @@ import { FileDropzone } from "../quincy/FileDropzone";
 import { VideoDownloadDialog } from "./VideoDownloadDialog";
 import { NewFilmPickButton, NewFilmUploader, useReceiveNewFilms } from "./NewFilmUploader";
 import { VideoCard } from "./VideoCard";
+import type { VideoActions } from "./VideoCardParts";
 import { VideoCollectionRows } from "./VideoCollectionRows";
 import { VideoDeleteDialog, type DeleteTarget } from "./VideoDeleteDialog";
 import { VideoRenameDialog, type RenameTarget } from "./VideoRenameDialog";
@@ -210,7 +212,26 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   }
 
   const myVersionUpload = (video: VideoDto) => running.find((upload) => upload.videoId === video.id);
-  const deletingVideo = deleting ? videos.data?.find((video) => video.id === deleting.videoId) ?? null : null;
+  // A file offered as a film's next Version (#939, S12): its check and refusal, per film, read alike by its tile and its Video row, whose menu, drop and upload line sit in
+  // different cells. Same key as the forms: a different person or Project starts with none.
+  const versionFilesRef = useRef<{ key: string; store: VersionFileStore } | null>(null);
+  if (versionFilesRef.current?.key !== formsKey) versionFilesRef.current = { key: formsKey, store: createVersionFileState() };
+  const versionFiles = versionFilesRef.current.store;
+  const sendVersionFile = (video: VideoDto, file: File) => { versionFiles.send(video.id, () => versionFile(video, file)); };
+  const cancelReservation = (reservationId: string) => abortVideoReservation(queryClient, projectId, reservationId);
+  /** What a film's tile and its Video row are granted (#939: the same for both). Dialogs opened from its "⋯" return focus to that "⋯", in either layout. */
+  const actionsFor = (video: VideoDto): VideoActions => {
+    const menuSelector = `[data-testid="video-card-menu"][data-video-id="${video.id}"]`;
+    return {
+      ...(downloadEnabled ? { download: { projectId } } : {}),
+      ...(canRename ? { onRename: (picked: VideoDto) => { const newest = picked.versions.find((version) => version.current) ?? picked.versions[0]!; renameHost.open({ videoId: picked.id, assetId: newest.assetId, originalFilename: newest.originalFilename }); } } : {}),
+      ...(reviewLinks.canWrite ? { onCreateReviewLink: () => reviewLinks.store.openCreateFor(video.id, [video.currentAssetId], menuSelector) } : {}),
+      ...(reviewLinks.canSelect && (reviewLinks.canWrite || downloadEnabled) ? { select: { selected: reviewLinks.selection.has(video.id), onToggle: () => reviewLinks.store.toggleSelect(video.id) } } : {}),
+      ...(reviewLinks.enabled ? { reviewLinks: { chips: reviewLinks.chipsFor(video.id), onOpenChip: (linkId: string) => { reviewLinks.store.openDetail(linkId, menuSelector); }, onOpenAll: () => { reviewLinks.store.openList(menuSelector); } } } : {}),
+      ...(trashEnabled ? { remove: { disabled: archived, onOpen: () => setDeleting({ videoId: video.id, title: video.title }) } } : {}),
+    };
+  };
+  const deletingVideo =deleting ? videos.data?.find((video) => video.id === deleting.videoId) ?? null : null;
 
   return <section aria-labelledby="video-films-heading" data-testid="video-films">
     <div className="workspace-intro workspace-intro--stack" data-testid="video-films-header">
@@ -236,10 +257,10 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
       {videos.data && videos.data.length > 0 && <VideoGridToolbar prefs={prefs} onChange={setPrefs} shown={arranged.length} total={videos.data.length} />}
       {videos.data && videos.data.length > 0 && arranged.length === 0 && <EmptyState title="No films match this filter.">Choose another status, or show all films.</EmptyState>}
       {videos.data && arranged.length > 0 && prefs.layout === "rows" && <div data-testid="video-row-list" onFocusCapture={onGridFocus} onPointerOverCapture={onGridPointer}>
-        <VideoCollectionRows videos={arranged} onOpen={openFromGrid} {...(reviewLinks.enabled ? { isLinked: (videoId: string) => reviewLinks.chipsFor(videoId).some((chip) => chip.status === "active") } : {})} />
+        <VideoCollectionRows videos={arranged} onOpen={openFromGrid} actionsFor={actionsFor} canUpload={canUpload} currentUserId={userId} myUploadOf={myVersionUpload} versionFiles={versionFiles} onVersionFile={sendVersionFile} onCancelReservation={cancelReservation} sort={prefs} onSort={(key) => { setPrefs(headerSort(prefs, key)); }} />
       </div>}
       {videos.data && arranged.length > 0 && prefs.layout !== "rows" && <div className={`grid gap-[var(--space-4)] ${GRID_CLASS}`} data-testid="video-card-grid" onFocusCapture={onGridFocus} onPointerOverCapture={onGridPointer}>
-        {arranged.map((video) => <VideoCard key={video.id} video={video} {...(downloadEnabled ? { download: { projectId } } : {})} {...(canRename ? { onRename: (picked: VideoDto) => { const newest = picked.versions.find((version) => version.current) ?? picked.versions[0]!; renameHost.open({ videoId: picked.id, assetId: newest.assetId, originalFilename: newest.originalFilename }); } } : {})} canUpload={canUpload} currentUserId={userId} myUpload={myVersionUpload(video)} onVersionFile={versionFile} onCancelReservation={(reservationId) => abortVideoReservation(queryClient, projectId, reservationId)} onOpen={openFromGrid} {...(reviewLinks.canWrite ? { onCreateReviewLink: () => reviewLinks.store.openCreateFor(video.id, [video.currentAssetId], `[data-testid="video-card-menu"][data-video-id="${video.id}"]`) } : {})} {...(reviewLinks.canSelect && (reviewLinks.canWrite || downloadEnabled) ? { select: { selected: reviewLinks.selection.has(video.id), onToggle: () => reviewLinks.store.toggleSelect(video.id) } } : {})} {...(reviewLinks.enabled ? { reviewLinks: { chips: reviewLinks.chipsFor(video.id), onOpenChip: (linkId: string) => { reviewLinks.store.openDetail(linkId, `[data-testid="video-card-menu"][data-video-id="${video.id}"]`); }, onOpenAll: () => { reviewLinks.store.openList(`[data-testid="video-card-menu"][data-video-id="${video.id}"]`); } } } : {})} {...(trashEnabled ? { remove: { disabled: archived, onOpen: () => setDeleting({ videoId: video.id, title: video.title }) } } : {})} />)}
+        {arranged.map((video) => <VideoCard key={video.id} video={video} {...actionsFor(video)} canUpload={canUpload} currentUserId={userId} myUpload={myVersionUpload(video)} versionFiles={versionFiles} onVersionFile={sendVersionFile} onCancelReservation={cancelReservation} onOpen={openFromGrid} />)}
       </div>}
     </FileDropzone>
     {downloadEnabled && <VideoDownloadDialog projectId={projectId} open={downloadIds !== null} onOpenChange={(open) => { if (!open) setDownloadIds(null); }} videos={(videos.data ?? []).filter((video) => downloadIds?.includes(video.id))} />}

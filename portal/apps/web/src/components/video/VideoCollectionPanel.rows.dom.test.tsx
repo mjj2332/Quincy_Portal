@@ -117,10 +117,11 @@ describe("the Video rows", () => {
   it("show each film's poster, title and Version, status, open notes, duration, upload date and uploader, all of its newest live Version", async () => {
     await mount();
     expect(tid("video-rows")!.getAttribute("aria-label")).toBe("Films");
-    expect([...document.querySelectorAll("th")].map((th) => th.textContent?.trim())).toEqual(["Poster", "Title", "Status", "Notes", "Duration", "Uploaded", "Uploader"]);
+    // #939 adds the tick (Review link selection is on here) and the "⋯" columns at the ends; their own cases are in VideoCollectionPanel.row-actions.dom.test.tsx.
+    expect([...document.querySelectorAll("th")].map((th) => th.textContent?.trim())).toEqual(["Select", "Poster", "Title", "Status", "Notes", "Duration", "Uploaded", "Uploader", "Actions"]);
     const kitchen = rows().find((row) => row.textContent?.includes("Kitchen walkthrough"))!;
     expect(kitchen.getAttribute("data-video-id")).toBe(KITCHEN.id);
-    const cells = [...kitchen.querySelectorAll("td")];
+    const cells = [...kitchen.querySelectorAll("td")].slice(1, -1);
     expect(cells[0]!.querySelector("img")!.getAttribute("src")).toBe(`/media/video/${id(601)}/poster`);
     expect(cells[1]!.textContent).toContain("v2");
     expect(cells[2]!.textContent).toContain("In review");
@@ -131,8 +132,8 @@ describe("the Video rows", () => {
     expect(cells[6]!.textContent).not.toContain("Mia Chen");
     expect(cells[6]!.querySelector('[data-testid="initials-avatar"]')!.textContent).toBe("SO");
     const teaser = rows().find((row) => row.textContent?.includes("Teaser"))!;
-    expect([...teaser.querySelectorAll("td")][4]!.textContent).toBe("1:02:05");
-    expect([...teaser.querySelectorAll("td")][2]!.textContent).toContain("Published");
+    expect([...teaser.querySelectorAll("td")][5]!.textContent).toBe("1:02:05");
+    expect([...teaser.querySelectorAll("td")][3]!.textContent).toContain("Published");
   });
 
   it("the row's open control is the film's title with the tile's summary as its description, and its title carries the full-title tooltip", async () => {

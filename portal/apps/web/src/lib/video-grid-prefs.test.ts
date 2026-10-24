@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { VideoDto } from "@quincy/shared";
-import { arrangeVideos, GRID_CLASS, DEFAULT_VIDEO_GRID_PREFS, NATURAL_DIR, normalizeVideoGridPrefs, videoGridKey, type VideoGridPrefs } from "./video-grid-prefs";
+import { arrangeVideos, GRID_CLASS, DEFAULT_VIDEO_GRID_PREFS, headerSort, NATURAL_DIR, normalizeVideoGridPrefs, videoGridKey, type VideoGridPrefs } from "./video-grid-prefs";
 
 const video = (id: string, title: string, status: VideoDto["reviewStatus"], current: string, older = "2026-01-01T00:00:00.000Z"): VideoDto => ({
   id, title, reviewStatus: status,
@@ -69,5 +69,21 @@ describe("arrangeVideos", () => {
     const before = ids(list);
     arrangeVideos(list, prefs({ sort: "name" }));
     expect(ids(list)).toEqual(before);
+  });
+});
+
+describe("headerSort (#939, S13)", () => {
+  it("a header for another key picks that key in the direction it reads naturally, whatever the current direction", () => {
+    expect(headerSort(prefs({ sort: "uploaded", dir: "desc" }), "name")).toEqual(prefs({ sort: "name", dir: "asc" }));
+    expect(headerSort(prefs({ sort: "name", dir: "desc" }), "uploaded")).toEqual(prefs({ sort: "uploaded", dir: "desc" }));
+    expect(headerSort(prefs({ sort: "name", dir: "asc" }), "status")).toEqual(prefs({ sort: "status", dir: "asc" }));
+  });
+  it("the header of the current key flips its direction, both ways, and never clears the sort", () => {
+    expect(headerSort(prefs({ sort: "name", dir: "asc" }), "name")).toEqual(prefs({ sort: "name", dir: "desc" }));
+    expect(headerSort(prefs({ sort: "name", dir: "desc" }), "name")).toEqual(prefs({ sort: "name", dir: "asc" }));
+    expect(headerSort(prefs({ sort: "uploaded", dir: "desc" }), "uploaded")).toEqual(prefs({ sort: "uploaded", dir: "asc" }));
+  });
+  it("keeps the filter and the layout", () => {
+    expect(headerSort(prefs({ status: "published", layout: "rows" }), "name")).toEqual({ sort: "name", dir: "asc", status: "published", layout: "rows" });
   });
 });

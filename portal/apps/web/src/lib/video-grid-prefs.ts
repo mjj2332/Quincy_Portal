@@ -21,7 +21,15 @@ export const DEFAULT_VIDEO_GRID_PREFS: VideoGridPrefs = { sort: "uploaded", dir:
 /** The direction a key reads naturally in when it is first picked, from the toolbar's Sort or (#939) a column header. */
 export const NATURAL_DIR: Record<VideoGridSort, VideoGridPrefs["dir"]> = { uploaded: "desc", name: "asc", status: "asc" };
 
-export const videoGridKey = (userId: string): string => uiPrefKey(`video-grid:${userId}`);
+/**
+ * A Video row's column header pressed (#939, S13): another key is picked in its natural direction (as the toolbar picks it); the current key flips. Never cleared: the
+ * grid's third, clearing press on a header is a press on the current key and flips it too. The filter and the layout stay; `arrangeVideos` stays the only sorter.
+ */
+export function headerSort(prefs: VideoGridPrefs, key: VideoGridSort): VideoGridPrefs {
+  return key === prefs.sort ? { ...prefs, dir: prefs.dir === "asc" ? "desc" : "asc" } : { ...prefs, sort: key, dir: NATURAL_DIR[key] };
+}
+
+export const videoGridKey =(userId: string): string => uiPrefKey(`video-grid:${userId}`);
 
 const pick = <T extends string>(raw: unknown, allowed: readonly T[], fallback: T): T => (allowed as readonly unknown[]).includes(raw) ? raw as T : fallback;
 
