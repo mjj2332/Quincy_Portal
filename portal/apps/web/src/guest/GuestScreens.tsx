@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent, type Reac
 import { GuestBackToPage } from "./GuestBackToPage";
 import { GUEST_PASSCODE_MAX, type GuestSessionResponse, type GuestVideoDto } from "@quincy/shared";
 import { Button } from "../components/reui/button";
+import { Badge } from "../components/reui/badge";
 import { Field, FieldError, FieldGroup, FieldLabel } from "../components/reui/field";
 import { Frame, FrameDescription, FrameHeader, FramePanel, FrameTitle } from "../components/reui/frame";
 import { Input } from "../components/reui/input";
@@ -132,7 +133,8 @@ export function VideoListScreen({ api, verify, canDownloadWithoutCode = false, p
     const latest = video.versions[0]!;
     return {
       id: video.id, title: video.title, posterUrl: latest.posterUrl, version: latest.version, durationMs: latest.durationMs, openNotes: latest.publicNoteCount,
-      ...(video.premium ? { premium: true } : {}),
+      // Story 54: the tile's Premium chip (VideoTile's `invert` badge), on the row's card without the photo scrim.
+      ...(video.premium ? { premium: true, premiumBadge: <Badge variant="invert" data-testid="video-row-premium" className="shrink-0">Premium</Badge> } : {}),
       onOpen: () => { onOpen(index); },
     };
   }), [videos, onOpen]);
@@ -149,7 +151,7 @@ export function VideoListScreen({ api, verify, canDownloadWithoutCode = false, p
     {videos.length === 0
       ? <EmptyState title="Nothing to review yet.">The studio hasn't shared any videos on this link.</EmptyState>
       : layout === "rows"
-      ? <ViewLoadBoundary viewLabel="list">
+      ? <ViewLoadBoundary viewLabel="list" message="The list could not be loaded.">
         <Suspense fallback={<GuestRowsSkeleton count={videos.length} />}>
           <VideoRows items={rowItems} columns={GUEST_ROW_COLUMNS} compact={compact} label="Videos" testIds={GUEST_ROW_TEST_IDS} />
         </Suspense>

@@ -11,3 +11,8 @@ export function stepTargets<T extends { id: string }>({ shown, openId }: { shown
   if (index < 0) return { position: null, total: shown.length, prev: null, next: null };
   return { position: index, total: shown.length, prev: shown[index - 1] ?? null, next: shown[index + 1] ?? null };
 }
+
+/** The highest Version number a Video has: what opening it, from a tile, a row or a step, shows by default (#936). */
+export function newestVersion(video: { versions: readonly { version: number }[] }): number {
+  return Math.max(...video.versions.map((entry) => entry.version));
+}

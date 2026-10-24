@@ -963,6 +963,9 @@ describe("the Film tab as a list (#941)", () => {
       expect(rowOf(1).querySelector('[data-testid="delivery-film-item-locked"]')).not.toBeNull();
       expect(rowOf(1).querySelector("img, video, a[href]")).toBeNull();
       expect(rowOf(1).textContent).toContain("Premium"); expect(rowOf(1).textContent).not.toMatch(/\bv\d|\d:\d\d/);
+      // Story 54: the locked tile's amber Premium badge, once.
+      expect(rowOf(1).querySelector('[data-testid="delivery-premium-badge"]')?.textContent).toBe("Premium");
+      expect([...rowOf(1).querySelectorAll("span")].filter((mark) => mark.textContent === "Premium")).toHaveLength(1);
       expect([...rowOf(1).querySelectorAll("button, a[href], input, [tabindex]")]).toEqual([openOf(1)]);
       expect(openOf(1).getAttribute("aria-label")).toBe("Request unlock: Video 01"); expect(openOf(1).hasAttribute("aria-disabled")).toBe(false);
       expect(rowOf(1).querySelector('[data-testid="delivery-unlock-action"]')!.textContent).toBe("Request unlock");

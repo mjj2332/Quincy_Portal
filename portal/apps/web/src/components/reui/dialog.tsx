@@ -32,6 +32,13 @@ import { XIcon } from "lucide-react"
  * and the band below it shows the backdrop, which must never be the light page under the scrim. The
  * overlay's own classes (z, `forceRender`) still apply; `cn` lets the caller's background win.
  *
+ * Divergence (#933 fix round 1, scoped opt-in): `DialogContent` takes `entry`, default `"animate"`
+ * (the registry's open fade and zoom, unchanged for every other caller). `entry="none"` leaves the
+ * popup's and its backdrop's open animation classes out; the close animation stays. The staff review
+ * viewer uses it when a step to the next film remounts the dialog (#936): the next viewer replaces
+ * the last in one commit, and an entry fade would flash the Project page through the scrim.
+ * `dialog.entry.dom.test.tsx` pins both paths.
+ *
  * NOTE: this repo already has a `components/reui/sheet.tsx` (base-nova's `sheet`, #56) that
  * covers most of the Portal's existing overlay needs. `dialog` is vendored separately here
  * because it is a `registryDependencies` entry of `@reui/gantt` (task/dependency editing
@@ -54,17 +61,23 @@ function DialogClose({ ...props }: DialogPrimitive.Close.Props) {
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
 }
 
+/** The open animations `entry="none"` leaves out (see header). */
+const OVERLAY_ENTRY = "data-open:animate-in data-open:fade-in-0"
+const CONTENT_ENTRY = "data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95"
+
 function DialogOverlay({
   className,
+  entry = "animate",
   ...props
-}: DialogPrimitive.Backdrop.Props) {
+}: DialogPrimitive.Backdrop.Props & { entry?: "animate" | "none" }) {
   return (
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       // Nested under a sheet Root, Base UI would skip the Backdrop (`forceRender || !nested`). See header.
       forceRender
       className={cn(
-        "fixed inset-0 isolate z-[var(--z-dialog)] bg-[var(--scrim-overlay)] duration-100 supports-backdrop-filter:backdrop-blur-[3px] data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 isolate z-[var(--z-dialog)] bg-[var(--scrim-overlay)] duration-100 supports-backdrop-filter:backdrop-blur-[3px] data-closed:animate-out data-closed:fade-out-0",
+        entry === "animate" && OVERLAY_ENTRY,
         className
       )}
       {...props}
@@ -77,19 +90,23 @@ function DialogContent({
   children,
   showCloseButton = true,
   overlayProps,
+  entry = "animate",
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean
   /** Attributes and classes for this dialog's backdrop (#879 fix r7, see the header). */
   overlayProps?: DialogPrimitive.Backdrop.Props & { "data-surface"?: "inverse" | "default"; "data-testid"?: string }
+  /** `"none"`: no open animation on the popup or its backdrop (#933, see the header). */
+  entry?: "animate" | "none"
 }) {
   return (
     <DialogPortal>
-      <DialogOverlay {...overlayProps} />
+      <DialogOverlay {...overlayProps} entry={entry} />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-[var(--z-dialog)] grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "fixed top-1/2 left-1/2 z-[var(--z-dialog)] grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          entry === "animate" && CONTENT_ENTRY,
           className
         )}
         {...props}

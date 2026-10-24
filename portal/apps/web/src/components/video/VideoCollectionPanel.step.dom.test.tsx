@@ -160,6 +160,20 @@ describe("the step control in the viewer header", () => {
     expect(after!.getAttribute("src") ?? after!.src).toContain(BRAVO.currentAssetId);
   });
 
+  it("lands the stepped-to film paused at its start, even when the film it left was playing (#936)", async () => {
+    await mount();
+    await open(ALPHA);
+    const before = viewer()!.querySelector("video")!;
+    await act(async () => { await before.play(); before.currentTime = 12; });
+    expect(before.paused).toBe(false);
+    await step(next());
+    const after = viewer()!.querySelector("video")!;
+    expect(after).not.toBe(before);
+    expect(after.paused).toBe(true);
+    expect(after.currentTime).toBe(0);
+    expect(stub.callsOf(after)).not.toContain("play");
+  });
+
   it("shows a film the filter hides with no position, both buttons disabled, and ] does nothing (#933 S1)", async () => {
     storage.values.set(`quincy:ui:video-grid:${auth.userId}`, JSON.stringify({ sort: "uploaded", dir: "desc", status: "in_review" }));
     await mount({ linked: { id: BRAVO.id, version: 2 } });
@@ -259,6 +273,20 @@ describe("what a step resets and what it keeps", () => {
     expect(title()).toBe("Bravo");
     expect(paneShown()).toBe(true);
   });
+
+  it("keeps the notes pane hidden when the person hid it, a step later (#933 S5)", async () => {
+    storage.values.set(REVIEW_PANE_KEY, JSON.stringify({ open: true, width: 360 }));
+    await mount({ parts: ["notes"] });
+    await open(ALPHA);
+    expect(paneShown()).toBe(true);
+    await act(async () => { inViewer("video-pane-hide")!.click(); });
+    await flush();
+    expect(paneShown()).toBe(false);
+    await step(next());
+    expect(title()).toBe("Bravo");
+    expect(paneShown()).toBe(false);
+    expect(inViewer("video-pane-show")).not.toBeNull();
+  });
 });
 
 describe("focus and entry", () => {
@@ -307,6 +335,9 @@ describe("focus and entry", () => {
     await step(next());
     expect(viewer()!.dataset.entry).toBe("step");
     expect(backdrop()!.dataset.entry).toBe("step");
+    // reui dialog's `entry="none"`: no open animation on either part.
+    expect(viewer()!.className).not.toContain("animate-in");
+    expect(backdrop()!.className).not.toContain("animate-in");
   });
 });
 
@@ -331,6 +362,20 @@ describe("on a phone", () => {
     await step(bar.querySelector<HTMLElement>('[data-testid="video-step-next"]'));
     expect(title()).toBe("Bravo");
     expect(inViewer("review-phone-bar-position")?.textContent).toBe("2 of 3");
+  });
+
+  // Story 19 / S5: the notes sheet stays where the person left it, collapsed or full, across a step.
+  it.each([["Home", "collapsed"], ["End", "full"]] as const)("keeps the notes sheet %s-moved to %s after a step", async (pressed, stop) => {
+    await viewport.set({ width: 390 });
+    await mount({ parts: ["notes"] });
+    await open(ALPHA);
+    const sheet = () => inViewer("video-review-pane")!;
+    expect(sheet().getAttribute("data-stop")).toBe("half");
+    await key(pressed, inViewer("review-sheet-grabber")!);
+    expect(sheet().getAttribute("data-stop")).toBe(stop);
+    await step(inViewer("review-phone-bar")!.querySelector<HTMLElement>('[data-testid="video-step-next"]'));
+    expect(title()).toBe("Bravo");
+    expect(sheet().getAttribute("data-stop")).toBe(stop);
   });
 });
 

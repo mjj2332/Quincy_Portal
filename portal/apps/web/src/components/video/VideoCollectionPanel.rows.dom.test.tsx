@@ -136,6 +136,15 @@ describe("the Video rows", () => {
     expect([...teaser.querySelectorAll("td")][3]!.textContent).toContain("Published");
   });
 
+  it("a Premium film's row shows the tile's Premium chip (story 54)", async () => {
+    state.videos = [{ ...KITCHEN, premium: true }, TEASER];
+    await mount();
+    const kitchen = rows().find((row) => row.textContent?.includes("Kitchen walkthrough"))!;
+    expect(kitchen.querySelector('[data-testid="video-row-premium"]')?.textContent).toBe("Premium");
+    expect([...kitchen.querySelectorAll("span")].filter((mark) => mark.textContent === "Premium")).toHaveLength(1);
+    expect(rows().find((row) => row.textContent?.includes("Teaser"))!.querySelector('[data-testid="video-row-premium"]')).toBeNull();
+  });
+
   it("the row's open control is the film's title with the tile's summary as its description, and its title carries the full-title tooltip", async () => {
     await mount();
     const open = rowOpen("Kitchen walkthrough");

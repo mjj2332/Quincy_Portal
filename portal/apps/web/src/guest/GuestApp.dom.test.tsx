@@ -1565,6 +1565,10 @@ describe("the list layout: Video rows (#940, #933 stories 49–52)", () => {
     expect([...first!.querySelectorAll("button")].map((b) => b.getAttribute("data-testid"))).toEqual(["guest-video-list-open"]);
     expect(second!.textContent).toMatch(/premium/i);
     expect(second!.textContent).not.toMatch(/open notes?/);
+    // Story 54: the row's Premium is the tile's chip, once.
+    expect(second!.querySelector('[data-testid="video-row-premium"]')?.textContent).toBe("Premium");
+    expect([...second!.querySelectorAll("span")].filter((mark) => mark.textContent === "Premium")).toHaveLength(1);
+    expect(first!.querySelector('[data-testid="video-row-premium"]')).toBeNull();
   });
 
   it("opens that film from its row, as a tile does, and Previous / Next still walk the list", async () => {

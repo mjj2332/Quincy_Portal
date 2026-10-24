@@ -7,6 +7,7 @@ import { LazyImage } from "../LazyImage";
 import { Badge } from "../reui/badge";
 import { DataGrid, DataGridContainer, dataGridFeatures, type DataGridFeatures } from "../reui/data-grid/data-grid";
 import { DataGridColumnHeader } from "../reui/data-grid/data-grid-column-header";
+import { DataGridScrollArea } from "../reui/data-grid/data-grid-scroll-area";
 import { DataGridTable } from "../reui/data-grid/data-grid-table";
 import { Frame, FramePanel } from "../reui/frame";
 import { formatDuration, formatVideoDate } from "../video/video-format";
@@ -30,8 +31,9 @@ import { VideoOpenControl, videoTileSummary, type VideoTileOpen, type VideoTileS
  *
  * ## Columns
  * `columns` is the screen's set, in order. Column definitions are built once per set; every cell reads the row's item and this grid's settings from context, so a refetch never
- * remounts a row (lesson #431). Width (#933 S8): the grid measures its own width and drops uploader, then uploaded, then notes until the rest fit at their sizes, so the title keeps
- * at least its 240px; an unmeasured width (0) drops nothing. The extra width of a wide panel spreads over the columns, as in the Dashboard Table.
+ * remounts a row (lesson #431). Width (#933 S8): the grid measures its own width and drops uploader, then uploaded, then notes until the rest fit with the title at its 240px
+ * floor; an unmeasured width (0) drops nothing. The title takes whatever width the others leave, so a table that fits is exactly the panel's width. Where even the floor does
+ * not fit (the staff set in the Project sheet at 768), the table sits in the data-grid's horizontal scroll area, as the Dashboard Table does, so no column is ever clipped.
  *
  * ## Compact
  * `compact` (the phone: staff and guest pass `PHONE_VIEWPORT_QUERY`, delivery its container width, S9) draws a list of two-line rows instead of the table, as the Dashboard's phone
@@ -64,6 +66,8 @@ export type VideoRowItem = VideoTileOpen & {
   /** A locked Premium film: a lock in the poster's place, no Version, duration or count. */
   locked?: boolean;
   premium?: boolean;
+  /** The Premium mark the screen's tile draws (story 54: both layouts match), shown on a premium or locked row in place of the neutral outline "Premium". */
+  premiumBadge?: ReactNode;
   /** On an active Review link (staff). */
   linked?: boolean;
   status?: VideoTileStatus;
@@ -89,20 +93,24 @@ const SettingsContext = createContext<Settings>({ testIds: { row: "video-row", o
 type Column = ColumnDef<DataGridFeatures, VideoRowItem>;
 type CellProps = { row: Row<DataGridFeatures, VideoRowItem> };
 
-/** Widths in px, padding included (the 8px each side, and the 16px edge on the first and last column). */
+/** Widths in px, padding included (the 8px each side, and the 16px edge on the first and last column). The title's is its size before the width is known. */
 const SIZES: Record<VideoRowColumn, number> = { select: 68, poster: 88, title: 280, status: 128, notes: 80, duration: 88, uploaded: 120, uploader: 180, menu: 60 };
+/** S8 / plan D5: the title never narrows below this; columns are dropped to keep it. */
+const TITLE_FLOOR = 240;
 /** S8: what a narrow panel gives up first. */
 const FIT_DROP_ORDER: readonly VideoRowColumn[] = ["uploader", "uploaded", "notes"];
+/** The width a column needs at the least: its size, the title its floor. */
+const leastWidth = (column: VideoRowColumn) => (column === "title" ? TITLE_FLOOR : SIZES[column]);
 const LABELS: Record<VideoRowColumn, string> = { select: "Select", poster: "Poster", title: "Title", status: "Status", notes: "Notes", duration: "Duration", uploaded: "Uploaded", uploader: "Uploader", menu: "Actions" };
 /** Columns whose header names a control column, not a fact: read aloud, not drawn. */
 const UNLABELLED = new Set<VideoRowColumn>(["select", "poster", "menu"]);
 const SORT_COLUMN: Partial<Record<VideoRowColumn, VideoRowSortKey>> = { title: "title", status: "status", uploaded: "uploaded" };
 
-/** The columns of `columns` that fit `width` (px), dropping uploader, uploaded, then notes (S8). An unmeasured width (0) drops nothing. */
+/** The columns of `columns` that fit `width` (px) with the title at its 240px floor, dropping uploader, uploaded, then notes (S8). An unmeasured width (0) drops nothing. */
 export function videoRowColumnsToFit(columns: readonly VideoRowColumn[], width: number): VideoRowColumn[] {
   if (width <= 0) return [...columns];
   const dropped = new Set<VideoRowColumn>();
-  let total = columns.reduce((sum, column) => sum + SIZES[column], 0);
+  let total = columns.reduce((sum, column) => sum + leastWidth(column), 0);
   for (const column of FIT_DROP_ORDER) {
     if (total <= width) break;
     if (!columns.includes(column)) continue;
@@ -110,6 +118,16 @@ export function videoRowColumnsToFit(columns: readonly VideoRowColumn[], width: 
     total -= SIZES[column];
   }
   return columns.filter((column) => !dropped.has(column));
+}
+
+/**
+ * The title column's width among `fitted` at `width` (px): every pixel the other columns leave, so a table that fits is exactly the panel's width, and never below the 240px
+ * floor (the table is then wider than the panel, and scrolls). Unmeasured (0): its 280px size.
+ */
+export function videoRowTitleSize(fitted: readonly VideoRowColumn[], width: number): number {
+  if (width <= 0) return SIZES.title;
+  const others = fitted.reduce((sum, column) => (column === "title" ? sum : sum + SIZES[column]), 0);
+  return Math.max(TITLE_FLOOR, Math.floor(width - others));
 }
 
 // The Dashboard Table's metrics (#923): 8px each side of a column, no vertical padding (the row's height centres it), 16px at the table's edges, sentence-case 12px headers.
@@ -148,7 +166,7 @@ function Menu({ item }: { item: VideoRowItem }) {
 function Badges({ item, withVersion }: { item: VideoRowItem; withVersion: boolean }) {
   return <>
     {withVersion && !item.locked && item.version !== null && <Badge variant="outline" data-testid="video-row-version" className={cn(MONO, "shrink-0 normal-case text-foreground-secondary")}>{`v${item.version}`}</Badge>}
-    {(item.premium || item.locked) && <Badge variant="outline" className="shrink-0 text-foreground-secondary">Premium</Badge>}
+    {(item.premium || item.locked) && (item.premiumBadge ?? <Badge variant="outline" className="shrink-0 text-foreground-secondary">Premium</Badge>)}
     {item.linked && <Badge variant="outline" className="shrink-0 text-foreground-secondary"><Link2 aria-hidden="true" /><span className="sr-only">On a Review link</span></Badge>}
   </>;
 }
@@ -272,25 +290,31 @@ export function VideoRows({ items, columns, compact = false, tone = "default", l
   return <section aria-label={label} data-testid="video-rows" data-tone={tone}>
     <SettingsContext.Provider value={settings}>
       <Frame dense className={cn("min-w-0", tone === "paper" && "bg-background")}>
-        <FramePanel ref={panelRef} className="flex min-w-0 flex-col p-0">
-          {compact
-            ? <CompactList items={items} columns={columns} rowAttributes={rowAttributes} />
-            : <RowsGrid items={items} columns={columns} fitted={videoRowColumnsToFit(columns, width)} sort={sort} rowAttributes={rowAttributes} />}
+        <FramePanel className="flex min-w-0 flex-col p-0">
+          {/* Measured inside the panel's hairlines: the width the table has. */}
+          <div ref={panelRef} className="min-w-0">
+            {compact
+              ? <CompactList items={items} columns={columns} rowAttributes={rowAttributes} />
+              : <RowsGrid items={items} columns={columns} width={width} sort={sort} rowAttributes={rowAttributes} />}
+          </div>
         </FramePanel>
       </Frame>
     </SettingsContext.Provider>
   </section>;
 }
 
-function RowsGrid({ items, columns, fitted, sort, rowAttributes }: {
-  items: readonly VideoRowItem[]; columns: readonly VideoRowColumn[]; fitted: readonly VideoRowColumn[]; sort: VideoRowsSort | undefined;
+function RowsGrid({ items, columns, width, sort, rowAttributes }: {
+  items: readonly VideoRowItem[]; columns: readonly VideoRowColumn[]; /** The panel's measured width, 0 until known. */ width: number; sort: VideoRowsSort | undefined;
   rowAttributes: (item: VideoRowItem) => ReturnType<ReturnType<typeof useRowAttributes>>;
 }) {
   const columnsKey = columns.join(",");
   const sortableKey = sort?.sortable.join(",") ?? "";
   // Built once per column set (lesson #431: a new column array remounts every row).
   const definitions = useMemo(() => buildColumns(columnsKey.split(",") as VideoRowColumn[], sortableKey === "" ? [] : sortableKey.split(",") as VideoRowSortKey[]), [columnsKey, sortableKey]);
-  const visibility = useMemo<ColumnVisibilityState>(() => Object.fromEntries(columns.map((id) => [id, fitted.includes(id)])), [columns, fitted]);
+  const fitted = useMemo(() => videoRowColumnsToFit(columnsKey.split(",") as VideoRowColumn[], width), [columnsKey, width]);
+  const visibility = useMemo<ColumnVisibilityState>(() => Object.fromEntries(columnsKey.split(",").map((id) => [id, fitted.includes(id as VideoRowColumn)])), [columnsKey, fitted]);
+  // The title takes the width the others leave, so a table that fits is exactly the panel's width (no spread over every column).
+  const sizing = useMemo(() => ({ title: videoRowTitleSize(fitted, width) }), [fitted, width]);
   const sorting = useMemo<SortingState>(() => (sort ? [{ id: sort.key, desc: sort.dir === "desc" }] : []), [sort]);
   const onSortingChange = (updater: Updater<SortingState>) => {
     if (!sort) return;
@@ -308,7 +332,7 @@ function RowsGrid({ items, columns, fitted, sort, rowAttributes }: {
     data,
     columns: definitions,
     getRowId,
-    state: { sorting, columnVisibility: visibility },
+    state: { sorting, columnVisibility: visibility, columnSizing: sizing },
     onSortingChange,
   });
   const rowProps = useCallback((row: Row<DataGridFeatures, VideoRowItem>) => rowAttributes(row.original), [rowAttributes]);
@@ -323,7 +347,10 @@ function RowsGrid({ items, columns, fitted, sort, rowAttributes }: {
       bodyRow: "relative h-13 bg-card",
     }}
   >
-    <DataGridContainer><DataGridTable rowProps={rowProps} /></DataGridContainer>
+    {/* As the Dashboard Table: where even the title's floor does not fit (the Project sheet at 768), the table scrolls sideways instead of the container clipping Actions. */}
+    <DataGridContainer>
+      <DataGridScrollArea orientation="horizontal" data-testid="video-rows-scroll"><DataGridTable rowProps={rowProps} /></DataGridScrollArea>
+    </DataGridContainer>
   </DataGrid>;
 }
 

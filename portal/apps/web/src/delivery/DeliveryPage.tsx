@@ -156,10 +156,12 @@ export function DeliveryPage(props: DeliveryPageProps) {
   // Back from a review lands on the tile it opened: a jump, not an animated scroll (the page sets no smooth scroll-behavior, so there is no motion for reduced motion to stop), the TILE centred (not its title link, which sits at the tile's foot) so the sticky tab bar never covers its poster, then focus on its open link without a second
   // scroll (the browser's own `:focus-visible` draws the ring).
   // The Film tab's list layout is a lazy chunk (#941): on a first visit its rows mount after this effect, so it waits for the first films to appear, lands once if its film is among them, and stops.
+  // It also stops if the chunk fails (the load error shows instead, #933 fix round 1): no film will come, so nothing is left to wait for.
   useEffect(() => {
     const root = page.current;
     if (returning === null || !root) return;
     const films = () => [...root.querySelectorAll<HTMLElement>('[data-testid="delivery-film-item"]')];
+    const failed = () => root.querySelector('[data-testid="view-load-error"]') !== null;
     const land = () => {
       const item = films().find((element) => element.dataset.handle === returning.handle);
       const open = item?.querySelector<HTMLElement>('[data-testid="delivery-film-open"]');
@@ -168,7 +170,9 @@ export function DeliveryPage(props: DeliveryPageProps) {
       open.focus({ preventScroll: true });
     };
     if (films().length > 0 || typeof MutationObserver === "undefined") { land(); return; }
-    const observer = new MutationObserver(() => { if (films().length === 0) return; observer.disconnect(); land(); });
+    const observer = new MutationObserver(() => {
+      if (films().length > 0) { observer.disconnect(); land(); } else if (failed()) observer.disconnect();
+    });
     observer.observe(root, { childList: true, subtree: true });
     return () => { observer.disconnect(); };
   }, [returning]);

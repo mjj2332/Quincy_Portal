@@ -32,7 +32,7 @@ import { VideoGridToolbar } from "./VideoGridToolbar";
 import { ReviewLinksHost, ReviewLinksOpenButton } from "./ReviewLinksHost";
 import { PROJECT_SHEET_CLOSE_SCROLL_MARGIN } from "../quincy/ProjectSheet";
 import { ReviewLinkStoreContext, useReviewLinksUi } from "./use-review-links-ui";
-import { stepTargets } from "../../lib/video-step";
+import { newestVersion, stepTargets } from "../../lib/video-step";
 import type { StepDelta, StepVia } from "../quincy/VideoStepControl";
 import type { ViewerStepEntry } from "./VideoReviewViewer";
 
@@ -174,7 +174,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   const opener = useRef<HTMLElement | null>(null);
   const openerVideoId = useRef<string | null>(null);
   /** A tile or a Video row opened this film (#938: the same path for both layouts). `version` from a tile's Versions menu, else the newest. */
-  const openFromGrid = (picked: VideoDto, trigger: HTMLElement, version?: number) => { opener.current = trigger; openerVideoId.current = picked.id; setOpenVideoId(picked.id, version ?? Math.max(...picked.versions.map((entry) => entry.version))); };
+  const openFromGrid = (picked: VideoDto, trigger: HTMLElement, version?: number) => { opener.current = trigger; openerVideoId.current = picked.id; setOpenVideoId(picked.id, version ?? newestVersion(picked)); };
   const openVideo = openVideoId ? videos.data?.find((video) => video.id === openVideoId) ?? null : null;
   // Previous / next (#936) through the films the grid shows, in its order (sort and Review status filter applied), by id on every render. A step takes the tile's path: newest Version, URL by replace.
   const stepAt = stepTargets({ shown: arranged, openId: openVideoId });
@@ -182,7 +182,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
     const target = delta === 1 ? stepAt.next : stepAt.prev;
     if (!target) return;
     opener.current = null; openerVideoId.current = null;
-    setOpenVideoId(target.id, Math.max(...target.versions.map((entry) => entry.version)), { via, delta });
+    setOpenVideoId(target.id, newestVersion(target), { via, delta });
   };
   const viewerStep = stepAt.total > 1 || (stepAt.position === null && stepAt.total > 0) ? { position: stepAt.position, total: stepAt.total, canPrev: stepAt.prev !== null, canNext: stepAt.next !== null, onStep: stepTo } : null;
   // The film open as of this render. A viewer whose film is no longer the open one is being replaced by a step (or Back / Forward): it hands focus to nothing, never to its old tile behind the next viewer (R1).
@@ -250,7 +250,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
       ...(trashEnabled ? { remove: { disabled: archived, onOpen: () => setDeleting({ videoId: video.id, title: video.title }) } } : {}),
     };
   };
-  const deletingVideo =deleting ? videos.data?.find((video) => video.id === deleting.videoId) ?? null : null;
+  const deletingVideo = deleting ? videos.data?.find((video) => video.id === deleting.videoId) ?? null : null;
 
   return <section aria-labelledby="video-films-heading" data-testid="video-films">
     <div className="workspace-intro workspace-intro--stack" data-testid="video-films-header">

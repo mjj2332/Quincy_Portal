@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stepTargets } from "./video-step";
+import { newestVersion, stepTargets } from "./video-step";
 
 const a = { id: "a" }; const b = { id: "b" }; const c = { id: "c" };
 
@@ -16,5 +16,12 @@ describe("stepTargets (#936)", () => {
   });
   it("has nothing open: no position, no step", () => {
     expect(stepTargets({ shown: [a, b], openId: null })).toEqual({ position: null, total: 2, prev: null, next: null });
+  });
+});
+
+describe("newestVersion", () => {
+  it("is the highest Version number, whatever order the list holds them in", () => {
+    expect(newestVersion({ versions: [{ version: 2 }, { version: 5 }, { version: 1 }] })).toBe(5);
+    expect(newestVersion({ versions: [{ version: 1 }] })).toBe(1);
   });
 });

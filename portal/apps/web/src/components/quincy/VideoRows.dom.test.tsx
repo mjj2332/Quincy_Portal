@@ -1,7 +1,8 @@
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { VideoRows, videoRowColumnsToFit, type VideoRowColumn, type VideoRowItem } from "./VideoRows";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { VideoRows, videoRowColumnsToFit, videoRowTitleSize, type VideoRowColumn, type VideoRowItem } from "./VideoRows";
+import "../../testing/dom-polyfills";
 
 /**
  * #938: the one Video row presentation (`VideoRows`), shared by the staff Video tab (#938, #939), the guest Review link page (#940) and the Delivery page (#941). This suite pins the
@@ -119,6 +120,21 @@ describe("VideoRows — the table (#938)", () => {
     expect(row.textContent).toContain("On a Review link");
   });
 
+  it("draws the caller's Premium mark in place of the neutral one, on a premium or a locked row (story 54)", async () => {
+    await mount(<VideoRows items={[
+      film({ premium: true, premiumBadge: <span data-testid="caller-premium">Premium</span> }),
+      film({ id: "v2", title: "Teaser", locked: true, version: null, durationMs: null, openNotes: null, premiumBadge: <span data-testid="caller-premium">Premium</span> }),
+      film({ id: "v3", title: "Plain", premium: true }),
+    ]} columns={GUEST} label="Films" testIds={TEST_IDS} />);
+    const [premium, locked, plain] = rows();
+    for (const row of [premium!, locked!]) {
+      expect(row.querySelector('[data-testid="caller-premium"]')).not.toBeNull();
+      expect([...row.querySelectorAll("span")].filter((mark) => mark.textContent === "Premium")).toHaveLength(1);
+    }
+    expect(plain!.querySelector('[data-testid="caller-premium"]')).toBeNull();
+    expect(plain!.textContent).toContain("Premium");
+  });
+
   it("puts rowAttrs on the row and the video id on the row and its open control", async () => {
     await mount(<VideoRows items={[film({ dataVideoId: "v1", rowAttrs: { "data-handle": "film-1" } })]} columns={GUEST} label="Films" testIds={{ row: "delivery-film-item", open: "delivery-film-open" }} />);
     const row = document.querySelector<HTMLElement>('[data-testid="delivery-film-item"]')!;
@@ -210,16 +226,68 @@ describe("videoRowColumnsToFit (S8)", () => {
     expect(videoRowColumnsToFit(all, 0)).toEqual(all);
     expect(videoRowColumnsToFit(all, 4000)).toEqual(all);
   });
-  // The staff set measures 1092px at its column sizes; uploader is 180, uploaded 120, notes 80.
+  // Fitted against the title's 240px floor (plan D5), not its 280px unmeasured size: the staff set needs 1052px; uploader is 180, uploaded 120, notes 80.
   const droppedAt = (width: number) => all.filter((column) => !videoRowColumnsToFit(all, width).includes(column));
   it("drops uploader, then uploaded, then notes, and never the title", () => {
-    expect(droppedAt(1092)).toEqual([]);
-    expect(droppedAt(1000)).toEqual(["uploader"]);
-    expect(droppedAt(900)).toEqual(["uploaded", "uploader"]);
-    expect(droppedAt(780)).toEqual(["notes", "uploaded", "uploader"]);
+    expect(droppedAt(1052)).toEqual([]);
+    expect(droppedAt(1051)).toEqual(["uploader"]);
+    expect(droppedAt(872)).toEqual(["uploader"]);
+    expect(droppedAt(871)).toEqual(["uploaded", "uploader"]);
+    expect(droppedAt(752)).toEqual(["uploaded", "uploader"]);
+    expect(droppedAt(751)).toEqual(["notes", "uploaded", "uploader"]);
     expect(droppedAt(320)).toEqual(["notes", "uploaded", "uploader"]);
   });
   it("skips a column the set does not have", () => {
-    expect(videoRowColumnsToFit(["poster", "title", "duration", "notes"], 500)).toEqual(["poster", "title", "duration"]);
+    expect(videoRowColumnsToFit(["poster", "title", "duration", "notes"], 496)).toEqual(["poster", "title", "duration", "notes"]);
+    expect(videoRowColumnsToFit(["poster", "title", "duration", "notes"], 495)).toEqual(["poster", "title", "duration"]);
+  });
+});
+
+describe("videoRowTitleSize", () => {
+  const fitted: readonly VideoRowColumn[] = ["select", "poster", "title", "status", "notes", "duration", "uploaded", "menu"]; // 632px besides the title
+  it("is the title's 280px while the width is unmeasured", () => {
+    expect(videoRowTitleSize(fitted, 0)).toBe(280);
+  });
+  it("takes every pixel the other columns leave, so the table is exactly as wide as the panel", () => {
+    expect(videoRowTitleSize(fitted, 1000)).toBe(368);
+    expect(videoRowTitleSize(fitted, 872)).toBe(240);
+  });
+  it("never goes below its 240px floor: the table is then wider than the panel and scrolls", () => {
+    expect(videoRowTitleSize(fitted, 700)).toBe(240);
+  });
+});
+
+describe("VideoRows — width (S8, #933 fix round 1)", () => {
+  const OriginalObserver = globalThis.ResizeObserver;
+  let width = 0;
+  beforeEach(() => {
+    globalThis.ResizeObserver = class {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(target: Element) { this.callback([{ target, contentRect: { width } } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver); }
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+  });
+  afterEach(() => { globalThis.ResizeObserver = OriginalObserver; });
+  const th = (name: string) => [...document.querySelectorAll("th")].find((cell) => cell.textContent?.trim() === name)!;
+  const widths = () => [...document.querySelectorAll("th")].map((cell) => Number.parseFloat(cell.style.width));
+  const staffFilm = () => film({ select: { selected: false, onToggle: () => undefined }, menu: <button type="button">Film actions</button> });
+
+  it("gives the title the width the other columns leave, the table exactly the panel's width", async () => {
+    width = 1000;
+    await mount(<VideoRows items={[staffFilm()]} columns={STAFF} label="Films" testIds={TEST_IDS} />);
+    expect(headers()).not.toContain("Uploader");
+    expect(th("Title").style.width).toBe("368px");
+    expect(widths().reduce((sum, w) => sum + w, 0)).toBe(1000);
+  });
+
+  it("at the Project sheet's 768px panel keeps the title at its floor and puts the table in a horizontal scroll area, so Actions is never clipped", async () => {
+    width = 652;
+    await mount(<VideoRows items={[staffFilm()]} columns={STAFF} label="Films" testIds={TEST_IDS} />);
+    expect(headers()).toEqual(["Select", "Poster", "Title", "Status", "Duration", "Actions"]);
+    expect(th("Title").style.width).toBe("240px");
+    const scroller = document.querySelector('[data-testid="video-rows-scroll"]');
+    expect(scroller).not.toBeNull();
+    expect(scroller!.querySelector("table")).not.toBeNull();
   });
 });

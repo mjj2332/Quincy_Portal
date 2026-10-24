@@ -2482,92 +2482,92 @@ function DataGridTable<TData extends object>({
     <DataGridTableRowPropsContext.Provider
       value={rowProps as DataGridTableRowProps<object> | undefined}
     >
-    <DataGridTableViewport>
-      <DataGridTableBase>
-        {renderHeader && (
-          <DataGridTableHead>
-            {mergedHeaderGroups.map((headerGroup) => {
-              return (
-                <DataGridTableHeadRow
-                  key={headerGroup.id}
-                  rowId={headerGroup.id}
-                >
-                  {headerGroup.headers
-                    .filter((header) => header.column.getIsPinned() !== "end")
-                    .map((header) => {
-                      const { column } = header
+      <DataGridTableViewport>
+        <DataGridTableBase>
+          {renderHeader && (
+            <DataGridTableHead>
+              {mergedHeaderGroups.map((headerGroup) => {
+                return (
+                  <DataGridTableHeadRow
+                    key={headerGroup.id}
+                    rowId={headerGroup.id}
+                  >
+                    {headerGroup.headers
+                      .filter((header) => header.column.getIsPinned() !== "end")
+                      .map((header) => {
+                        const { column } = header
 
-                      return (
-                        <DataGridTableHeadRowCell
-                          header={header}
-                          key={header.id}
-                        >
-                          {header.isPlaceholder
-                            ? null
-                            : flexRender(
-                                header.column.columnDef.header,
-                                header.getContext()
+                        return (
+                          <DataGridTableHeadRowCell
+                            header={header}
+                            key={header.id}
+                          >
+                            {header.isPlaceholder
+                              ? null
+                              : flexRender(
+                                  header.column.columnDef.header,
+                                  header.getContext()
+                                )}
+                            {props.tableLayout?.columnsResizable &&
+                              column.getCanResize() && (
+                                <DataGridTableHeadRowCellResize header={header} />
                               )}
-                          {props.tableLayout?.columnsResizable &&
-                            column.getCanResize() && (
-                              <DataGridTableHeadRowCellResize header={header} />
-                            )}
-                        </DataGridTableHeadRowCell>
-                      )
-                    })}
-                  {props.tableLayout?.columnsResizable &&
-                  hasRightPinnedColumns ? (
-                    <DataGridTableFillHeadCell />
-                  ) : null}
-                  {headerGroup.headers
-                    .filter((header) => header.column.getIsPinned() === "end")
-                    .map((header) => {
-                      const { column } = header
+                          </DataGridTableHeadRowCell>
+                        )
+                      })}
+                    {props.tableLayout?.columnsResizable &&
+                    hasRightPinnedColumns ? (
+                      <DataGridTableFillHeadCell />
+                    ) : null}
+                    {headerGroup.headers
+                      .filter((header) => header.column.getIsPinned() === "end")
+                      .map((header) => {
+                        const { column } = header
 
-                      return (
-                        <DataGridTableHeadRowCell
-                          header={header}
-                          key={header.id}
-                        >
-                          {header.isPlaceholder
-                            ? null
-                            : flexRender(
-                                header.column.columnDef.header,
-                                header.getContext()
+                        return (
+                          <DataGridTableHeadRowCell
+                            header={header}
+                            key={header.id}
+                          >
+                            {header.isPlaceholder
+                              ? null
+                              : flexRender(
+                                  header.column.columnDef.header,
+                                  header.getContext()
+                                )}
+                            {props.tableLayout?.columnsResizable &&
+                              column.getCanResize() && (
+                                <DataGridTableHeadRowCellResize header={header} />
                               )}
-                          {props.tableLayout?.columnsResizable &&
-                            column.getCanResize() && (
-                              <DataGridTableHeadRowCellResize header={header} />
-                            )}
-                        </DataGridTableHeadRowCell>
-                      )
-                    })}
-                  {props.tableLayout?.columnsResizable &&
-                  !hasRightPinnedColumns ? (
-                    <DataGridTableFillHeadCell />
-                  ) : null}
-                </DataGridTableHeadRow>
-              )
-            })}
-          </DataGridTableHead>
-        )}
-
-        {renderHeader &&
-          (props.tableLayout?.stripped || !props.tableLayout?.rowBorder) && (
-            <DataGridTableRowSpacer />
+                          </DataGridTableHeadRowCell>
+                        )
+                      })}
+                    {props.tableLayout?.columnsResizable &&
+                    !hasRightPinnedColumns ? (
+                      <DataGridTableFillHeadCell />
+                    ) : null}
+                  </DataGridTableHeadRow>
+                )
+              })}
+            </DataGridTableHead>
           )}
 
-        <DataGridTableBody>
-          <MemoizedDataGridTableBodyRows table={table} />
-          {props.appendRow}
-          <DataGridTableAddRow />
-        </DataGridTableBody>
+          {renderHeader &&
+            (props.tableLayout?.stripped || !props.tableLayout?.rowBorder) && (
+              <DataGridTableRowSpacer />
+            )}
 
-        {footerContent && (
-          <DataGridTableFoot>{footerContent}</DataGridTableFoot>
-        )}
-      </DataGridTableBase>
-    </DataGridTableViewport>
+          <DataGridTableBody>
+            <MemoizedDataGridTableBodyRows table={table} />
+            {props.appendRow}
+            <DataGridTableAddRow />
+          </DataGridTableBody>
+
+          {footerContent && (
+            <DataGridTableFoot>{footerContent}</DataGridTableFoot>
+          )}
+        </DataGridTableBase>
+      </DataGridTableViewport>
     </DataGridTableRowPropsContext.Provider>
   )
 }

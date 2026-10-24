@@ -84,6 +84,8 @@ function FilmRows({ items, hrefs, unlock, onRequestUnlock, pageSlug, compact, op
       return {
         ...base, locked: true, posterUrl: null, version: null, durationMs: null, openNotes: null,
         ...lockedFilmProps(unlockViewAt(state, now), name, () => { onRequestUnlock(item.handle); }),
+        // Story 54: the locked tile's amber Premium badge.
+        premiumBadge: <PremiumBadge />,
         caption: <LockedRowLine state={state} />,
       };
     }
@@ -93,7 +95,7 @@ function FilmRows({ items, hrefs, unlock, onRequestUnlock, pageSlug, compact, op
       ...(hrefs ? { menu: <FilmMenu item={item} hrefs={hrefs} /> } : {}),
     };
   });
-  return <ViewLoadBoundary viewLabel="film list">
+  return <ViewLoadBoundary viewLabel="film list" message="The list could not be loaded.">
     <Suspense fallback={<RowsLoading count={items.length} />}>
       <VideoRows items={rows} columns={hrefs ? COLUMNS : COLUMNS_NO_MENU} compact={compact} tone="paper" label="Film" testIds={ROW_TEST_IDS} />
     </Suspense>
@@ -102,7 +104,7 @@ function FilmRows({ items, hrefs, unlock, onRequestUnlock, pageSlug, compact, op
 
 /** While the rows' chunk loads: a bar in each row's place (at most six). */
 function RowsLoading({ count }: { count: number }) {
-  return <div data-testid="delivery-film-rows-loading" aria-busy="true" className="grid gap-[var(--space-1)]">
+  return <div role="status" data-testid="delivery-film-rows-loading" aria-busy="true" className="grid gap-[var(--space-1)]">
     <span className="sr-only">Loading the film list</span>
     {Array.from({ length: Math.min(Math.max(count, 1), 6) }, (_, index) => <Skeleton key={index} className="h-13 w-full" />)}
   </div>;

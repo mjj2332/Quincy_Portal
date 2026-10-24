@@ -26,9 +26,8 @@ import { CopyTextButton } from "./CopyTextButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
 import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet-layers";
 import { ReviewPaneHideContext, ReviewSplit, useReviewPane, useReviewPaneControls } from "../quincy/ReviewPane";
-import { VideoStepControl, type StepDelta, type StepVia } from "../quincy/VideoStepControl";
-import { cn } from "@/lib/utils";
-import { blurComposerField, isComposerField, useReviewSheet, useSheetMode } from "../quincy/ReviewSheet";
+import { VideoStepControl, type StepDelta, type StepVia, type VideoStepControlProps } from "../quincy/VideoStepControl";
+import { blurComposerField, isComposerField, useReviewSheet, useSheetMode, type ReviewSheetState } from "../quincy/ReviewSheet";
 import { useVisualViewport } from "../../lib/use-visual-viewport";
 import { useInkCanvas } from "../../lib/use-ink-canvas";
 import type { SheetStop } from "../../lib/review-pane-geometry";
@@ -71,11 +70,6 @@ const preloadCompare = (withNotes: boolean) => { void loadCompare(); if (withNot
 const PHONE_QUERY = "(width < 721px)";
 
 const VERSION_SELECT_ID = "video-review-version";
-/**
- * A viewer reached by a step (#936) carries `data-entry="step"` on its popup and backdrop, and this class turns reui `dialog`'s open animation (fade and zoom in) off there;
- * `!` so it beats `data-open:animate-in` whatever the CSS order. The attribute is the switch, so the class can sit on every viewer.
- */
-const STEP_ENTRY = "data-[entry=step]:!animate-none";
 
 /** Below this bar width (a container query on the header) an action's label is spoken, not drawn, and a tooltip names it, so the title keeps its floor (`TITLE_FLOOR`) from 721px up (#878). */
 /** The title never shrinks below this many characters, so a crowded bar truncates it last, not to nothing (#878). */
@@ -108,22 +102,27 @@ type ViewerBodyProps = Parameters<typeof ViewerBody>[0];
  * Social off, the Version from the URL), while the side pane's state lives here, above that key, so a pane revealed for this visit or shown in a narrow window stays as it is
  * (#933 S5). The visit lives in this chunk, so the collection panel never loads the pane's code.
  */
-export function VideoReviewViewer(props: Omit<ViewerBodyProps, "pane">) {
+export function VideoReviewViewer(props: Omit<ViewerBodyProps, "pane" | "sheetStop">) {
   const pane = useReviewPane(useMediaQuery(PHONE_QUERY));
-  return <ViewerBody key={props.video.id} {...props} pane={pane} />;
+  // The phone notes sheet's stop (collapsed, half, full) belongs to the visit too (story 19, S5): a step leaves the sheet where the person put it. A new visit opens at half.
+  const [stop, onStop] = useState<SheetStop>("half");
+  const sheetStop = useMemo(() => ({ stop, onStop }), [stop]);
+  return <ViewerBody key={props.video.id} {...props} pane={pane} sheetStop={sheetStop} />;
 }
 
-function ViewerBody({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download, reviewLinks, deepLink, reviewStatus, social, step, entry, pane }: {
+function ViewerBody({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download, reviewLinks, deepLink, reviewStatus, social, step, entry, pane, sheetStop }: {
   video: VideoDto;
   onClose: () => void;
   /** The control that opened the viewer; focus goes back to it on close. `false`: move focus nowhere (a step to another film is replacing this viewer, #936). */
   returnFocusTo?: () => HTMLElement | null | false;
   /** Previous / next through the films the grid shows (#936); absent when there is nothing to step through. */
-  step?: { position: number | null; total: number; canPrev: boolean; canNext: boolean; onStep: (delta: StepDelta, via: StepVia) => void };
+  step?: Pick<VideoStepControlProps, "position" | "total" | "canPrev" | "canNext" | "onStep">;
   /** This viewer was reached by a step (#936): it appears without the dialog's entry animation, and a step by button puts focus on the step button. Read once, at mount. */
   entry?: ViewerStepEntry;
   /** The side pane's state, held by the visit (`VideoReviewViewer`) so it outlives a step. */
   pane: ReturnType<typeof useReviewPane>;
+  /** The phone notes sheet's stop, held by the visit (`VideoReviewViewer`) so it outlives a step. */
+  sheetStop: Pick<ReviewSheetState, "stop" | "onStop">;
   /** Present only when the notes part is on. */
   notes?: { projectId: string; role: Role; userId: string | null; archived: boolean; forms: NoteFormStore; /** The Project's `markup` part is on (#741 6b-ui). */ markup?: boolean; /** The Project's `export` part is on (#741 9). */ exportEnabled?: boolean; /** #835: the note the link names (`&note=`): its thread is selected and the film sought to its frame. */ openNoteId?: string };
   /** Present only when the Project's `compare` part is on (#741 7c). */
@@ -203,7 +202,7 @@ function ViewerBody({ video, onClose, returnFocusTo, notes, compare, delivery, t
   // The sheet's one mode (#927; lesson "A layout switched by two flags will disagree…"): the pen is down from its press, its frame confirmation included, so the sheet never
   // flashes back to its stop meanwhile. Everything below reads `sheetControl.mode` and nothing overrides it.
   const penDown = useSyncExternalStore(forms ? forms.subscribe : noSubscribe, () => (forms ? forms.slot(assetId).draw !== null : false));
-  const sheetControl = useSheetMode(useReviewSheet({ filmAspect: shown.height > 0 ? shown.width / shown.height : 16 / 9 }), penDown);
+  const sheetControl = useSheetMode({ ...useReviewSheet({ filmAspect: shown.height > 0 ? shown.width / shown.height : 16 / 9 }), ...sheetStop }, penDown);
   const sheetStopRef = useRef(sheetControl.stop);
   sheetStopRef.current = sheetControl.stop;
   const setSheetStop = sheetControl.onStop;
@@ -531,7 +530,7 @@ function ViewerBody({ video, onClose, returnFocusTo, notes, compare, delivery, t
   useInkCanvas(handheld);
   const chipRef = useRef<HTMLButtonElement | null>(null);
   const summaries = useVideoVersionSummariesQuery(notes?.projectId ?? reviewStatus?.projectId ?? trash?.projectId ?? download?.projectId ?? "", video.id, phone && versionsOpen && (notes ?? reviewStatus ?? trash ?? download) !== undefined, notes?.role ?? reviewStatus?.role);
-  const backdropProps = { ...(phone ? PHONE_BACKDROP : DESKTOP_BACKDROP), className: cn(phone ? PHONE_BACKDROP.className : undefined, STEP_ENTRY), ...(entryAt ? { "data-entry": "step" } : {}) };
+  const backdropProps = { ...(phone ? PHONE_BACKDROP : DESKTOP_BACKDROP), ...(entryAt ? { "data-entry": "step" } : {}) };
   // `[` / `]` step (#936) except in Full screen (its header is hidden) or with the pen down; Compare allows them (a step leaves it).
   const stepKeys = !imm && !penDown;
   const desktopHeader = <header className="@container flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-1)] text-card-foreground max-[721px]:gap-x-[var(--space-2)] max-[721px]:px-[var(--space-3)]">
@@ -724,8 +723,9 @@ function ViewerBody({ video, onClose, returnFocusTo, notes, compare, delivery, t
       showCloseButton={false}
       // On a phone the backdrop is solid ink (#879 fix r7): while iOS raises the keyboard the dialog is shortened to what is left above it, and the band below
       // shows the backdrop, never the light Project page through the scrim. Desktop keeps the scrim.
-      // A step (#936) swaps one viewer for the next in one commit: the next appears at once instead of fading in over the Project page.
       overlayProps={backdropProps}
+      // A step (#936) swaps one viewer for the next in one commit: the next appears at once (reui dialog's scoped `entry="none"`) instead of fading in over the Project page.
+      entry={entryAt ? "none" : "animate"}
       data-entry={entryAt ? "step" : undefined}
       // `false` (a step is replacing this viewer): no focus return, or Base UI would focus the old film's tile behind the next viewer a microtask later.
       finalFocus={() => { const opener = returnFocusTo?.(); if (opener === false) return false; return opener && opener.isConnected ? opener : true; }}
@@ -737,7 +737,7 @@ function ViewerBody({ video, onClose, returnFocusTo, notes, compare, delivery, t
         if (!phone && !imm && modeRef.current === "single" && isPaneToggleKey(event.nativeEvent)) { event.preventDefault(); paneControls.toggle(); return; }
         (modeRef.current === "compare" ? compareRef.current : playerRef.current)?.handleKeyDown(event);
       }}
-      className={`top-0 left-0 flex h-dvh w-dvw max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none bg-background p-0 text-foreground ring-0 focus-visible:!outline-none sm:max-w-none ${STEP_ENTRY}`}
+      className="top-0 left-0 flex h-dvh w-dvw max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none bg-background p-0 text-foreground ring-0 focus-visible:!outline-none sm:max-w-none"
     >
       <OverlayContainerContext.Provider value={slot}>
       {/* The header sits outside the mode switch so the Compare button is the same node in both modes (focus survives the switch). */}

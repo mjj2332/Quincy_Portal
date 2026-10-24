@@ -3,6 +3,7 @@ import { PHONE_VIEWPORT_QUERY, useMediaQuery } from "../../lib/use-media-query";
 import type { VideoUploadState } from "../../lib/video-upload";
 import type { VideoGridPrefs, VideoGridSort } from "../../lib/video-grid-prefs";
 import { useVersionFiles, IDLE_VERSION_FILE, type VersionFileStore } from "../../lib/version-file-state";
+import { Badge } from "../reui/badge";
 import { VideoRows, type VideoRowColumn, type VideoRowItem, type VideoRowSortKey, type VideoRowsSort } from "../quincy/VideoRows";
 import { videoCardFacts } from "./VideoCard";
 import { hasActiveLink, VideoCardMenu, videoUploadFacts, videoUploadLine, type VideoActions } from "./VideoCardParts";
@@ -55,7 +56,8 @@ export function VideoCollectionRows({ videos, onOpen, actionsFor, canUpload, cur
     return {
       id: video.id, dataVideoId: video.id, title: video.title, posterUrl: newest.posterUrl, version: newest.version, durationMs: newest.durationMs, openNotes: video.latestNoteCount,
       status, uploadedAt: newest.createdAt, uploader: { name: newest.uploadedBy.name },
-      ...(video.premium ? { premium: true } : {}),
+      // Story 54: the tile's Premium chip (VideoTile's `invert` badge), on the row's card without the photo scrim.
+      ...(video.premium ? { premium: true, premiumBadge: <Badge variant="invert" data-testid="video-row-premium" className="shrink-0">Premium</Badge> } : {}),
       ...(hasActiveLink(actions) ? { linked: true } : {}),
       onOpen: (trigger) => { onOpen(video, trigger); },
       ...(actions.select ? { select: actions.select } : {}),
