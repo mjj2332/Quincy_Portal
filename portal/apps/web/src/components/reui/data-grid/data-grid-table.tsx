@@ -22,10 +22,18 @@
  *   body row, the skeleton row and the pinned cells' premixed hover.
  * - The getRowStatus amber/green/destructive tints (row and pinned-cell premixes) removed; the
  *   `deleted` row keeps its opacity and line-through. The Quincy Table passes no getRowStatus.
+ *
+ * QUINCY ADDITION (#938, scoped): `DataGridTable` takes an optional `rowProps(row)`, whose attributes and handlers
+ * land on that row's `<tr>` (the Video row's file drop, `quincy/VideoRows.tsx`, and its data attributes). It travels
+ * by a file-local context so the memoised body rows need no new prop. The grid's own attributes, `onClick`, `ref`
+ * and `style` win; a `className` is appended to the row's classes. A caller that passes none (the Dashboard Table)
+ * renders every row exactly as before (`data-grid-table.row-props.dom.test.tsx`).
  */
 import {
+  createContext,
   Fragment,
   memo,
+  useContext,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -34,6 +42,7 @@ import {
 } from "react"
 import type {
   CSSProperties,
+  HTMLAttributes,
   MouseEvent as ReactMouseEvent,
   ReactNode,
   TouchEvent as ReactTouchEvent,
@@ -58,6 +67,19 @@ import { Button } from "@/components/reui/button"
 import { Checkbox } from "@/components/reui/checkbox"
 import { Spinner } from "@/components/reui/spinner"
 import { PlusIcon } from "lucide-react"
+
+/** Quincy addition (#938): extra attributes and handlers for one body row's `<tr>`; see the header note. */
+type DataGridTableRowProps<TData extends object> = (
+  row: Row<DataGridFeatures, TData>
+) =>
+  | (Omit<HTMLAttributes<HTMLTableRowElement>, "onClick" | "style"> & {
+      [data: `data-${string}`]: string | undefined
+    })
+  | undefined
+
+const DataGridTableRowPropsContext = createContext<
+  DataGridTableRowProps<object> | undefined
+>(undefined)
 
 // Static spacing lookups; called once per cell, so they stay plain string
 // picks instead of runtime variant machinery.
@@ -1580,11 +1602,17 @@ function DataGridTableBodyRow<TData extends object>({
   const { props, table } = useDataGrid()
   const isRowPinned = row.getIsPinned()
   const rowStatus = props.getRowStatus?.(row.original)
+  // Quincy addition (#938): the caller's attributes go first, so the grid's own win.
+  const { className: extraClassName, ...extraRowProps } =
+    useContext(DataGridTableRowPropsContext)?.(
+      row as unknown as Row<DataGridFeatures, object>
+    ) ?? {}
 
   const bodyRowBottomBorderClasses = "[&:not(:last-child)>td]:border-b"
 
   return (
     <tr
+      {...extraRowProps}
       ref={(node) => {
         assignRef(rowRef, node)
         assignRef(dndRef, node)
@@ -1654,7 +1682,8 @@ function DataGridTableBodyRow<TData extends object>({
         props.tableLayout?.rowsPinnable &&
           isRowPinned &&
           props.tableClassNames?.rowPinned,
-        props.tableClassNames?.bodyRow
+        props.tableClassNames?.bodyRow,
+        extraClassName
       )}
     >
       {children}
@@ -2438,15 +2467,21 @@ function DataGridTableHeader<TData extends object>() {
 function DataGridTable<TData extends object>({
   footerContent,
   renderHeader = true,
+  rowProps,
 }: {
   footerContent?: ReactNode
   renderHeader?: boolean
+  /** Quincy addition (#938): attributes and handlers for each body row's `<tr>`; see the header note. */
+  rowProps?: DataGridTableRowProps<TData>
 }) {
   const { table, props } = useDataGrid()
   const mergedHeaderGroups = getDataGridTableMergedHeaderGroups(table)
   const hasRightPinnedColumns = hasDataGridTableRightPinnedColumns(table)
 
   return (
+    <DataGridTableRowPropsContext.Provider
+      value={rowProps as DataGridTableRowProps<object> | undefined}
+    >
     <DataGridTableViewport>
       <DataGridTableBase>
         {renderHeader && (
@@ -2533,8 +2568,11 @@ function DataGridTable<TData extends object>({
         )}
       </DataGridTableBase>
     </DataGridTableViewport>
+    </DataGridTableRowPropsContext.Provider>
   )
 }
+
+export type { DataGridTableRowProps }
 
 export {
   DataGridTable,

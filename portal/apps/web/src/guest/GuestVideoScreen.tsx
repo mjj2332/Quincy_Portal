@@ -1,7 +1,7 @@
 import { flushSync } from "react-dom";
 import { FloatingFocusManager, useFloating } from "@floating-ui/react";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
-import { Check, ChevronLeft, ChevronRight, Copy, DownloadIcon, FolderDown, Maximize, MessageSquareWarning, Smartphone } from "lucide-react";
+import { Check, ChevronLeft, Copy, DownloadIcon, FolderDown, Maximize, MessageSquareWarning, Smartphone } from "lucide-react";
 import { type Box, type GuestDecision, type GuestNoteThreadDto, type GuestSessionResponse, type GuestSocialOverlay, type GuestVideoDto } from "@quincy/shared";
 import { mustTurnUpright, nextPrompt, rotate, readPhoneDevice, UPRIGHT_PROMPT, type ImmersivePrompt, type ImmersiveState } from "../lib/immersive";
 import { readLandscape, useDeviceOrientation, useLandscape } from "../lib/use-device-orientation";
@@ -21,6 +21,7 @@ import { Toggle } from "../components/reui/toggle";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/reui/select";
 import { Tabs, TabsList, TabsTrigger } from "../components/reui/tabs";
 import { PHONE_BAR_TEXT_BUTTON, ReviewPhoneBar, VersionChip } from "../components/quincy/ReviewPhoneBar";
+import { VideoStepControl, useVideoStepKeys, type StepDelta } from "../components/quincy/VideoStepControl";
 import { ActionRow, ActionSeparator, ReviewActionSheet } from "../components/quincy/ReviewActionSheet";
 import { blurComposerField, isComposerField, useReviewSheet, useSheetMode } from "../components/quincy/ReviewSheet";
 import { PHONE_QUERY } from "../lib/review-pane-geometry";
@@ -64,25 +65,10 @@ const FIELD = "input, textarea, select, [contenteditable], [role=listbox], [role
 /** A text field: the compose hook leaves Escape typed into one to the ladder, so the pen is down only for an Escape typed elsewhere. */
 const TEXT_FIELD = "input, textarea, select, [contenteditable]:not([contenteditable='false'])";
 const NOTES_HEADING = "m-0 text-foreground [font:var(--type-h3)]";
-const MODAL = "[role=dialog], [role=alertdialog]";
 const POPUP = "[role=dialog], [role=alertdialog], [role=menu], [role=listbox], [role=combobox]";
 const TOUCH = "pointer-coarse:min-h-11 max-[721px]:min-h-11";
 /** The phone header's ⋯ (`ReviewActionSheet`'s trigger): where focus returns from a dialog one of its rows opened, since the row is gone by then (#879 PR 3b). */
 const headerMenu = () => document.querySelector<HTMLElement>('[data-testid="video-header-menu"]');
-
-/** `[` and `]` step through the videos unless a field, list, modal or modifier owns the key. */
-function useVideoStepKeys(onStep: (delta: -1 | 1) => void) {
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
-      if (event.key !== "[" && event.key !== "]") return;
-      if (event.target instanceof Element && event.target.closest(`${FIELD}, ${MODAL}`)) return;
-      onStep(event.key === "]" ? 1 : -1);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => { window.removeEventListener("keydown", onKeyDown); };
-  }, [onStep]);
-}
 
 /** The player's keys (J / K / L, Space, arrows, Home / End) from anywhere on the screen, so they keep working once focus has moved to a note's anchor. Fields and popups keep their own keys. */
 function usePlayerKeysFromScreen(player: RefObject<VideoPlayerControl | null>) {
@@ -307,7 +293,8 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
     });
   }, [recheckAccess]);
 
-  const step = useCallback((delta: -1 | 1) => { const next = index + delta; if (next >= 0 && next < videos.length) onIndex(next); }, [index, videos.length, onIndex]);
+  const step = useCallback((delta: StepDelta) => { const next = index + delta; if (next >= 0 && next < videos.length) onIndex(next); }, [index, videos.length, onIndex]);
+  // The keys step on every layout, the phone bar's too, which draws no control (pinned by GuestApp.dom.test.tsx), so the screen owns them and the control gets `keys={false}`.
   useVideoStepKeys(step);
   const playerRef = useRef<VideoPlayerControl>(null);
   usePlayerKeysFromScreen(playerRef);
@@ -741,11 +728,7 @@ export function GuestVideoScreen({ api, verify, canDownloadWithoutCode = false, 
         : onBack && <Button type="button" variant="ghost" className={`${TOUCH} shrink-0`} onClick={onBack}><ChevronLeft aria-hidden="true" /><span>All videos</span></Button>}
       <h1 data-testid="guest-video-title" title={video.title} className="m-0 min-w-0 flex-1 truncate [font:var(--type-body)]">{video.title}</h1>
       <div className="flex min-w-0 flex-none items-center gap-[var(--space-3)]">
-      {videos.length > 1 && <div className="flex items-center gap-[var(--space-2)]">
-        <Button type="button" variant="outline" size="icon" aria-label="Previous video" className={TOUCH} disabled={index === 0} onClick={() => { step(-1); }}><ChevronLeft aria-hidden="true" /></Button>
-        <span data-testid="guest-video-position" className="text-foreground-secondary tabular-nums [font:var(--type-label)]">{`${index + 1} of ${videos.length}`}</span>
-        <Button type="button" variant="outline" size="icon" aria-label="Next video" className={TOUCH} disabled={index === videos.length - 1} onClick={() => { step(1); }}><ChevronRight aria-hidden="true" /></Button>
-      </div>}
+      {videos.length > 1 && <VideoStepControl position={index} total={videos.length} canPrev={index > 0} canNext={index < videos.length - 1} onStep={step} noun="video" positionTestId="guest-video-position" keys={false} />}
       <div className="flex min-w-0 max-w-full items-center gap-[var(--space-2)]">
         <label htmlFor={VERSION_SELECT_ID} className="shrink-0 text-foreground-secondary [font:var(--type-label)]">Version</label>
         <OverlayContainerContext.Provider value={slot}>

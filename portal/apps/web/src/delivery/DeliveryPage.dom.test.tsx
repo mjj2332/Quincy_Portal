@@ -6,6 +6,9 @@ import type { DeliveryHrefs, UnlockStates } from "./delivery-model";
 import { DeliveryPage } from "./DeliveryPage";
 import { SLIDE_MS } from "./DeliveryLightbox";
 import { createDeliveryApi } from "./delivery-api";
+import { mockViewport } from "../testing/viewport";
+import { resetUiPrefMemory } from "../lib/ui-prefs";
+import { installLocalStorageShim } from "../testing/local-storage";
 
 vi.mock("../components/LazyImage", () => ({
   LazyImage: ({ src, alt, className, onFailedChange }: { src: string; alt: string; className?: string; onFailedChange?: (failed: boolean) => void }) => <img src={src} alt={alt} className={className} onError={() => { onFailedChange?.(true); }} />,
@@ -715,6 +718,328 @@ describe("film tiles (#882)", () => {
     const grid = byTestId("delivery-film")!.className;
     expect(grid).toContain("grid-cols-[repeat(auto-fill,minmax(min(280px,100%),1fr))]"); expect(grid).toContain("@max-[721px]:grid-cols-1"); expect(grid).toContain("has-[>li:only-child]:grid-cols-1");
     expect(grid.split(" ")).not.toContain("max-[721px]:grid-cols-1");
+  });
+});
+
+describe("stepping in the plain player (#937)", () => {
+  const REVIEW = "/d/review?link=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa#t=secret&v=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const tileOf = (n: number) => document.querySelector<HTMLElement>(`[data-testid="delivery-film-item"][data-handle="${handle(n)}"]`)!;
+  const openOf = (n: number) => tileOf(n).querySelector<HTMLElement>('[data-testid="delivery-film-open"]')!;
+  const player = () => byTestId("delivery-film-player");
+  const title = () => player()!.querySelector("h2")!.textContent;
+  const position = () => byTestId("video-step-position")?.textContent ?? null;
+  const prev = () => byTestId("video-step-previous") as HTMLButtonElement | null;
+  const next = () => byTestId("video-step-next") as HTMLButtonElement | null;
+  const lockedFilm = (n: number, over: Partial<DeliveryPageDto["items"][number]> = {}) => locked(n, { kind: "video", label: `Video ${String(n).padStart(2, "0")}`, url: null, thumbUrl: null, ...over });
+  /** Film tab: 1 plays, 2 opens its review, 3 plays, 4 has no URL, 5 plays. */
+  const mixed = () => [film(1), film(2, { review: { url: REVIEW } }), film(3), film(4, { url: null }), film(5)];
+  const openFilm = async (n: number) => { await click(openOf(n)); await flush(); };
+  const showFilmTab = async (items: DeliveryPageDto["items"]) => { await show(page(items), { hrefs: null }); await click(tab("Film")); };
+
+  it("counts only the films this player plays (no Review link, a URL, unlocked) and steps over the rest", async () => {
+    await showFilmTab(mixed());
+    await openFilm(1);
+    expect(byTestId("video-step-control", player()!)).not.toBeNull();
+    expect(position()).toBe("1 of 3");
+    expect(prev()!.getAttribute("aria-label")).toBe("Previous film"); expect(next()!.getAttribute("aria-label")).toBe("Next film");
+    expect(prev()!.disabled).toBe(true); expect(next()!.disabled).toBe(false);
+    await click(next()!); await flush();
+    expect(title()).toBe("Video 03"); expect(position()).toBe("2 of 3");
+    expect(byTestId("delivery-film-player-video")!.getAttribute("src")).toBe(film(3).url);
+    await click(next()!); await flush();
+    expect(title()).toBe("Video 05"); expect(position()).toBe("3 of 3");
+    expect(next()!.disabled).toBe(true); expect(prev()!.disabled).toBe(false);
+  });
+  it("a press that reaches an end hands focus to the other step button, so the keyboard keeps a live control", async () => {
+    await showFilmTab([film(1), film(2)]);
+    await openFilm(1);
+    next()!.focus(); await click(next()!); await flush();
+    expect(next()!.disabled).toBe(true);
+    expect(document.activeElement).toBe(prev());
+  });
+  it("[ and ] step from inside the player, and do nothing past either end", async () => {
+    await showFilmTab(mixed());
+    await openFilm(3);
+    expect(position()).toBe("2 of 3");
+    await press("]", player()!); await flush();
+    expect(title()).toBe("Video 05");
+    await press("]", player()!); await flush();
+    expect(title()).toBe("Video 05");
+    await press("[", player()!); await flush(); await press("[", player()!); await flush();
+    expect(title()).toBe("Video 01"); expect(position()).toBe("1 of 3");
+    await press("[", player()!); await flush();
+    expect(title()).toBe("Video 01");
+  });
+  it("never steps onto a locked film, and the Premium films step among themselves, not with the Film tab", async () => {
+    await show(page([film(1), film(2), film(3, { premium: true }), lockedFilm(4), film(5, { premium: true })]), { hrefs: null });
+    await click(tab("Premium"));
+    await openFilm(3);
+    expect(position()).toBe("1 of 2");
+    await click(next()!); await flush();
+    expect(title()).toBe("Video 05"); expect(position()).toBe("2 of 2");
+  });
+  it("shows no step control and ignores [ and ] when only one film plays here", async () => {
+    await showFilmTab([film(1), film(2, { review: { url: REVIEW } })]);
+    await openFilm(1);
+    expect(byTestId("video-step-control")).toBeNull();
+    await press("]", player()!); await flush();
+    expect(title()).toBe("Video 01");
+  });
+  it("sits in the title row on a wide screen and in its own row under it on a phone, where the title row is full", async () => {
+    const viewport = mockViewport({ width: 1280 });
+    try {
+      await showFilmTab([film(1), film(2)]);
+      await openFilm(1);
+      const titleRow = () => player()!.querySelector("h2")!.parentElement!;
+      expect(titleRow().contains(byTestId("video-step-control"))).toBe(true);
+      await viewport.set({ width: 390 });
+      expect(byTestId("video-step-control")).not.toBeNull();
+      expect(titleRow().contains(byTestId("video-step-control"))).toBe(false);
+      expect(position()).toBe("1 of 2");
+    } finally { viewport.restore(); }
+  });
+  it("closing after steps returns focus to the film now showing", async () => {
+    await showFilmTab(mixed());
+    openOf(1).focus();
+    await openFilm(1);
+    await click(next()!); await flush(); await click(next()!); await flush();
+    await click(byTestId("delivery-film-player-close")); await flush();
+    expect(player()).toBeNull();
+    expect(document.activeElement).toBe(openOf(5));
+  });
+  it("a step loads the next film afresh: the old one pauses, a new element shows the loading line, and a failed film's error does not carry over", async () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    try {
+      await showFilmTab([film(1), film(2), film(3)]);
+      await openFilm(1);
+      const first = byTestId("delivery-film-player-video")!;
+      await act(async () => { first.dispatchEvent(new Event("loadedmetadata")); });
+      expect(byTestId("delivery-film-player-loading")).toBeNull();
+      pause.mockClear();
+      await click(next()!); await flush();
+      const second = byTestId("delivery-film-player-video")!;
+      expect(second).not.toBe(first); expect(pause.mock.contexts).toContain(first);
+      expect(byTestId("delivery-film-player-loading")).not.toBeNull();
+      await act(async () => { second.dispatchEvent(new Event("error")); });
+      expect(byTestId("delivery-film-player-error")).not.toBeNull();
+      await click(next()!); await flush();
+      expect(byTestId("delivery-film-player-error")).toBeNull();
+      expect(byTestId("delivery-film-player-video")!.getAttribute("src")).toBe(film(3).url);
+    } finally { pause.mockRestore(); }
+  });
+  it("a refetch that relocks the film now showing closes the player and puts focus on that film's (now locked) tile", async () => {
+    const premium = (n: number) => film(n, { premium: true });
+    mounted = await render(<Harness initial={page([premium(1), premium(2), premium(3)])} after={page([premium(1), lockedFilm(2), premium(3)])} />);
+    await click(tab("Premium")); await openFilm(1);
+    await click(next()!); await flush();
+    expect(title()).toBe("Video 02");
+    await click(byTestId("swap")); await flush();
+    expect(player()).toBeNull();
+    expect(document.activeElement).toBe(openOf(2));
+    expect(openOf(2).getAttribute("aria-label")).toBe("Request unlock: Video 02");
+  });
+  it("a film the player closed on (relocked) does not reopen it when it unlocks again", async () => {
+    const premium = (n: number) => film(n, { premium: true });
+    const { root } = await show(page([premium(1), premium(2)]), { hrefs: null });
+    const again = async (items: DeliveryPageDto["items"]) => { await act(async () => { root.render(<DeliveryPage dto={page(items)} hrefs={null} onRequestUnlock={() => undefined} unlockState={{}} />); }); await flush(); };
+    await click(tab("Premium")); await openFilm(2);
+    await again([premium(1), lockedFilm(2)]);
+    expect(player()).toBeNull();
+    await again([premium(1), premium(2)]);
+    expect(player()).toBeNull();
+  });
+  it("a refetch that takes the film now showing off the list closes the player and puts focus on the film that took its place", async () => {
+    mounted = await render(<Harness initial={page([film(1), film(2), film(3)])} after={page([film(1), film(3)])} />);
+    await click(tab("Film")); await openFilm(1);
+    await click(next()!); await flush();
+    await click(byTestId("swap")); await flush();
+    expect(player()).toBeNull();
+    expect(document.activeElement).toBe(openOf(3));
+  });
+  it("a refetch that drops another film keeps the player on its film and recounts", async () => {
+    mounted = await render(<Harness initial={page([film(1), film(2), film(3)])} after={page([film(1), film(3)])} />);
+    await click(tab("Film")); await openFilm(3);
+    expect(position()).toBe("3 of 3");
+    await click(byTestId("swap")); await flush();
+    expect(title()).toBe("Video 03"); expect(position()).toBe("2 of 2");
+  });
+});
+
+describe("the Film tab as a list (#941)", () => {
+  const KEY = "quincy:ui:video-layout:delivery";
+  const REVIEW = "/d/review?link=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa#t=secret&v=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const PAGE_SLUG = "12-example-st-23456b";
+  const rowOf = (n: number) => document.querySelector<HTMLElement>(`[data-testid="delivery-film-item"][data-handle="${handle(n)}"]`)!;
+  const openOf = (n: number) => rowOf(n).querySelector<HTMLElement>('[data-testid="delivery-film-open"]')!;
+  const rows = () => byTestId("video-rows");
+  /** The rows are a lazy chunk: its first import in a run takes longer than a tick count, so wait on the clock. */
+  const untilRows = async () => {
+    const deadline = Date.now() + 10_000;
+    while (!rows()) { if (Date.now() > deadline) throw new Error("the Video rows never mounted"); await flush(1); }
+  };
+  const showRows = async (items: DeliveryPageDto["items"], props: Props = {}, tabName = "Film") => {
+    const shown = await show(page(items), { pageSlug: PAGE_SLUG, ...props });
+    await click(tab(tabName));
+    await untilRows();
+    return shown;
+  };
+  let storage: ReturnType<typeof installLocalStorageShim>;
+  beforeEach(() => { storage = installLocalStorageShim(); resetUiPrefMemory(); });
+  afterEach(() => { resetUiPrefMemory(); storage.restore(); });
+
+  it("starts on tiles, switches to the list and back above the films, and remembers the choice in this browser", async () => {
+    await show(page([film(1), film(2)]));
+    await click(tab("Film"));
+    const toggle = byTestId("video-layout-toggle")!;
+    expect(toggle.getAttribute("aria-label")).toBe("Layout");
+    expect(toggle.compareDocumentPosition(byTestId("delivery-film")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(rows()).toBeNull();
+    await click(byTestId("video-layout-rows"));
+    await untilRows();
+    expect(byTestId("delivery-film")).toBeNull();
+    expect(allByTestId("delivery-film-item")).toHaveLength(2);
+    expect(JSON.parse(storage.values.get(KEY)!)).toBe("rows");
+    await mounted!.unmount(); mounted = null;
+    await show(page([film(1), film(2)]));
+    await click(tab("Film"));
+    await untilRows();
+    await click(byTestId("video-layout-tiles"));
+    expect(rows()).toBeNull(); expect(byTestId("delivery-film")).not.toBeNull();
+    expect(JSON.parse(storage.values.get(KEY)!)).toBe("tiles");
+  });
+
+  describe("with the list chosen", () => {
+    beforeEach(() => { storage.values.set(KEY, JSON.stringify("rows")); });
+    const lockedFilm = (n: number) => locked(n, { kind: "video", label: `Video ${String(n).padStart(2, "0")}`, url: null, thumbUrl: null });
+    const lockedLine = (n: number) => rowOf(n).querySelector<HTMLElement>('[data-testid="delivery-unlock-status"]')!;
+
+    it("shows poster, title with its Version, duration and open notes, in paper, and the same choice on the Premium tab's films", async () => {
+      await showRows([film(1, { review: { url: REVIEW }, version: 3, openNotes: 2 }), film(2), film(3, { premium: true })]);
+      expect(rows()!.dataset.tone).toBe("paper");
+      expect([...rows()!.querySelectorAll("th")].map((th) => th.textContent?.trim())).toEqual(["Poster", "Title", "Duration", "Notes", "Actions"]);
+      const cells = [...rowOf(1).querySelectorAll("td")];
+      expect(rowOf(1).tagName).toBe("TR");
+      expect(cells[0]!.querySelector("img")!.getAttribute("src")).toBe(film(1).thumbUrl);
+      expect(openOf(1).textContent).toBe("Video 01"); expect(cells[1]!.textContent).toContain("v3");
+      expect(cells[2]!.textContent).toBe("1:02");
+      expect(cells[3]!.textContent).toContain("2 open notes on v3");
+      expect(document.getElementById(openOf(1).getAttribute("aria-describedby")!)!.textContent).toBe("v3, 1:02, 2 open notes on v3");
+      expect(rowOf(1).querySelector('[data-testid="delivery-film-menu"]')).not.toBeNull();
+      await click(tab("Premium")); await untilRows();
+      expect(rowOf(3)).not.toBeNull(); expect(byTestId("delivery-film")).toBeNull();
+    });
+    it("carries the full title in a tooltip when the title is cut short", async () => {
+      const long = "A very long film title ".repeat(8).trim();
+      await showRows([film(1, { review: { url: REVIEW }, title: long })]);
+      const text = openOf(1).querySelector<HTMLElement>("[data-title-text]")!;
+      Object.defineProperty(text, "scrollWidth", { configurable: true, get: () => 420 });
+      Object.defineProperty(text, "clientWidth", { configurable: true, get: () => 180 });
+      await act(async () => { openOf(1).focus(); await Promise.resolve(); });
+      await until(() => byTestId("truncated-title-tip")?.textContent === long);
+    });
+    it("a row with a Review link is a same-tab link to that review, with the page to return to", async () => {
+      await showRows([film(1, { review: { url: REVIEW } })]);
+      expect(openOf(1).tagName).toBe("A");
+      expect(openOf(1).getAttribute("href")).toBe(`${REVIEW}&p=${PAGE_SLUG}`);
+      expect(openOf(1).hasAttribute("target")).toBe(false);
+    });
+    it("a row without one plays the film, steps to the next, and closing returns focus to the row now showing", async () => {
+      await showRows([film(1), film(2)], { hrefs: null });
+      expect([...rows()!.querySelectorAll("th")].map((th) => th.textContent?.trim())).toEqual(["Poster", "Title", "Duration", "Notes"]);
+      expect(openOf(1).tagName).toBe("BUTTON");
+      openOf(1).focus(); await click(openOf(1)); await flush();
+      const player = byTestId("delivery-film-player")!;
+      expect(player.querySelector("h2")!.textContent).toBe("Video 01");
+      expect(byTestId("video-step-position")!.textContent).toBe("1 of 2");
+      await press("]", player); await flush();
+      expect(byTestId("delivery-film-player")!.querySelector("h2")!.textContent).toBe("Video 02");
+      await click(byTestId("delivery-film-player-close")); await flush();
+      expect(byTestId("delivery-film-player")).toBeNull();
+      expect(document.activeElement).toBe(openOf(2));
+    });
+    it("a locked film is a locked row: a lock in the poster's place, Premium, no Version, duration or count, and its one control requests the unlock", async () => {
+      const onRequestUnlock = vi.fn();
+      await showRows([lockedFilm(1)], { onRequestUnlock }, "Premium");
+      expect(rowOf(1).querySelector('[data-testid="delivery-film-item-locked"]')).not.toBeNull();
+      expect(rowOf(1).querySelector("img, video, a[href]")).toBeNull();
+      expect(rowOf(1).textContent).toContain("Premium"); expect(rowOf(1).textContent).not.toMatch(/\bv\d|\d:\d\d/);
+      expect([...rowOf(1).querySelectorAll("button, a[href], input, [tabindex]")]).toEqual([openOf(1)]);
+      expect(openOf(1).getAttribute("aria-label")).toBe("Request unlock: Video 01"); expect(openOf(1).hasAttribute("aria-disabled")).toBe(false);
+      expect(rowOf(1).querySelector('[data-testid="delivery-unlock-action"]')!.textContent).toBe("Request unlock");
+      await click(openOf(1)); expect(onRequestUnlock).toHaveBeenCalledWith(handle(1));
+    });
+    it("a requested unlock leaves the row inert but focusable, named for what happened, with the studio's acknowledgement", async () => {
+      const onRequestUnlock = vi.fn();
+      await showRows([lockedFilm(1)], { onRequestUnlock, unlockState: { [handle(1)]: { kind: "requested" } } }, "Premium");
+      expect(openOf(1).getAttribute("aria-label")).toBe("Unlock requested: Video 01");
+      expect(openOf(1).getAttribute("aria-disabled")).toBe("true"); expect((openOf(1) as HTMLButtonElement).disabled).toBe(false);
+      expect(lockedLine(1).textContent).toBe("Requested. The studio will be in touch.");
+      await click(openOf(1)); expect(onRequestUnlock).not.toHaveBeenCalled();
+    });
+    it("sending holds the row inert, a failure stays retryable, and a rate-limit wait counts down before the row requests again", async () => {
+      const onRequestUnlock = vi.fn();
+      const props = (unlockState: UnlockStates) => ({ dto: page([lockedFilm(1)]), pageSlug: PAGE_SLUG, hrefs, onRequestUnlock, unlockState });
+      const { root } = await showRows([lockedFilm(1)], { onRequestUnlock, unlockState: { [handle(1)]: { kind: "sending" } } }, "Premium");
+      expect(openOf(1).getAttribute("aria-disabled")).toBe("true");
+      expect(rowOf(1).querySelector('[data-testid="delivery-unlock-action"]')!.textContent).toBe("Sending");
+      await act(async () => { root.render(<DeliveryPage {...props({ [handle(1)]: { kind: "failed" } })} />); });
+      expect(openOf(1).hasAttribute("aria-disabled")).toBe(false); expect(lockedLine(1).textContent).toBe("Couldn't send. Try again.");
+      vi.useFakeTimers();
+      await act(async () => { root.render(<DeliveryPage {...props({ [handle(1)]: { kind: "limited", until: Date.now() + 2000 } })} />); });
+      expect(openOf(1).getAttribute("aria-disabled")).toBe("true");
+      expect(lockedLine(1).textContent).toBe("Too many requests. Try again in 2 seconds.");
+      await click(openOf(1)); expect(onRequestUnlock).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(2500); });
+      expect(openOf(1).hasAttribute("aria-disabled")).toBe(false); expect(lockedLine(1).textContent).toBe("");
+      await click(openOf(1)); expect(onRequestUnlock).toHaveBeenCalledWith(handle(1));
+    });
+
+    describe("compact rows follow the page's container, not the window (#933 S9)", () => {
+      let restoreRect: () => void = () => undefined;
+      /** The page's own width, as the browser would measure it; every other element keeps happy-dom's 0. */
+      const containerAt = (width: number) => {
+        const original = HTMLElement.prototype.getBoundingClientRect;
+        HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect(this: HTMLElement) {
+          return this.dataset.testid === "delivery-page" ? ({ width, height: 800, top: 0, left: 0, right: width, bottom: 800, x: 0, y: 0, toJSON: () => ({}) } as DOMRect) : original.call(this);
+        };
+        restoreRect = () => { HTMLElement.prototype.getBoundingClientRect = original; };
+      };
+      afterEach(() => { restoreRect(); restoreRect = () => undefined; });
+
+      it("at 720 px the rows are the two-line list, even in a wide window (the staff Preview)", async () => {
+        const viewport = mockViewport({ width: 1440 });
+        try {
+          containerAt(720);
+          await showRows([film(1, { review: { url: REVIEW }, version: 3 })]);
+          expect(rows()!.querySelector("table")).toBeNull();
+          expect(rowOf(1).tagName).toBe("LI");
+          expect(rowOf(1).querySelector('[data-testid="video-row-meta"]')!.textContent).toBe("v3 · 1:02");
+        } finally { viewport.restore(); }
+      });
+      it("at 721 px they are the table", async () => {
+        containerAt(721);
+        await showRows([film(1, { review: { url: REVIEW }, version: 3 })]);
+        expect(rowOf(1).tagName).toBe("TR");
+      });
+      it("an unmeasured page (0) is not narrow", async () => {
+        await showRows([film(1)]);
+        expect(rowOf(1).tagName).toBe("TR");
+      });
+    });
+
+    it("back from a film's review focuses that film's row, brought to the centre", async () => {
+      const vid = "bbbbbbbb-bbbb-4bbb-8bbb-000000000003";
+      const scrolled: Element[] = [];
+      Element.prototype.scrollIntoView = function scrollIntoView(this: Element) { scrolled.push(this); };
+      try {
+        await show(page([photo(1), film(2, { review: { url: REVIEW.replace(/v=[^&]+$/, "v=bbbbbbbb-bbbb-4bbb-8bbb-000000000002") } }), film(3, { review: { url: REVIEW.replace(/v=[^&]+$/, `v=${vid}`) } })]), { returnToVideo: vid });
+        expect(tab("Film")!.getAttribute("aria-selected")).toBe("true");
+        await untilRows();
+        await flush();
+        expect(scrolled).toEqual([rowOf(3)]);
+        expect(document.activeElement).toBe(openOf(3));
+      } finally { delete (Element.prototype as Partial<Element>).scrollIntoView; }
+    });
   });
 });
 

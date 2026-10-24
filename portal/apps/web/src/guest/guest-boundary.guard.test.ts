@@ -4,11 +4,18 @@
  * `/d/review` and `/d/<address>` are served by the same SPA entry as the staff app but must never reach the staff app's session, API, router or query cache: a guest has no staff session, so a stray
  * `/api` request is an unauthenticated probe of the staff surface, and a router that canonicalises the URL would undo the fragment scrub. Each tree (`src/guest/`, `src/delivery/`) is held to:
  *
- * - no import of `lib/auth`, `lib/api`, `lib/router`, `lib/app-router`, `lib/query-client`, `InternalLink` or `@tanstack/*`, directly or through anything it imports;
+ * - no import of `lib/auth`, `lib/api`, `lib/router`, `lib/app-router`, `lib/query-client`, `InternalLink` or `@tanstack/*` (one exception, below), directly or through anything it
+ *   imports. "Through anything it imports" counts packages too: every import in every project file the tree reaches (relative, `@/` or dynamic `import()`) is held to the same list,
+ *   so a shared component that imports `@tanstack/react-query` breaches the rule as surely as a guest file that imports it itself;
  * - no `locationStore(` call;
  * - `history.` is used only as `history.replaceState`, and only in the one file the tree allows (guest: `link-fragment.ts`, the fragment scrub; delivery: none, there is no fragment);
  * - `fetch(` is called only in the tree's one API file (`guest/guest-api.ts`, `delivery/delivery-api.ts`), and no string literal starts a staff `/api/` path;
  * - the Delivery page's own `/d/api/pages` address is written only in `delivery/delivery-api.ts`, in either tree.
+ *
+ * The one allowed package is `@tanstack/react-table`, by name (owner decision, #933, 2026-10-23: "keep data-grid for guest/delivery Video rows, lazy-load them there"). The Video row
+ * list (`components/quincy/VideoRows.tsx`) is the ReUI data-grid, which is TanStack Table: a headless, in-memory table model with no URL, history, network or cache of its own, so it
+ * cannot canonicalise the URL or reach the staff session. The real TanStack hazards stay banned: `@tanstack/react-router` (and `@tanstack/history`, its URL owner) would undo the
+ * fragment scrub, and `@tanstack/react-query` is the staff cache. The guest and Delivery pages load the rows lazily, so a visitor who keeps tiles never downloads the table.
  *
  * Per docs/lessons.md ("a grep gate that cannot fail is not a gate") every detector is a pure function over injected input and is falsified with planted fixtures beside the real scan.
  */
@@ -23,9 +30,21 @@ const rel = (file: string) => relative(srcDir, file).split("\\").join("/");
 
 type Source = { path: string; source: string };
 
-/** The staff modules a guest file must not reach. Matched on the resolved path (transitive) and on the specifier (direct). */
+/** The staff modules a guest file must not reach. Matched on the resolved path (transitive) and on the specifier (direct and transitive). */
 const BANNED_MODULE = /^(?:lib\/(?:auth|api|router|app-router|query-client|staff-history|location-store)|components\/InternalLink)(?:\.tsx?)?$/;
-const BANNED_SPECIFIER = /(?:^|\/)(?:lib\/(?:auth|api|router|app-router|query-client|staff-history)|InternalLink)(?:\.tsx?)?$|^@tanstack\//;
+const BANNED_STAFF_SPECIFIER = /(?:^|\/)(?:lib\/(?:auth|api|router|app-router|query-client|staff-history)|InternalLink)(?:\.tsx?)?$/;
+/** Every TanStack package (`@tanstack/react-router`, `@tanstack/history` and `@tanstack/react-query` above all) except those `ALLOWED_PACKAGES` names. */
+const BANNED_PACKAGE = /^@tanstack\//;
+/** Allowed by exact package name, with the reason (see the header). */
+const ALLOWED_PACKAGES: ReadonlyMap<string, string> = new Map([
+  ["@tanstack/react-table", "The Video row list's data-grid (#933, owner 2026-10-23): a headless table model with no URL, history, network or cache; loaded lazily on guest and delivery."],
+]);
+/** `@scope/name/sub/path` -> `@scope/name`; `name/sub` -> `name`. */
+const packageOf = (specifier: string) => specifier.split("/").slice(0, specifier.startsWith("@") ? 2 : 1).join("/");
+export function isBannedSpecifier(specifier: string): boolean {
+  if (BANNED_STAFF_SPECIFIER.test(specifier)) return true;
+  return BANNED_PACKAGE.test(specifier) && !ALLOWED_PACKAGES.has(packageOf(specifier));
+}
 
 /** Blanks comments so prose in a header cannot trip (or hide) a detector. */
 const strip = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
@@ -36,9 +55,9 @@ export function importSpecifiers(source: string): string[] {
   return out;
 }
 
-/** Direct: files importing a banned staff module or TanStack. */
+/** Direct: files importing a banned staff module or TanStack package. */
 export function findBannedImports(files: Source[]): string[] {
-  return files.filter(({ source }) => importSpecifiers(source).some((specifier) => BANNED_SPECIFIER.test(specifier))).map(({ path }) => path).sort();
+  return files.filter(({ source }) => importSpecifiers(source).some(isBannedSpecifier)).map(({ path }) => path).sort();
 }
 export function findLocationStoreCalls(files: Source[]): string[] {
   return files.filter(({ source }) => /\blocationStore\s*\(/.test(strip(source))).map(({ path }) => path).sort();
@@ -93,11 +112,24 @@ export function reachableFrom(roots: string[], project: Source[]): Map<string, s
 }
 export function findReachableStaffModules(roots: string[], project: Source[]): string[] {
   const reached = reachableFrom(roots, project);
-  return [...reached.keys()].filter((path) => BANNED_MODULE.test(path)).map((path) => {
-    const chain = [path]; let at = path;
-    while (reached.get(at) !== at && chain.length < 12) { at = reached.get(at)!; chain.push(at); }
-    return chain.reverse().join(" -> ");
-  }).sort();
+  return [...reached.keys()].filter((path) => BANNED_MODULE.test(path)).map((path) => chainTo(path, reached).join(" -> ")).sort();
+}
+
+/** The import chain from a root to `path`, root first. */
+function chainTo(path: string, reached: Map<string, string>): string[] {
+  const chain = [path]; let at = path;
+  while (reached.get(at) !== at && chain.length < 12) { at = reached.get(at)!; chain.push(at); }
+  return chain.reverse();
+}
+
+/**
+ * Transitive specifiers: every banned specifier (a staff module, or a TanStack package not allowed by name) written in any project file reachable from `roots`, as
+ * "root -> ... -> file -> specifier". Packages are not followed into `node_modules`: what counts is what the project's own files import.
+ */
+export function findReachableBannedSpecifiers(roots: string[], project: Source[]): string[] {
+  const byPath = new Map(project.map((file) => [file.path, file.source]));
+  const reached = reachableFrom(roots, project);
+  return [...reached.keys()].flatMap((path) => importSpecifiers(byPath.get(path) ?? "").filter(isBannedSpecifier).map((specifier) => [...chainTo(path, reached), specifier].join(" -> "))).sort();
 }
 
 function walk(dir: string): string[] {
@@ -129,13 +161,18 @@ describe.each(TREES)("guard: the $name tree stays out of the staff app", (tree) 
     expect(existsSync(join(srcDir, tree.allowedFetch))).toBe(true);
   });
 
-  it("imports no staff module, router or TanStack directly", () => {
+  it("imports no staff module, router or banned TanStack package directly", () => {
     expect(findBannedImports(treeFiles(tree))).toEqual([]);
   });
 
   it("reaches no staff module through anything it imports", () => {
     const roots = treeFiles(tree).map((file) => file.path);
     expect(findReachableStaffModules(roots, projectFiles())).toEqual([]);
+  });
+
+  it("reaches no staff module or banned TanStack package through any import of any file it reaches", () => {
+    const roots = treeFiles(tree).map((file) => file.path);
+    expect(findReachableBannedSpecifiers(roots, projectFiles())).toEqual([]);
   });
 
   it("never calls locationStore", () => {
@@ -165,9 +202,32 @@ describe("self-test: each detector fires on planted fixtures and spares the clea
       { path: "guest/d.tsx", source: 'import { InternalLink } from "../components/InternalLink";' },
       { path: "guest/e.tsx", source: 'const m = await import("../lib/query-client");' },
       { path: "guest/f.tsx", source: 'import { x } from "@/lib/app-router";' },
+      { path: "guest/g.tsx", source: 'import { useQuery } from "@tanstack/react-query";' },
+      { path: "guest/table.tsx", source: 'import { useTable } from "@tanstack/react-table";' },
       { path: "guest/ok.tsx", source: 'import { readStoredMarkup } from "../lib/read-stored-markup";\n// import { apiGet } from "../lib/api";' },
     ];
-    expect(findBannedImports(planted)).toEqual(["guest/a.tsx", "guest/b.tsx", "guest/c.tsx", "guest/d.tsx", "guest/e.tsx", "guest/f.tsx"]);
+    expect(findBannedImports(planted)).toEqual(["guest/a.tsx", "guest/b.tsx", "guest/c.tsx", "guest/d.tsx", "guest/e.tsx", "guest/f.tsx", "guest/g.tsx"]);
+  });
+
+  it("transitive package reach: a TanStack package other than react-table fires wherever it is imported (#933)", () => {
+    const project: Source[] = [
+      { path: "guest/G.tsx", source: 'const Rows = lazy(() => import("../components/Rows"));' },
+      { path: "components/Rows.tsx", source: 'import { useTable } from "@tanstack/react-table";\nimport { cache } from "../lib/cache";' },
+      { path: "lib/cache.ts", source: 'import { useQuery } from "@tanstack/react-query";\nimport { useRouter } from "@tanstack/react-router/ssr";\nexport const cache = 1;' },
+      { path: "components/Clean.tsx", source: 'import { useTable, type ColumnDef } from "@tanstack/react-table";\nimport type { Row } from "@tanstack/react-table";\nimport { x } from "react";' },
+      { path: "components/Lookalike.tsx", source: 'import { y } from "@tanstack/react-table-extra";\nconst h = await import("@tanstack/history");' },
+      { path: "guest/H.tsx", source: 'import { Clean } from "../components/Clean";\n// import { useQuery } from "@tanstack/react-query";' },
+    ];
+    expect(findReachableBannedSpecifiers(["guest/G.tsx"], project)).toEqual([
+      "guest/G.tsx -> components/Rows.tsx -> lib/cache.ts -> @tanstack/react-query",
+      "guest/G.tsx -> components/Rows.tsx -> lib/cache.ts -> @tanstack/react-router/ssr",
+    ]);
+    // react-table is allowed by name, directly or through a project file, type-only or not; a package that only starts with its name is not.
+    expect(findReachableBannedSpecifiers(["guest/H.tsx"], project)).toEqual([]);
+    expect(findBannedImports([project[3]!])).toEqual([]);
+    expect(findReachableBannedSpecifiers(["components/Lookalike.tsx"], project)).toEqual(["components/Lookalike.tsx -> @tanstack/history", "components/Lookalike.tsx -> @tanstack/react-table-extra"]);
+    // The same specifier check holds for the staff modules, so a file the resolver cannot place (a bare path) is still caught by its name.
+    expect(findReachableBannedSpecifiers(["guest/S.tsx"], [{ path: "guest/S.tsx", source: 'import { apiGet } from "../lib/api";' }])).toEqual(["guest/S.tsx -> ../lib/api"]);
   });
 
   it("transitive staff reach", () => {

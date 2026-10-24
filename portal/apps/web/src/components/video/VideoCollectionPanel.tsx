@@ -1,4 +1,4 @@
-import { lazy, Suspense, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useContext, useEffect, useMemo, useRef, useState, type FocusEvent } from "react";
 import TrashIcon from "../reui/icons/trash";
 import { useReportBarHeight } from "./ReviewBarClearance";
 import { roleHasCapability, staffPathFor, type Mp4Probe, type ProjectVideoSelection, type Role, type VideoDto, type VideoReviewResponse } from "@quincy/shared";
@@ -11,7 +11,8 @@ import { createVideoApprovalStore, type VideoApprovalStore } from "../../lib/vid
 import { abortVideoReservation, cancelVideoUpload, removeVideoUpload, retryVideoUpload, startVideoUpload, uploadIdentityGeneration, useVideoUploads } from "../../lib/video-upload-store";
 import { checkVideoFile, pluralCaution } from "../../lib/video-upload";
 import { useUiPref } from "../../lib/ui-prefs";
-import { arrangeVideos, DEFAULT_VIDEO_GRID_PREFS, GRID_CLASS, normalizeVideoGridPrefs, videoGridKey, type VideoGridPrefs } from "../../lib/video-grid-prefs";
+import { arrangeVideos, DEFAULT_VIDEO_GRID_PREFS, GRID_CLASS, headerSort, normalizeVideoGridPrefs, videoGridKey, type VideoGridPrefs } from "../../lib/video-grid-prefs";
+import { createVersionFileState, type VersionFileStore } from "../../lib/version-file-state";
 import { ViewLoadBoundary } from "../ViewLoadBoundary";
 import { Button } from "../quincy/Button";
 import { EmbeddedUploadTray, type EmbeddedUpload } from "../quincy/EmbeddedUploadTray";
@@ -22,6 +23,8 @@ import { FileDropzone } from "../quincy/FileDropzone";
 import { VideoDownloadDialog } from "./VideoDownloadDialog";
 import { NewFilmPickButton, NewFilmUploader, useReceiveNewFilms } from "./NewFilmUploader";
 import { VideoCard } from "./VideoCard";
+import type { VideoActions } from "./VideoCardParts";
+import { VideoCollectionRows } from "./VideoCollectionRows";
 import { VideoDeleteDialog, type DeleteTarget } from "./VideoDeleteDialog";
 import { VideoRenameDialog, type RenameTarget } from "./VideoRenameDialog";
 import { useCardDialogHost } from "./use-card-dialog-host";
@@ -29,6 +32,9 @@ import { VideoGridToolbar } from "./VideoGridToolbar";
 import { ReviewLinksHost, ReviewLinksOpenButton } from "./ReviewLinksHost";
 import { PROJECT_SHEET_CLOSE_SCROLL_MARGIN } from "../quincy/ProjectSheet";
 import { ReviewLinkStoreContext, useReviewLinksUi } from "./use-review-links-ui";
+import { stepTargets } from "../../lib/video-step";
+import type { StepDelta, StepVia } from "../quincy/VideoStepControl";
+import type { ViewerStepEntry } from "./VideoReviewViewer";
 
 /** The player is a separate chunk: nobody who never opens a film pays for it (#292: every lazy view sits in a ViewLoadBoundary). */
 type ViewerComponent = typeof import("./VideoReviewViewer").VideoReviewViewer;
@@ -40,6 +46,8 @@ const preloadViewer = () => { void loadViewer(); };
 /** The Trash dialog (#776 E) is its own chunk, loaded the first time Trash is opened and kept mounted after (it reads the list afresh on every opening). */
 const LazyTrashDialog = lazy(() => import("./VideoTrashDialog").then((module) => ({ default: module.VideoTrashDialog })));
 const TRASH_OPEN_ID = "video-trash-open";
+/** The open control of a film's tile or its Video row (#938; #936 reuses it): where focus returns when its viewer closes and the opener is gone. */
+const openControlFor = (videoId: string) => document.querySelector<HTMLElement>(`[data-testid="video-card-open"][data-video-id="${videoId}"],[data-testid="video-row-open"][data-video-id="${videoId}"]`);
 /** With notes on, the notes chunk starts loading along with the viewer's. */
 const preloadNotes = () => { void import("./VideoNotesHost"); };
 
@@ -140,6 +148,9 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
       if (active === null || active === document.body) document.querySelector<HTMLElement>('[data-testid="video-grid-status"]')?.focus({ preventScroll: true });
     }, 0);
   }, [arranged]);
+  // Pointing at or focusing a film, tile or row, starts the viewer's chunk; the focused one is remembered for the status-change rescue above.
+  const onGridFocus = (event: FocusEvent) => { const item = (event.target as Element).closest<HTMLElement>('[data-testid="video-card"],[data-testid="video-row"]'); if (item) focusedCard.current = item; preloadViewer(); if (notesEnabled) preloadNotes(); };
+  const onGridPointer = () => { preloadViewer(); if (notesEnabled) preloadNotes(); };
   const running = uploads.filter((upload) => upload.phase === "reserving" || upload.phase === "uploading" || upload.phase === "finishing");
   // The component is chosen once per opening: swapping `lazy` for the loaded one mid-open would remount the viewer (playback, Version and frame lost).
   const [opened, setOpened] = useState<{ id: string; Viewer: ViewerComponent | typeof LazyViewer } | null>(null);
@@ -152,14 +163,32 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   }
   const Viewer = (deepLink ? frozenViewer.current : opened?.Viewer) ?? LazyViewer;
   const deepLinkChange = deepLink?.onChange;
-  const setOpenVideoId = (id: string | null, version?: number) => {
+  // #936: how the open film was reached when that was a step (the next viewer skips its entry animation and puts focus back on the step button); any other open or close clears it.
+  const stepEntry = useRef<(ViewerStepEntry & { id: string }) | null>(null);
+  const setOpenVideoId = (id: string | null, version?: number, entry?: ViewerStepEntry) => {
+    stepEntry.current = id && entry ? { id, ...entry } : null;
     if (deepLinkChange) { deepLinkChange(id ? { id, ...(version !== undefined ? { version } : {}) } : null, openVideoId); return; }
-    // Once preloaded the component renders directly: `lazy` would suspend for a task even with the module in hand.
-    setOpened(id ? { id, Viewer: loadedViewer ?? LazyViewer } : null);
+    // Once preloaded the component renders directly: `lazy` would suspend for a task even with the module in hand. A step keeps the visit's component (#936): swapping it would remount the visit.
+    setOpened((current) => (id ? { id, Viewer: current?.Viewer ?? loadedViewer ?? LazyViewer } : null));
   };
   const opener = useRef<HTMLElement | null>(null);
   const openerVideoId = useRef<string | null>(null);
+  /** A tile or a Video row opened this film (#938: the same path for both layouts). `version` from a tile's Versions menu, else the newest. */
+  const openFromGrid = (picked: VideoDto, trigger: HTMLElement, version?: number) => { opener.current = trigger; openerVideoId.current = picked.id; setOpenVideoId(picked.id, version ?? Math.max(...picked.versions.map((entry) => entry.version))); };
   const openVideo = openVideoId ? videos.data?.find((video) => video.id === openVideoId) ?? null : null;
+  // Previous / next (#936) through the films the grid shows, in its order (sort and Review status filter applied), by id on every render. A step takes the tile's path: newest Version, URL by replace.
+  const stepAt = stepTargets({ shown: arranged, openId: openVideoId });
+  const stepTo = (delta: StepDelta, via: StepVia) => {
+    const target = delta === 1 ? stepAt.next : stepAt.prev;
+    if (!target) return;
+    opener.current = null; openerVideoId.current = null;
+    setOpenVideoId(target.id, Math.max(...target.versions.map((entry) => entry.version)), { via, delta });
+  };
+  const viewerStep = stepAt.total > 1 || (stepAt.position === null && stepAt.total > 0) ? { position: stepAt.position, total: stepAt.total, canPrev: stepAt.prev !== null, canNext: stepAt.next !== null, onStep: stepTo } : null;
+  // The film open as of this render. A viewer whose film is no longer the open one is being replaced by a step (or Back / Forward): it hands focus to nothing, never to its old tile behind the next viewer (R1).
+  const liveOpenId = useRef<string | null>(null);
+  liveOpenId.current = openVideoId;
+  const replacedBy = (thisId: string) => liveOpenId.current !== null && liveOpenId.current !== thisId;
   // A link names a film the list may not hold (trashed, another Project's, or the list was a stale copy): only a settled, successful read says so. Loading never strips, and neither does a failed refresh over cached data (`isSuccess` is false then).
   const listSettled = !deepLinkChange || (videos.isSuccess && !videos.isFetching);
   useEffect(() => {
@@ -202,7 +231,26 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
   }
 
   const myVersionUpload = (video: VideoDto) => running.find((upload) => upload.videoId === video.id);
-  const deletingVideo = deleting ? videos.data?.find((video) => video.id === deleting.videoId) ?? null : null;
+  // A file offered as a film's next Version (#939, S12): its check and refusal, per film, read alike by its tile and its Video row, whose menu, drop and upload line sit in
+  // different cells. Same key as the forms: a different person or Project starts with none.
+  const versionFilesRef = useRef<{ key: string; store: VersionFileStore } | null>(null);
+  if (versionFilesRef.current?.key !== formsKey) versionFilesRef.current = { key: formsKey, store: createVersionFileState() };
+  const versionFiles = versionFilesRef.current.store;
+  const sendVersionFile = (video: VideoDto, file: File) => { versionFiles.send(video.id, () => versionFile(video, file)); };
+  const cancelReservation = (reservationId: string) => abortVideoReservation(queryClient, projectId, reservationId);
+  /** What a film's tile and its Video row are granted (#939: the same for both). Dialogs opened from its "⋯" return focus to that "⋯", in either layout. */
+  const actionsFor = (video: VideoDto): VideoActions => {
+    const menuSelector = `[data-testid="video-card-menu"][data-video-id="${video.id}"]`;
+    return {
+      ...(downloadEnabled ? { download: { projectId } } : {}),
+      ...(canRename ? { onRename: (picked: VideoDto) => { const newest = picked.versions.find((version) => version.current) ?? picked.versions[0]!; renameHost.open({ videoId: picked.id, assetId: newest.assetId, originalFilename: newest.originalFilename }); } } : {}),
+      ...(reviewLinks.canWrite ? { onCreateReviewLink: () => reviewLinks.store.openCreateFor(video.id, [video.currentAssetId], menuSelector) } : {}),
+      ...(reviewLinks.canSelect && (reviewLinks.canWrite || downloadEnabled) ? { select: { selected: reviewLinks.selection.has(video.id), onToggle: () => reviewLinks.store.toggleSelect(video.id) } } : {}),
+      ...(reviewLinks.enabled ? { reviewLinks: { chips: reviewLinks.chipsFor(video.id), onOpenChip: (linkId: string) => { reviewLinks.store.openDetail(linkId, menuSelector); }, onOpenAll: () => { reviewLinks.store.openList(menuSelector); } } } : {}),
+      ...(trashEnabled ? { remove: { disabled: archived, onOpen: () => setDeleting({ videoId: video.id, title: video.title }) } } : {}),
+    };
+  };
+  const deletingVideo =deleting ? videos.data?.find((video) => video.id === deleting.videoId) ?? null : null;
 
   return <section aria-labelledby="video-films-heading" data-testid="video-films">
     <div className="workspace-intro workspace-intro--stack" data-testid="video-films-header">
@@ -227,8 +275,11 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
       {videos.data && videos.data.length === 0 && <EmptyState title="No films yet.">{canUpload ? "Drop the first MP4 or MOV above to begin." : "Uploaded films will appear here."}</EmptyState>}
       {videos.data && videos.data.length > 0 && <VideoGridToolbar prefs={prefs} onChange={setPrefs} shown={arranged.length} total={videos.data.length} />}
       {videos.data && videos.data.length > 0 && arranged.length === 0 && <EmptyState title="No films match this filter.">Choose another status, or show all films.</EmptyState>}
-      {videos.data && arranged.length > 0 && <div className={`grid gap-[var(--space-4)] ${GRID_CLASS}`} data-testid="video-card-grid" onFocusCapture={(event) => { const card = (event.target as Element).closest<HTMLElement>('[data-testid="video-card"]'); if (card) focusedCard.current = card; preloadViewer(); if (notesEnabled) preloadNotes(); }} onPointerOverCapture={() => { preloadViewer(); if (notesEnabled) preloadNotes(); }}>
-        {arranged.map((video) => <VideoCard key={video.id} video={video} {...(downloadEnabled ? { download: { projectId } } : {})} {...(canRename ? { onRename: (picked: VideoDto) => { const newest = picked.versions.find((version) => version.current) ?? picked.versions[0]!; renameHost.open({ videoId: picked.id, assetId: newest.assetId, originalFilename: newest.originalFilename }); } } : {})} canUpload={canUpload} currentUserId={userId} myUpload={myVersionUpload(video)} onVersionFile={versionFile} onCancelReservation={(reservationId) => abortVideoReservation(queryClient, projectId, reservationId)} onOpen={(picked, trigger, version) => { opener.current = trigger; openerVideoId.current = picked.id; setOpenVideoId(picked.id, version ?? Math.max(...picked.versions.map((entry) => entry.version))); }} {...(reviewLinks.canWrite ? { onCreateReviewLink: () => reviewLinks.store.openCreateFor(video.id, [video.currentAssetId], `[data-testid="video-card-menu"][data-video-id="${video.id}"]`) } : {})} {...(reviewLinks.canSelect && (reviewLinks.canWrite || downloadEnabled) ? { select: { selected: reviewLinks.selection.has(video.id), onToggle: () => reviewLinks.store.toggleSelect(video.id) } } : {})} {...(reviewLinks.enabled ? { reviewLinks: { chips: reviewLinks.chipsFor(video.id), onOpenChip: (linkId: string) => { reviewLinks.store.openDetail(linkId, `[data-testid="video-card-menu"][data-video-id="${video.id}"]`); }, onOpenAll: () => { reviewLinks.store.openList(`[data-testid="video-card-menu"][data-video-id="${video.id}"]`); } } } : {})} {...(trashEnabled ? { remove: { disabled: archived, onOpen: () => setDeleting({ videoId: video.id, title: video.title }) } } : {})} />)}
+      {videos.data && arranged.length > 0 && prefs.layout === "rows" && <div className="min-w-0" data-testid="video-row-list" onFocusCapture={onGridFocus} onPointerOverCapture={onGridPointer}>
+        <VideoCollectionRows videos={arranged} onOpen={openFromGrid} actionsFor={actionsFor} canUpload={canUpload} currentUserId={userId} myUploadOf={myVersionUpload} versionFiles={versionFiles} onVersionFile={sendVersionFile} onCancelReservation={cancelReservation} sort={prefs} onSort={(key) => { setPrefs(headerSort(prefs, key)); }} />
+      </div>}
+      {videos.data && arranged.length > 0 && prefs.layout !== "rows" && <div className={`grid gap-[var(--space-4)] ${GRID_CLASS}`} data-testid="video-card-grid" onFocusCapture={onGridFocus} onPointerOverCapture={onGridPointer}>
+        {arranged.map((video) => <VideoCard key={video.id} video={video} {...actionsFor(video)} canUpload={canUpload} currentUserId={userId} myUpload={myVersionUpload(video)} versionFiles={versionFiles} onVersionFile={sendVersionFile} onCancelReservation={cancelReservation} onOpen={openFromGrid} />)}
       </div>}
     </FileDropzone>
     {downloadEnabled && <VideoDownloadDialog projectId={projectId} open={downloadIds !== null} onOpenChange={(open) => { if (!open) setDownloadIds(null); }} videos={(videos.data ?? []).filter((video) => downloadIds?.includes(video.id))} />}
@@ -246,7 +297,8 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
     </ViewLoadBoundary>}
     {openVideo && <ViewLoadBoundary viewLabel="video player">
       <Suspense fallback={null}>
-        <Viewer key={openVideo.id} video={openVideo} onClose={() => { setOpenVideoId(null); }} social={{ projectId, role, initialOn: false }} returnFocusTo={() => { const card = opener.current?.isConnected && openerVideoId.current === openVideo.id ? opener.current : document.querySelector<HTMLElement>(`[data-testid="video-card-open"][data-video-id="${openVideo.id}"]`); return card ?? document.querySelector<HTMLElement>(`[data-testid="${TRASH_OPEN_ID}"]`); }} {...(deepLink?.selection ? { deepLink: { settled: videos.isSuccess && !videos.isFetching, ...(deepLink.selection.version !== undefined ? { version: deepLink.selection.version } : {}), href: (version: number) => new URL(staffPathFor({ kind: "project", projectId, arrivalTab: "video", video: { id: openVideo.id, version } }), window.location.origin).href, onVersionShown: (version: number) => deepLink.onChange({ id: openVideo.id, version }, openVideo.id) } } : {})} {...(notesEnabled ? { notes: { projectId, role, userId, archived, forms, markup: markupEnabled, exportEnabled, ...(deepLink?.selection?.note ? { openNoteId: deepLink.selection.note } : {}) } } : {})} {...(compareEnabled ? { compare: { store: compareStore } } : {})} {...(deliveryEnabled ? { delivery: { projectId, role, archived, store: deliveryStore } } : {})} {...(trashEnabled ? { trash: { projectId, archived } } : {})} reviewStatus={{ projectId, role, archived }} {...(downloadEnabled ? { download: { projectId } } : {})} {...(reviewLinks.canWrite ? { reviewLinks: { onCreate: (assetId: string) => reviewLinks.store.openCreateFor(openVideo.id, [assetId]) } } : {})} />
+        {/* The viewer keys its own body by film (a step remounts it); the visit around it stays for the whole opening (#936). */}
+        <Viewer video={openVideo} {...(viewerStep ? { step: viewerStep } : {})} {...(stepEntry.current?.id === openVideo.id ? { entry: stepEntry.current } : {})} onClose={() => { setOpenVideoId(null); }} social={{ projectId, role, initialOn: false }} returnFocusTo={() => { if (replacedBy(openVideo.id)) return false; const card = opener.current?.isConnected && openerVideoId.current === openVideo.id ? opener.current : openControlFor(openVideo.id); return card ?? document.querySelector<HTMLElement>(`[data-testid="${TRASH_OPEN_ID}"]`); }} {...(deepLink?.selection ? { deepLink: { settled: videos.isSuccess && !videos.isFetching, ...(deepLink.selection.version !== undefined ? { version: deepLink.selection.version } : {}), href: (version: number) => new URL(staffPathFor({ kind: "project", projectId, arrivalTab: "video", video: { id: openVideo.id, version } }), window.location.origin).href, onVersionShown: (version: number) => deepLink.onChange({ id: openVideo.id, version }, openVideo.id) } } : {})} {...(notesEnabled ? { notes: { projectId, role, userId, archived, forms, markup: markupEnabled, exportEnabled, ...(deepLink?.selection?.note ? { openNoteId: deepLink.selection.note } : {}) } } : {})} {...(compareEnabled ? { compare: { store: compareStore } } : {})} {...(deliveryEnabled ? { delivery: { projectId, role, archived, store: deliveryStore } } : {})} {...(trashEnabled ? { trash: { projectId, archived } } : {})} reviewStatus={{ projectId, role, archived }} {...(downloadEnabled ? { download: { projectId } } : {})} {...(reviewLinks.canWrite ? { reviewLinks: { onCreate: (assetId: string) => reviewLinks.store.openCreateFor(openVideo.id, [assetId]) } } : {})} />
       </Suspense>
     </ViewLoadBoundary>}
   </section>;
