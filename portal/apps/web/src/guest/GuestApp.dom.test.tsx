@@ -7,6 +7,7 @@ import { installLocalStorageShim } from "../testing/local-storage";
 import { mockViewport, type MockViewport } from "../testing/viewport";
 import { REVIEW_PANE_KEY } from "../lib/review-pane-prefs";
 import { resetUiPrefMemory } from "../lib/ui-prefs";
+import { GUEST_VIDEO_LAYOUT_KEY } from "../lib/video-layout-pref";
 import { GuestApp } from "./GuestApp";
 import { createGuestMediaTransport, type GuestApi } from "./guest-api";
 import { GuestVideoScreen } from "./GuestVideoScreen";
@@ -1515,5 +1516,87 @@ describe("downloads on the Delivery review link need no code (#882, ADR 0025)", 
     await click(byId("guest-download-all") ?? undefined);
     expect(document.querySelectorAll('[data-testid="guest-verify-dialog"]')).toHaveLength(0);
     expect(document.querySelector('[data-testid="guest-download-all-dialog"]')).not.toBeNull();
+  });
+});
+
+describe("the list layout: Video rows (#940, #933 stories 49–52)", () => {
+  /** The rows are a lazy chunk: the first load in a run takes longer than one settle, so wait (bounded) for the loading skeleton to give way. */
+  const rowsLoaded = async () => { for (let i = 0; i < 100 && byId("guest-video-rows-loading"); i += 1) await flush(1); expect(byId("guest-video-rows-loading")).toBeNull(); };
+  const toList = async () => { await click(byId("video-layout-rows") ?? undefined); await rowsLoaded(); };
+  const rowTitles = () => allById("guest-video-list-row").map((row) => row.querySelector('[data-testid="guest-video-list-open"]')?.textContent);
+
+  it("starts on tiles, switches to rows from the toggle above the films, and remembers the choice in this browser", async () => {
+    await open(`?link=${LINK}`, "");
+    const toggle = byId("video-layout-toggle")!;
+    expect(toggle.getAttribute("aria-label")).toBe("Layout");
+    expect(toggle.compareDocumentPosition(byId("guest-video-grid")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(allById("guest-video-row")).toHaveLength(3);
+    expect(allById("guest-video-list-row")).toHaveLength(0);
+    await toList();
+    expect(rowTitles()).toEqual(["Film 1", "Film 2", "Film 3"]);
+    expect(allById("guest-video-row")).toHaveLength(0);
+    expect(byId("guest-video-grid")).toBeNull();
+    expect(window.localStorage.getItem(GUEST_VIDEO_LAYOUT_KEY)).toBe(JSON.stringify("rows"));
+    await act(async () => { root!.unmount(); }); host.remove(); root = null; resetUiPrefMemory();
+    await open(`?link=${LINK}`, "");
+    await rowsLoaded();
+    expect(rowTitles()).toEqual(["Film 1", "Film 2", "Film 3"]);
+    await click(byId("video-layout-tiles") ?? undefined);
+    expect(allById("guest-video-row")).toHaveLength(3);
+    expect(window.localStorage.getItem(GUEST_VIDEO_LAYOUT_KEY)).toBe(JSON.stringify("tiles"));
+  });
+
+  it("shows only what a guest tile shows: poster, title, Version, duration, open public notes and Premium; no Review status, uploader or date", async () => {
+    videos = [
+      videoOf(1, { versions: [versionOf(10, { publicNoteCount: 4, decision: { value: "approved", revision: 1, at: "2026-10-09T01:00:00.000Z", self: false }, released: true })] }),
+      videoOf(2, { premium: true, unlocked: false }),
+    ];
+    await open(`?link=${LINK}`, "");
+    await toList();
+    const headers = [...host.querySelectorAll('[data-testid="video-rows"] th')].map((th) => th.textContent?.trim());
+    expect(headers).toEqual(["Poster", "Title", "Duration", "Notes"]);
+    const [first, second] = allById("guest-video-list-row");
+    expect(first!.querySelector("img")?.getAttribute("src")).toBe(versionOf(10).posterUrl);
+    expect(first!.querySelector('[data-testid="video-row-version"]')?.textContent).toBe("v10");
+    expect(first!.textContent).toContain("2:00");
+    expect(first!.textContent).toContain("4 open notes on v10");
+    expect(first!.textContent).not.toMatch(/in review|approved|released|uploaded/i);
+    expect(first!.querySelector('[data-testid="guest-decision-chip"], [data-testid="guest-released-chip"], input[type="checkbox"]')).toBeNull();
+    expect([...first!.querySelectorAll("button")].map((b) => b.getAttribute("data-testid"))).toEqual(["guest-video-list-open"]);
+    expect(second!.textContent).toMatch(/premium/i);
+    expect(second!.textContent).not.toMatch(/open notes?/);
+  });
+
+  it("opens that film from its row, as a tile does, and Previous / Next still walk the list", async () => {
+    await open(`?link=${LINK}`, "");
+    await toList();
+    await click(allById("guest-video-list-open")[1]!);
+    expect(byId("guest-video-screen")).not.toBeNull();
+    expect(title()).toBe("Film 2");
+    await click(button("Next video"));
+    expect(title()).toBe("Film 3");
+    await click(button("All videos"));
+    await rowsLoaded();
+    expect(rowTitles()).toEqual(["Film 1", "Film 2", "Film 3"]);
+  });
+
+  it("draws the compact two-line row on a phone", async () => {
+    await viewport.set({ width: 390, coarse: true });
+    videos = [videoOf(1, { versions: [versionOf(10, { publicNoteCount: 2 })] }), videoOf(2)];
+    await open(`?link=${LINK}`, "");
+    await toList();
+    const row = allById("guest-video-list-row")[0]!;
+    expect(row.tagName).toBe("LI");
+    expect(row.querySelector('[data-testid="video-row-meta"]')?.textContent).toBe("v10 · 2:00");
+    expect(host.querySelector('[data-testid="video-rows"] table')).toBeNull();
+    await click(row.querySelector<HTMLElement>('[data-testid="guest-video-list-open"]') ?? undefined);
+    expect(title()).toBe("Film 1");
+  });
+
+  it("shows no toggle when there is nothing to review", async () => {
+    videos = [];
+    await open(`?link=${LINK}`, "");
+    expect(byId("guest-list")).not.toBeNull();
+    expect(byId("video-layout-toggle")).toBeNull();
   });
 });
