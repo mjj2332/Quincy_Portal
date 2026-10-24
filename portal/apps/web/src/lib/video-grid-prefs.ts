@@ -1,8 +1,9 @@
 import type { VideoDto, VideoReviewStatus } from "@quincy/shared";
 import { uiPrefKey } from "./ui-prefs";
+import { normalizeVideoLayout, type VideoLayout } from "./video-layout-pref";
 
 /**
- * The Video collection's grid preferences (#865, trimmed by #884: the tile has one size and one poster fit, so Appearance is gone): the sort and the Review status filter.
+ * The Video collection's grid preferences (#865, trimmed by #884: the tile has one size and one poster fit, so Appearance is gone): the sort, the Review status filter and (#938) the layout.
  * One JSON object per person in this browser (`quincy:ui:video-grid:<userId>`, via `useUiPref`). Sort and filter are client-side over the
  * loaded collection; `arrangeVideos` never mutates the query data.
  */
@@ -11,9 +12,14 @@ export type VideoGridPrefs = {
   sort: VideoGridSort;
   dir: "asc" | "desc";
   status: "all" | VideoReviewStatus;
+  /** Tiles or Video rows (#938); presentation only, the sort and filter apply to both. */
+  layout: VideoLayout;
 };
 
-export const DEFAULT_VIDEO_GRID_PREFS: VideoGridPrefs = { sort: "uploaded", dir: "desc", status: "all" };
+export const DEFAULT_VIDEO_GRID_PREFS: VideoGridPrefs = { sort: "uploaded", dir: "desc", status: "all", layout: "tiles" };
+
+/** The direction a key reads naturally in when it is first picked, from the toolbar's Sort or (#939) a column header. */
+export const NATURAL_DIR: Record<VideoGridSort, VideoGridPrefs["dir"]> = { uploaded: "desc", name: "asc", status: "asc" };
 
 export const videoGridKey = (userId: string): string => uiPrefKey(`video-grid:${userId}`);
 
@@ -28,6 +34,7 @@ export function normalizeVideoGridPrefs(raw: unknown): VideoGridPrefs {
     sort: pick(o.sort, ["uploaded", "name", "status"], d.sort),
     dir: pick(o.dir, ["asc", "desc"], d.dir),
     status: pick(o.status, ["all", "in_review", "approved_internal", "published"], d.status),
+    layout: normalizeVideoLayout(o.layout),
   };
 }
 

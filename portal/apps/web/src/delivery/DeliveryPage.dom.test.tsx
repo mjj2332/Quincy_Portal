@@ -6,6 +6,7 @@ import type { DeliveryHrefs, UnlockStates } from "./delivery-model";
 import { DeliveryPage } from "./DeliveryPage";
 import { SLIDE_MS } from "./DeliveryLightbox";
 import { createDeliveryApi } from "./delivery-api";
+import { mockViewport } from "../testing/viewport";
 
 vi.mock("../components/LazyImage", () => ({
   LazyImage: ({ src, alt, className, onFailedChange }: { src: string; alt: string; className?: string; onFailedChange?: (failed: boolean) => void }) => <img src={src} alt={alt} className={className} onError={() => { onFailedChange?.(true); }} />,
@@ -715,6 +716,150 @@ describe("film tiles (#882)", () => {
     const grid = byTestId("delivery-film")!.className;
     expect(grid).toContain("grid-cols-[repeat(auto-fill,minmax(min(280px,100%),1fr))]"); expect(grid).toContain("@max-[721px]:grid-cols-1"); expect(grid).toContain("has-[>li:only-child]:grid-cols-1");
     expect(grid.split(" ")).not.toContain("max-[721px]:grid-cols-1");
+  });
+});
+
+describe("stepping in the plain player (#937)", () => {
+  const REVIEW = "/d/review?link=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa#t=secret&v=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const tileOf = (n: number) => document.querySelector<HTMLElement>(`[data-testid="delivery-film-item"][data-handle="${handle(n)}"]`)!;
+  const openOf = (n: number) => tileOf(n).querySelector<HTMLElement>('[data-testid="delivery-film-open"]')!;
+  const player = () => byTestId("delivery-film-player");
+  const title = () => player()!.querySelector("h2")!.textContent;
+  const position = () => byTestId("video-step-position")?.textContent ?? null;
+  const prev = () => byTestId("video-step-previous") as HTMLButtonElement | null;
+  const next = () => byTestId("video-step-next") as HTMLButtonElement | null;
+  const lockedFilm = (n: number, over: Partial<DeliveryPageDto["items"][number]> = {}) => locked(n, { kind: "video", label: `Video ${String(n).padStart(2, "0")}`, url: null, thumbUrl: null, ...over });
+  /** Film tab: 1 plays, 2 opens its review, 3 plays, 4 has no URL, 5 plays. */
+  const mixed = () => [film(1), film(2, { review: { url: REVIEW } }), film(3), film(4, { url: null }), film(5)];
+  const openFilm = async (n: number) => { await click(openOf(n)); await flush(); };
+  const showFilmTab = async (items: DeliveryPageDto["items"]) => { await show(page(items), { hrefs: null }); await click(tab("Film")); };
+
+  it("counts only the films this player plays (no Review link, a URL, unlocked) and steps over the rest", async () => {
+    await showFilmTab(mixed());
+    await openFilm(1);
+    expect(byTestId("video-step-control", player()!)).not.toBeNull();
+    expect(position()).toBe("1 of 3");
+    expect(prev()!.getAttribute("aria-label")).toBe("Previous film"); expect(next()!.getAttribute("aria-label")).toBe("Next film");
+    expect(prev()!.disabled).toBe(true); expect(next()!.disabled).toBe(false);
+    await click(next()!); await flush();
+    expect(title()).toBe("Video 03"); expect(position()).toBe("2 of 3");
+    expect(byTestId("delivery-film-player-video")!.getAttribute("src")).toBe(film(3).url);
+    await click(next()!); await flush();
+    expect(title()).toBe("Video 05"); expect(position()).toBe("3 of 3");
+    expect(next()!.disabled).toBe(true); expect(prev()!.disabled).toBe(false);
+  });
+  it("a press that reaches an end hands focus to the other step button, so the keyboard keeps a live control", async () => {
+    await showFilmTab([film(1), film(2)]);
+    await openFilm(1);
+    next()!.focus(); await click(next()!); await flush();
+    expect(next()!.disabled).toBe(true);
+    expect(document.activeElement).toBe(prev());
+  });
+  it("[ and ] step from inside the player, and do nothing past either end", async () => {
+    await showFilmTab(mixed());
+    await openFilm(3);
+    expect(position()).toBe("2 of 3");
+    await press("]", player()!); await flush();
+    expect(title()).toBe("Video 05");
+    await press("]", player()!); await flush();
+    expect(title()).toBe("Video 05");
+    await press("[", player()!); await flush(); await press("[", player()!); await flush();
+    expect(title()).toBe("Video 01"); expect(position()).toBe("1 of 3");
+    await press("[", player()!); await flush();
+    expect(title()).toBe("Video 01");
+  });
+  it("never steps onto a locked film, and the Premium films step among themselves, not with the Film tab", async () => {
+    await show(page([film(1), film(2), film(3, { premium: true }), lockedFilm(4), film(5, { premium: true })]), { hrefs: null });
+    await click(tab("Premium"));
+    await openFilm(3);
+    expect(position()).toBe("1 of 2");
+    await click(next()!); await flush();
+    expect(title()).toBe("Video 05"); expect(position()).toBe("2 of 2");
+  });
+  it("shows no step control and ignores [ and ] when only one film plays here", async () => {
+    await showFilmTab([film(1), film(2, { review: { url: REVIEW } })]);
+    await openFilm(1);
+    expect(byTestId("video-step-control")).toBeNull();
+    await press("]", player()!); await flush();
+    expect(title()).toBe("Video 01");
+  });
+  it("sits in the title row on a wide screen and in its own row under it on a phone, where the title row is full", async () => {
+    const viewport = mockViewport({ width: 1280 });
+    try {
+      await showFilmTab([film(1), film(2)]);
+      await openFilm(1);
+      const titleRow = () => player()!.querySelector("h2")!.parentElement!;
+      expect(titleRow().contains(byTestId("video-step-control"))).toBe(true);
+      await viewport.set({ width: 390 });
+      expect(byTestId("video-step-control")).not.toBeNull();
+      expect(titleRow().contains(byTestId("video-step-control"))).toBe(false);
+      expect(position()).toBe("1 of 2");
+    } finally { viewport.restore(); }
+  });
+  it("closing after steps returns focus to the film now showing", async () => {
+    await showFilmTab(mixed());
+    openOf(1).focus();
+    await openFilm(1);
+    await click(next()!); await flush(); await click(next()!); await flush();
+    await click(byTestId("delivery-film-player-close")); await flush();
+    expect(player()).toBeNull();
+    expect(document.activeElement).toBe(openOf(5));
+  });
+  it("a step loads the next film afresh: the old one pauses, a new element shows the loading line, and a failed film's error does not carry over", async () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    try {
+      await showFilmTab([film(1), film(2), film(3)]);
+      await openFilm(1);
+      const first = byTestId("delivery-film-player-video")!;
+      await act(async () => { first.dispatchEvent(new Event("loadedmetadata")); });
+      expect(byTestId("delivery-film-player-loading")).toBeNull();
+      pause.mockClear();
+      await click(next()!); await flush();
+      const second = byTestId("delivery-film-player-video")!;
+      expect(second).not.toBe(first); expect(pause.mock.contexts).toContain(first);
+      expect(byTestId("delivery-film-player-loading")).not.toBeNull();
+      await act(async () => { second.dispatchEvent(new Event("error")); });
+      expect(byTestId("delivery-film-player-error")).not.toBeNull();
+      await click(next()!); await flush();
+      expect(byTestId("delivery-film-player-error")).toBeNull();
+      expect(byTestId("delivery-film-player-video")!.getAttribute("src")).toBe(film(3).url);
+    } finally { pause.mockRestore(); }
+  });
+  it("a refetch that relocks the film now showing closes the player and puts focus on that film's (now locked) tile", async () => {
+    const premium = (n: number) => film(n, { premium: true });
+    mounted = await render(<Harness initial={page([premium(1), premium(2), premium(3)])} after={page([premium(1), lockedFilm(2), premium(3)])} />);
+    await click(tab("Premium")); await openFilm(1);
+    await click(next()!); await flush();
+    expect(title()).toBe("Video 02");
+    await click(byTestId("swap")); await flush();
+    expect(player()).toBeNull();
+    expect(document.activeElement).toBe(openOf(2));
+    expect(openOf(2).getAttribute("aria-label")).toBe("Request unlock: Video 02");
+  });
+  it("a film the player closed on (relocked) does not reopen it when it unlocks again", async () => {
+    const premium = (n: number) => film(n, { premium: true });
+    const { root } = await show(page([premium(1), premium(2)]), { hrefs: null });
+    const again = async (items: DeliveryPageDto["items"]) => { await act(async () => { root.render(<DeliveryPage dto={page(items)} hrefs={null} onRequestUnlock={() => undefined} unlockState={{}} />); }); await flush(); };
+    await click(tab("Premium")); await openFilm(2);
+    await again([premium(1), lockedFilm(2)]);
+    expect(player()).toBeNull();
+    await again([premium(1), premium(2)]);
+    expect(player()).toBeNull();
+  });
+  it("a refetch that takes the film now showing off the list closes the player and puts focus on the film that took its place", async () => {
+    mounted = await render(<Harness initial={page([film(1), film(2), film(3)])} after={page([film(1), film(3)])} />);
+    await click(tab("Film")); await openFilm(1);
+    await click(next()!); await flush();
+    await click(byTestId("swap")); await flush();
+    expect(player()).toBeNull();
+    expect(document.activeElement).toBe(openOf(3));
+  });
+  it("a refetch that drops another film keeps the player on its film and recounts", async () => {
+    mounted = await render(<Harness initial={page([film(1), film(2), film(3)])} after={page([film(1), film(3)])} />);
+    await click(tab("Film")); await openFilm(3);
+    expect(position()).toBe("3 of 3");
+    await click(byTestId("swap")); await flush();
+    expect(title()).toBe("Video 03"); expect(position()).toBe("2 of 2");
   });
 });
 
