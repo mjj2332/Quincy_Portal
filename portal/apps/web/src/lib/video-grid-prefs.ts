@@ -29,7 +29,7 @@ export function headerSort(prefs: VideoGridPrefs, key: VideoGridSort): VideoGrid
   return key === prefs.sort ? { ...prefs, dir: prefs.dir === "asc" ? "desc" : "asc" } : { ...prefs, sort: key, dir: NATURAL_DIR[key] };
 }
 
-export const videoGridKey =(userId: string): string => uiPrefKey(`video-grid:${userId}`);
+export const videoGridKey = (userId: string): string => uiPrefKey(`video-grid:${userId}`);
 
 const pick = <T extends string>(raw: unknown, allowed: readonly T[], fallback: T): T => (allowed as readonly unknown[]).includes(raw) ? raw as T : fallback;
 
