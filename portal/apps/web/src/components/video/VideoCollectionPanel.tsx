@@ -275,7 +275,7 @@ export function VideoCollectionPanel({ projectId, role, review, archived = false
       {videos.data && videos.data.length === 0 && <EmptyState title="No films yet.">{canUpload ? "Drop the first MP4 or MOV above to begin." : "Uploaded films will appear here."}</EmptyState>}
       {videos.data && videos.data.length > 0 && <VideoGridToolbar prefs={prefs} onChange={setPrefs} shown={arranged.length} total={videos.data.length} />}
       {videos.data && videos.data.length > 0 && arranged.length === 0 && <EmptyState title="No films match this filter.">Choose another status, or show all films.</EmptyState>}
-      {videos.data && arranged.length > 0 && prefs.layout === "rows" && <div data-testid="video-row-list" onFocusCapture={onGridFocus} onPointerOverCapture={onGridPointer}>
+      {videos.data && arranged.length > 0 && prefs.layout === "rows" && <div className="min-w-0" data-testid="video-row-list" onFocusCapture={onGridFocus} onPointerOverCapture={onGridPointer}>
         <VideoCollectionRows videos={arranged} onOpen={openFromGrid} actionsFor={actionsFor} canUpload={canUpload} currentUserId={userId} myUploadOf={myVersionUpload} versionFiles={versionFiles} onVersionFile={sendVersionFile} onCancelReservation={cancelReservation} sort={prefs} onSort={(key) => { setPrefs(headerSort(prefs, key)); }} />
       </div>}
       {videos.data && arranged.length > 0 && prefs.layout !== "rows" && <div className={`grid gap-[var(--space-4)] ${GRID_CLASS}`} data-testid="video-card-grid" onFocusCapture={onGridFocus} onPointerOverCapture={onGridPointer}>
