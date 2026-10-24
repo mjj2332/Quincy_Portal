@@ -13,14 +13,22 @@ import type { StatusTone } from "./StatusPill";
 /** A text control in the bar (kit.jsx `ibtn sm`: the staff and Guest Approve): drawn 32px tall, with a 44px hit area from a transparent pseudo-element. */
 export const PHONE_BAR_TEXT_BUTTON = "relative min-h-8 px-[var(--space-2)] after:absolute after:inset-x-0 after:-inset-y-1.5 after:content-['']";
 
-export function ReviewPhoneBar({ back, title, chip, approve, actions }: { back: ReactNode; title: ReactNode; chip: ReactNode; approve?: ReactNode; actions?: ReactNode }) {
+/**
+ * `step` (#936, staff only): the compact previous / next buttons, before Approve. `position` ("2 of 5") sits after the chip on the title's second line, since the bar has no room
+ * for it beside the buttons at 390pt. The guest passes neither, and its bar is unchanged.
+ */
+export function ReviewPhoneBar({ back, title, chip, step, position, approve, actions }: { back: ReactNode; title: ReactNode; chip: ReactNode; step?: ReactNode; position?: string; approve?: ReactNode; actions?: ReactNode }) {
   return <header data-testid="review-phone-bar" className="flex h-[calc(var(--space-7)+var(--space-2))] flex-none flex-nowrap items-center gap-x-[var(--space-1)] border-b border-border bg-card px-[var(--space-1)] text-card-foreground">
     {back}
     {/* No leading control (a guest on a one-video link): P1/P2 always lead with the 44px back, and the bar's `--space-1` gutter alone left the title ~4pt from the edge (#879 PR 3a round 2). */}
     <div data-testid="review-phone-bar-title" className={cn("flex min-w-0 flex-1 flex-col items-start justify-center", back == null && "ps-[var(--space-3)]")}>
       {title}
-      {chip}
+      {position === undefined ? chip : <div className="flex max-w-full items-center gap-[var(--space-1)]">
+        {chip}
+        <span data-testid="review-phone-bar-position" className="flex-none whitespace-nowrap text-xs text-foreground-secondary tabular-nums">{position}</span>
+      </div>}
     </div>
+    {step}
     {approve}
     {actions}
   </header>;
