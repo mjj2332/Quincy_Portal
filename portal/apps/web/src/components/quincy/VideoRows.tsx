@@ -393,7 +393,8 @@ function CompactRow({ item, columns, attributes }: { item: VideoRowItem; columns
     {columns.includes("poster") && <Thumb item={item} />}
     <div className="flex min-w-0 flex-1 flex-col gap-[var(--space-1)]">
       <TitleBlock item={item} withVersion={false} meta={meta.length > 0 || notes
-        ? <span data-testid="video-row-meta" className={META}>{meta.join(" · ")}{notes && <>{meta.length > 0 && " · "}<OpenNotes item={item} className="align-bottom" /></>}</span>
+        // One line, so the row stays two (S9): the text gives way to an ellipsis before the note count does.
+        ? <span data-testid="video-row-meta" className={cn(META, "flex min-w-0 items-center whitespace-pre")}><span className="min-w-0 truncate">{meta.join(" · ")}{notes && meta.length > 0 && " · "}</span>{notes && <OpenNotes item={item} className="shrink-0" />}</span>
         : null} />
     </div>
     {columns.includes("menu") && <div className="-my-[var(--space-2)]"><Menu item={item} /></div>}
