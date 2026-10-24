@@ -223,7 +223,8 @@ function NotesCell({ row }: CellProps) {
 
 function DurationCell({ row }: CellProps) {
   const { durationMs, locked } = row.original;
-  return locked || durationMs === null ? null : <span className={cn(MONO, "text-sm tabular-nums")}>{formatDuration(durationMs)}</span>;
+  // The body sans with tabular figures, as the Dashboard Table's numbers (F11); the tile's duration chip keeps its own type.
+  return locked || durationMs === null ? null : <span className="text-sm tabular-nums">{formatDuration(durationMs)}</span>;
 }
 
 function UploadedCell({ row }: CellProps) {
