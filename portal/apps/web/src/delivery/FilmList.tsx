@@ -1,6 +1,7 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { DeliveryItemDto } from "@quincy/shared";
 import { EllipsisIcon, DownloadIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { ViewLoadBoundary } from "../components/ViewLoadBoundary";
 import { VideoLayoutToggle } from "../components/quincy/VideoLayoutToggle";
 import type { VideoRowColumn, VideoRowItem } from "../components/quincy/VideoRows";
@@ -33,18 +34,23 @@ export const reviewAddress = (reviewUrl: string, pageSlug: string | null): strin
  * a locked row whose one control requests the unlock, with the same unlock line. `compact` is the page's container width, not the window (#933 S9: the staff Preview holds the page at 720 px), and
  * draws the two-line rows.
  */
-export function FilmList({ items, hrefs, unlock, onRequestUnlock, pageSlug = null, compact = false }: {
+export function FilmList({ items, hrefs, unlock, onRequestUnlock, pageSlug = null, compact = false, label }: {
   items: DeliveryItemDto[]; hrefs: DeliveryHrefs | null; unlock: UnlockStates; onRequestUnlock: (handle: string) => void;
   /** This page's own address segment, so the review's Back button can return here. */
   pageSlug?: string | null;
   /** The page's container is phone-narrow (under 721 px): the rows are the two-line list. */
   compact?: boolean;
+  /** The section's label ("FILM 1" on the Premium tab), drawn on the Layout switch's row with no margin of its own. The Film tab has none: the switch sits alone at the right. */
+  label?: ReactNode;
 }) {
   const { listRef, openFilm, player } = usePlainPlayer(items);
   const [layout, setLayout] = useUiPref(DELIVERY_VIDEO_LAYOUT_KEY, normalizeVideoLayout);
   return <>
     <div ref={listRef} className="grid gap-[var(--space-3)]">
-      <div className="flex justify-end"><VideoLayoutToggle value={layout} onChange={setLayout} /></div>
+      {/* #933 F12: one row for the label and the switch, so the switch never adds a row of its own under the label. */}
+      <div data-testid="delivery-film-head" className={cn("flex items-center gap-[var(--space-3)]", label ? "justify-between" : "justify-end")}>
+        {label}<VideoLayoutToggle value={layout} onChange={setLayout} />
+      </div>
       {layout === "rows"
         ? <FilmRows items={items} hrefs={hrefs} unlock={unlock} onRequestUnlock={onRequestUnlock} pageSlug={pageSlug} compact={compact} openFilm={openFilm} />
         : <ul aria-label="Film" data-testid="delivery-film" className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(min(280px,100%),1fr))] gap-[var(--space-4)] p-0 has-[>li:only-child]:grid-cols-1 @max-[721px]:grid-cols-1">

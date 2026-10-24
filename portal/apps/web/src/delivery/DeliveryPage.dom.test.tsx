@@ -908,6 +908,24 @@ describe("the Film tab as a list (#941)", () => {
     expect(JSON.parse(storage.values.get(KEY)!)).toBe("tiles");
   });
 
+  it("puts the switch on the Premium tab's FILM label row, and alone at the right on the Film tab, which has no label (F12)", async () => {
+    await show(page([film(1, { premium: true }), film(2)]));
+    await click(tab("Premium"));
+    const panel = byTestId("delivery-panel-premium")!;
+    const head = byTestId("delivery-film-head", panel)!;
+    const label = head.querySelector("h3")!;
+    expect(label.textContent).toBe("Film1");
+    expect(byTestId("video-layout-toggle", head)).not.toBeNull();
+    expect(label.compareDocumentPosition(byTestId("video-layout-toggle", head)!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The label and the switch are the row's only pieces, and the films follow it.
+    expect([...head.children]).toEqual([label, byTestId("video-layout-toggle", head)]);
+    expect(head.compareDocumentPosition(byTestId("delivery-film", panel)!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(panel.querySelectorAll("h3")).toHaveLength(1);
+    await click(tab("Film"));
+    const filmHead = byTestId("delivery-film-head", byTestId("delivery-panel-film")!)!;
+    expect([...filmHead.children]).toEqual([byTestId("video-layout-toggle", filmHead)]);
+  });
+
   describe("with the list chosen", () => {
     beforeEach(() => { storage.values.set(KEY, JSON.stringify("rows")); });
     const lockedFilm = (n: number) => locked(n, { kind: "video", label: `Video ${String(n).padStart(2, "0")}`, url: null, thumbUrl: null });

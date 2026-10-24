@@ -87,10 +87,11 @@ function Groups({ items, props, onOpen, headings, compact }: { items: DeliveryIt
   const { hrefs, onRequestUnlock, unlockState } = props;
   const of = (kind: DeliveryItemDto["kind"]) => items.filter((item) => item.kind === kind);
   const photos = of("photo"); const films = of("video"); const plans = of("floorplan"); const copy = of("copy");
-  const heading = (text: string, n: number) => headings ? <h3 className="m-0 mb-[var(--space-3)] flex items-baseline gap-[var(--space-2)] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary">{text}<span className="tabular-nums">{n}</span></h3> : null;
+  // `inRow`: the label shares a row with a control (the Film group's Layout switch, #933 F12), whose list keeps the gap below, so it brings no margin of its own.
+  const heading = (text: string, n: number, inRow = false) => headings ? <h3 className={`m-0 ${inRow ? "" : "mb-[var(--space-3)] "}flex items-baseline gap-[var(--space-2)] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary`}>{text}<span className="tabular-nums">{n}</span></h3> : null;
   return <div className="grid gap-[var(--space-6)]">
     {photos.length > 0 && <section aria-label="Photos">{heading("Photos", photos.length)}<PhotoGrid items={photos} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} onOpen={onOpen} /></section>}
-    {films.length > 0 && <section aria-label="Film">{heading("Film", films.length)}<FilmList items={films} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} pageSlug={props.pageSlug ?? null} compact={compact} /></section>}
+    {films.length > 0 && <section aria-label="Film"><FilmList items={films} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} pageSlug={props.pageSlug ?? null} compact={compact} label={heading("Film", films.length, true)} /></section>}
     {plans.length > 0 && <section aria-label="Floorplan">{heading("Floorplan", plans.length)}<DocRows items={plans} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} label="Floorplan" /></section>}
     {copy.length > 0 && <section aria-label="Copywriting">{heading("Copywriting", copy.length)}<DocRows items={copy} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} label="Copywriting" /></section>}
   </div>;
