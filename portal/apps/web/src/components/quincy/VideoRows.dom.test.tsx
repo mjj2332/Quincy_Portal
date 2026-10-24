@@ -226,31 +226,38 @@ describe("videoRowColumnsToFit (S8)", () => {
     expect(videoRowColumnsToFit(all, 0)).toEqual(all);
     expect(videoRowColumnsToFit(all, 4000)).toEqual(all);
   });
-  // Fitted against the title's 240px floor (plan D5), not its 280px unmeasured size: the staff set needs 1052px; uploader is 180, uploaded 120, notes 80.
+  // Fitted against the title's 240px floor (plan D5), not its 280px unmeasured size: the staff set needs 1032px; uploader is 180, uploaded 120, notes 80.
   const droppedAt = (width: number) => all.filter((column) => !videoRowColumnsToFit(all, width).includes(column));
   it("drops uploader, then uploaded, then notes, and never the title", () => {
-    expect(droppedAt(1052)).toEqual([]);
-    expect(droppedAt(1051)).toEqual(["uploader"]);
-    expect(droppedAt(872)).toEqual(["uploader"]);
-    expect(droppedAt(871)).toEqual(["uploaded", "uploader"]);
-    expect(droppedAt(752)).toEqual(["uploaded", "uploader"]);
-    expect(droppedAt(751)).toEqual(["notes", "uploaded", "uploader"]);
+    expect(droppedAt(1032)).toEqual([]);
+    expect(droppedAt(1031)).toEqual(["uploader"]);
+    expect(droppedAt(852)).toEqual(["uploader"]);
+    expect(droppedAt(851)).toEqual(["uploaded", "uploader"]);
+    expect(droppedAt(732)).toEqual(["uploaded", "uploader"]);
+    expect(droppedAt(731)).toEqual(["notes", "uploaded", "uploader"]);
     expect(droppedAt(320)).toEqual(["notes", "uploaded", "uploader"]);
   });
-  it("skips a column the set does not have", () => {
-    expect(videoRowColumnsToFit(["poster", "title", "duration", "notes"], 496)).toEqual(["poster", "title", "duration", "notes"]);
-    expect(videoRowColumnsToFit(["poster", "title", "duration", "notes"], 495)).toEqual(["poster", "title", "duration"]);
+  // F10: the Project sheet at 768 gives the panel 652px; tick 68 (its 16px edge), poster 80, title 240, status 128, duration 76, ⋯ 60 (its edge) is exactly that.
+  it("fits the staff set at the Project sheet's 652px panel with nothing dropped past notes", () => {
+    expect(droppedAt(652)).toEqual(["notes", "uploaded", "uploader"]);
+    expect(videoRowTitleSize(videoRowColumnsToFit(all, 652), 652)).toBe(240);
+  });
+  it("skips a column the set does not have, and counts the table edge on whichever column is first or last", () => {
+    // Poster opens the guest set (88 with the edge) and notes closes it (88): 88 + 240 + 76 + 88. Without notes, duration takes the edge (84).
+    expect(videoRowColumnsToFit(["poster", "title", "duration", "notes"], 492)).toEqual(["poster", "title", "duration", "notes"]);
+    expect(videoRowColumnsToFit(["poster", "title", "duration", "notes"], 491)).toEqual(["poster", "title", "duration"]);
+    expect(videoRowTitleSize(["poster", "title", "duration"], 412)).toBe(240);
   });
 });
 
 describe("videoRowTitleSize", () => {
-  const fitted: readonly VideoRowColumn[] = ["select", "poster", "title", "status", "notes", "duration", "uploaded", "menu"]; // 632px besides the title
+  const fitted: readonly VideoRowColumn[] = ["select", "poster", "title", "status", "notes", "duration", "uploaded", "menu"]; // 612px besides the title
   it("is the title's 280px while the width is unmeasured", () => {
     expect(videoRowTitleSize(fitted, 0)).toBe(280);
   });
   it("takes every pixel the other columns leave, so the table is exactly as wide as the panel", () => {
-    expect(videoRowTitleSize(fitted, 1000)).toBe(368);
-    expect(videoRowTitleSize(fitted, 872)).toBe(240);
+    expect(videoRowTitleSize(fitted, 1000)).toBe(388);
+    expect(videoRowTitleSize(fitted, 852)).toBe(240);
   });
   it("never goes below its 240px floor: the table is then wider than the panel and scrolls", () => {
     expect(videoRowTitleSize(fitted, 700)).toBe(240);
@@ -277,17 +284,25 @@ describe("VideoRows — width (S8, #933 fix round 1)", () => {
     width = 1000;
     await mount(<VideoRows items={[staffFilm()]} columns={STAFF} label="Films" testIds={TEST_IDS} />);
     expect(headers()).not.toContain("Uploader");
-    expect(th("Title").style.width).toBe("368px");
+    expect(th("Title").style.width).toBe("388px");
     expect(widths().reduce((sum, w) => sum + w, 0)).toBe(1000);
   });
 
-  it("at the Project sheet's 768px panel keeps the title at its floor and puts the table in a horizontal scroll area, so Actions is never clipped", async () => {
+  it("at the Project sheet's 768px (a 652px panel) fills the panel exactly with the title at its floor: nothing to scroll, Actions in view (F10)", async () => {
     width = 652;
     await mount(<VideoRows items={[staffFilm()]} columns={STAFF} label="Films" testIds={TEST_IDS} />);
     expect(headers()).toEqual(["Select", "Poster", "Title", "Status", "Duration", "Actions"]);
-    expect(th("Title").style.width).toBe("240px");
+    expect(widths()).toEqual([68, 80, 240, 128, 76, 60]);
+    expect(widths().reduce((sum, w) => sum + w, 0)).toBe(652);
+    // Narrower still, the table keeps its floor inside the data-grid's horizontal scroll area.
     const scroller = document.querySelector('[data-testid="video-rows-scroll"]');
-    expect(scroller).not.toBeNull();
     expect(scroller!.querySelector("table")).not.toBeNull();
+  });
+
+  it("gives the poster the table's edge where it opens the set (guest, delivery): 88, the 64px thumb with 16px before it", async () => {
+    width = 600;
+    await mount(<VideoRows items={[film()]} columns={GUEST} label="Films" testIds={TEST_IDS} />);
+    expect(headers()).toEqual(["Poster", "Title", "Duration", "Notes"]);
+    expect(widths()).toEqual([88, 348, 76, 88]);
   });
 });

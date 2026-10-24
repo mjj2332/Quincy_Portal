@@ -33,7 +33,8 @@ import { VideoOpenControl, videoTileSummary, type VideoTileOpen, type VideoTileS
  * `columns` is the screen's set, in order. Column definitions are built once per set; every cell reads the row's item and this grid's settings from context, so a refetch never
  * remounts a row (lesson #431). Width (#933 S8): the grid measures its own width and drops uploader, then uploaded, then notes until the rest fit with the title at its 240px
  * floor; an unmeasured width (0) drops nothing. The title takes whatever width the others leave, so a table that fits is exactly the panel's width. Where even the floor does
- * not fit (the staff set in the Project sheet at 768), the table sits in the data-grid's horizontal scroll area, as the Dashboard Table does, so no column is ever clipped.
+ * not fit (narrower than the Project sheet at 768, whose 652px panel the staff set fills exactly: F10), the table sits in the data-grid's horizontal scroll area, as the
+ * Dashboard Table does, so no column is ever clipped.
  *
  * ## Compact
  * `compact` (the phone: staff and guest pass `PHONE_VIEWPORT_QUERY`, delivery its container width, S9) draws a list of two-line rows instead of the table, as the Dashboard's phone
@@ -93,14 +94,22 @@ const SettingsContext = createContext<Settings>({ testIds: { row: "video-row", o
 type Column = ColumnDef<DataGridFeatures, VideoRowItem>;
 type CellProps = { row: Row<DataGridFeatures, VideoRowItem> };
 
-/** Widths in px, padding included (the 8px each side, and the 16px edge on the first and last column). The title's is its size before the width is known. */
-const SIZES: Record<VideoRowColumn, number> = { select: 68, poster: 88, title: 280, status: 128, notes: 80, duration: 88, uploaded: 120, uploader: 180, menu: 60 };
+/**
+ * Widths in px of a column between two others, its 8px each side included: the tick's 44px target, the 64px poster, 60px for the widest duration ("1:02:05" is at most 51px in
+ * text-sm tabular Apfel Grotezk), 112px for the widest status pill (~71px), the 36px "⋯". The title's is its size before the width is known. The first and last shown column
+ * gain EDGE_EXTRA for the table's 16px edge (`EDGE_CELL`): the poster is 80 inside the staff set and 88 where it opens the guest and delivery sets (#933 F10).
+ */
+const SIZES: Record<VideoRowColumn, number> = { select: 60, poster: 80, title: 280, status: 128, notes: 80, duration: 76, uploaded: 120, uploader: 180, menu: 52 };
+/** The 16px table edge less the column's own 8px. */
+const EDGE_EXTRA = 8;
 /** S8 / plan D5: the title never narrows below this; columns are dropped to keep it. */
 const TITLE_FLOOR = 240;
 /** S8: what a narrow panel gives up first. */
 const FIT_DROP_ORDER: readonly VideoRowColumn[] = ["uploader", "uploaded", "notes"];
-/** The width a column needs at the least: its size, the title its floor. */
-const leastWidth = (column: VideoRowColumn) => (column === "title" ? TITLE_FLOOR : SIZES[column]);
+/** A column's width among the shown `set`: its size, plus the table edge when it is the first or last. */
+const columnSize = (column: VideoRowColumn, set: readonly VideoRowColumn[]) => SIZES[column] + (set[0] === column ? EDGE_EXTRA : 0) + (set[set.length - 1] === column ? EDGE_EXTRA : 0);
+/** The width `set` needs at the least: every column's size, the title at its floor. */
+const leastWidth = (set: readonly VideoRowColumn[]) => set.reduce((sum, column) => sum + (column === "title" ? TITLE_FLOOR : columnSize(column, set)), 0);
 const LABELS: Record<VideoRowColumn, string> = { select: "Select", poster: "Poster", title: "Title", status: "Status", notes: "Notes", duration: "Duration", uploaded: "Uploaded", uploader: "Uploader", menu: "Actions" };
 /** Columns whose header names a control column, not a fact: read aloud, not drawn. */
 const UNLABELLED = new Set<VideoRowColumn>(["select", "poster", "menu"]);
@@ -108,16 +117,13 @@ const SORT_COLUMN: Partial<Record<VideoRowColumn, VideoRowSortKey>> = { title: "
 
 /** The columns of `columns` that fit `width` (px) with the title at its 240px floor, dropping uploader, uploaded, then notes (S8). An unmeasured width (0) drops nothing. */
 export function videoRowColumnsToFit(columns: readonly VideoRowColumn[], width: number): VideoRowColumn[] {
-  if (width <= 0) return [...columns];
-  const dropped = new Set<VideoRowColumn>();
-  let total = columns.reduce((sum, column) => sum + leastWidth(column), 0);
+  let fitted = [...columns];
+  if (width <= 0) return fitted;
   for (const column of FIT_DROP_ORDER) {
-    if (total <= width) break;
-    if (!columns.includes(column)) continue;
-    dropped.add(column);
-    total -= SIZES[column];
+    if (leastWidth(fitted) <= width) break;
+    fitted = fitted.filter((kept) => kept !== column);
   }
-  return columns.filter((column) => !dropped.has(column));
+  return fitted;
 }
 
 /**
@@ -126,8 +132,13 @@ export function videoRowColumnsToFit(columns: readonly VideoRowColumn[], width: 
  */
 export function videoRowTitleSize(fitted: readonly VideoRowColumn[], width: number): number {
   if (width <= 0) return SIZES.title;
-  const others = fitted.reduce((sum, column) => (column === "title" ? sum : sum + SIZES[column]), 0);
+  const others = fitted.reduce((sum, column) => (column === "title" ? sum : sum + columnSize(column, fitted)), 0);
   return Math.max(TITLE_FLOOR, Math.floor(width - others));
+}
+
+/** Every shown column's width among `fitted` at `width`: each its size at its place (edge or not), the title what the others leave. */
+function videoRowColumnSizes(fitted: readonly VideoRowColumn[], width: number): Record<string, number> {
+  return Object.fromEntries(fitted.map((column) => [column, column === "title" ? videoRowTitleSize(fitted, width) : columnSize(column, fitted)]));
 }
 
 // The Dashboard Table's metrics (#923): 8px each side of a column, no vertical padding (the row's height centres it), 16px at the table's edges, sentence-case 12px headers.
@@ -246,7 +257,7 @@ function buildColumns(columns: readonly VideoRowColumn[], sortable: readonly Vid
       accessorFn: (item) => item.id,
       header: UNLABELLED.has(id) ? () => <span className="sr-only">{LABELS[id]}</span> : ({ column }) => <DataGridColumnHeader column={column} title={LABELS[id]} className={HEADER_TYPE} />,
       cell: CELLS[id],
-      size: SIZES[id],
+      size: columnSize(id, columns),
       meta: { headerClassName: CELL_X, cellClassName: CELL_X },
       enableSorting: sortKey !== undefined && sortable.includes(sortKey),
       enableHiding: id !== "title",
@@ -314,7 +325,7 @@ function RowsGrid({ items, columns, width, sort, rowAttributes }: {
   const fitted = useMemo(() => videoRowColumnsToFit(columnsKey.split(",") as VideoRowColumn[], width), [columnsKey, width]);
   const visibility = useMemo<ColumnVisibilityState>(() => Object.fromEntries(columnsKey.split(",").map((id) => [id, fitted.includes(id as VideoRowColumn)])), [columnsKey, fitted]);
   // The title takes the width the others leave, so a table that fits is exactly the panel's width (no spread over every column).
-  const sizing = useMemo(() => ({ title: videoRowTitleSize(fitted, width) }), [fitted, width]);
+  const sizing = useMemo(() => videoRowColumnSizes(fitted, width), [fitted, width]);
   const sorting = useMemo<SortingState>(() => (sort ? [{ id: sort.key, desc: sort.dir === "desc" }] : []), [sort]);
   const onSortingChange = (updater: Updater<SortingState>) => {
     if (!sort) return;
@@ -347,7 +358,7 @@ function RowsGrid({ items, columns, width, sort, rowAttributes }: {
       bodyRow: "relative h-13 bg-card",
     }}
   >
-    {/* As the Dashboard Table: where even the title's floor does not fit (the Project sheet at 768), the table scrolls sideways instead of the container clipping Actions. */}
+    {/* As the Dashboard Table: where even the title's floor does not fit (narrower than the Project sheet at 768), the table scrolls sideways instead of the container clipping Actions. */}
     <DataGridContainer>
       <DataGridScrollArea orientation="horizontal" data-testid="video-rows-scroll"><DataGridTable rowProps={rowProps} /></DataGridScrollArea>
     </DataGridContainer>
