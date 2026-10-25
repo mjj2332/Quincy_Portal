@@ -416,7 +416,8 @@ export function QuincyRichTextEditorBase({
       // Likewise a sibling upload landing must not retire the cancel announcement or its re-announce timer.
       if (!isUploadInsert) { clearCancelTimer(); setUploadCancelled(false); }
       setNestingBlocked(false); setMentionDismissed(false); setQuery(mentionsOnRef.current ? mentionQuery(next) : null);
-      for (const { href, at } of linkedAddresses(appendedTransactions)) offerLinkPreviewRef.current(href, at);
+      // Links are reported by the transaction that made them: one a plugin appended, or one dispatched on its own (an IME's input, linked once its composition ends).
+      for (const { href, at } of linkedAddresses([transaction, ...appendedTransactions])) offerLinkPreviewRef.current(href, at);
     },
     onSelectionUpdate: ({ editor: next }) => setQuery(mentionsOnRef.current ? mentionQuery(next) : null),
   });
