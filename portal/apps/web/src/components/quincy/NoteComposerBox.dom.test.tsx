@@ -300,6 +300,82 @@ describe("NoteComposerBox, edit (E1)", () => {
   });
 });
 
+describe("NoteComposerBox, post (#950: R1's row, E1's Cancel and Save)", () => {
+  const post = (overrides: Partial<Extract<NoteComposerBoxProps, { variant: "post" }>> = {}): NoteComposerBoxProps =>
+    ({ variant: "post", label: "Write a comment", field, attach: { onPick: vi.fn() }, send: { label: "Post comment", onSend: vi.fn(), disabled: false }, ...overrides }) as NoteComposerBoxProps;
+  const pressKeepsFocus = (el: Element) => ["pointerdown", "mousedown"].every((type) => { const event = new Event(type, { bubbles: true, cancelable: true }); el.dispatchEvent(event); return event.defaultPrevented; });
+
+  it("is the field, the strip, the paperclip and a round Send: no chip, no in/out, no pen, no visibility", async () => {
+    const host = await mount(post({ strip }));
+    expect(host.querySelector("form")!.getAttribute("data-variant")).toBe("post");
+    expect(q("note-composer-chip")).toBeNull();
+    expect(q("note-composer-visibility")).toBeNull();
+    expect(rowNames()).toEqual(["Add photos or videos", "Post comment"]);
+    expect(byLabel("Post comment")!.getAttribute("type")).toBe("submit");
+    expect(byLabel("Post comment")!.getAttribute("title")).toBe("Post (⌘↵)");
+    expect(q("note-composer-text")!.contains(q("field-fixture"))).toBe(true);
+    expect(q("strip-fixture")).not.toBeNull();
+    expect(host.querySelector("form")!.textContent).not.toMatch(/Internal|Client-visible|Cancel/);
+  });
+
+  it("the paperclip opens the picker; it and Send keep the field's focus, so a phone keeps its keyboard", async () => {
+    const p = post();
+    await mount(p);
+    expect(pressKeepsFocus(byLabel("Add photos or videos")!)).toBe(true);
+    expect(pressKeepsFocus(byLabel("Post comment")!)).toBe(true);
+    await click(byLabel("Add photos or videos")!);
+    expect((p as Extract<NoteComposerBoxProps, { variant: "post" }>).attach.onPick).toHaveBeenCalledTimes(1);
+    await click(byLabel("Post comment")!);
+    expect((p as Extract<NoteComposerBoxProps, { variant: "post" }>).send!.onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("a held Send says why and does nothing", async () => {
+    const onSend = vi.fn();
+    await mount(post({ send: { label: "Post comment", onSend, disabled: true, reason: "Wait for the uploads to finish." } }));
+    const send = byLabel("Post comment")!;
+    expect(send.getAttribute("aria-disabled")).toBe("true");
+    expect(send.getAttribute("title")).toBe("Wait for the uploads to finish.");
+    await click(send);
+    await act(async () => { send.closest("form")!.requestSubmit(); });
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("editing: Cancel and Save end the row in place of Send, and both keep the field's focus", async () => {
+    const save = { onSave: vi.fn(), onCancel: vi.fn(), disabled: false };
+    await mount({ variant: "post", label: "Edit comment", field, attach: { onPick: vi.fn() }, save });
+    expect(byLabel("Post comment")).toBeNull();
+    const buttons = [...q("note-composer-tools")!.querySelectorAll("button")];
+    expect(buttons.map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Add photos or videos", "Cancel", "Save"]);
+    expect(buttons.slice(-2).map((b) => b.getAttribute("type"))).toEqual(["button", "submit"]);
+    expect(buttons.slice(-2).every(pressKeepsFocus)).toBe(true);
+    await click(buttons[1]!); await click(buttons[2]!);
+    expect(save.onCancel).toHaveBeenCalledTimes(1);
+    expect(save.onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("a notice sits above the row, beside Send", async () => {
+    await mount(post({ strip, notice: <p role="alert">Comment could not be posted.</p> }));
+    const order = [...q("note-composer-box")!.children].map((c) => c.getAttribute("data-testid") ?? c.getAttribute("role"));
+    expect(order).toEqual(["note-composer-text", "strip-fixture", "alert", "note-composer-tools"]);
+  });
+
+  it("draws 44px targets on a phone and 32px on desktop", async () => {
+    await mount(post({ phone: true }));
+    for (const label of ["Add photos or videos", "Post comment"]) expect(byLabel(label)!.className.split(/\s+/), label).toContain("size-11");
+    await act(async () => { root!.render(<NoteComposerBox {...post()} />); });
+    for (const label of ["Add photos or videos", "Post comment"]) expect(byLabel(label)!.className.split(/\s+/), label).toContain("size-8");
+  });
+
+  it("leaves Escape alone without a host handler (the Project sheet owns it), and hands it over with one", async () => {
+    await mount(post());
+    expect((await key(q("field-fixture")!, { key: "Escape" })).defaultPrevented).toBe(false);
+    const onEscape = vi.fn();
+    await act(async () => { root!.render(<NoteComposerBox {...post({ onEscape })} />); });
+    expect((await key(q("field-fixture")!, { key: "Escape" })).defaultPrevented).toBe(true);
+    expect(onEscape).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("NoteComposerBox, phone (P1) and Full screen (F1)", () => {
   it("draws every tool, Send and the visibility trigger at 44px on a phone", async () => {
     await mount(staff({ phone: true }));

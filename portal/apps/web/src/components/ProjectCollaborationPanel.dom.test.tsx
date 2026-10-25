@@ -57,7 +57,7 @@ const projectId = "11111111-1111-4111-8111-111111111111";
 const doc = (text: string) => ({ type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text }] }] });
 const ownComment = { id: "comment-own", author: { id: "user-me", name: "Myself" }, body: "My comment", content: doc("My comment"), createdAt: "2026-08-17T00:00:00.000Z", editedAt: null };
 const otherComment = { id: "comment-other", author: { id: "user-other", name: "Other person" }, body: "Other comment", content: doc("Other comment"), createdAt: "2026-08-17T00:01:00.000Z", editedAt: null };
-const comments = (items = [ownComment, otherComment]) => ({ project: { id: projectId, street: "72 Collaboration Lane" }, comments: items });
+const comments = (items: readonly { id: string; author: { id: string; name: string }; body: string; content: unknown; createdAt: string; editedAt: string | null }[] = [ownComment, otherComment]) => ({ project: { id: projectId, street: "72 Collaboration Lane" }, comments: items });
 const page = (ids: string[], nextCursor?: string) => ({ project: { id: projectId, street: "72 Collaboration Lane" }, comments: ids.map((id) => ({ ...otherComment, id, body: id, content: doc(id) })), ...(nextCursor ? { nextCursor } : {}) });
 const readState = () => ({ projectId, marker: null, latest: null, unreadCount: 0 });
 function deferredPromise<T>() {
@@ -234,50 +234,47 @@ describe("ProjectCollaborationPanel", () => {
     expect(panel.className).toContain("max-[721px]:p-[var(--space-3)]");
   });
 
-  it("posts a task list and renders its posted indicator without a checkbox control", async () => {
+  // #950: the composer is the note box's preset, which makes no checklist or heading (the selection bubble has Bold, Italic, Strike, Link
+  // and the two lists); a posted one still renders, and an edit gives it back unchanged.
+  it("renders a posted task list's indicator without a checkbox control, and an author edit keeps the list", async () => {
     const content = { type: "doc" as const, content: [{ type: "taskList" as const, content: [{ type: "taskItem" as const, attrs: { checked: false }, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Comment task" }] }] }] }] };
-    const posted = { ...otherComment, id: "comment-task", body: "Comment task", content };
-    apiPostMock.mockResolvedValue(posted); mockCommentRefetchAfter(posted);
+    const posted = { ...ownComment, id: "comment-task", body: "Comment task", content };
+    apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : path.includes("comment-read-marker") ? Promise.resolve(readState()) : Promise.resolve(comments([posted])));
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
-    await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "Comment task");
-    await click(host.querySelector<HTMLButtonElement>('[aria-label="Checklist"]')!);
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post")!); await flush();
-    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content });
     expect(host.querySelector("[data-testid=discussion-comments] input")).toBeNull();
-    apiPostMock.mockClear(); apiPatchMock.mockClear();
     await click(host.querySelector('[data-testid=discussion-comments] [data-testid="rich-text-task-indicator"]')!);
     expect(apiPostMock).not.toHaveBeenCalled(); expect(apiPatchMock).not.toHaveBeenCalled();
     expect(host.querySelector('[data-testid=discussion-comments] [data-testid="rich-text-task-status"]')?.textContent).toBe("Not completed");
-    expect(host.querySelector('[data-testid=discussion-comments] [data-testid="rich-text-task-indicator"]')?.closest("article")?.textContent).not.toContain("Edit");
+    await chooseCommentAction(host, "Myself", "Edit");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!); await flush();
+    expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/${posted.id}`, { content });
   });
 
-  it("posts and renders a Subsection heading through the shared composer", async () => {
+  it("renders a posted Subsection heading, and an author edit keeps it", async () => {
     const content = { type: "doc" as const, content: [{ type: "heading" as const, attrs: { level: 3 as const }, content: [{ type: "text" as const, text: "Comment subsection" }] }] };
     const posted = { ...ownComment, id: "comment-heading", body: "Comment subsection", content };
-    apiPostMock.mockResolvedValue(posted); mockCommentRefetchAfter(posted);
+    apiGetMock.mockImplementation((path) => path.includes("subtasks") ? Promise.resolve({ subtasks: [] }) : path.includes("comment-read-marker") ? Promise.resolve(readState()) : Promise.resolve(comments([posted])));
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
-    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
-    await typeIntoEditor(editor, "Comment subsection");
-    // #491: the composer's heading control is a dropdown menu, not a native select; same document outcome.
-    await click(host.querySelector<HTMLButtonElement>('[aria-label="Heading"]')!);
-    await click([...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((item) => item.textContent === "Subsection")!);
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post")!);
-    await flush();
-    expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content });
     expect(host.querySelector("[data-testid=discussion-comments] h3")?.textContent).toBe("Comment subsection");
+    expect(host.querySelector('[data-testid=discussion-composer] [aria-label="Heading"], [data-testid=discussion-composer] [aria-label="Checklist"]')).toBeNull();
+    await chooseCommentAction(host, "Myself", "Edit");
+    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!); await flush();
+    expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/${posted.id}`, { content });
   });
 
-  it("posts newly underlined and struck-through comment content through the composer", async () => {
+  it("posts struck-through text from the selection bubble and underline from ⌘U", async () => {
     const content = { type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Marked comment", marks: [{ type: "strike" as const }, { type: "underline" as const }] }] }] };
     const posted = { ...ownComment, id: "comment-marked", body: "Marked comment", content };
     apiPostMock.mockResolvedValue(posted); mockCommentRefetchAfter(posted);
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
-    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    const editor = host.querySelector<HTMLElement>('[data-testid=discussion-composer] [contenteditable="true"]')!;
     await typeIntoEditor(editor, "Marked comment");
     await selectText(editor, editor.querySelector("p")!.firstChild!, 0, "Marked comment".length);
-    await click(host.querySelector<HTMLButtonElement>('[aria-label="Underline"]')!);
-    await click(host.querySelector<HTMLButtonElement>('[aria-label="Strikethrough"]')!);
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post")!);
+    // Tiptap's bubble waits out its 250ms update delay over a range selection.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+    await click(document.querySelector<HTMLButtonElement>('[data-testid="rich-text-format-bubble"] [aria-label="Strikethrough"]')!);
+    await act(async () => { editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "u", ctrlKey: true })); await Promise.resolve(); });
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Post comment"]')!);
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content });
     expect(host.querySelector("[data-testid=discussion-comments] u")?.textContent).toBe("Marked comment"); expect(host.querySelector("[data-testid=discussion-comments] s")?.textContent).toBe("Marked comment");
@@ -483,7 +480,7 @@ describe("ProjectCollaborationPanel", () => {
     expect(host.querySelector('[aria-label="Actions for comment by Other person"]')).toBeNull();
     const composer = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await typeIntoEditor(composer, "Posted comment");
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post")!); await flush();
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Post comment"]')!); await flush();
     expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content: doc("Posted comment") }); expect(host.textContent).toContain("Posted comment");
     await chooseCommentAction(host, "Myself", "Edit");
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Cancel")!);
@@ -499,7 +496,7 @@ describe("ProjectCollaborationPanel", () => {
     const runtime = getProjectQueryRuntime(client)!;
     const publish = vi.spyOn(runtime, "publish");
     await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "New Activity comment");
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post")!); await flush();
+    await click(host.querySelector<HTMLButtonElement>('[aria-label="Post comment"]')!); await flush();
     expect(publish.mock.calls.some(([message]) => message.type === "project-data-invalidated" && JSON.stringify(message.resources) === JSON.stringify([{ kind: "comments" }, { kind: "comment-read-marker" }, { kind: "activity" }]))).toBe(true);
 
     publish.mockClear();
@@ -1213,28 +1210,29 @@ describe("Discussion restyle (#376)", () => {
     expect(host.querySelector("[data-testid=discussion-comments]")!.children).toHaveLength(1);
   });
 
-  it("keeps Post disabled for an empty or over-limit comment and sends nothing when a disabled Post is clicked", async () => {
+  it("keeps Send held for an empty or over-limit comment and sends nothing when a held Send is clicked", async () => {
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
     const composer = host.querySelector<HTMLElement>("[data-testid=discussion-composer]")!;
     const post = () => composer.querySelector<HTMLButtonElement>('button[type="submit"]')!;
-    expect(post().textContent).toBe("Post");
-    expect(post().disabled).toBe(true);
+    expect(post().getAttribute("aria-label")).toBe("Post comment");
+    expect(post().getAttribute("aria-disabled")).toBe("true");
     await click(post());
     expect(apiPostMock).not.toHaveBeenCalled();
     const editor = composer.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await typeIntoEditor(editor, "A real comment");
-    expect(post().disabled).toBe(false);
+    expect(post().getAttribute("aria-disabled")).toBeNull();
     await typeIntoEditor(editor, "x".repeat(10_001));
-    expect(post().disabled).toBe(true);
+    expect(post().getAttribute("aria-disabled")).toBe("true");
+    expect(post().getAttribute("title")).toBe("Comments can be 10,000 characters at most.");
     await click(post());
     expect(apiPostMock).not.toHaveBeenCalled();
   });
 
-  it("renders the composer as an always-open field with a hint and no counter until near the limit", async () => {
+  it("renders the composer as an always-open field with the @ hint in its placeholder and no counter until near the limit", async () => {
     const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
     const composer = host.querySelector<HTMLElement>("[data-testid=discussion-composer]")!;
     expect(composer.querySelector('[data-testid="rich-text-field"]')).not.toBeNull();
-    expect(composer.textContent).toContain("Use @ to mention project participants");
+    expect(composer.querySelector('[contenteditable="true"]')!.getAttribute("data-placeholder")).toContain("Use @ to mention project participants");
     expect(composer.querySelector('[data-testid="rich-text-counter"]')).toBeNull();
   });
 });

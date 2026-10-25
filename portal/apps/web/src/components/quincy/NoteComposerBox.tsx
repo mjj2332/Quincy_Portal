@@ -10,13 +10,15 @@ import { NOTE_TARGET, NOTE_TARGET_PHONE, NOTE_TOOL, NoteDrawRow, keepFocus, type
 
 /**
  * The note composer box (#927, prototype `note-composer`: C2, C4, C5, C6, G1, R1, E1, P1; F1 floating). One box, after Frame.io's comment
- * field, for every place a note or a reply is written on a Video: row 1 is the anchor chip inline before the text, then the media strip; the
+ * field, for every place a note or a reply is written on a Video, and for a Project discussion comment (#950): row 1 is the anchor chip inline before the text, then the media strip; the
  * last row is the tools on the left (in/out, paperclip, pen) and visibility plus a round Send on the right. While the pen is on, the drawing
  * row (`NoteDrawRow`) takes the tool row's place, and visibility and Send hide until ‹.
  *
  * Variants: `staff` (visibility menu), `guest` (no visibility: a guest's note is always public), `reply` (paperclip and Send only: a reply
  * inherits its note's anchor and visibility; no visible Cancel, Esc and the reply toggle dismiss it), `edit` (Cancel and Save, and a fixed
- * visibility label when the host gives one: staff do, a guest's edit shows none, owner decision 2026-10-20). `phone` gives every target
+ * visibility label when the host gives one: staff do, a guest's edit shows none, owner decision 2026-10-20), `post` (#950, a Project
+ * discussion comment and its edit: R1's row, the paperclip and Send, with E1's Cancel and Save in place of Send for an edit; no chip,
+ * in/out, pen or visibility, and its paperclip keeps the field's focus too). `phone` gives every target
  * 44px; `floating` is Full screen's box over the film; `foot` draws the composer's own foot (a hairline above, the card ground and the
  * gutter, prototype `.cmp-wrap`) for a host that has none of its own. Without it the form draws nothing around the box.
  *
@@ -76,6 +78,8 @@ export type NoteComposerBoxProps =
   | (BaseProps & AnchoredProps & { variant: "staff"; visibility: { value: VideoNoteVisibility; onChange: (value: VideoNoteVisibility) => void; disabled?: boolean }; send: NoteSendControl })
   | (BaseProps & AnchoredProps & { variant: "guest"; send: NoteSendControl })
   | (BaseProps & { variant: "reply"; send: NoteSendControl })
+  /** A Project discussion comment (#950): R1's row (paperclip and Send) for a new comment; E1's Cancel and Save, in place of Send, for an edit. */
+  | (BaseProps & { variant: "post" } & ({ send: NoteSendControl; save?: never } | { save: NoteSaveControl; send?: never }))
   | (BaseProps & AnchoredProps & { variant: "edit"; /** Absent: no visibility shown (a guest's edit). */ visibility?: VideoNoteVisibility; save: NoteSaveControl });
 
 /** D2's Send reason: a drawing alone is not a note. */
@@ -127,12 +131,12 @@ function AnchorChip({ chip, drawn, phone }: { chip: NoteAnchorChip; drawn: boole
 
 export function NoteComposerBox(props: NoteComposerBoxProps) {
   const { variant, label, field, strip, notice, attach, phone = false, floating = false, foot = false, onEscape, testId = "note-composer", className, textClassName, textAttributes, formAttributes } = props;
-  const anchored = variant === "reply" ? null : props;
+  const anchored = variant === "reply" || variant === "post" ? null : props;
   const draw = anchored?.draw ?? null;
   const target = phone ? NOTE_TARGET_PHONE : NOTE_TARGET;
   const tool = cn(NOTE_TOOL, target);
-  const send = variant === "edit" ? null : props.send;
-  const save = variant === "edit" ? props.save : null;
+  const send = variant === "edit" ? null : props.send ?? null;
+  const save = variant === "edit" || variant === "post" ? props.save ?? null : null;
   const blocked = send ? send.disabled : save!.disabled;
 
   const submit = (event: FormEvent) => {
@@ -157,7 +161,7 @@ export function NoteComposerBox(props: NoteComposerBoxProps) {
       title={anchored.range.disabled && anchored.range.reason ? anchored.range.reason : RANGE_TITLE[step]}
       className={tool} {...lockProps(anchored.range)} {...KEEP_FOCUS_MARKER} onClick={() => { anchored.range.onPress(step); }}
     ><ArrowRightFromLineIcon aria-hidden="true" /></Button>}
-    <Button type="button" variant="ghost" size="icon" aria-label="Add photos or videos" title={attach.disabled && attach.reason ? attach.reason : "Add photos or videos"} className={tool} {...lockProps(attach)} onClick={attach.onPick}>
+    <Button type="button" variant="ghost" size="icon" aria-label="Add photos or videos" title={attach.disabled && attach.reason ? attach.reason : "Add photos or videos"} className={tool} {...lockProps(attach)} {...(variant === "post" ? KEEP_FOCUS_MARKER : {})} onClick={attach.onPick}>
       <PaperclipIcon aria-hidden="true" />
     </Button>
     {anchored?.pen && <Button type="button" variant="ghost" size="icon" aria-label="Draw on the frame" title={anchored.pen.disabled && anchored.pen.reason ? anchored.pen.reason : "Draw on the frame"} className={tool} {...lockProps(anchored.pen)} onClick={anchored.pen.onPress}>

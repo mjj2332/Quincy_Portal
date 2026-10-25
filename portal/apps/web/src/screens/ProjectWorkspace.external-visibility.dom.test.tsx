@@ -476,6 +476,11 @@ describe("external-editor visibility inventory", () => {
 // shows enters the closed-state inventory. Admin's Dropbox popover trigger leaves (`project-dropbox-trigger`, "Dropbox: Not
 // monitored"): its details, Open and Sync moved into Project info's Dropbox section, gated exactly as before. Nothing else moved.
 //
+// Re-frozen, deliberately, for #950 (prototype note-composer R1/E1/C2). Re-captured with DUMP_VISIBILITY_INVENTORY; only the
+// Collaboration tab moved, for both roles alike. The Discussion composer is now the note composer box's `post` variant: the
+// fixed formatting toolbar (Bold … Redo, Heading, Insert image/video, its toolbar, group and separator roles) is gone, formatting
+// is the selection bubble; the paperclip ("Add photos or videos") and a round "Post comment" Send replace it and "Post". No data a
+// role may see changed.
 const FROZEN_EXTERNAL_EDITOR = {
   "RAW": {
     "testids": {
@@ -684,7 +689,11 @@ const FROZEN_EXTERNAL_EDITOR = {
     "testids": {
       "discussion-comments": 1,
       "discussion-composer": 1,
+      "discussion-composer-form": 1,
       "discussion-read-anchor": 1,
+      "note-composer-box": 1,
+      "note-composer-text": 1,
+      "note-composer-tools": 1,
       "project-collaboration-panel": 1,
       "project-collaboration-rail": 1,
       "project-header": 1,
@@ -698,51 +707,34 @@ const FROZEN_EXTERNAL_EDITOR = {
       "project-team-control": 1,
       "project-workspace": 1,
       "rich-text-field": 1,
-      "rich-text-heading-menu": 1,
-      "rich-text-media-tools": 1,
       "subtask-checklist-count": 1,
       "toast-viewport": 1,
       "workspace-main": 1
     },
     "roles": [
       "combobox",
-      "group",
       "presentation",
       "progressbar",
-      "separator",
       "status",
       "tab",
       "tablist",
-      "tabpanel",
-      "toolbar"
+      "tabpanel"
     ],
     "controls": [
       "+ Add an item",
       "Activity",
-      "Bold",
-      "Bullet list",
-      "Checklist",
+      "Add photos or videos",
       "Collaboration",
       "Collapse checklist",
       "Copy0",
       "Discussion",
       "Edited1",
       "Floorplan0",
-      "Heading",
-      "Insert image",
-      "Insert video",
-      "Italic",
-      "Link",
       "More actions",
-      "Ordered list",
-      "Post",
+      "Post comment",
       "Project info",
       "RAW2",
-      "Redo",
       "Stage: RAW review",
-      "Strikethrough",
-      "Underline",
-      "Undo",
       "Video0",
       "[div]",
       "[input]"
@@ -992,7 +984,11 @@ const FROZEN_ADMIN = {
     "testids": {
       "discussion-comments": 1,
       "discussion-composer": 1,
+      "discussion-composer-form": 1,
       "discussion-read-anchor": 1,
+      "note-composer-box": 1,
+      "note-composer-text": 1,
+      "note-composer-tools": 1,
       "project-collaboration-panel": 1,
       "project-collaboration-rail": 1,
       "project-deadline-trigger": 1,
@@ -1008,8 +1004,6 @@ const FROZEN_ADMIN = {
       "project-team-trigger": 1,
       "project-workspace": 1,
       "rich-text-field": 1,
-      "rich-text-heading-menu": 1,
-      "rich-text-media-tools": 1,
       "subtask-checklist-count": 1,
       "toast-viewport": 1,
       "workspace-main": 1
@@ -1019,19 +1013,15 @@ const FROZEN_ADMIN = {
       "group",
       "presentation",
       "progressbar",
-      "separator",
       "status",
       "tab",
       "tablist",
-      "tabpanel",
-      "toolbar"
+      "tabpanel"
     ],
     "controls": [
       "+ Add an item",
       "Activity",
-      "Bold",
-      "Bullet list",
-      "Checklist",
+      "Add photos or videos",
       "Collaboration",
       "Collapse checklist",
       "Copy0",
@@ -1039,24 +1029,14 @@ const FROZEN_ADMIN = {
       "Discussion",
       "Edited1",
       "Floorplan0",
-      "Heading",
-      "Insert image",
-      "Insert video",
-      "Italic",
-      "Link",
       "More actions",
-      "Ordered list",
-      "Post",
+      "Post comment",
       "Project",
       "Project info",
       "RAW2",
-      "Redo",
       "Stage: RAW review",
-      "Strikethrough",
       "System",
       "Team: nobody assigned",
-      "Underline",
-      "Undo",
       "Video0",
       "[div]",
       "[input]"

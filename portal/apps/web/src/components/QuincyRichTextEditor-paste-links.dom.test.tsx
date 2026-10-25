@@ -18,11 +18,11 @@ const plain = (text = "Intro"): RichTextDoc => ({ type: "doc", content: [{ type:
 let root: Root | null = null;
 let latest: RichTextDoc = plain();
 type Scope = { projectId: string } | { noticeBoard: true } | null;
-function Harness({ initial, preset, scope }: { initial: RichTextDoc; preset: "composer" | "document"; scope: Scope }) {
+function Harness({ initial, preset, scope }: { initial: RichTextDoc; preset: "composer" | "document" | "note"; scope: Scope }) {
   const [value, setValue] = useState(initial);
   return <QuincyRichTextEditor preset={preset} value={value} onChange={(next) => { latest = next; setValue(next); }} limit={10_000} loadMentionables={async () => []} {...(scope ? { linkPreviews: scope, media: scope } : {})} />;
 }
-async function mount(initial: RichTextDoc = plain(), preset: "composer" | "document" = "composer", scope: Scope = { projectId: "p1" }) {
+async function mount(initial: RichTextDoc = plain(), preset: "composer" | "document" | "note" = "composer", scope: Scope = { projectId: "p1" }) {
   const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
   await act(async () => root!.render(<Harness initial={initial} preset={preset} scope={scope} />));
   return host;
@@ -91,6 +91,15 @@ describe("a pasted web address becomes a link with its Link preview (#947)", () 
     const host = await mount({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Hi " }, { type: "mention", attrs: { id: "u1", label: "Ana" } }, { type: "text", text: " see" }] }] });
     await paste(host, " https://example.test/a, thanks");
     expect(links()).toEqual([{ text: "https://example.test/a", href: "https://example.test/a" }]);
+  });
+
+  it("does the same in the Project discussion's note box preset (#950)", async () => {
+    request.mockResolvedValue(cardFor(id(1), "https://example.test/a"));
+    const host = await mount(plain(), "note", { projectId: "p1" });
+    await paste(host, " https://example.test/a");
+    expect(request).toHaveBeenCalledExactlyOnceWith({ projectId: "p1" }, "https://example.test/a", expect.anything());
+    expect(storedCards()).toEqual([id(1)]);
+    expect(shownCards(host)).toHaveLength(1);
   });
 
   it("does the same in the Notice board's document editor", async () => {
