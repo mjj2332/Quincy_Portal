@@ -34,7 +34,7 @@ import { EmbeddedVideoNoteNode, EmbeddedVideoWithView } from "./quincy/EmbeddedV
 import { EmbeddedImage as EmbeddedImageThumb } from "./quincy/EmbeddedImage";
 import { EmbeddedVideo as EmbeddedVideoThumb } from "./quincy/EmbeddedVideo";
 import { Spinner } from "./reui/spinner";
-import { AttachmentThumb, FILE_CHIP, FILE_CHIP_META, FILE_CHIP_NAME, FILE_CHIP_THUMB, fileSize } from "./quincy/AttachmentChip";
+import { AttachmentThumb, FILE_CHIP, FILE_CHIP_META, FILE_CHIP_THUMB, FileChipName, fileSize } from "./quincy/AttachmentChip";
 import { RichTextFormatBubble, showRichTextFormatBubble } from "./reui/rich-text-editor/rich-text-format-bubble";
 import {
   DropdownMenu,
@@ -982,7 +982,6 @@ type NoteStripItem =
 
 /** The chip's frame (C4 `.cmp-file`), shared with the posted Attachment chip (`quincy/AttachmentChip`). */
 const NOTE_CHIP = FILE_CHIP;
-const NOTE_CHIP_NAME = FILE_CHIP_NAME;
 
 /**
  * The note preset's draft strip (#927, frame C4): one chip per photo or video, with its thumb (the posted tile's dialog, at 32px), its
@@ -1020,7 +1019,7 @@ function NoteDraftStrip({ items, disabled, phone, inline, mediaUrl, posterUrl, n
         const name = served || "File";
         return <li key={`attachment-${attachmentId}`} data-testid="note-draft-chip" data-state="ready" data-kind="attachment" title={name} className={NOTE_CHIP}>
           <AttachmentThumb name={name} />
-          <span className={NOTE_CHIP_NAME}>{name}</span>
+          <FileChipName name={name} />
           {typeof bytes === "number" && <span className={FILE_CHIP_META}>{fileSize(bytes)}</span>}
           <Button type="button" variant="ghost" size="icon-xs" aria-label={`Remove ${name}`} title="Remove" disabled={disabled} className={remove} onMouseDown={keepEditorFocus} onClick={(event) => press(event, () => onRemove(attachmentId))}><XIcon aria-hidden="true" /></Button>
         </li>;
@@ -1032,7 +1031,7 @@ function NoteDraftStrip({ items, disabled, phone, inline, mediaUrl, posterUrl, n
           {failed
             ? <span aria-hidden="true" className={cn(FILE_CHIP_THUMB, "text-destructive")}><CircleAlertIcon className="size-4" /></span>
             : <span className={FILE_CHIP_THUMB}><Spinner aria-hidden="true" role="presentation" className="size-3.5" /></span>}
-          <span className={NOTE_CHIP_NAME}>{entry.name}</span>
+          <FileChipName name={entry.name} />
           {failed
             ? <span className={cn(FILE_CHIP_META, "text-destructive")}>Upload failed</span>
             : <><span className={FILE_CHIP_META}>{fileSize(entry.bytes)}</span><span className="sr-only">Uploading, {Math.round(entry.percent)}%</span></>}
@@ -1044,7 +1043,7 @@ function NoteDraftStrip({ items, disabled, phone, inline, mediaUrl, posterUrl, n
         const { entry } = item;
         return <li key={`uploading-${entry.key}`} data-testid="note-draft-chip" data-state="uploading" title={entry.name} className={NOTE_CHIP}>
           <span className="grid size-[var(--space-6)] shrink-0 place-items-center rounded-[var(--radius-sm)] bg-muted text-foreground-secondary"><Spinner aria-hidden="true" role="presentation" className="size-3.5" /></span>
-          <span className={NOTE_CHIP_NAME}>{entry.name}</span>
+          <FileChipName name={entry.name} />
           {item.size !== undefined && <span className="whitespace-nowrap [font:var(--type-eyebrow)] text-foreground-secondary">{fileSize(item.size)}</span>}
           <span className="sr-only">Uploading, {Math.round(entry.percent)}%</span>
           <Button type="button" variant="ghost" size="icon-xs" aria-label={`Remove ${entry.name}`} title="Remove" className={remove} onMouseDown={keepEditorFocus} onClick={(event) => press(event, () => onCancel(entry.key))}><XIcon aria-hidden="true" /></Button>
@@ -1058,10 +1057,10 @@ function NoteDraftStrip({ items, disabled, phone, inline, mediaUrl, posterUrl, n
           ? <EmbeddedImageThumb size="chip" mediaId={id} alt={node.attrs.alt} mediaUrl={mediaUrl} />
           : <EmbeddedVideoThumb size="chip" mediaId={id} hasPoster={node.attrs.hasPoster} mediaUrl={mediaUrl} posterUrl={posterUrl} />}
         {node.type === "image" && !disabled
-          ? <EmbeddedImageAltPopover alt={node.attrs.alt ?? ""} onApply={(alt) => onAlt(id, alt)} trigger={<Button type="button" variant="ghost" size="xs" title="Edit alt text" aria-label={`${name}, edit alt text`} className="h-auto min-w-0 max-w-[15ch] justify-start px-0 py-0 text-foreground hover:bg-transparent hover:underline [font:var(--type-label)]" />}>
+          ? <EmbeddedImageAltPopover alt={node.attrs.alt ?? ""} onApply={(alt) => onAlt(id, alt)} trigger={<Button type="button" variant="ghost" size="xs" title="Edit alt text" aria-label={`${name}, edit alt text`} className="h-auto min-w-0 max-w-[15ch] justify-start px-0 py-0 normal-case tracking-[var(--tracking-normal)] text-foreground hover:bg-transparent hover:underline [font:var(--type-label)]" />}>
             <span className="truncate">{name}</span>
           </EmbeddedImageAltPopover>
-          : <span className={NOTE_CHIP_NAME}>{name}</span>}
+          : <FileChipName name={name} />}
         <Button type="button" variant="ghost" size="icon-xs" aria-label={`Remove ${name}`} title="Remove" disabled={disabled} className={remove} onMouseDown={keepEditorFocus} onClick={(event) => press(event, () => onRemove(id))}><XIcon aria-hidden="true" /></Button>
       </li>;
     })}
