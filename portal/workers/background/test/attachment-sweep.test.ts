@@ -79,11 +79,12 @@ describe("attachment sweep (#953)", () => {
     expect(await exists(row.id)).toBe(true); expect(await objectExists(row.key)).toBe(true);
   });
 
-  it("backstop: an attached Attachment whose comment or Notice board post is gone is reclaimed", async () => {
+  it("backstop: an attached Attachment whose comment, Notice board post or Video note (#955) is gone is reclaimed", async () => {
     const comment = await seed({ state: "attached", createdAt: now - 400 * day });
     const notice = await seed({ state: "attached", ownerKind: "notice_post" });
+    const note = await seed({ state: "attached", ownerKind: "video_note" });
     await sweepEmbeddedMedia(env, now);
-    for (const row of [comment, notice]) { expect(await exists(row.id)).toBe(false); expect(await objectExists(row.key)).toBe(false); }
+    for (const row of [comment, notice, note]) { expect(await exists(row.id)).toBe(false); expect(await objectExists(row.key)).toBe(false); }
   });
 
   it("deletes a Project's Attachment objects once the Project delete has queued their keys", async () => {
