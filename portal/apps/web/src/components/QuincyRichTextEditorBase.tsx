@@ -186,8 +186,9 @@ export type QuincyRichTextEditorBaseProps = {
   /** Reports whether an image is still uploading, so the host can hold Post / Save until it lands. */
   onUploadingChange?: (uploading: boolean) => void;
   /**
-   * Turns on Attachments (#952), in the note preset: the picker, paste and drop take any file, and a file that is not a photo or video
-   * this person may embed is uploaded through this transport and drawn as a chip in the strip. Absent, the picker is exactly as before.
+   * Turns on Attachments, in the note preset (#952) and the document preset (a notice, #954): the picker, paste and drop take any file, and a
+   * file that is not a photo or video this person may embed is uploaded through this transport and drawn as a chip in the strip. Absent, the
+   * picker is exactly as before.
    */
   attachments?: EditorAttachmentTransport;
   /** Reports how many Attachments failed to upload and wait on Retry or Remove, so the host can hold Post / Save: a post never goes out missing a file. */
@@ -345,8 +346,8 @@ export function QuincyRichTextEditorBase({
   const landedSeq = useRef(new Map<string, number>());
   const fileNames = useRef(new Map<string, string>());
   const uploadSizes = useRef(new Map<number, number>());
-  // Attachments (#952), in the note preset only: its strip is what draws them. Each file's chip lives from the pick until its node lands.
-  const attachmentsOn = isNote && attachments !== undefined;
+  // Attachments, in the note preset (#952) and the document preset (#954): the strip is what draws them. Each file's chip lives from the pick until its node lands.
+  const attachmentsOn = (isNote || isDocument) && attachments !== undefined;
   const attachmentsRef = useRef(attachmentsOn ? attachments : undefined); attachmentsRef.current = attachmentsOn ? attachments : undefined;
   const [fileEntries, setFileEntries] = useState<FileEntry[]>([]);
   const fileEntriesRef = useRef(fileEntries); fileEntriesRef.current = fileEntries;
@@ -836,10 +837,14 @@ export function QuincyRichTextEditorBase({
     return found as { pos: number; size: number; attrs: Record<string, unknown> } | null;
   };
   // Photos, videos and Attachments (#952) together, in document order for what the note already holds and in the order chosen for what lands.
+  // A notice's strip (#954) holds its Attachments alone: its photos are inline in the page.
   const stripItems: NoteStripItem[] = isNote ? [
     ...value.content.flatMap((block): NoteStripItem[] => block.type === "image" || block.type === "video" ? [{ state: "ready", seq: landedSeq.current.get(block.attrs.mediaId) ?? 0, node: block }]
       : block.type === "attachment" ? [{ state: "file", seq: landedSeq.current.get(block.attrs.attachmentId) ?? 0, node: block }] : []),
     ...uploads.filter((entry) => (entry.phase ?? "uploading") === "uploading").map((entry): NoteStripItem => ({ state: "uploading", seq: entry.key, entry, size: uploadSizes.current.get(entry.key) })),
+    ...fileEntries.map((entry): NoteStripItem => ({ state: "file-entry", seq: entry.key, entry })),
+  ].sort((a, b) => a.seq - b.seq) : attachmentsOn ? [
+    ...value.content.flatMap((block): NoteStripItem[] => block.type === "attachment" ? [{ state: "file", seq: landedSeq.current.get(block.attrs.attachmentId) ?? 0, node: block }] : []),
     ...fileEntries.map((entry): NoteStripItem => ({ state: "file-entry", seq: entry.key, entry })),
   ].sort((a, b) => a.seq - b.seq) : [];
   const strip = stripItems.length > 0 ? <NoteDraftStrip
@@ -947,7 +952,7 @@ export function QuincyRichTextEditorBase({
       {inlineEnd !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-end" className={cn("cursor-default", pill && "pb-[calc(var(--space-1)*1.5)] pr-[var(--space-1)] group-data-[wrapped=true]/input-group:ms-auto")}>{inlineEnd}</InputGroupAddon> : null}
     </InputGroup>}
     {(isNote || boxed) && <RichTextFormatBubble editor={editor} linkOpen={linkOpen} onLinkOpenChange={setLinkOpen} onLinkApplied={offerLinkPreview} disabled={disabled} docked={docked} dockTo={bubbleDockTo} notice={boxed} />}
-    {isNote && (stripContainer === undefined ? strip : stripContainer ? createPortal(strip, stripContainer) : null)}
+    {(isNote || attachmentsOn) && (stripContainer === undefined ? strip : stripContainer ? createPortal(strip, stripContainer) : null)}
     {previewContainer ? createPortal(draftCards, previewContainer) : null}
     {toolbarContainer && !isNote && !boxed ? createPortal(toolbar, toolbarContainer) : null}
     {isDocument && <>

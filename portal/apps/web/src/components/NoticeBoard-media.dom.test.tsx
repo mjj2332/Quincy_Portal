@@ -22,6 +22,8 @@ const upload = vi.hoisted(() => vi.fn());
 const heicSetting = vi.hoisted(() => vi.fn());
 const retryRendition = vi.hoisted(() => vi.fn());
 vi.mock("../lib/embedded-media", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/embedded-media")>()), uploadEmbeddedImage: upload, fetchEmbeddedHeicSetting: heicSetting, retryEmbeddedRendition: retryRendition }));
+const uploadFile = vi.hoisted(() => vi.fn());
+vi.mock("../lib/attachments", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/attachments")>()), uploadNoticeAttachment: uploadFile }));
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 const apiPatchMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
@@ -51,7 +53,7 @@ const buttonNamed = (scope: ParentNode, name: string) => [...scope.querySelector
 const tiptapOf = (scope: ParentNode) => (scope.querySelector('[contenteditable="true"]') as unknown as { editor: Editor }).editor;
 async function choose(scope: ParentNode, files: File[]) {
   const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => undefined);
-  await act(async () => { scope.querySelector<HTMLButtonElement>('button[aria-label="Add photos"]')!.click(); });
+  await act(async () => { scope.querySelector<HTMLButtonElement>('button[aria-label="Add files"]')!.click(); });
   click.mockRestore();
   const picker = scope.querySelector<HTMLInputElement>('input[data-testid="rich-text-media-picker"]')!;
   Object.defineProperty(picker, "files", { configurable: true, value: files });
@@ -72,7 +74,7 @@ beforeEach(() => {
   Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, String(value)); }, removeItem: (key: string) => { values.delete(key); }, clear: () => { values.clear(); } } });
   Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
   focusManager.setFocused(true);
-  upload.mockReset(); heicSetting.mockReset(); heicSetting.mockResolvedValue(false); retryRendition.mockReset(); apiGetMock.mockReset(); apiPostMock.mockReset(); apiPatchMock.mockReset();
+  upload.mockReset(); uploadFile.mockReset(); heicSetting.mockReset(); heicSetting.mockResolvedValue(false); retryRendition.mockReset(); apiGetMock.mockReset(); apiPostMock.mockReset(); apiPatchMock.mockReset();
   queryClient = createQuincyQueryClient();
   apiGetMock.mockImplementation((path) => Promise.resolve(path.includes("read-marker") ? readState : { posts: [ownPost] }));
 });
@@ -84,9 +86,9 @@ afterEach(async () => {
 describe("the Notice board composers take images", () => {
   it("shows the media tools in both the new-post and the edit composer", async () => {
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
-    expect(composer(host).querySelector('button[aria-label="Add photos"]')).not.toBeNull();
+    expect(composer(host).querySelector('button[aria-label="Add files"]')).not.toBeNull();
     await chooseNoticeAction(host, "A", "Edit", advanceTimers);
-    expect(editComposer(host).querySelector('button[aria-label="Add photos"]')).not.toBeNull();
+    expect(editComposer(host).querySelector('button[aria-label="Add files"]')).not.toBeNull();
     expect(editComposer(host).querySelector('img[data-media-id]')?.getAttribute("src")).toBe(`/media/embedded/${A}`);
   });
 
@@ -292,10 +294,13 @@ describe("HEIC images on the Notice board (#495)", () => {
     expect(trayOf(composer(host))?.textContent).toContain("Still preparing IMG_1.HEIC… this can take a few minutes");
   });
 
-  it("refuses a HEIC with the unsupported-type message while the setting is off", async () => {
+  // Owner decision A3 (#954): a photo this person may not embed is attached instead of refused.
+  it("attaches a HEIC as a file while the setting is off, never as an image", async () => {
+    uploadFile.mockImplementation(() => new Promise<string>(() => undefined));
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     await choose(composer(host), [heic()]);
     expect(upload).not.toHaveBeenCalled();
-    expect(composer(host).querySelector('[role="alert"]')?.textContent).toContain("is not a JPEG, PNG or WebP image");
+    expect(uploadFile).toHaveBeenCalledTimes(1);
+    expect(composer(host).querySelector('[data-testid="note-draft-chip"][data-kind="attachment"]')).not.toBeNull();
   });
 });

@@ -3,10 +3,10 @@
 An **Attachment** is any file shared on a post for people to download. It is never shown inline. Photos and videos that the
 Portal can show in a post stay **Embedded media** (`docs/maps/` and `packages/shared/src/embedded-media.ts`). Spec #945, tracer #952.
 
-Status: **Project discussion comments** (#952, staff and External editors, owner decision A1) and **staff Video notes and replies**
-(#955, with Guest reviewers downloading a public note's files) are live. The table already allows the other owner kinds and a guest
-uploader. The Notice board (#954) and guest notes on a Review link (#956) are later tickets. The clean-up sweep (#953) and
-notifications (#957: comments, Video notes and replies) are below.
+Status: #952 covers **Project discussion comments**, for staff and External editors (owner decision A1). #954 adds **Notice board
+posts**, for staff only. #955 adds **staff Video notes and replies**, with Guest reviewers downloading a public note's files. The
+table already allows a guest uploader; guest notes on a Review link (#956) are a later ticket. The clean-up sweep (#953) and
+notifications (#957: Project comments, Notice board posts, Video notes and replies) are below.
 
 ## Limits
 
@@ -61,12 +61,17 @@ name that ends up empty is refused.
   `attached` row belongs to exactly one post (`owner_kind`, `owner_id`). Rows are created, attached and detached in the post's own
   batch (`workers/app/src/lib/attachments.ts`), next to the post's Embedded media reconciler. Each change writes an audit row:
   `attachment.presign`, `attachment.upload`, `attachment.attach` or `attachment.detach`.
-- An object's key is `projects/<projectId>/attachments/<id>/original`. It never contains a name the user supplied. Every object is
-  stored as `application/octet-stream`, whatever the file is.
+- An object's key is `projects/<projectId>/attachments/<id>/original`, or `notice-board/attachments/<id>/original` for a Notice
+  board post, whose row has no `project_id`. It never contains a name the user supplied. Every object is stored as
+  `application/octet-stream`, whatever the file is.
+- The Notice board has its own upload routes, `POST /api/notice-board/attachments` and `.../:id/direct|complete|abort`, behind the
+  Notice board capability (an External editor gets 403). They run the same upload core (`workers/app/src/lib/attachment-upload.ts`)
+  with no Project to fence on.
 - The download route is `GET /media/attachments/:id`. **It serves only an `attached` row**, for every caller, the uploader
   included, so a file that was never posted or has been removed stops downloading at once. On a Project comment, the people who
   can download are the people who can see the Project's Collaboration tab. Staff who are not on the Project get a 403; an External
-  editor outside the Project gets a 404.
+  editor outside the Project gets a 404. On a notice, the people who can download are the notice's audience: every role with the
+  Notice board capability (staff). An External editor gets a 404.
 - Every response has these headers: `content-type: application/octet-stream`, `content-disposition: attachment` with an ASCII
   fallback name and a `filename*` UTF-8 name, `x-content-type-options: nosniff`, `content-security-policy: default-src 'none';
   sandbox`, `cache-control: private, no-store`, `cross-origin-resource-policy: same-origin`, `referrer-policy: no-referrer`. Range
@@ -97,7 +102,8 @@ upload (#956).
 
 ## Clean-up
 
-- Deleting a comment detaches its Attachments in the same batch, so they stop downloading immediately.
+- Deleting a comment or a notice detaches its Attachments in the same batch, each with an audit row, so they stop downloading
+  immediately.
 - A Project hard delete aborts started uploads and queues every Attachment key into `embedded_media_cleanup` in the same batch as
   the cascade.
 - The background Worker's daily embedded media sweep (`sweepAttachments` in `workers/background/src/embedded-media-sweep.ts`, #953)
@@ -122,9 +128,11 @@ name): the Project activity notification (`project.comment.created` / `edited`, 
 the mention notification and its email ("You were mentioned in a project comment with 2 attachments."), and the digest, which
 composes from the stored copy. The count rides on the activity's `safePayload.attachmentCount` (written by
 `createProjectCommentActivityIntent`, omitted at zero; the edit records the comment's count after the edit) and is rendered by
-`attachmentCountSuffix` in `packages/shared/src/project-activity.ts`.
+`attachmentCountSuffix` in `packages/shared/src/project-activity.ts`. A Notice board post (#954) has no activity row: its mention
+notification and email say the same ("You were mentioned in a notice-board post with 2 attachments."), from the count the route
+passes to `notifyNoticeBoardMentions`.
 
 A staff Video note or reply (#955) does the same on its Video review notification: "Mia left a note with 2 attachments on Main
 walkthrough", "replied with 1 attachment", and a mention "mentioned you in a note with 3 attachments". The count rides on the
 outbox payload's `video.attachmentCount` (`videoReviewOutboxStatements`, omitted at zero; a mention-on-edit records the note's count
-after the edit). The Notice board joins this when its ticket lands.
+after the edit).

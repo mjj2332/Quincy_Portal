@@ -234,8 +234,8 @@ export const LinkPreview = TiptapNode.create({
 /**
  * An Attachment (#952): an atom that names a stored file by id, at the top level only. `name` and `bytes` are what the server serves for the
  * chip and live on the editor node only so it can draw; `tiptapToRichTextDoc` strips them back to the id. No `parseHTML` rule, so pasted
- * HTML never becomes one: the only way in is the editor's own upload. In the note preset only (a Project discussion comment), where the
- * strip draws it; it renders nothing in the text.
+ * HTML never becomes one: the only way in is the editor's own upload. In the note preset (a Project discussion comment) and the document
+ * preset (a notice, #954), where the box's strip draws it; it renders nothing in the text.
  */
 export const Attachment = TiptapNode.create({
   name: "attachment",
@@ -366,16 +366,18 @@ const noteTaskItem = (content: string) => TaskItem.extend({ content, parseHTML()
 // An Attachment (#952) is drawn by the same strip, so it is part of the same tail.
 const isMediaNode = (node: ProseMirrorNode) => node.type.name === "image" || node.type.name === "video" || node.type.name === "attachment";
 const mediaIdOf = (node: ProseMirrorNode) => String(node.attrs.mediaId ?? node.attrs.attachmentId ?? "");
-/** Where the run of media that ends the note starts (the document's size when it does not end with media). */
-export function noteMediaTailStart(doc: ProseMirrorNode): number {
+/** Where the run of `isTailNode` nodes that ends the document starts (its size when it does not end with one). */
+function tailStartOf(doc: ProseMirrorNode, isTailNode: (node: ProseMirrorNode) => boolean): number {
   let start = doc.content.size;
   for (let index = doc.childCount - 1; index >= 0; index -= 1) {
     const child = doc.child(index);
-    if (!isMediaNode(child)) break;
+    if (!isTailNode(child)) break;
     start -= child.nodeSize;
   }
   return start;
 }
+/** Where the run of media that ends the note starts (the document's size when it does not end with media). */
+export const noteMediaTailStart = (doc: ProseMirrorNode): number => tailStartOf(doc, isMediaNode);
 
 /**
  * A note's photos and videos are a strip after its text (#927, frame C4), drawn outside the text (`QuincyRichTextEditorBase`), so the
@@ -385,28 +387,36 @@ export function noteMediaTailStart(doc: ProseMirrorNode): number {
  * or Delete all remove it, and undo brings it back. Nothing here touches the host replacing the content (`preventUpdate`) or an undo /
  * redo, and a photo an old note holds between paragraphs stays where it is: the stored order is never rewritten.
  */
-export const NoteMediaTail = Extension.create({
-  name: "noteMediaTail",
-  addProseMirrorPlugins() {
-    return [new Plugin({
-      appendTransaction(transactions, oldState, newState) {
-        if (!transactions.some((tr) => tr.docChanged)) return null;
-        if (transactions.some((tr) => tr.getMeta("preventUpdate") || tr.getMeta("history$"))) return null;
-        const known = new Set<string>();
-        oldState.doc.forEach((child) => { if (isMediaNode(child)) known.add(mediaIdOf(child)); });
-        // What is new to the note and landed before the run that ends it, in document order.
-        const tail = noteMediaTailStart(newState.doc);
-        const stray: { node: ProseMirrorNode; pos: number }[] = [];
-        newState.doc.forEach((child, offset) => { if (isMediaNode(child) && offset < tail && !known.has(mediaIdOf(child))) stray.push({ node: child, pos: offset }); });
-        if (stray.length === 0) return null;
-        const tr = newState.tr;
-        for (const { node, pos } of [...stray].reverse()) tr.delete(pos, pos + node.nodeSize);
-        tr.insert(tr.doc.content.size, stray.map(({ node }) => node));
-        return tr;
-      },
-    })];
-  },
-});
+function mediaTail(name: string, isTailNode: (node: ProseMirrorNode) => boolean) {
+  return Extension.create({
+    name,
+    addProseMirrorPlugins() {
+      return [new Plugin({
+        appendTransaction(transactions, oldState, newState) {
+          if (!transactions.some((tr) => tr.docChanged)) return null;
+          if (transactions.some((tr) => tr.getMeta("preventUpdate") || tr.getMeta("history$"))) return null;
+          const known = new Set<string>();
+          oldState.doc.forEach((child) => { if (isTailNode(child)) known.add(mediaIdOf(child)); });
+          // What is new to the post and landed before the run that ends it, in document order.
+          const tail = tailStartOf(newState.doc, isTailNode);
+          const stray: { node: ProseMirrorNode; pos: number }[] = [];
+          newState.doc.forEach((child, offset) => { if (isTailNode(child) && offset < tail && !known.has(mediaIdOf(child))) stray.push({ node: child, pos: offset }); });
+          if (stray.length === 0) return null;
+          const tr = newState.tr;
+          for (const { node, pos } of [...stray].reverse()) tr.delete(pos, pos + node.nodeSize);
+          tr.insert(tr.doc.content.size, stray.map(({ node }) => node));
+          return tr;
+        },
+      })];
+    },
+  });
+}
+export const NoteMediaTail = mediaTail("noteMediaTail", isMediaNode);
+/**
+ * A notice's Attachments (#954) are the same kind of tail: the box's strip draws them under the page, and the posted notice shows them as one
+ * list of chips after its text. Its photos stay inline where they were put, so only an Attachment is moved.
+ */
+export const DocumentAttachmentTail = mediaTail("documentAttachmentTail", (node) => node.type.name === "attachment");
 
 /** The editor schema for a preset, shared with direct schema regression tests. */
 export function createRichTextEditorExtensions(preset: RichTextEditorPreset = "composer") {
@@ -443,7 +453,7 @@ export function createRichTextEditorExtensions(preset: RichTextEditorPreset = "c
     LinkPreviewFollowsLink,
     ...(preset === "composer" || note ? [EmbeddedVideo] : []),
     ...(note ? [Attachment, NoteMediaTail] : []),
-    ...(preset === "document" ? documentExtensions() : []),
+    ...(preset === "document" ? [...documentExtensions(), Attachment, DocumentAttachmentTail] : []),
   ];
 }
 

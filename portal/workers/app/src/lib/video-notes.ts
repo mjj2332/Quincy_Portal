@@ -9,7 +9,7 @@ import { guestReplyInsertSql, projectFence, REPLY_INSERT_SQL, VERSION_FROM } fro
 import { guestDigestStatements } from "./guest-digest";
 import { videoReviewOutboxStatements } from "./video-review-notifications";
 import { isMediaGuardFailure, ownedMediaStatements, type MediaUploader } from "./embedded-media";
-import { deletedOwnerAttachmentStatements, isAttachmentGuardFailure, ownedAttachmentStatements } from "./attachments";
+import { deleteWonByAudit, deletedOwnerAttachmentStatements, isAttachmentGuardFailure, ownedAttachmentStatements } from "./attachments";
 import type { VideoReviewGateState } from "./video-review-gate";
 
 /** Notes and replies on a Video Version (#741, 5a): scoped reads and the atomic writes. Routes decide who may call; every write repeats its fence in SQL. */
@@ -393,8 +393,8 @@ export async function deleteVideoNote<T = VideoNoteThreadDto>(db: D1Database, in
   // #955: a deleted note's Attachments (and those of the replies a hard delete takes), each with a detach audit row, so a download stops the moment the note is gone. The sweep (#953)
   // reclaims the objects. A guest's note has none, and its audit principal is null.
   const principal = author.kind === "user" ? author.principal : null;
-  const hardFiles = deletedOwnerAttachmentStatements(db, { ownerKind: "video_note", ownerId: note.id, ownerIdsIn: { sql: "SELECT id FROM video_notes WHERE id = ? OR parent_id = ?", binds: [note.id, note.id] }, now: input.now, principal, deleteAuditId: hardAudit });
-  const tombFiles = deletedOwnerAttachmentStatements(db, { ownerKind: "video_note", ownerId: note.id, now: input.now, principal, deleteAuditId: tombAudit });
+  const hardFiles = deletedOwnerAttachmentStatements(db, { ownerKind: "video_note", ownerId: note.id, ownerIdsIn: { sql: "SELECT id FROM video_notes WHERE id = ? OR parent_id = ?", binds: [note.id, note.id] }, now: input.now, principal, won: deleteWonByAudit(hardAudit) });
+  const tombFiles = deletedOwnerAttachmentStatements(db, { ownerKind: "video_note", ownerId: note.id, now: input.now, principal, won: deleteWonByAudit(tombAudit) });
   const results = await db.batch([
     // The audit goes first so the author's replies are counted before the DELETE cascades them: the winning audit records what was actually removed.
     db.prepare(`${AUDIT_INSERT} SELECT ?5, ?8, 'video_note.delete', 'video_note', ?1, json_set(?6, '$.ownRepliesRemoved', (SELECT COUNT(*) FROM video_notes r WHERE r.parent_id = ?1 AND ${authorPredicate(author, "r", "?3")}), '$.hadMarkup', json(CASE WHEN EXISTS (SELECT 1 FROM video_note_markup k WHERE k.note_id = ?1) THEN 'true' ELSE 'false' END)), ?7 ${hardWhere}${hardAuditGuard.sql}`)

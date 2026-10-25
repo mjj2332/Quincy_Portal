@@ -25,6 +25,10 @@ import type { NoticeBoardPost } from "../lib/notice-board-data";
 const CREATE_COMPOSER = "px-[var(--space-5)] py-[var(--space-4)]";
 const EDIT_COMPOSER = "pt-[var(--space-4)] px-0 pb-0";
 const WAIT_FOR_UPLOADS = "Wait for the uploads to finish.";
+/** An Attachment failed to upload (#954, as on the Project discussion, #952): Post and Save wait until it is retried or removed. */
+const RETRY_OR_REMOVE = "Retry or remove the file that failed.";
+/** The paperclip takes any file (#954): a photo lands inline in the page, anything else is an Attachment. */
+const ATTACH_LABEL = "Add files";
 const TOO_LARGE = "This notice is too large to post; shorten it or remove formatting.";
 /** A refused Post or Save, in the box that sent it above its row, beside Send or Save (the Collaboration box's line, #950). */
 const BOX_LINE = "m-0 [font:var(--type-label)] text-destructive";
@@ -71,6 +75,8 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   // Separate locks: an upload in the new-post composer must not hold the edit composer, nor the other way round (#496).
   const [composerUploading, setComposerUploading] = useState(false);
   const [editUploading, setEditUploading] = useState(false);
+  const [composerFailedFiles, setComposerFailedFiles] = useState(0);
+  const [editFailedFiles, setEditFailedFiles] = useState(0);
   const [noticeBoardMutation, setNoticeBoardMutation] = useState<NoticeBoardMutation | null>(null);
   const noticeBoardMutationRef = useRef<NoticeBoardMutation | null>(null);
   const [presentationError, setPresentationError] = useState<string | null>(null);
@@ -108,7 +114,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   const postingOverBytes = overCap(content);
   const editingOverBytes = overCap(editingContent);
   // An empty or blank notice is not sent (the Discussion's `canPost` rule, and the server's: it refuses a document
-  // whose plain text is blank). Words or a photo count; a link preview card alone does not, as on the server.
+  // whose plain text is blank). Words, a photo or a file count; a link preview card alone does not, as on the server.
   const blank = (doc: RichTextDoc) => richTextPlainText(doc).trim() === "";
   const postingBlank = blank(content);
   const editingBlank = blank(editingContent);
@@ -143,7 +149,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   };
 
   async function submit() {
-    if (postingBlank || postingOverBytes || composerUploading || !beginNoticeBoardMutation("create")) return;
+    if (postingBlank || postingOverBytes || composerUploading || composerFailedFiles > 0 || !beginNoticeBoardMutation("create")) return;
     try {
       await createNoticeBoardPost(queryClient, stripEmbeddedDisplay(content));
       setContent(EMPTY_DOC); clearMutationError("create");
@@ -153,7 +159,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   }
 
   async function saveEdit(id: string) {
-    if (editingBlank || editingOverBytes || editUploading || !beginNoticeBoardMutation("edit")) return;
+    if (editingBlank || editingOverBytes || editUploading || editFailedFiles > 0 || !beginNoticeBoardMutation("edit")) return;
     try {
       await editNoticeBoardPost(queryClient, id, stripEmbeddedDisplay(editingContent));
       restoreTriggerFor.current = id; setEditingId(null); setEditingContent(EMPTY_DOC); clearMutationError("edit");
@@ -202,11 +208,11 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   const renderEditComposer = (id: string) => <div data-slot="notice-board-edit-composer" className={EDIT_COMPOSER}>
     <NoticeBox
       label="Edit notice" phone={phone} value={editingContent} onChange={setEditingContent} disabled={isBusy} loadMentionables={loadMentionables} placeholder="Edit notice…"
-      onSubmit={() => void saveEdit(id)} onUploadingChange={setEditUploading} problem={mutationErrors.edit}
+      onSubmit={() => void saveEdit(id)} onUploadingChange={setEditUploading} onFailedFilesChange={setEditFailedFiles} problem={mutationErrors.edit}
       save={{
         onSave: () => void saveEdit(id), onCancel: () => { restoreTriggerFor.current = id; setEditingId(null); setEditingContent(EMPTY_DOC); clearMutationError("edit"); },
-        disabled: isBusy || editingBlank || editingOverBytes || editUploading, pending: isSaving,
-        ...(editUploading ? { reason: WAIT_FOR_UPLOADS } : editingOverBytes ? { reason: TOO_LARGE } : {}),
+        disabled: isBusy || editingBlank || editingOverBytes || editUploading || editFailedFiles > 0, pending: isSaving,
+        ...(editUploading ? { reason: WAIT_FOR_UPLOADS } : editFailedFiles > 0 ? { reason: RETRY_OR_REMOVE } : editingOverBytes ? { reason: TOO_LARGE } : {}),
       }}
     />
   </div>;
@@ -246,10 +252,10 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
         <NoticeBox
           label="Write a notice" id={`${panelId}-body`} phone={phone} value={content} onChange={setContent} disabled={isBusy} loadMentionables={loadMentionables}
           placeholder={phone ? "Write a notice for the team…" : "Write a notice for the team… Use @ to mention active staff."}
-          onSubmit={() => void submit()} onUploadingChange={setComposerUploading} problem={mutationErrors.create}
+          onSubmit={() => void submit()} onUploadingChange={setComposerUploading} onFailedFilesChange={setComposerFailedFiles} problem={mutationErrors.create}
           send={{
-            label: isPosting ? "Posting…" : "Post notice", onSend: () => void submit(), disabled: isBusy || postingBlank || postingOverBytes || composerUploading, pending: isPosting,
-            ...(composerUploading ? { reason: WAIT_FOR_UPLOADS } : postingOverBytes ? { reason: TOO_LARGE } : {}),
+            label: isPosting ? "Posting…" : "Post notice", onSend: () => void submit(), disabled: isBusy || postingBlank || postingOverBytes || composerUploading || composerFailedFiles > 0, pending: isPosting,
+            ...(composerUploading ? { reason: WAIT_FOR_UPLOADS } : composerFailedFiles > 0 ? { reason: RETRY_OR_REMOVE } : postingOverBytes ? { reason: TOO_LARGE } : {}),
           }}
         />
       </div>
@@ -269,6 +275,7 @@ type NoticeBoxProps = {
   placeholder: string;
   onSubmit: () => void;
   onUploadingChange: (uploading: boolean) => void;
+  onFailedFilesChange: (failed: number) => void;
   problem: string | undefined;
 } & ({ send: NoteSendControl; save?: never } | { save: NoteSaveControl; send?: never });
 
@@ -276,12 +283,15 @@ type NoticeBoxProps = {
  * A notice's box (#951): the note composer box's post variant around the document editor (`boxed`), keeping what makes a notice a page:
  * headings, the checklist and tables through "/", alignment and highlight in the selection bubble (N4), the table bar (docked above the
  * box at every width, N3, in room kept for it) and the outline rail (N2). No seven-line cap (N1). Photos land inline at the caret; link preview cards sit under the
- * text (B1). The byte and length limits, the mentions (active staff) and the upload hold are the editor's, as before.
+ * text (B1), and Attachments (#954) are C4 chips in the box's strip under them. The byte and length limits, the mentions (active staff) and the upload hold are the editor's, as before.
  */
-function NoticeBox({ label, id, phone, value, onChange, disabled, loadMentionables, placeholder, onSubmit, onUploadingChange, problem, ...action }: NoticeBoxProps) {
+const NOTICE_FILES = { noticeBoard: true } as const;
+
+function NoticeBox({ label, id, phone, value, onChange, disabled, loadMentionables, placeholder, onSubmit, onUploadingChange, onFailedFilesChange, problem, ...action }: NoticeBoxProps) {
   const editor = useRef<RichTextEditorHandle>(null);
   const field = useRef<HTMLDivElement>(null);
   const [previews, setPreviews] = useState<HTMLDivElement | null>(null);
+  const [strip, setStrip] = useState<HTMLDivElement | null>(null);
   const room = useRef<HTMLDivElement>(null);
   return <div ref={room} data-testid="notice-box-room" className={TABLE_BAR_ROOM}><NoteComposerBox
     variant="post" label={label} phone={phone} tall
@@ -290,12 +300,13 @@ function NoticeBox({ label, id, phone, value, onChange, disabled, loadMentionabl
       <QuincyRichTextEditor
         preset="document" boxed ref={editor} {...(id ? { id } : { ariaLabel: label })} value={value} onChange={onChange} limit={NOTICE_BODY_MAX_LENGTH} maxBytes={NOTICE_RICH_TEXT_JSON_MAX_BYTES}
         disabled={disabled} loadMentionables={loadMentionables} placeholder={placeholder} onSubmit={onSubmit} media={{ noticeBoard: true }} linkPreviews={{ noticeBoard: true }}
-        onUploadingChange={onUploadingChange} previewContainer={previews} bubbleDocked={phone} bubbleDockTo={() => boxOf(field.current)} tableBarRoot={() => room.current}
+        attachments={NOTICE_FILES} onUploadingChange={onUploadingChange} onFailedFilesChange={onFailedFilesChange} stripContainer={strip} previewContainer={previews} bubbleDocked={phone} bubbleDockTo={() => boxOf(field.current)} tableBarRoot={() => room.current}
       />
     </div>}
     previews={<div ref={setPreviews} className="empty:hidden" />}
+    strip={<div ref={setStrip} className="empty:hidden" />}
     notice={problem ? <p role="alert" className={BOX_LINE}>{problem}</p> : null}
-    attach={{ onPick: () => { editor.current?.pickMedia(); }, disabled, label: "Add photos" }}
+    attach={{ onPick: () => { editor.current?.pickMedia(); }, disabled, label: ATTACH_LABEL }}
     {...action}
   /></div>;
 }

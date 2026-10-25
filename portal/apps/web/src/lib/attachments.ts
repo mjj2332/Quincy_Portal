@@ -11,9 +11,8 @@ export * from "./attachments-core";
 /** What a staff file is for (#955): the Project's discussion (no owner sent, the default) or a staff Video note, which the server gates as note writing. */
 export type AttachmentOwner = "video_note";
 
-/** A Project's staff routes. The abort is `fetch` with `keepalive`, so it survives the page closing. */
-function staffIo(projectId: string, owner?: AttachmentOwner): AttachmentIo {
-  const base = `/api/projects/${encodeURIComponent(projectId)}/attachments`;
+/** A Project's staff routes, or the Notice board's (#954). The abort is `fetch` with `keepalive`, so it survives the page closing. `owner` is sent on a presign only (#955). */
+function staffIo(base: string, owner?: AttachmentOwner): AttachmentIo {
   const at = (attachmentId: string) => `${base}/${encodeURIComponent(attachmentId)}`;
   return {
     presign: (body) => apiPost<unknown, typeof body & { owner?: AttachmentOwner }>(base, owner ? { ...body, owner } : body),
@@ -24,5 +23,10 @@ function staffIo(projectId: string, owner?: AttachmentOwner): AttachmentIo {
 }
 
 export function uploadAttachment(projectId: string, file: File, options: AttachmentUploadOptions = {}, owner?: AttachmentOwner): Promise<string> {
-  return uploadAttachmentVia(staffIo(projectId, owner), file, options);
+  return uploadAttachmentVia(staffIo(`/api/projects/${encodeURIComponent(projectId)}/attachments`, owner), file, options);
+}
+
+/** An Attachment on a Notice board post (#954): the Notice board's own routes, with no Project. */
+export function uploadNoticeAttachment(file: File, options: AttachmentUploadOptions = {}): Promise<string> {
+  return uploadAttachmentVia(staffIo("/api/notice-board/attachments"), file, options);
 }

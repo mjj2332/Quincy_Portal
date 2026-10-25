@@ -78,8 +78,8 @@ export function imageAltFromFileName(name: string): string {
  */
 export type RichTextProfile = { readonly maxBytes: number; readonly allowTables: boolean; readonly allowAlign: boolean; readonly allowHighlight: boolean; readonly allowMedia: boolean; readonly allowVideo: boolean; readonly allowLinkPreviews: boolean; readonly allowAttachments: boolean; readonly maxAttachments: number };
 export const COMMENT_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: RICH_TEXT_JSON_MAX_BYTES, allowTables: false, allowAlign: false, allowHighlight: false, allowMedia: false, allowVideo: false, allowLinkPreviews: false, allowAttachments: false, maxAttachments: 0 };
-/** Attachments on the Notice board are #954's: it turns them on here, for the write and the read path at once (lessons, #496). */
-export const NOTICE_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: NOTICE_RICH_TEXT_JSON_MAX_BYTES, allowTables: true, allowAlign: true, allowHighlight: true, allowMedia: true, allowVideo: false, allowLinkPreviews: true, allowAttachments: false, maxAttachments: 0 };
+/** Attachments on the Notice board (#954): on here, for the write and the read path at once (lessons, #496), 10 a notice. */
+export const NOTICE_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: NOTICE_RICH_TEXT_JSON_MAX_BYTES, allowTables: true, allowAlign: true, allowHighlight: true, allowMedia: true, allowVideo: false, allowLinkPreviews: true, allowAttachments: true, maxAttachments: ATTACHMENT_MAX_PER_POST };
 /** Project discussion (#493, #494, #952): the comment profile plus embedded images and videos and Attachments. The Notice board's profile takes images too (#496), never video. */
 export const COMMENT_MEDIA_RICH_TEXT_PROFILE: RichTextProfile = { ...COMMENT_RICH_TEXT_PROFILE, allowMedia: true, allowVideo: true, allowLinkPreviews: true, allowAttachments: true, maxAttachments: ATTACHMENT_MAX_PER_POST };
 

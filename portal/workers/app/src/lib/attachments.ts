@@ -176,21 +176,24 @@ export function ownedAttachmentStatements(db: D1Database, input: AttachmentOwner
 
 /**
  * The statements a post's delete adds to its own batch: an audit row per attached file, then every attached or detached row is detached and due now (`detached_at = 0`), so a download
- * stops the moment the post is gone. Both are conditioned on the post's own delete audit row (`deleteAuditId`), which the caller writes earlier in the same batch only when its delete
- * won. The objects and rows are reclaimed by the sweep (#953). `ownerIdsIn` widens the owners to a sub-select (a Video note's hard delete takes its replies too, #955); without it the
- * owner is `ownerId` alone.
+ * stops the moment the post is gone. Both are conditioned on `won`, which holds only when the caller's delete earlier in the same batch took the post: a Project comment's or Video note's
+ * own delete audit row (`deleteWonByAudit`), or a Notice board post being gone (#954). The objects and rows are reclaimed by the sweep (#953). `ownerIdsIn` widens the owners to a
+ * sub-select (a Video note's hard delete takes its replies too, #955); without it the owner is `ownerId` alone.
  */
-export function deletedOwnerAttachmentStatements(db: D1Database, input: { ownerKind: AttachmentOwnerKind; ownerId: string; ownerIdsIn?: { sql: string; binds: unknown[] }; now: number; principal: AuditPrincipal; deleteAuditId: string }): D1PreparedStatement[] {
-  const won = "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)";
+export function deletedOwnerAttachmentStatements(db: D1Database, input: { ownerKind: AttachmentOwnerKind; ownerId: string; ownerIdsIn?: { sql: string; binds: unknown[] }; now: number; principal: AuditPrincipal; won: { sql: string; binds: unknown[] } }): D1PreparedStatement[] {
+  const { won } = input;
   const owners = input.ownerIdsIn ? { sql: `owner_id IN (${input.ownerIdsIn.sql})`, binds: input.ownerIdsIn.binds } : { sql: "owner_id = ?", binds: [input.ownerId] };
   const meta = auditMeta(input.principal, { ownerKind: input.ownerKind, ownerId: input.ownerId, reason: "owner_deleted" });
   return [
     db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ${SQL_UUID_V4}, ?, 'attachment.detach', 'attachment', id, ?, ? FROM attachments
-      WHERE owner_kind = ? AND ${owners.sql} AND state = 'attached' AND ${won}`).bind(input.principal?.id ?? null, meta, input.now, input.ownerKind, ...owners.binds, input.deleteAuditId),
-    db.prepare(`UPDATE attachments SET state = 'detached', detached_at = 0, updated_at = ? WHERE owner_kind = ? AND ${owners.sql} AND state IN ('attached', 'detached') AND ${won}`)
-      .bind(input.now, input.ownerKind, ...owners.binds, input.deleteAuditId),
+      WHERE owner_kind = ? AND ${owners.sql} AND state = 'attached' AND ${won.sql}`).bind(input.principal?.id ?? null, meta, input.now, input.ownerKind, ...owners.binds, ...won.binds),
+    db.prepare(`UPDATE attachments SET state = 'detached', detached_at = 0, updated_at = ? WHERE owner_kind = ? AND ${owners.sql} AND state IN ('attached', 'detached') AND ${won.sql}`)
+      .bind(input.now, input.ownerKind, ...owners.binds, ...won.binds),
   ];
 }
+
+/** A delete won when its own audit row, written earlier in the batch only by the winner, exists. */
+export const deleteWonByAudit = (auditId: string) => ({ sql: "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)", binds: [auditId] });
 
 /** True when a batch failed on the attachment guard's CHECK. */
 export function isAttachmentGuardFailure(error: unknown, ids: string[] | undefined): boolean {

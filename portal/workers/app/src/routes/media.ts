@@ -200,9 +200,10 @@ async function readableAttachment(c: Context<AppEnv>, attachmentId: string): Pro
   const notFound = () => c.json({ error: "File not found" }, 404);
   const row = await c.env.DB.prepare(`
     SELECT a.owner_kind AS ownerKind, a.owner_id AS ownerId, a.project_id AS projectId, a.storage_key AS storageKey, a.file_name AS fileName,
-      EXISTS (SELECT 1 FROM project_comments pc WHERE pc.id = a.owner_id AND pc.project_id = a.project_id) AS commentLive
+      EXISTS (SELECT 1 FROM project_comments pc WHERE pc.id = a.owner_id AND pc.project_id = a.project_id) AS commentLive,
+      EXISTS (SELECT 1 FROM notice_board_posts np WHERE np.id = a.owner_id AND a.project_id IS NULL) AS noticeLive
     FROM attachments a WHERE a.id = ? AND a.state = 'attached'
-  `).bind(attachmentId).first<{ ownerKind: "project_comment" | "notice_post" | "video_note"; ownerId: string | null; projectId: string | null; storageKey: string; fileName: string; commentLive: number }>();
+  `).bind(attachmentId).first<{ ownerKind: "project_comment" | "notice_post" | "video_note"; ownerId: string | null; projectId: string | null; storageKey: string; fileName: string; commentLive: number; noticeLive: number }>();
   if (!row) return notFound();
   switch (row.ownerKind) {
     case "project_comment": {
@@ -211,8 +212,11 @@ async function readableAttachment(c: Context<AppEnv>, attachmentId: string): Pro
       if (!await hasProjectCollaborationAccess(c, row.projectId)) return c.get("user").role === "external_editor" ? notFound() : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
       return row;
     }
-    // The Notice board (#954) adds its own rule; until then nothing of its downloads.
-    case "notice_post": return notFound();
+    // A notice's audience (#954): everyone with the Notice board capability, staff only. An External editor, or an Admin impersonating one, is told nothing exists.
+    case "notice_post": {
+      if (!row.noticeLive || !roleHasCapability(c.get("user").role, "viewNoticeBoard")) return notFound();
+      return row;
+    }
     case "video_note": {
       // A staff Video note's or reply's file (#955): the people who can open the note, as for its Embedded media. The `notes` part, `viewVideo` and Project access, and the owner note
       // live on a live Version of this Project (public or internal: both are staff-visible). Every refusal is the same 404, so an id tells nothing.

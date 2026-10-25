@@ -22,7 +22,7 @@ Types: `NOTIFICATION_TYPES` portal/packages/shared/src/notification-types.ts:3. 
 | delivery_unlock_requested (#787 slice 8) | `writeUnlockRequest` portal/workers/app/src/lib/delivery-unlock-request.ts, one fenced batch from the public `POST /d/api/pages/:slug/items/:handle/unlock-request` | `project.delivery.unlock_requested` (payload `portal/packages/shared/src/delivery-unlock-notifications.ts`) |
 | subtask_due_today (retired, still in the type list) | none | consumer suppresses `legacy_due_today_retired` portal/workers/background/src/notification-delivery.ts:977 |
 
-Attachment count (#957): a Project comment's `project.comment.created`/`edited` `safePayload.attachmentCount` (also read from the mention payload's embedded activity) adds " with N attachments" via `attachmentCountSuffix` portal/packages/shared/src/project-activity.ts to the activity copy and the mention body/email; count only, no names.
+Attachment count (#957): a Project comment's `project.comment.created`/`edited` `safePayload.attachmentCount` (also read from the mention payload's embedded activity) adds " with N attachments" via `attachmentCountSuffix` portal/packages/shared/src/project-activity.ts to the activity copy and the mention body/email; count only, no names. A Notice board post (#954) passes `attachmentCount` to `notifyNoticeBoardMentions` (workers/app/src/lib/notifications.ts), which adds the same suffix to the mention body and, through `mentionEmail.attachmentCount`, its email (packages/db/src/notifications.ts).
 
 ## Staff video-review notifications (#741 15a)
 - **Gate:** emitted only while the Project's `notify_staff` part is on at write time (`readVideoReviewGate`), and checked again at delivery (resolver) and at every channel admission (SQL). Dark otherwise.

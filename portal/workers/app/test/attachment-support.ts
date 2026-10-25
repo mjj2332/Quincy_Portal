@@ -1,4 +1,4 @@
-import { attachmentObjectKey } from "@quincy/shared";
+import { attachmentObjectKey, noticeAttachmentObjectKey } from "@quincy/shared";
 import { database, ids } from "./embedded-media-support";
 
 /** Attachments (#952) reuse the Embedded media fixture (people, Projects, sessions); this adds rows of their own table. */
@@ -7,12 +7,12 @@ export type AttachmentRowInput = {
   fileName?: string; contentType?: string; bytes?: number; detachedAt?: number | null; createdAt?: number; uploadId?: string | null; object?: Uint8Array | null;
 };
 
-/** Inserts an `attachments` row and (unless `object: null`) its stored object, stored as octet-stream as the upload path stores it. */
+/** Inserts an `attachments` row and (unless `object: null`) its stored object, stored as octet-stream as the upload path stores it. A Notice board row (#954) has no Project and its own prefix. */
 export async function seedAttachment(input: AttachmentRowInput = {}) {
-  const id = input.id ?? crypto.randomUUID(); const projectId = input.projectId ?? ids.project; const state = input.state ?? "pending";
+  const id = input.id ?? crypto.randomUUID(); const notice = input.ownerKind === "notice_post"; const projectId = notice ? null : input.projectId ?? ids.project; const state = input.state ?? "pending";
   const ownerId = input.ownerId === undefined ? (state === "attached" || state === "detached" ? crypto.randomUUID() : null) : input.ownerId;
   const detachedAt = input.detachedAt === undefined ? (state === "detached" ? Date.now() : null) : input.detachedAt;
-  const bytes = input.bytes ?? 32; const key = attachmentObjectKey(projectId, id); const createdAt = input.createdAt ?? Date.now();
+  const bytes = input.bytes ?? 32; const key = projectId === null ? noticeAttachmentObjectKey(id) : attachmentObjectKey(projectId, id); const createdAt = input.createdAt ?? Date.now();
   await database.DB.prepare("INSERT INTO attachments (id, owner_kind, owner_id, project_id, uploader_id, file_name, content_type, bytes, storage_key, upload_id, state, detached_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
     .bind(id, input.ownerKind ?? "project_comment", ownerId, projectId, input.uploader ?? ids.member, input.fileName ?? "Floor plan.pdf", input.contentType ?? "application/pdf", bytes, key, input.uploadId ?? null, state, detachedAt, createdAt, createdAt).run();
   if (input.object !== null) await database.MEDIA.put(key, input.object ?? fileBytes(bytes), { httpMetadata: { contentType: "application/octet-stream" } });
