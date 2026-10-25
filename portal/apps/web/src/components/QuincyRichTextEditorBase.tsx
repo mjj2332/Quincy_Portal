@@ -9,7 +9,7 @@ import { useMediaQuery } from "../lib/use-media-query";
 import { EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_VIDEO_ACCEPT, RenditionFailedError, embeddedImageAccept, embeddedImageProblem, embeddedVideoProblem, type EditorMediaTransport, type LinkPreviewRequest } from "../lib/embedded-media-core";
 import { splitNoteMedia } from "../lib/note-media-strip";
 import { linkPreviewSlot } from "../lib/link-preview-slot";
-import { PastedWebAddressLinks, pastedLinks, pasteRulesWithoutLink } from "../lib/rich-text-paste-links";
+import { PastedWebAddressLinks, TypedWebAddressLinks, linkedAddresses, pasteRulesWithoutLink } from "../lib/rich-text-address-links";
 import {
   EmbeddedImage,
   EmbeddedVideo,
@@ -321,6 +321,8 @@ export function QuincyRichTextEditorBase({
     ...(preset === "document" ? [RichTextSlashCommand.configure({ items: [...RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_TABLE_SLASH_ITEM] })] : []),
     // A pasted web address becomes a link where Link previews are on (#947); the editor then offers it a card.
     PastedWebAddressLinks.configure({ enabled: () => Boolean(linkPreviewsRef.current) && !disabledRef.current }),
+    // So does a typed one, once the author types a space, Enter or closing punctuation after it (#948).
+    TypedWebAddressLinks.configure({ enabled: () => Boolean(linkPreviewsRef.current) && !disabledRef.current }),
   ], [preset, mentionsOn, mediaUrl, posterUrl]);
   // Read once, when the editor is built: the hosts with Link previews (#947) always have them.
   const linksPasted = Boolean(linkPreviews);
@@ -414,7 +416,7 @@ export function QuincyRichTextEditorBase({
       // Likewise a sibling upload landing must not retire the cancel announcement or its re-announce timer.
       if (!isUploadInsert) { clearCancelTimer(); setUploadCancelled(false); }
       setNestingBlocked(false); setMentionDismissed(false); setQuery(mentionsOnRef.current ? mentionQuery(next) : null);
-      for (const { href, at } of pastedLinks(appendedTransactions)) offerLinkPreviewRef.current(href, at);
+      for (const { href, at } of linkedAddresses(appendedTransactions)) offerLinkPreviewRef.current(href, at);
     },
     onSelectionUpdate: ({ editor: next }) => setQuery(mentionsOnRef.current ? mentionQuery(next) : null),
   });

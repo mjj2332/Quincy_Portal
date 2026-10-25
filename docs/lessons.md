@@ -5835,9 +5835,16 @@ Tags: rich-text, focus-overlays, testing-guards · #562
 ## Tiptap's Link links pasted text whatever autolink and linkOnPaste say (#947)
 Tags: rich-text · #947
 
-- **`autolink: false, linkOnPaste: false` does not stop pasted linking.** The Link extension also registers a linkify `addPasteRules` rule, gated only by `shouldAutoLink`, so a pasted email became a `mailto:` link and a bare domain an `http://` one, both of which the server refuses. The four editors with Link previews now leave that rule out (`enablePasteRules: pasteRulesWithoutLink(extensions)`, every other paste rule kept) and link pasted `http://`, `https://` and `www.` addresses themselves (`PastedWebAddressLinks` in `lib/rich-text-paste-links.ts`, detector `findWebAddresses` in `lib/web-address.ts`). Video notes and Guest notes still run the stock rule.
+- **`autolink: false, linkOnPaste: false` does not stop pasted linking.** The Link extension also registers a linkify `addPasteRules` rule, gated only by `shouldAutoLink`, so a pasted email became a `mailto:` link and a bare domain an `http://` one, both of which the server refuses. The four editors with Link previews now leave that rule out (`enablePasteRules: pasteRulesWithoutLink(extensions)`, every other paste rule kept) and link pasted `http://`, `https://` and `www.` addresses themselves (`PastedWebAddressLinks` in `lib/rich-text-address-links.ts`, detector `findWebAddresses` in `lib/web-address.ts`). Video notes and Guest notes still run the stock rule.
 - **Offer the card from `onUpdate`, not from the plugin.** The links are reported as meta on the appended transaction; `onUpdate` reads `appendedTransactions` after the `transaction` event has mapped every pending insertion point, so a place recorded inside the plugin would be mapped through the paste a second time.
 - **A card's place is its link's place in the block, not its arrival.** `linkPreviewSlot` walks back over the cards already after the block and inserts before the first whose link comes later in it.
+
+## A typed address ends at a space, Enter or a closing bracket, not at a full stop (#948)
+Tags: rich-text · #948
+
+- **Sentence punctuation is also the middle of an address being typed.** `https://example.` , `…/search?` and `…:8080` all trim to a complete-looking address, so linking on `.`, `,`, `:` or `?` would fetch a preview for half an address. `TypedWebAddressLinks` (`lib/rich-text-address-links.ts`) links at a space, Enter, or a closing bracket or quote the address did not open; a sentence's punctuation ends it at the space or Enter that follows, and stays out of the link. A post ending `…/a.` with nothing typed after gets no card.
+- **Only typing counts, and text already linked is left alone.** Paste and drop (`uiEvent`), the host's `setContent` (`preventUpdate`) and undo/redo (`history$`) are skipped, and an address that already carries a link (a post opened for editing) gets no card when a boundary is typed after it. Both plugins report through `LINKED_ADDRESSES_META`, read in `onUpdate` by `linkedAddresses`.
+- **Typing in happy-dom:** call `handleTextInput` per character (as the keyboard does) and dispatch a `keydown` Enter on `view.dom`; `insertContent` would not exercise the boundary path.
 
 ## Pasted HEIC flake: one setTimeout(0) does not cover react-query's notify (#576)
 Tags: rich-text, testing-guards · #576
