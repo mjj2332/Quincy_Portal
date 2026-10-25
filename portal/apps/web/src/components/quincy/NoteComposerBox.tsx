@@ -209,6 +209,8 @@ export function NoteComposerBox(props: NoteComposerBoxProps) {
       className={cn(
         "relative flex flex-col gap-[var(--space-2)] rounded-[var(--radius-lg)] border border-solid border-[length:var(--border-width-hair)] border-border-faint pt-[var(--space-2)] pe-[var(--space-2)] pb-[var(--space-1)] ps-[var(--space-3)] transition-colors focus-within:border-border-hover",
         floating ? "bg-[color-mix(in_srgb,var(--card)_92%,transparent)] shadow-[var(--shadow-lg)] backdrop-blur-md" : "bg-surface-sunken",
+        // Tall (N1): the page sets the box this far above the on-screen keyboard (`useFitAboveKeyboard` places it with `scrollIntoView`).
+        tall && "scroll-mb-[var(--space-2)]",
       )}
     >
       <div ref={setTextElement} data-testid="note-composer-text" {...textAttributes} className={cn("relative min-h-[var(--space-5)] overflow-y-auto", tall ? "max-h-[min(60dvh,var(--note-box-fit,60dvh))]" : "max-h-[calc(var(--space-5)*7)]", "leading-[var(--space-5)] text-foreground", phone ? "text-[length:var(--text-base)]" : "text-[length:var(--text-sm)]", textClassName)}>
