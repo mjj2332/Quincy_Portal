@@ -53,6 +53,34 @@ describe("Attachments on a posted comment (#952)", () => {
     expect(item.querySelector('[data-state="unavailable"]')).not.toBeNull();
   });
 
+  it("keeps the extension in view when a long name is cut: only the stem truncates, and the whole name still reads", () => {
+    const host = mount(<RichTextContent content={{ type: "doc", content: [{ type: "attachment", attrs: { attachmentId: A, name: "Floor plan v2.zip", bytes: 10 } }] }} />);
+    const name = host.querySelector<HTMLElement>('[data-testid="attachment-chip"] [data-testid="file-chip-name"]')!;
+    expect(name.textContent).toBe("Floor plan v2.zip");
+    const stem = name.querySelector<HTMLElement>('[data-testid="file-chip-stem"]')!;
+    const extension = name.querySelector<HTMLElement>('[data-testid="file-chip-extension"]')!;
+    expect(stem.textContent).toBe("Floor plan v2");
+    expect(stem.classList.contains("truncate")).toBe(true);
+    expect(extension.textContent).toBe(".zip");
+    expect(extension.classList.contains("shrink-0")).toBe(true);
+    expect(stem.contains(extension)).toBe(false);
+  });
+
+  it("cuts a name with no extension as a whole", () => {
+    const host = mount(<RichTextContent content={{ type: "doc", content: [{ type: "attachment", attrs: { attachmentId: A, name: "Site notes v1.2 final", bytes: 10 } }] }} />);
+    const name = host.querySelector<HTMLElement>('[data-testid="file-chip-name"]')!;
+    expect(name.querySelector('[data-testid="file-chip-extension"]')).toBeNull();
+    expect(name.querySelector('[data-testid="file-chip-stem"]')!.textContent).toBe("Site notes v1.2 final");
+  });
+
+  it("draws the file name in its own case, as the composer chip does, not in the button's uppercase label type", () => {
+    const host = mount(<RichTextContent content={doc} />);
+    const link = host.querySelector<HTMLElement>('[data-testid="attachment-chip"]')!;
+    expect(link.classList.contains("uppercase")).toBe(false);
+    expect(link.classList.contains("normal-case")).toBe(true);
+    expect(link.querySelector('[data-testid="file-chip-name"]')!.textContent).toBe("Floor plan.pdf");
+  });
+
   it("starts a new list when other content sits between two runs", () => {
     const host = mount(<RichTextContent content={{ type: "doc", content: [
       { type: "attachment", attrs: { attachmentId: A, name: "a.pdf", bytes: 10 } },

@@ -209,6 +209,18 @@ describe("an Attachment's chip", () => {
     expect(latest.content.filter((block) => block.type === "attachment")).toEqual([{ type: "attachment", attrs: { attachmentId: B, name: "b.zip", bytes: 3_000_000 } }]);
   });
 
+  it("keeps a chip's extension in view when its name is cut, while it uploads and once it lands", async () => {
+    const upload = deferred();
+    uploadAttachment.mockImplementation(() => upload.promise);
+    const host = mount(<Harness />);
+    await pick(host, [pdf("Floor plan revision two.pdf")]);
+    const parts = () => { const name = chips()[0]!.querySelector<HTMLElement>('[data-testid="file-chip-name"]')!; return [name.textContent, name.querySelector('[data-testid="file-chip-stem"]')!.textContent, name.querySelector('[data-testid="file-chip-extension"]')!.textContent]; };
+    expect(parts()).toEqual(["Floor plan revision two.pdf", "Floor plan revision two", ".pdf"]);
+    await act(async () => { upload.resolve(A); }); await settle();
+    expect(chips()[0]!.dataset.state).toBe("ready");
+    expect(parts()).toEqual(["Floor plan revision two.pdf", "Floor plan revision two", ".pdf"]);
+  });
+
   it("cancels a running upload when the editor unmounts", async () => {
     let signal: AbortSignal | undefined;
     uploadAttachment.mockImplementation((_project: string, _file: File, options: { signal?: AbortSignal }) => { signal = options.signal; return new Promise(() => {}); });
