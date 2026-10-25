@@ -10,7 +10,7 @@ import { RICH_TEXT_PHONE_QUERY } from "./reui/rich-text-editor/rich-text-toolbar
 /**
  * The Notice board's editor inside the note box (#951): the document preset with `boxed`. No fixed toolbar and no field chrome; a
  * formatting bubble over a selection with the note's controls plus Underline, alignment and highlight (owner decision N4); headings,
- * checklist and table through "/"; the table bar over the table on a desktop and docked to the box's top edge on a phone (N3); and
+ * checklist and table through "/"; the table bar docked to the box's top edge (N3 on a phone; on a desktop too, so it never covers the notice above); and
  * photos landing inline at the caret.
  */
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -29,15 +29,15 @@ let latest: RichTextDoc = empty();
 let handle: RichTextEditorHandle | null = null;
 let phone = false;
 
-function Harness({ initial = empty(), dockTo }: { initial?: RichTextDoc; dockTo?: () => Element | null }) {
+function Harness({ initial = empty(), dockTo, barRoot }: { initial?: RichTextDoc; dockTo?: () => Element | null; barRoot?: () => HTMLElement | null }) {
   const [value, setValue] = useState(initial);
-  return <div data-testid="box">
+  return <div data-testid="bar-root"><div data-testid="box">
     <QuincyRichTextEditor
       ref={(next) => { handle = next; }} boxed
       preset="document" value={value} onChange={(next) => { latest = next; setValue(next); }} limit={10_000} loadMentionables={async () => []}
-      media={{ noticeBoard: true }} bubbleDocked={phone} {...(dockTo ? { bubbleDockTo: dockTo } : {})}
+      media={{ noticeBoard: true }} bubbleDocked={phone} {...(dockTo ? { bubbleDockTo: dockTo } : {})} {...(barRoot ? { tableBarRoot: barRoot } : {})}
     />
-  </div>;
+  </div></div>;
 }
 function mount(ui: React.ReactElement) { const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); act(() => root!.render(ui)); return host; }
 const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
@@ -100,12 +100,14 @@ describe("the boxed Notice editor", () => {
     for (const title of ["Section", "Subsection", "Checklist", "Table"]) expect(menu.textContent).toContain(title);
   });
 
-  it("floats the table bar over the table on a desktop", async () => {
-    const host = mount(<Harness />); await settle();
+  it("docks the table bar to the box's top edge on a desktop too, mounted where the host keeps room for it (review of #951)", async () => {
+    const host = mount(<Harness dockTo={() => document.querySelector('[data-testid="box"]')} barRoot={() => document.querySelector<HTMLElement>('[data-testid="bar-root"]')} />); await settle();
     await act(async () => { surfaceOf(host).focus(); tiptapOf(host).chain().focus().insertTable({ rows: 2, cols: 2, withHeaderRow: true }).run(); });
     await settle();
-    expect(tableBar()).not.toBeNull();
-    expect(tableBar()!.closest("[data-docked]")!.getAttribute("data-docked")).toBe("false");
+    expect(document.querySelectorAll('[data-testid="rich-text-table-bubble"]')).toHaveLength(1);
+    const wrapper = tableBar()!.closest("[data-docked]")!;
+    expect(wrapper.getAttribute("data-docked")).toBe("true");
+    expect(wrapper.parentElement!.getAttribute("data-testid")).toBe("bar-root");
   });
 
   it("docks the table bar to the box's top edge on a phone (N3), and gives way to the format bubble over a selection", async () => {

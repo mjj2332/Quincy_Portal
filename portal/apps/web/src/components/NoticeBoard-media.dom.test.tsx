@@ -254,10 +254,12 @@ describe("HEIC images on the Notice board (#495)", () => {
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     await choose(composer(host), [heic()]);
     await act(async () => { drives[0]!.phase("preparing", B); });
+    expect(postButton(host).title).toBe("Wait for the uploads to finish.");
     await click(buttonNamed(composer(host), "Remove")); await flush();
     expect(drives[0]!.signal.aborted).toBe(true);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(trayOf(composer(host))).toBeNull(); expect(isLocked(postButton(host))).toBe(false);
+    // The upload hold lifts: Post notice no longer waits for uploads (it stays locked on this empty draft, the blank rule).
+    expect(trayOf(composer(host))).toBeNull(); expect(postButton(host).title).not.toBe("Wait for the uploads to finish.");
   });
 
   it("stops polling when the board unmounts", async () => {
