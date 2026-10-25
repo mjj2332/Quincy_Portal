@@ -47,11 +47,11 @@ afterEach(async () => { if (root) await act(async () => { root!.unmount(); await
 describe("rich-text serialized-width submit guards", () => {
   it("disables and re-enables both notice submit buttons at the 560/540 task-item boundary (64 KiB)", async () => {
     mocks.apiGet.mockResolvedValue({ posts: [ownPost] }); const host = mount(); await render(<NoticeBoard currentUserId="user-me" />);
-    await click(button(host, "Use oversized formatting")); expect(button(host, "Post notice").disabled).toBe(true);
-    await click(button(host, "Use accepted formatting")); expect(button(host, "Post notice").disabled).toBe(false); await click(button(host, "Post notice")); expect(mocks.apiPost).toHaveBeenCalledWith("/api/notice-board/posts", { content: noticeAccepted });
+    await click(button(host, "Use oversized formatting")); expect(held(button(host, "Post notice"))).toBe(true);
+    await click(button(host, "Use accepted formatting")); expect(held(button(host, "Post notice"))).toBe(false); await click(button(host, "Post notice")); expect(mocks.apiPost).toHaveBeenCalledWith("/api/notice-board/posts", { content: noticeAccepted });
     await chooseNoticeAction(host, "Me", "Edit", (ms) => new Promise((resolve) => setTimeout(resolve, ms))); const edit = host.querySelector('[data-slot="notice-board-edit-composer"]')!;
-    await click(button(edit as HTMLElement, "Use oversized formatting")); expect(button(edit as HTMLElement, "Save").disabled).toBe(true);
-    await click(button(edit as HTMLElement, "Use accepted formatting")); expect(button(edit as HTMLElement, "Save").disabled).toBe(false); await click(button(edit as HTMLElement, "Save"));
+    await click(button(edit as HTMLElement, "Use oversized formatting")); expect(held(button(edit as HTMLElement, "Save"))).toBe(true);
+    await click(button(edit as HTMLElement, "Use accepted formatting")); expect(held(button(edit as HTMLElement, "Save"))).toBe(false); await click(button(edit as HTMLElement, "Save"));
     expect(mocks.apiPatch).toHaveBeenCalledWith(`/api/notice-board/posts/${ownPost.id}`, { content: noticeAccepted });
   });
 

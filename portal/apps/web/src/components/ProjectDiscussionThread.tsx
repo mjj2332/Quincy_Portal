@@ -127,6 +127,7 @@ function CommentItem({ comment, isOwn, readOnly, now, saving, editing, editingOv
   const editEditor = useRef<RichTextEditorHandle>(null);
   const editField = useRef<HTMLDivElement>(null);
   const [editStrip, setEditStrip] = useState<HTMLDivElement | null>(null);
+  const [editPreviews, setEditPreviews] = useState<HTMLDivElement | null>(null);
   // Every save path (the Save button, and Ctrl/Cmd+Enter in the editor) goes through this: an image still uploading would be lost.
   const saveEdit = () => { if (!editUploading) onEditSave(); };
   const isEditing = editing !== undefined;
@@ -158,9 +159,10 @@ function CommentItem({ comment, isOwn, readOnly, now, saving, editing, editingOv
           <QuincyRichTextEditor
             preset="note" ref={editEditor} value={editing} onChange={onEditChange} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables} placeholder="Edit comment…" ariaLabel="Edit comment" onSubmit={saveEdit}
             media={{ projectId }} linkPreviews={{ projectId }} onUploadingChange={setEditUploading}
-            stripContainer={editStrip} bubbleDocked={phone} bubbleDockTo={() => boxOf(editField.current)}
+            stripContainer={editStrip} previewContainer={editPreviews} bubbleDocked={phone} bubbleDockTo={() => boxOf(editField.current)}
           />
         </div>}
+        previews={<div ref={setEditPreviews} className="empty:hidden" />}
         strip={<div ref={setEditStrip} className="empty:hidden" />}
         notice={editError ? <p role="alert" data-testid="discussion-edit-problem" className={BOX_LINE}>{editError}</p> : null}
         attach={{ onPick: () => { editEditor.current?.pickMedia(); }, disabled: saving }}
@@ -212,6 +214,7 @@ export function ProjectDiscussionThread({
   const composerEditor = useRef<RichTextEditorHandle>(null);
   const composerField = useRef<HTMLDivElement>(null);
   const [composerStrip, setComposerStrip] = useState<HTMLDivElement | null>(null);
+  const [composerPreviews, setComposerPreviews] = useState<HTMLDivElement | null>(null);
   const [discussionDeniedFor, setDiscussionDeniedFor] = useState<string>();
   // Delete confirmation (#568). The focus hand-off runs after `deleteTarget` is cleared, so the target and the comment order live in a ref.
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; excerpt: string } | null>(null);
@@ -431,9 +434,10 @@ export function ProjectDiscussionThread({
           preset="note" ref={composerEditor} id={`project-comment-${projectId}`} value={content} onChange={setContent} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables}
           placeholder={phone ? "Write a project comment…" : "Write a project comment… Use @ to mention project participants."} onSubmit={() => void submit()}
           media={{ projectId }} linkPreviews={{ projectId }} onUploadingChange={setComposerUploading}
-          stripContainer={composerStrip} bubbleDocked={phone} bubbleDockTo={() => boxOf(composerField.current)}
+          stripContainer={composerStrip} previewContainer={composerPreviews} bubbleDocked={phone} bubbleDockTo={() => boxOf(composerField.current)}
         />
       </div>}
+      previews={<div ref={setComposerPreviews} className="empty:hidden" />}
       strip={<div ref={setComposerStrip} className="empty:hidden" />}
       notice={postProblem ? <p role="alert" data-testid="discussion-composer-problem" className={BOX_LINE}>{postProblem}</p> : null}
       attach={{ onPick: () => { composerEditor.current?.pickMedia(); }, disabled: saving }}
