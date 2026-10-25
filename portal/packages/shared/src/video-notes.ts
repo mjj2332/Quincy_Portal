@@ -2,7 +2,7 @@ import { z } from "zod";
 import { ROLES } from "./capabilities";
 import { shapeSchema, strokePointSchema, strokeSchema, STROKE_LIMITS } from "./freehand-strokes";
 import { videoPersonSchema } from "./video-review";
-import { richTextMediaRefs, richTextPlainText, type RichTextDoc, type RichTextBlock, type RichTextTreeNode } from "./rich-text";
+import { richTextAttachmentIds, richTextMediaRefs, richTextPlainText, type RichTextDoc, type RichTextBlock, type RichTextTreeNode } from "./rich-text";
 
 /**
  * Frame-anchored notes on a Video Version (#741, 5a). A leaf module on purpose: `external-project-dto` imports it for its response-schema
@@ -16,7 +16,7 @@ export const VIDEO_NOTE_BODY_MAX = 10_000;
 
 /**
  * The plain `body` a rich note stores (#835): what marker export, counts, search and the guest digest read. A mention reads "@Name", an image or video node reads as nothing in the
- * text, and a count hint ("[1 image]", "[2 videos]") closes it, so an exported marker says there is something to look at in the Portal. The caller checks the length.
+ * text, and a count hint ("[1 image]", "[2 videos]", "[1 file]" for Attachments, #955) closes it, so an exported marker says there is something to look at in the Portal. The caller checks the length.
  */
 export function videoNoteBody(doc: RichTextDoc): string {
   const strip = (node: RichTextTreeNode): RichTextTreeNode => {
@@ -26,9 +26,11 @@ export function videoNoteBody(doc: RichTextDoc): string {
     return { ...node, content: (node as { content?: RichTextTreeNode[] }).content?.map(strip) } as RichTextTreeNode;
   };
   const refs = richTextMediaRefs(doc);
-  const text = richTextPlainText({ type: "doc", content: doc.content.filter((block) => block.type !== "image" && block.type !== "video").map((block) => strip(block) as RichTextBlock) });
+  const files = richTextAttachmentIds(doc).length;
+  const text = richTextPlainText({ type: "doc", content: doc.content.filter((block) => block.type !== "image" && block.type !== "video" && block.type !== "attachment").map((block) => strip(block) as RichTextBlock) });
   const images = refs.filter((ref) => ref.kind === "image").length; const videos = refs.length - images;
-  const hints = [images ? `[${images} image${images === 1 ? "" : "s"}]` : "", videos ? `[${videos} video${videos === 1 ? "" : "s"}]` : ""].filter(Boolean).join(" ");
+  const count = (n: number, noun: string) => n ? `[${n} ${noun}${n === 1 ? "" : "s"}]` : "";
+  const hints = [count(images, "image"), count(videos, "video"), count(files, "file")].filter(Boolean).join(" ");
   return [text.trim(), hints].filter(Boolean).join(" ");
 }
 

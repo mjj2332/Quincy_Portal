@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   COMMENT_MEDIA_RICH_TEXT_PROFILE,
   COMMENT_RICH_TEXT_PROFILE,
+  GUEST_NOTE_RICH_TEXT_PROFILE,
   NOTICE_RICH_TEXT_PROFILE,
   RICH_TEXT_ATTACHMENT_PLACEHOLDER,
   RichTextValidationError,
@@ -28,11 +29,16 @@ describe("attachment node (#952)", () => {
     expect(richTextAttachmentIds(doc)).toEqual([id(1)]);
   });
 
-  it("is refused on the comment, Notice board and Video note profiles until their tickets turn it on", () => {
-    for (const profile of [COMMENT_RICH_TEXT_PROFILE, NOTICE_RICH_TEXT_PROFILE, VIDEO_NOTE_RICH_TEXT_PROFILE]) {
+  it("is refused on the comment, Notice board and Guest note profiles until their tickets turn it on", () => {
+    for (const profile of [COMMENT_RICH_TEXT_PROFILE, NOTICE_RICH_TEXT_PROFILE, GUEST_NOTE_RICH_TEXT_PROFILE]) {
       expect(() => parse([para("x"), attachment(1)], profile)).toThrow(RichTextValidationError);
     }
-    expect(VIDEO_NOTE_RICH_TEXT_PROFILE.allowAttachments).toBe(false);
+    expect(GUEST_NOTE_RICH_TEXT_PROFILE.allowAttachments).toBe(false);
+  });
+
+  it("is accepted on a staff Video note, ten at most (#955)", () => {
+    expect(richTextAttachmentIds(parse([para("x"), attachment(1)], VIDEO_NOTE_RICH_TEXT_PROFILE))).toEqual([id(1)]);
+    expect(() => parse([para("x"), ...Array.from({ length: 11 }, (_, n) => attachment(n + 1))], VIDEO_NOTE_RICH_TEXT_PROFILE)).toThrow("A post may have at most 10 attachments");
   });
 
   it("lives at the top level only", () => {

@@ -142,6 +142,8 @@ export const attachmentPresignInput = z.object({
   name: z.string().min(1).max(1024),
   contentType: z.string().max(255),
   bytes: z.number().int().min(0),
+  /** What the file is for (#955): the Project's discussion (the default) or a staff Video note, which takes the note-writing gate instead of the Collaboration tab's. */
+  owner: z.enum(["discussion", "video_note"]).optional(),
 }).strict();
 export type AttachmentPresignInput = z.infer<typeof attachmentPresignInput>;
 

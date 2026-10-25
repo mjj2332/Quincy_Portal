@@ -1,9 +1,22 @@
-import { ATTACHMENT_RETENTION_MS, type AttachmentOwnerKind } from "@quincy/shared";
+import { ATTACHMENT_RETENTION_MS, ATTACHMENT_STORED_CONTENT_TYPE, normalizeAttachmentName, type AttachmentOwnerKind } from "@quincy/shared";
 import { enqueueEmbeddedMediaCleanup } from "@quincy/db";
 import type { Env } from "../env";
 import { isMissingUpload, uploaderColumn, uploaderValue, type MediaUploader } from "./embedded-media";
 import { auditMeta, type AuditPrincipal } from "./audit";
+import { attachment as attachmentDisposition } from "./download-name";
 import { SQL_UUID_V4 } from "./sql-uuid";
+
+/**
+ * The headers of every Attachment download, staff (`GET /media/attachments/:id`) and guest (`GET /d/api/links/:linkId/attachments/:id`, #955) alike: a download as octet-stream,
+ * never shown inline, never cached, never sniffed, with a sandbox CSP in case a browser renders it anyway. The name is cleaned again on the way out.
+ */
+export function attachmentDownloadHeaders(fileName: string): Record<string, string> {
+  return {
+    "content-type": ATTACHMENT_STORED_CONTENT_TYPE, "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox",
+    "cache-control": "private, no-store", "cross-origin-resource-policy": "same-origin", "referrer-policy": "no-referrer",
+    "content-disposition": attachmentDisposition(normalizeAttachmentName(fileName) ?? "file"),
+  };
+}
 
 /**
  * Attachments (#945, tracer #952): the D1 row and every helper that writes it outside the upload core. The lifecycle is Embedded
@@ -94,7 +107,7 @@ export async function abortAttachment(env: Pick<Env, "DB" | "MEDIA">, row: Attac
   return "in_use";
 }
 
-/** What owns a set of Attachments. #952 writes `project_comment`; the Notice board (#954) has no Project, a Video note (#955) has one. */
+/** What owns a set of Attachments. #952 writes `project_comment`, #955 `video_note` (a staff note or reply, which has a Project); the Notice board (#954) has none. */
 export type AttachmentOwner = { ownerKind: AttachmentOwnerKind; ownerId: string; projectId: string | null };
 
 type PreflightRow = { id: string; state: AttachmentState; owner_id: string | null; uploader_id: string | null; uploader_guest_id: string | null; project_id: string | null; owner_kind: string; created_at: number; detached_at: number | null };
@@ -164,16 +177,18 @@ export function ownedAttachmentStatements(db: D1Database, input: AttachmentOwner
 /**
  * The statements a post's delete adds to its own batch: an audit row per attached file, then every attached or detached row is detached and due now (`detached_at = 0`), so a download
  * stops the moment the post is gone. Both are conditioned on the post's own delete audit row (`deleteAuditId`), which the caller writes earlier in the same batch only when its delete
- * won. The objects and rows are reclaimed by the sweep (#953).
+ * won. The objects and rows are reclaimed by the sweep (#953). `ownerIdsIn` widens the owners to a sub-select (a Video note's hard delete takes its replies too, #955); without it the
+ * owner is `ownerId` alone.
  */
-export function deletedOwnerAttachmentStatements(db: D1Database, input: { ownerKind: AttachmentOwnerKind; ownerId: string; now: number; principal: AuditPrincipal; deleteAuditId: string }): D1PreparedStatement[] {
+export function deletedOwnerAttachmentStatements(db: D1Database, input: { ownerKind: AttachmentOwnerKind; ownerId: string; ownerIdsIn?: { sql: string; binds: unknown[] }; now: number; principal: AuditPrincipal; deleteAuditId: string }): D1PreparedStatement[] {
   const won = "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)";
+  const owners = input.ownerIdsIn ? { sql: `owner_id IN (${input.ownerIdsIn.sql})`, binds: input.ownerIdsIn.binds } : { sql: "owner_id = ?", binds: [input.ownerId] };
   const meta = auditMeta(input.principal, { ownerKind: input.ownerKind, ownerId: input.ownerId, reason: "owner_deleted" });
   return [
     db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ${SQL_UUID_V4}, ?, 'attachment.detach', 'attachment', id, ?, ? FROM attachments
-      WHERE owner_kind = ? AND owner_id = ? AND state = 'attached' AND ${won}`).bind(input.principal?.id ?? null, meta, input.now, input.ownerKind, input.ownerId, input.deleteAuditId),
-    db.prepare(`UPDATE attachments SET state = 'detached', detached_at = 0, updated_at = ? WHERE owner_kind = ? AND owner_id = ? AND state IN ('attached', 'detached') AND ${won}`)
-      .bind(input.now, input.ownerKind, input.ownerId, input.deleteAuditId),
+      WHERE owner_kind = ? AND ${owners.sql} AND state = 'attached' AND ${won}`).bind(input.principal?.id ?? null, meta, input.now, input.ownerKind, ...owners.binds, input.deleteAuditId),
+    db.prepare(`UPDATE attachments SET state = 'detached', detached_at = 0, updated_at = ? WHERE owner_kind = ? AND ${owners.sql} AND state IN ('attached', 'detached') AND ${won}`)
+      .bind(input.now, input.ownerKind, ...owners.binds, input.deleteAuditId),
   ];
 }
 
