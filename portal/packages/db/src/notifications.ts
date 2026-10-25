@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { DEFAULT_EMAIL_DIGEST_CADENCE, isDigestExemptType, isEmailDigestCadence, type EmailDigestCadence, type NotificationType } from "@quincy/shared";
+import { DEFAULT_EMAIL_DIGEST_CADENCE, attachmentCountSuffix, isDigestExemptType, isEmailDigestCadence, type EmailDigestCadence, type NotificationType } from "@quincy/shared";
 import type { Database } from "./index";
 import * as schema from "./schema";
 
@@ -97,6 +97,8 @@ export type EmitNotificationInput = {
         scope: "notice-board";
         authorName: string;
         excerpt: string;
+        /** How many Attachments the post carries (#954, #957's count): the email says so; never a name. */
+        attachmentCount?: number;
       };
   email?: NotificationEmail;
   fromAddress?: string;
@@ -123,8 +125,9 @@ function formatMentionEmail(mentionEmail: NonNullable<EmitNotificationInput["men
       ? { text: `${text}\n\n${link}`, html: `${html}<p><a href="${escapeHtml(link)}">View project</a></p>` }
       : { text, html };
   }
-  const text = `${mentionEmail.authorName} mentioned you in a notice-board post:\n\n“${mentionEmail.excerpt}”`;
-  const html = `<p>${escapeHtml(mentionEmail.authorName)} mentioned you in a notice-board post:</p><p>“${htmlExcerpt}”</p>`;
+  const withFiles = attachmentCountSuffix(mentionEmail.attachmentCount);
+  const text = `${mentionEmail.authorName} mentioned you in a notice-board post${withFiles}:\n\n“${mentionEmail.excerpt}”`;
+  const html = `<p>${escapeHtml(mentionEmail.authorName)} mentioned you in a notice-board post${withFiles}:</p><p>“${htmlExcerpt}”</p>`;
   return { text, html };
 }
 

@@ -895,7 +895,7 @@ describe("the Notice board's note box (#951)", () => {
   const editBox = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-slot="notice-board-edit-composer"] [data-testid="note-composer-box"]');
   const card = { type: "linkPreview" as const, attrs: { previewId: "22222222-2222-4222-8222-222222222222", url: "https://example.test/a", title: "A page", description: "About it", siteName: "Example", imageMediaId: null } };
 
-  it("writes a new notice in the post box: no fixed toolbar, the paperclip for photos and a round Post notice", async () => {
+  it("writes a new notice in the post box: no fixed toolbar, the paperclip for photos and files and a round Post notice", async () => {
     apiGetMock.mockResolvedValue({ posts: [] });
     const host = mount();
     await render(<NoticeBoard currentUserId="user-a" />);
@@ -905,7 +905,7 @@ describe("the Notice board's note box (#951)", () => {
     expect(composer.querySelector('[contenteditable="true"]')).not.toBeNull();
     expect(host.querySelector('[role="toolbar"][aria-label="Formatting"]')).toBeNull();
     const tools = [...composer.querySelectorAll<HTMLButtonElement>('[data-testid="note-composer-tools"] button')].map((button) => button.getAttribute("aria-label") ?? button.textContent);
-    expect(tools).toEqual(["Add photos", "Post notice"]);
+    expect(tools).toEqual(["Add files", "Post notice"]);
     // No seven-line cap (owner decision N1): the text grows with the page to about 60% of the viewport.
     expect(composer.querySelector('[data-testid="note-composer-text"]')!.className.split(/\s+/)).toContain("max-h-[min(60dvh,var(--note-box-fit,60dvh))]");
   });
@@ -967,7 +967,7 @@ describe("the Notice board's note box (#951)", () => {
     const edit = editBox(host)!;
     expect(edit).not.toBeNull();
     const tools = [...edit.querySelectorAll<HTMLButtonElement>('[data-testid="note-composer-tools"] button')].map((button) => button.getAttribute("aria-label") ?? button.textContent);
-    expect(tools).toEqual(["Add photos", "Cancel", "Save"]);
+    expect(tools).toEqual(["Add files", "Cancel", "Save"]);
     await appendToEditor(edit.querySelector<HTMLElement>('[contenteditable="true"]')!, "!");
     await click([...edit.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
     expect(apiPatchMock).toHaveBeenCalled();

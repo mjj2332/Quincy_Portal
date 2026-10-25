@@ -9,7 +9,7 @@ import type { RichTextEditorHandle } from "./QuincyRichTextEditorBase";
 /**
  * #952 D8: the note box's paper clip takes any file. A photo or video the person may embed goes down the Embedded media path as before;
  * anything else becomes an Attachment, a chip from the moment it is picked (uploading, then failed with Retry and Remove, then landed).
- * Without an attachment transport (Video notes, Guest notes, the Notice board) the picker is exactly as it was.
+ * Without an attachment transport (Video notes, Guest notes) the picker is exactly as it was.
  */
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const uploadImage = vi.hoisted(() => vi.fn());
