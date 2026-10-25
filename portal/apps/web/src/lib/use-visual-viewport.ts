@@ -102,3 +102,46 @@ export function useVisualViewport(enabled: boolean, onKeyboardGone?: () => void,
   useEffect(() => () => { settling.current?.(); }, []);
   return box;
 }
+
+/** The gap kept between a fitted box's foot and the keyboard's top edge (`--space-2`). */
+const FIT_MARGIN_PX = 8;
+/** The fitted text never drops below two of its 24px lines (`--space-5`), however little room the keyboard leaves. */
+const FIT_MIN_PX = 48;
+
+/**
+ * Keeps a box that grows with its text (the Notice board's tall note box, owner decision N1) inside the visual viewport (review of #951). `60dvh` alone does not see
+ * the on-screen keyboard (iOS shrinks the visual viewport, never the `dvh` unit), so a tall notice pushed Send under it.
+ *
+ * - The text region's `--note-box-fit` follows the visual viewport: its height, less the box's own rows and padding around the text (measured, so a preview card or the
+ *   media strip counts), less a margin. The region's class caps it at `min(60dvh, var(--note-box-fit))`.
+ * - While the focus is in the box and the keyboard is up (the viewport 150px or more below the layout height), a box whose foot falls below the keyboard's top edge is
+ *   scrolled up by the difference: when the keyboard rises, and when the box grows as the text does. Never on the viewport's own scroll, so the person can still pan the page.
+ *
+ * Unlike `useVisualViewport` it writes no root and puts back no page scroll: the box sits in an ordinary scrolling page, not a fixed screen.
+ */
+export function useFitAboveKeyboard(enabled: boolean, box: HTMLElement | null, text: HTMLElement | null) {
+  useLayoutEffect(() => {
+    const viewport = typeof window === "undefined" ? undefined : window.visualViewport;
+    if (!enabled || !viewport || !box || !text) return undefined;
+    const fit = () => {
+      if (viewport.scale > 1.01) return;
+      const rows = box.getBoundingClientRect().height - text.getBoundingClientRect().height;
+      text.style.setProperty("--note-box-fit", `${Math.max(FIT_MIN_PX, Math.round(viewport.height - rows - FIT_MARGIN_PX))}px`);
+    };
+    const reveal = () => {
+      if (viewport.scale > 1.01 || window.innerHeight - viewport.height < KEYBOARD_MIN_PX || !box.contains(document.activeElement)) return;
+      const below = box.getBoundingClientRect().bottom - (viewport.offsetTop + viewport.height);
+      if (below > 0) window.scrollBy(0, Math.round(below + FIT_MARGIN_PX));
+    };
+    const onResize = () => { fit(); reveal(); };
+    fit();
+    viewport.addEventListener("resize", onResize);
+    const grows = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(reveal);
+    grows?.observe(box);
+    return () => {
+      viewport.removeEventListener("resize", onResize);
+      grows?.disconnect();
+      text.style.removeProperty("--note-box-fit");
+    };
+  }, [enabled, box, text]);
+}

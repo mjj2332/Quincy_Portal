@@ -28,8 +28,14 @@ const WAIT_FOR_UPLOADS = "Wait for the uploads to finish.";
 const TOO_LARGE = "This notice is too large to post; shorten it or remove formatting.";
 /** A refused Post or Save, in the box that sent it above its row, beside Send or Save (the Collaboration box's line, #950). */
 const BOX_LINE = "m-0 [font:var(--type-label)] text-destructive";
-/** The box's bubbles dock to the box on a phone (frame P2; the table bar too, owner decision N3). */
+/** The box's bubbles dock to the box on a phone (frame P2; the table bar too, owner decision N3, and on a desktop since the review). */
 const boxOf = (field: HTMLElement | null) => field?.closest('[data-testid="note-composer-box"]') ?? null;
+/**
+ * Room above the box for its docked table bar while the bar is up (review of #951): the bar sits a `--space-2` offset above the box's top
+ * edge, so without this it covered the notice above. The bar is 38px on a desktop (28px controls), 54px below 721px (44px), with that offset:
+ * `--space-7` and `--space-8` hold it. The bar mounts in this element only while it shows, so the room is there only then.
+ */
+const TABLE_BAR_ROOM = "has-[>[data-docked=true]]:pt-[var(--space-7)] max-[721px]:has-[>[data-docked=true]]:pt-[var(--space-8)]";
 
 // The "⋯" trigger's hit area (28px, 44px at <=721px: `ICON_BUTTON`'s min-h) is taller than the author line
 // (`--type-eyebrow` = `--text-xs` at 1.2 line-height), and would stretch the header, making own notices
@@ -101,6 +107,11 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   const overCap = (doc: RichTextDoc) => richTextDocByteLength(stripEmbeddedDisplay(doc)) > NOTICE_RICH_TEXT_JSON_MAX_BYTES || richTextPlainText(doc).length > NOTICE_BODY_MAX_LENGTH;
   const postingOverBytes = overCap(content);
   const editingOverBytes = overCap(editingContent);
+  // An empty or blank notice is not sent (the Discussion's `canPost` rule, and the server's: it refuses a document
+  // whose plain text is blank). Words or a photo count; a link preview card alone does not, as on the server.
+  const blank = (doc: RichTextDoc) => richTextPlainText(doc).trim() === "";
+  const postingBlank = blank(content);
+  const editingBlank = blank(editingContent);
   const queryError = postsQuery.error ?? readStateQuery.error;
   // A refused Post or Save shows in its own box (#951); the board's line keeps loading and read-state failures.
   const visibleError = presentationError ?? (queryError ? "Notice board is unavailable." : null);
@@ -132,7 +143,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   };
 
   async function submit() {
-    if (postingOverBytes || composerUploading || !beginNoticeBoardMutation("create")) return;
+    if (postingBlank || postingOverBytes || composerUploading || !beginNoticeBoardMutation("create")) return;
     try {
       await createNoticeBoardPost(queryClient, stripEmbeddedDisplay(content));
       setContent(EMPTY_DOC); clearMutationError("create");
@@ -142,7 +153,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
   }
 
   async function saveEdit(id: string) {
-    if (editingOverBytes || editUploading || !beginNoticeBoardMutation("edit")) return;
+    if (editingBlank || editingOverBytes || editUploading || !beginNoticeBoardMutation("edit")) return;
     try {
       await editNoticeBoardPost(queryClient, id, stripEmbeddedDisplay(editingContent));
       restoreTriggerFor.current = id; setEditingId(null); setEditingContent(EMPTY_DOC); clearMutationError("edit");
@@ -194,7 +205,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
       onSubmit={() => void saveEdit(id)} onUploadingChange={setEditUploading} problem={mutationErrors.edit}
       save={{
         onSave: () => void saveEdit(id), onCancel: () => { restoreTriggerFor.current = id; setEditingId(null); setEditingContent(EMPTY_DOC); clearMutationError("edit"); },
-        disabled: isBusy || editingOverBytes || editUploading, pending: isSaving,
+        disabled: isBusy || editingBlank || editingOverBytes || editUploading, pending: isSaving,
         ...(editUploading ? { reason: WAIT_FOR_UPLOADS } : editingOverBytes ? { reason: TOO_LARGE } : {}),
       }}
     />
@@ -237,7 +248,7 @@ export function NoticeBoard({ currentUserId }: { currentUserId: string }) {
           placeholder={phone ? "Write a notice for the team…" : "Write a notice for the team… Use @ to mention active staff."}
           onSubmit={() => void submit()} onUploadingChange={setComposerUploading} problem={mutationErrors.create}
           send={{
-            label: isPosting ? "Posting…" : "Post notice", onSend: () => void submit(), disabled: isBusy || postingOverBytes || composerUploading, pending: isPosting,
+            label: isPosting ? "Posting…" : "Post notice", onSend: () => void submit(), disabled: isBusy || postingBlank || postingOverBytes || composerUploading, pending: isPosting,
             ...(composerUploading ? { reason: WAIT_FOR_UPLOADS } : postingOverBytes ? { reason: TOO_LARGE } : {}),
           }}
         />
@@ -263,29 +274,30 @@ type NoticeBoxProps = {
 
 /**
  * A notice's box (#951): the note composer box's post variant around the document editor (`boxed`), keeping what makes a notice a page:
- * headings, the checklist and tables through "/", alignment and highlight in the selection bubble (N4), the table bar (docked to the box
- * on a phone, N3) and the outline rail (N2). No seven-line cap (N1). Photos land inline at the caret; link preview cards sit under the
+ * headings, the checklist and tables through "/", alignment and highlight in the selection bubble (N4), the table bar (docked above the
+ * box at every width, N3, in room kept for it) and the outline rail (N2). No seven-line cap (N1). Photos land inline at the caret; link preview cards sit under the
  * text (B1). The byte and length limits, the mentions (active staff) and the upload hold are the editor's, as before.
  */
 function NoticeBox({ label, id, phone, value, onChange, disabled, loadMentionables, placeholder, onSubmit, onUploadingChange, problem, ...action }: NoticeBoxProps) {
   const editor = useRef<RichTextEditorHandle>(null);
   const field = useRef<HTMLDivElement>(null);
   const [previews, setPreviews] = useState<HTMLDivElement | null>(null);
-  return <NoteComposerBox
+  const room = useRef<HTMLDivElement>(null);
+  return <div ref={room} data-testid="notice-box-room" className={TABLE_BAR_ROOM}><NoteComposerBox
     variant="post" label={label} phone={phone} tall
     field={<div ref={field} className="min-w-0">
       {id && <label className="sr-only" htmlFor={id}>{label}</label>}
       <QuincyRichTextEditor
         preset="document" boxed ref={editor} {...(id ? { id } : { ariaLabel: label })} value={value} onChange={onChange} limit={NOTICE_BODY_MAX_LENGTH} maxBytes={NOTICE_RICH_TEXT_JSON_MAX_BYTES}
         disabled={disabled} loadMentionables={loadMentionables} placeholder={placeholder} onSubmit={onSubmit} media={{ noticeBoard: true }} linkPreviews={{ noticeBoard: true }}
-        onUploadingChange={onUploadingChange} previewContainer={previews} bubbleDocked={phone} bubbleDockTo={() => boxOf(field.current)}
+        onUploadingChange={onUploadingChange} previewContainer={previews} bubbleDocked={phone} bubbleDockTo={() => boxOf(field.current)} tableBarRoot={() => room.current}
       />
     </div>}
     previews={<div ref={setPreviews} className="empty:hidden" />}
     notice={problem ? <p role="alert" className={BOX_LINE}>{problem}</p> : null}
     attach={{ onPick: () => { editor.current?.pickMedia(); }, disabled, label: "Add photos" }}
     {...action}
-  />;
+  /></div>;
 }
 
 type NoticeItemProps = {
