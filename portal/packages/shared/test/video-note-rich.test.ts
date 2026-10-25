@@ -11,7 +11,7 @@ const doc = (...content: RichTextDoc["content"]): RichTextDoc => ({ type: "doc",
 
 describe("#835 video note rich text", () => {
   it("is the comment-media profile without link previews", () => {
-    expect(VIDEO_NOTE_RICH_TEXT_PROFILE).toEqual({ ...COMMENT_MEDIA_RICH_TEXT_PROFILE, allowLinkPreviews: false });
+    expect(VIDEO_NOTE_RICH_TEXT_PROFILE).toEqual({ ...COMMENT_MEDIA_RICH_TEXT_PROFILE, allowLinkPreviews: false, allowAttachments: false, maxAttachments: 0 });
     const withPreview = { type: "doc", content: [{ type: "paragraph", content: [text("x")] }, { type: "linkPreview", attrs: { previewId: a } }] };
     expect(() => parseRichTextDoc(withPreview, VIDEO_NOTE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
   });
