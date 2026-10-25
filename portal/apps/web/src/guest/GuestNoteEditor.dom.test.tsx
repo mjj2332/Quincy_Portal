@@ -119,7 +119,8 @@ describe("the guest's note field", () => {
     expect(fetchMock).not.toHaveBeenCalled();
 
     await pick(host, Array.from({ length: 6 }, (_, n) => pdf(`page-${n + 1}.pdf`)));
-    expect(host.textContent).toContain("A post can hold 5 attachments at most.");
+    expect(host.textContent).toContain("A note can hold 5 attachments at most.");
+    expect(host.textContent).not.toContain("A post can hold");
     expect(fetchMock.mock.calls.filter((call) => String(call[0]) === FILES)).toHaveLength(5);
   });
 

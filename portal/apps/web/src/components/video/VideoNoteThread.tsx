@@ -25,7 +25,7 @@ import { Button as ReuiButton } from "../reui/button";
 import { Item } from "../reui/item";
 import { NoteBody } from "../quincy/NoteMediaStrip";
 import { NoteComposerBox, rangeChip, type NoteAnchorChip } from "../quincy/NoteComposerBox";
-import { ATTACHMENT_RETRY_OR_REMOVE as RETRY_OR_REMOVE } from "../../lib/attachments";
+import { ATTACHMENT_RETRY_OR_REMOVE as RETRY_OR_REMOVE, WAIT_FOR_UPLOADS } from "../../lib/attachments";
 import { VideoNoteEditor } from "./VideoNoteEditor";
 import { MARKUP_FULL_TEXT, type NoteDrawControls } from "./VideoMarkupOverlay";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../reui/tooltip";
@@ -246,7 +246,7 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
 
   const sendReply = () => { void store.reply(assetId, { send: actions.reply }); };
   const replyTooLong = form?.kind === "reply" && form.text.length > VIDEO_NOTE_BODY_MAX;
-  const replyReason = uploading ? "Wait for the uploads to finish." : failedFiles > 0 ? RETRY_OR_REMOVE : replyTooLong ? `Replies can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.` : undefined;
+  const replyReason = uploading ? WAIT_FOR_UPLOADS : failedFiles > 0 ? RETRY_OR_REMOVE : replyTooLong ? `Replies can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.` : undefined;
 
   const label = noteAnchorLabel(thread, timecode);
   const resolvedLine = thread.resolved ? `Resolved by ${thread.resolved.by.name}` : null;
@@ -369,7 +369,7 @@ function NoteEditBox({ thread, editing, store, assetId, clock, timecode, busy, s
   useEffect(() => { if (clearedNew && !drawingNow) store.removeDrawing(assetId); }, [clearedNew, drawingNow, store, assetId]);
 
   const tooLong = editing.text.length > VIDEO_NOTE_BODY_MAX;
-  const saveReason = uploading ? "Wait for the uploads to finish." : failedFiles > 0 ? RETRY_OR_REMOVE : tooLong ? `Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.` : undefined;
+  const saveReason = uploading ? WAIT_FOR_UPLOADS : failedFiles > 0 ? RETRY_OR_REMOVE : tooLong ? `Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.` : undefined;
   const notice = <>
     {drawings?.on && drawings.canAnnotate && <SavedDrawingStatus store={store} assetId={assetId} note={thread} editing={editing} projectId={drawings.projectId} role={drawings.role} />}
     {draw?.full && <p role="status" data-testid="video-note-edit-markup-full" className={cn(LINE, "text-warning-foreground")}>{MARKUP_FULL_TEXT}</p>}

@@ -11,7 +11,7 @@ import { Button } from "../quincy/Button";
 import { DRAWING_NEEDS_WORDS, NoteComposerBox, rangeChip, type NoteAnchorChip } from "../quincy/NoteComposerBox";
 import { SHEET_TEXT, SheetModeContext, usePostHold } from "../quincy/ReviewSheet";
 import { MARKUP_FULL_TEXT, type NoteDrawControls } from "./VideoMarkupOverlay";
-import { ATTACHMENT_RETRY_OR_REMOVE as RETRY_OR_REMOVE } from "../../lib/attachments";
+import { ATTACHMENT_RETRY_OR_REMOVE as RETRY_OR_REMOVE, WAIT_FOR_UPLOADS } from "../../lib/attachments";
 import { VideoNoteEditor } from "./VideoNoteEditor";
 
 /** A line in the box above its tools (a lock, a problem). Label type: the box is quiet, so these are text, not cards. */
@@ -82,7 +82,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
       : { kind: "point", at: timecode(drawn?.drawingFrame ?? composer.anchorFrame ?? liveFrame), following: composer.anchorFrame === null && drawn === null });
   const label = phase === "confirming" ? "Confirming…" : phase === "posting" ? "Posting…" : problem?.retry ? "Retry" : "Post note";
   const lock = clock === null ? "Loading the film…" : otherForm !== null ? `Finish or cancel the open ${otherForm} first.` : null;
-  const sendReason = lock ?? (uploading ? "Wait for the uploads to finish." : failedFiles > 0 ? RETRY_OR_REMOVE : tooLong ? `Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.` : !hasText && drawn ? DRAWING_NEEDS_WORDS : undefined);
+  const sendReason = lock ?? (uploading ? WAIT_FOR_UPLOADS : failedFiles > 0 ? RETRY_OR_REMOVE : tooLong ? `Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.` : !hasText && drawn ? DRAWING_NEEDS_WORDS : undefined);
 
   // The phone layout follows the sheet's mode and nothing else (#879 fix). Outside a phone sheet (a composer rendered on its own) the field's focus stands in for it.
   const composing = phone && (sheet ? sheet.mode === "compose" : focused);

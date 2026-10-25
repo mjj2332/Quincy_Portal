@@ -7,7 +7,7 @@ import { isMediaGuardFailure, ownedMediaStatements, preflightOwnedMedia } from "
 import { fillLinkPreviews, linkPreviewStatements, preflightLinkPreviews } from "./link-previews";
 import { deleteWonByAudit, deletedOwnerAttachmentStatements, isAttachmentGuardFailure, ownedAttachmentStatements, preflightOwnedAttachments } from "./attachments";
 import { ATTACHMENT_MAX_PER_POST } from "@quincy/shared";
-import { auditMeta, type AuditPrincipal } from "./audit";
+import { auditMeta, type Principal } from "./audit";
 import { ARCHIVED_SNAPSHOT_SQL, archivedInSnapshot } from "./project-archive";
 
 const readMarkerUpsertSql = `
@@ -64,7 +64,8 @@ export type CreateProjectCommentInput = {
   mentions: Array<{ id: string; commentId: string; mentionedUserId: string; createdAt: Date }>;
   wallClockMs: number;
   occurredAt: Date;
-  auditPrincipal?: AuditPrincipal;
+  /** Who is acting, for the audit rows: an impersonating Admin is stamped (`metaJson.impersonatedBy`). Required, so no caller can drop the stamp. */
+  principal: Principal;
   media?: CommentMediaChanges;
 };
 
@@ -80,7 +81,8 @@ export type EditProjectCommentInput = {
   mentionIds?: string[];
   editedAt: Date;
   occurredAt: Date;
-  auditPrincipal?: AuditPrincipal;
+  /** Who is acting, for the audit rows: an impersonating Admin is stamped (`metaJson.impersonatedBy`). Required, so no caller can drop the stamp. */
+  principal: Principal;
   media?: CommentMediaChanges;
 };
 
@@ -89,7 +91,8 @@ export type DeleteProjectCommentInput = {
   commentId: string;
   actorId: string;
   occurredAt: Date;
-  auditPrincipal?: AuditPrincipal;
+  /** Who is acting, for the audit rows: an impersonating Admin is stamped (`metaJson.impersonatedBy`). Required, so no caller can drop the stamp. */
+  principal: Principal;
 };
 
 export type ProjectCommentMentionAuthorizationSnapshot =
@@ -334,7 +337,7 @@ export async function resolveCommentMedia(db: D1Database, input: { projectId: st
 }
 
 /** The comment's media statements, fenced on the winner's audit row (lessons #364); see `ownedMediaStatements`. */
-function mediaStatements(db: D1Database, projectId: string, commentId: string, media: CommentMediaChanges, now: number, auditId: string, includePreviews: boolean, principal: AuditPrincipal): D1PreparedStatement[] {
+function mediaStatements(db: D1Database, projectId: string, commentId: string, media: CommentMediaChanges, now: number, auditId: string, includePreviews: boolean, principal: Principal): D1PreparedStatement[] {
   const fence = { sql: "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)", binds: [auditId] };
   const previews = media.previewIds ?? [];
   return [
@@ -400,12 +403,12 @@ export async function createProjectComment(db: D1Database, input: CreateProjectC
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
     SELECT ?, ?, 'project_comment.create', 'project_comment', ?, ?, ?
     WHERE EXISTS (SELECT 1 FROM projects WHERE id = ? AND archived_at IS NULL)
-  `).bind(auditId, input.auditPrincipal?.id ?? input.authorId, input.id, auditMeta(input.auditPrincipal ?? { id: input.authorId, impersonatedBy: null }), input.occurredAt.getTime(), input.projectId);
+  `).bind(auditId, input.principal.id, input.id, auditMeta(input.principal), input.occurredAt.getTime(), input.projectId);
   const outbox = mentionOutboxStatements(db, input.projectId, input.authorId, activity, input.mentions, snapshots, input.occurredAt.getTime(), auditId);
   const activityStatements = buildProjectActivityStatements({ db, intent: activity, winnerAuditId: auditId, createdAt: input.occurredAt.getTime() });
   // Leading block: audit, comment insert, mentions, read marker (the audit row moved to the front in #527; the count is unchanged).
   const activityStatementStart = 1 + mentions.length + 2 + outbox.statements.length;
-  const media = mediaStatements(db, input.projectId, input.id, input.media ?? { authorId: input.authorId, ids: [] }, input.occurredAt.getTime(), auditId, false, input.auditPrincipal ?? { id: input.authorId, impersonatedBy: null });
+  const media = mediaStatements(db, input.projectId, input.id, input.media ?? { authorId: input.authorId, ids: [] }, input.occurredAt.getTime(), auditId, false, input.principal);
   const results = await db.batch([audit, insert, ...mentions, marker, ...outbox.statements, ...activityStatements.statements, ...media, db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId)]).catch((error) => rethrowMediaConflict(error, input.media));
   const comment = await findProjectComment(createDb(db), input.projectId, input.id);
   if (!comment) {
@@ -445,7 +448,7 @@ export async function editProjectComment(db: D1Database, input: EditProjectComme
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
     SELECT ?, ?, 'project_comment.edit', 'project_comment', ?, ?, ?
     WHERE changes() = 1
-  `).bind(auditId, input.auditPrincipal?.id ?? input.actorId, input.commentId, auditMeta(input.auditPrincipal ?? { id: input.actorId, impersonatedBy: null }), input.occurredAt.getTime()));
+  `).bind(auditId, input.principal.id, input.commentId, auditMeta(input.principal), input.occurredAt.getTime()));
   statements.push(...input.removeMentionIds.map((id) => db.prepare("DELETE FROM project_comment_mentions WHERE id = ? AND comment_id = ? AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)").bind(id, input.commentId, auditId)));
   statements.push(...input.addMentions.map((mention) => db.prepare(`
     INSERT INTO project_comment_mentions (id, comment_id, mentioned_user_id, created_at)
@@ -454,7 +457,7 @@ export async function editProjectComment(db: D1Database, input: EditProjectComme
   const outbox = mentionOutboxStatements(db, input.projectId, input.actorId, activity, input.addMentions, snapshots, input.occurredAt.getTime(), auditId);
   const activityStatements = buildProjectActivityStatements({ db, intent: activity, winnerAuditId: auditId, createdAt: input.occurredAt.getTime() });
   const activityStatementStart = statements.length + outbox.statements.length;
-  const media = mediaStatements(db, input.projectId, input.commentId, input.media ?? { authorId: input.actorId, ids: [] }, input.editedAt.getTime(), auditId, true, input.auditPrincipal ?? { id: input.actorId, impersonatedBy: null });
+  const media = mediaStatements(db, input.projectId, input.commentId, input.media ?? { authorId: input.actorId, ids: [] }, input.editedAt.getTime(), auditId, true, input.principal);
   const results = await db.batch([...statements, ...outbox.statements, ...activityStatements.statements, ...media, db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId)]).catch((error) => rethrowMediaConflict(error, input.media));
   if ((results[0]?.meta.changes ?? 0) !== 1) {
     // Archived wins over the same-state no-op (#527): an identical save on an archived Project is refused too.
@@ -480,7 +483,7 @@ export async function deleteProjectComment(db: D1Database, input: DeleteProjectC
     INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at)
     SELECT ?, ?, 'project_comment.delete', 'project_comment', ?, ?, ?
     WHERE changes() = 1
-  `).bind(auditId, input.auditPrincipal?.id ?? input.actorId, input.commentId, auditMeta(input.auditPrincipal ?? { id: input.actorId, impersonatedBy: null }), input.occurredAt.getTime());
+  `).bind(auditId, input.principal.id, input.commentId, auditMeta(input.principal), input.occurredAt.getTime());
   const activityStatements = buildProjectActivityStatements({ db, intent: activity, winnerAuditId: auditId, createdAt: input.occurredAt.getTime() });
   const activityStatementStart = 2;
   // The comment's media is detached and due now in the same batch (no trigger carries the delete across, a polymorphic
@@ -488,7 +491,7 @@ export async function deleteProjectComment(db: D1Database, input: DeleteProjectC
   const media = db.prepare("UPDATE embedded_media SET state = 'detached', detached_at = 0, updated_at = ? WHERE owner_kind = 'project_comment' AND owner_id = ? AND state IN ('attached', 'detached') AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)").bind(input.occurredAt.getTime(), input.commentId, auditId);
   const previews = db.prepare("DELETE FROM link_previews WHERE owner_kind = 'project_comment' AND owner_id = ? AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)").bind(input.commentId, auditId);
   // Its Attachments too (#952), each with a detach audit row, so a download stops the moment the comment is gone. The sweep (#953) reclaims the objects.
-  const attachments = deletedOwnerAttachmentStatements(db, { ownerKind: "project_comment", ownerId: input.commentId, now: input.occurredAt.getTime(), principal: input.auditPrincipal ?? { id: input.actorId, impersonatedBy: null }, won: deleteWonByAudit(auditId) });
+  const attachments = deletedOwnerAttachmentStatements(db, { ownerKind: "project_comment", ownerId: input.commentId, now: input.occurredAt.getTime(), principal: input.principal, won: deleteWonByAudit(auditId) });
   const results = await db.batch([deletion, audit, ...activityStatements.statements, media, previews, ...attachments, db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId)]);
   // The JS-level .meta.changes on the DELETE includes cascade-deleted
   // project_comment_mentions rows (ON DELETE CASCADE), so the outer check must accept any

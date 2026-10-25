@@ -147,7 +147,7 @@ describe("deleting a comment with images", () => {
 
   it("detaches the media in the same batch as the delete, due now", async () => {
     const id = await media(); const comment = await created(await post("member", imageDoc(id)));
-    await deleteProjectComment(database.DB, { projectId: ids.project, commentId: comment.id, actorId: ids.member, occurredAt: new Date() });
+    await deleteProjectComment(database.DB, { projectId: ids.project, commentId: comment.id, actorId: ids.member, principal: { id: ids.member, impersonatedBy: null }, occurredAt: new Date() });
     expect(await mediaRow(id)).toMatchObject({ state: "detached", detached_at: 0 });
   });
 });
@@ -155,7 +155,7 @@ describe("deleting a comment with images", () => {
 describe("the library create", () => {
   it("attaches the media it is given only when the comment lands", async () => {
     const id = await media(); const commentId = crypto.randomUUID(); const now = new Date();
-    await createProjectComment(database.DB, { id: commentId, projectId: ids.project, authorId: ids.member, body: "[image]", contentJson: JSON.stringify(imageDoc(id)), mentions: [], wallClockMs: now.getTime(), occurredAt: now, media: { authorId: ids.member, ids: [id] } });
+    await createProjectComment(database.DB, { id: commentId, projectId: ids.project, authorId: ids.member, principal: { id: ids.member, impersonatedBy: null }, body: "[image]", contentJson: JSON.stringify(imageDoc(id)), mentions: [], wallClockMs: now.getTime(), occurredAt: now, media: { authorId: ids.member, ids: [id] } });
     expect(await mediaRow(id)).toMatchObject({ state: "attached", owner_id: commentId });
   });
 });
@@ -237,7 +237,7 @@ describe("Project hard delete dequeues only what it resolved (#493)", () => {
 });
 
 describe("concurrent saves reconcile media inside the winning batch", () => {
-  const editLib = (commentId: string, content: unknown, ids_: string[], text = "x") => editProjectComment(database.DB, { projectId: ids.project, commentId, actorId: ids.member, body: text, contentJson: JSON.stringify(content), removeMentionIds: [], addMentions: [], mentionIds: [], editedAt: new Date(), occurredAt: new Date(), media: { authorId: ids.member, ids: ids_ } });
+  const editLib = (commentId: string, content: unknown, ids_: string[], text = "x") => editProjectComment(database.DB, { projectId: ids.project, commentId, actorId: ids.member, principal: { id: ids.member, impersonatedBy: null }, body: text, contentJson: JSON.stringify(content), removeMentionIds: [], addMentions: [], mentionIds: [], editedAt: new Date(), occurredAt: new Date(), media: { authorId: ids.member, ids: ids_ } });
 
   it("a stale save that retains an image another edit just removed re-attaches it, so it is never left detached", async () => {
     const [a, b] = [await media(), await media()];
@@ -263,13 +263,13 @@ describe("concurrent saves reconcile media inside the winning batch", () => {
 
   it("a row the sweep has claimed (detached at 0, owned by its own id) can never be attached, even by a save that skipped the preflight", async () => {
     const claimedId = crypto.randomUUID(); const claimed = (await seedMedia({ id: claimedId, state: "detached", ownerId: claimedId, detachedAt: 0 })).id;
-    await expect(createProjectComment(database.DB, { id: crypto.randomUUID(), projectId: ids.project, authorId: ids.member, body: "[image]", contentJson: JSON.stringify(imageDoc(claimed)), mentions: [], wallClockMs: Date.now(), occurredAt: new Date(), media: { authorId: ids.member, ids: [claimed] } })).rejects.toBeInstanceOf(CommentMediaConflictError);
+    await expect(createProjectComment(database.DB, { id: crypto.randomUUID(), projectId: ids.project, authorId: ids.member, principal: { id: ids.member, impersonatedBy: null }, body: "[image]", contentJson: JSON.stringify(imageDoc(claimed)), mentions: [], wallClockMs: Date.now(), occurredAt: new Date(), media: { authorId: ids.member, ids: [claimed] } })).rejects.toBeInstanceOf(CommentMediaConflictError);
     expect(await mediaRow(claimed)).toMatchObject({ state: "detached", owner_id: claimedId, detached_at: 0 });
   });
 
   it("an image node only attaches a row whose kind is image, even for a save that skipped the preflight", async () => {
     const preview = (await seedMedia({ kind: "preview_image" })).id; const commentId = crypto.randomUUID();
-    await expect(createProjectComment(database.DB, { id: commentId, projectId: ids.project, authorId: ids.member, body: "[image]", contentJson: JSON.stringify(imageDoc(preview)), mentions: [], wallClockMs: Date.now(), occurredAt: new Date(), media: { authorId: ids.member, ids: [preview] } })).rejects.toBeInstanceOf(CommentMediaConflictError);
+    await expect(createProjectComment(database.DB, { id: commentId, projectId: ids.project, authorId: ids.member, principal: { id: ids.member, impersonatedBy: null }, body: "[image]", contentJson: JSON.stringify(imageDoc(preview)), mentions: [], wallClockMs: Date.now(), occurredAt: new Date(), media: { authorId: ids.member, ids: [preview] } })).rejects.toBeInstanceOf(CommentMediaConflictError);
     expect(await mediaRow(preview)).toMatchObject({ state: "pending", owner_id: null });
     expect(await database.DB.prepare("SELECT count(*) AS n FROM project_comments WHERE id = ?").bind(commentId).first()).toEqual({ n: 0 });
   });
@@ -281,7 +281,7 @@ describe("concurrent saves reconcile media inside the winning batch", () => {
 
   it("two creates racing for one pending image: exactly one wins and the loser creates no comment", async () => {
     const id = await media();
-    const make = (commentId: string) => createProjectComment(database.DB, { id: commentId, projectId: ids.project, authorId: ids.member, body: "[image]", contentJson: JSON.stringify(imageDoc(id)), mentions: [], wallClockMs: Date.now(), occurredAt: new Date(), media: { authorId: ids.member, ids: [id] } });
+    const make = (commentId: string) => createProjectComment(database.DB, { id: commentId, projectId: ids.project, authorId: ids.member, principal: { id: ids.member, impersonatedBy: null }, body: "[image]", contentJson: JSON.stringify(imageDoc(id)), mentions: [], wallClockMs: Date.now(), occurredAt: new Date(), media: { authorId: ids.member, ids: [id] } });
     const [one, two] = [crypto.randomUUID(), crypto.randomUUID()];
     const results = await Promise.allSettled([make(one), make(two)]);
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);

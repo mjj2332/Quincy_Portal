@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useQueryClient } from "@tanstack/react-query";
 import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost } from "../lib/api";
-import { ATTACHMENT_RETRY_OR_REMOVE as RETRY_OR_REMOVE } from "../lib/attachments";
+import { ATTACHMENT_RETRY_OR_REMOVE as RETRY_OR_REMOVE, WAIT_FOR_UPLOADS } from "../lib/attachments";
 import { externalApiGet } from "../lib/external-api-response";
 import { useSession } from "../lib/auth";
 import {
@@ -22,7 +22,7 @@ import { useProjectCommentDraft } from "../lib/project-comment-drafts";
 import { RichTextContent } from "./RichTextContent";
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
 import type { RichTextEditorHandle } from "./QuincyRichTextEditorBase";
-import { NoteComposerBox } from "./quincy/NoteComposerBox";
+import { NOTE_BOX_LINE as BOX_LINE, NoteComposerBox, noteComposerBoxOf as boxOf } from "./quincy/NoteComposerBox";
 import { PHONE_VIEWPORT_QUERY, useMediaQuery } from "../lib/use-media-query";
 import type { MentionableUser } from "./MentionAutocomplete";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
@@ -62,14 +62,9 @@ const emptyDoc = (): RichTextDoc => ({ type: "doc", content: [{ type: "paragraph
 
 const COMMENT_LIMIT = 10_000;
 const COMMENT_TOO_LONG = `Comments can be ${new Intl.NumberFormat("en").format(COMMENT_LIMIT)} characters at most.`;
-const WAIT_FOR_UPLOADS = "Wait for the uploads to finish.";
 /** The paperclip takes any file on a Project comment (#952): photos and videos embed, everything else is attached. */
 const ATTACH_LABEL = "Add files";
 const TOO_LARGE = "This formatting is too large to save; remove list items or formatting.";
-/** A line in the note box above its row, beside Send or Save (the Video composer's problem line): label type. */
-const BOX_LINE = "m-0 [font:var(--type-label)] text-destructive";
-/** The box's paperclip opens the editor's picker, and on a phone its bubble docks to the box (frame P2). */
-const boxOf = (field: HTMLElement | null) => field?.closest('[data-testid="note-composer-box"]') ?? null;
 
 /** The server refused a write because the Project is archived (#527): a 409 with this code. Upload refusals are not this: they stay in-editor errors. */
 function isCommentArchivedRefusal(error: unknown) { return error instanceof ApiError && error.status === 409 && typeof error.details === "object" && error.details !== null && (error.details as { code?: unknown }).code === "comment_project_archived"; }

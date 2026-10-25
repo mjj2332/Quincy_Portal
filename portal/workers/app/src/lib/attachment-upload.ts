@@ -3,6 +3,9 @@ import {
   normalizeDeclaredContentType, noticeAttachmentObjectKey, type AttachmentOwnerKind,
 } from "@quincy/shared";
 import { enqueueEmbeddedMediaCleanup } from "@quincy/db";
+import { z } from "zod";
+import type { Env } from "../env";
+import { audit, type Principal } from "./audit";
 import { newId } from "./ids";
 import { abortMultipart, completeMultipart, createMultipartPresign, PART_BYTES, validateMultipartParts } from "./r2s3";
 import { uploaderColumn, uploaderValue } from "./embedded-media";
@@ -19,9 +22,25 @@ import { abortAttachment, claimAndDiscardUploadingAttachment, getAttachment, isA
  * under the Notice board prefix and nothing about a Project fences its writes.
  */
 export type AttachmentScope = Omit<UploadScope, "projectId"> & { projectId: string | null };
+
+/**
+ * The scope of a signed-in staff upload, a Project discussion's (`projectId`) or the Notice board's (null): the user uploads, nothing fences it, and audit rows name them (an impersonating
+ * Admin is stamped). The guest scope (`guest/attachments.ts`) differs in all three and builds its own.
+ */
+export function staffAttachmentScope(env: Env, principal: Principal, projectId: string | null): AttachmentScope {
+  return { env, projectId, uploader: { userId: principal.id }, audit: (action, attachmentId, meta) => audit(env, principal, action, "attachment", attachmentId, meta) };
+}
+
+/** The complete body every Attachment route takes (staff, Notice board, guest): each multipart part's ETag, none for a dev direct upload. */
+export const attachmentCompleteInput = z.object({ parts: z.array(z.object({ partNumber: z.number().int().positive(), etag: z.string().min(1) }).strict()).optional() }).strict();
+
 const reply = (status: number, body: unknown): Response => Response.json(body, { status });
-const archived = () => reply(409, { error: "Archived projects cannot accept files", code: "project_archived" });
-const stray = () => reply(404, { error: "File upload not found" });
+/** The replies the routes and the core share, so each is spelled once. */
+export const invalidAttachmentReply = () => reply(400, { error: "Invalid file upload" });
+export const archivedAttachmentReply = () => reply(409, { error: "Archived projects cannot accept files", code: "project_archived" });
+export const strayAttachmentReply = () => reply(404, { error: "File upload not found" });
+const archived = archivedAttachmentReply;
+const stray = strayAttachmentReply;
 const inUse = () => reply(409, { error: "This file is already in a post", code: "attachment_not_uploading" });
 const fenceOf = (scope: AttachmentScope) => scope.fence ?? NO_FENCE;
 /** The condition every write repeats: the Project is still live, or nothing for a Notice board file. */

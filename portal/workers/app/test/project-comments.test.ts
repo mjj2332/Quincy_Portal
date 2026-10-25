@@ -160,8 +160,8 @@ describe("project comments API", () => {
     const frozenClock = Date.now() + 20_000_000;
     await database.DB.prepare("INSERT INTO project_comments (id, project_id, author_id, body, content_json, created_at) VALUES (?, ?, ?, ?, ?, ?)").bind(deletedId, projectId, editorId, "Deleted high-water", JSON.stringify(doc("Deleted high-water")), frozenClock).run();
     await database.DB.prepare("INSERT INTO project_comment_read_markers (user_id, project_id, last_read_comment_id, last_read_comment_created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, project_id) DO UPDATE SET last_read_comment_id = excluded.last_read_comment_id, last_read_comment_created_at = excluded.last_read_comment_created_at, updated_at = excluded.updated_at").bind(editorId, projectId, deletedId, frozenClock, frozenClock).run();
-    await deleteProjectComment(database.DB, { projectId, commentId: deletedId, actorId: editorId, occurredAt: new Date(frozenClock) });
-    const result = await createProjectComment(database.DB, { id: successorId, projectId, authorId: photographerId, body: "Lower UUID successor", contentJson: JSON.stringify(doc("Lower UUID successor")), mentions: [], wallClockMs: frozenClock, occurredAt: new Date(frozenClock) });
+    await deleteProjectComment(database.DB, { projectId, commentId: deletedId, actorId: editorId, principal: { id: editorId, impersonatedBy: null }, occurredAt: new Date(frozenClock) });
+    const result = await createProjectComment(database.DB, { id: successorId, projectId, authorId: photographerId, principal: { id: photographerId, impersonatedBy: null }, body: "Lower UUID successor", contentJson: JSON.stringify(doc("Lower UUID successor")), mentions: [], wallClockMs: frozenClock, occurredAt: new Date(frozenClock) });
     const stored = await database.DB.prepare("SELECT created_at FROM project_comments WHERE id = ?").bind(successorId).first<{ created_at: number }>();
     expect(Number(stored?.created_at)).toBeGreaterThan(frozenClock);
     expect(result.activity.targetedMentionDelivery).toBe(false);
@@ -175,7 +175,7 @@ describe("project comments API", () => {
     const ownPostId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee0";
     const lowerFollowUpId = "00000000-0000-4000-8000-0000000000f0";
     const create = (id: string, authorId: string, text: string) => createProjectComment(database.DB, {
-      id, projectId, authorId, body: text, contentJson: JSON.stringify(doc(text)), mentions: [], wallClockMs: frozenClock, occurredAt: new Date(frozenClock),
+      id, projectId, authorId, principal: { id: authorId, impersonatedBy: null }, body: text, contentJson: JSON.stringify(doc(text)), mentions: [], wallClockMs: frozenClock, occurredAt: new Date(frozenClock),
     });
     await create(visibleTargetId, photographerId, "Visible target");
     const visibleRead = await request(`/api/projects/${projectId}/comment-read-marker`, "comments-editor-token", "PATCH", { throughCommentId: visibleTargetId });

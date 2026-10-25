@@ -71,6 +71,12 @@ describe("uploading a file for a Video note", () => {
     await clearVideoFlags();
     expect((await presign("member", body)).status).toBe(404);
   });
+
+  it("validates the body before its owner picks the gate, so unparsed input never chooses one", async () => {
+    // A Photographer passes the Collaboration gate but not the note gate (403 above): a malformed body naming the note owner is a 400 whichever gate it names.
+    expect((await presign("photographer", { name: "a.pdf", contentType: "application/pdf", bytes: 10, owner: "video_note", stray: true })).status).toBe(400);
+    expect((await presign("photographer", { name: "a.pdf", contentType: "application/pdf", bytes: "ten", owner: "video_note" })).status).toBe(400);
+  });
 });
 
 describe("a staff note with Attachments", () => {

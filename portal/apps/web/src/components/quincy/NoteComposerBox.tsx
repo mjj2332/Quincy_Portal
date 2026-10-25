@@ -92,6 +92,10 @@ export type NoteComposerBoxProps =
 
 /** D2's Send reason: a drawing alone is not a note. */
 export const DRAWING_NEEDS_WORDS = "Add a few words to post the drawing";
+/** A refused Post or Save, in the box that sent it, above its row beside Send or Save (`notice`): label type. */
+export const NOTE_BOX_LINE = "m-0 [font:var(--type-label)] text-destructive";
+/** The note composer box around an element inside it: on a phone the editor's bubbles dock to it (frame P2). */
+export const noteComposerBoxOf = (field: HTMLElement | null) => field?.closest('[data-testid="note-composer-box"]') ?? null;
 
 /**
  * The range chip once In is marked (In → Out; Out follows the playhead until it is marked, so it reads the live frame), else null and the

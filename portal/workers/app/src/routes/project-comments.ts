@@ -24,7 +24,7 @@ import {
   serializeProjectComment,
 } from "../lib/project-comments";
 import { fillLinkPreviews } from "../lib/link-previews";
-import { jsonInput } from "./helpers";
+import { jsonInput, principalOf } from "./helpers";
 import { purgeDetachedOwnerMedia } from "../lib/embedded-media";
 import { resolveVisibleProject } from "../lib/visible-project-scope";
 import { assignedSubtaskCounts } from "../lib/external-project-query";
@@ -122,7 +122,7 @@ projectCommentsRoutes.get("/projects/:projectId/comments", terminalRoute("/proje
   const cursor = parsed.data.before ? parseCursor(parsed.data.before) : null; if (parsed.data.before && !cursor) return c.json({ error: "Invalid cursor" }, 400);
   const rows = await listProjectComments(createDb(c.env.DB), projectId, { limit: parsed.data.limit ?? MAX_LIMIT, before: cursor ? { createdAt: new Date(cursor.createdAt), id: cursor.id } : null });
   const oldest = rows.at(-1)?.comment;
-  const filled = await fillLinkPreviews(c.env.DB, rows.map(serializeProjectComment));
+  const filled = await fillLinkPreviews(c.env.DB, rows.map(serializeProjectComment), "project_comment");
   const viaClients = await commentViaClients(c.env.DB, filled.map((comment) => comment.id));
   const withVia = filled.map((comment) => ({ ...comment, viaClient: viaClients.get(comment.id) ?? null }));
   if (c.get("user").role === "external_editor") return c.json(externalCommentListResponseSchema.parse({ project: access, comments: withVia.map((comment) => externalCommentSchema.parse(comment)), ...(oldest && rows.length === (parsed.data.limit ?? MAX_LIMIT) ? { nextCursor: encodeCursor(oldest) } : {}) }));
@@ -139,10 +139,10 @@ projectCommentsRoutes.post("/projects/:projectId/comments", terminalRoute("/proj
   const mentions = prepared.mentionIds.map((mentionedUserId) => ({ id: newId(), commentId: id, mentionedUserId, createdAt }));
   // Images are checked before the batch: each must be the author's own finished upload in this Project (#493).
   const media = await resolveCommentMedia(c.env.DB, { projectId, authorId: currentUser.id, commentId: id, mediaIds: prepared.mediaIds, videoIds: prepared.videoIds, previewIds: prepared.previewIds, attachmentIds: prepared.attachmentIds }); if (!media) return c.json({ error: "An image, video, file or link preview in this comment is unavailable.", code: "invalid_media" }, 400);
-  const result = await createProjectComment(c.env.DB, { id, projectId, authorId: currentUser.id, auditPrincipal: currentUser, body: prepared.body, contentJson: JSON.stringify(prepared.content), mentions, wallClockMs: createdAt.getTime(), occurredAt: createdAt, media }).catch(onSaveLoss); if (result === ARCHIVED_LOSS) return commentArchivedResponse(c); if (!result) return c.json({ error: "An image in this comment is no longer available. Remove it and try again.", code: "media_conflict" }, 409);
+  const result = await createProjectComment(c.env.DB, { id, projectId, authorId: currentUser.id, principal: principalOf(c), body: prepared.body, contentJson: JSON.stringify(prepared.content), mentions, wallClockMs: createdAt.getTime(), occurredAt: createdAt, media }).catch(onSaveLoss); if (result === ARCHIVED_LOSS) return commentArchivedResponse(c); if (!result) return c.json({ error: "An image in this comment is no longer available. Remove it and try again.", code: "media_conflict" }, 409);
   c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
   if (!result.comment) return c.json({ error: "Comment could not be created" }, 500);
-  const [created] = await fillLinkPreviews(c.env.DB, [serializeProjectComment(result.comment)]);
+  const [created] = await fillLinkPreviews(c.env.DB, [serializeProjectComment(result.comment)], "project_comment");
   return c.json(c.get("user").role === "external_editor" ? externalCommentSchema.parse({ ...created!, viaClient: currentUser.via?.clientName ?? null }) : { ...created!, viaClient: currentUser.via?.clientName ?? null }, 201);
 }));
 
@@ -159,10 +159,10 @@ projectCommentsRoutes.patch("/projects/:projectId/comments/:commentId", terminal
   const maps = await db.select().from(schema.projectCommentMentions).where(eq(schema.projectCommentMentions.commentId, commentId)).all(); const wanted = new Set(prepared.mentionIds); const existingIds = new Set(maps.map((map) => map.mentionedUserId)); const createdAt = new Date();
   const added = prepared.mentionIds.filter((mentionedUserId) => !existingIds.has(mentionedUserId)).map((mentionedUserId) => ({ id: newId(), commentId, mentionedUserId, createdAt }));
   const media = await resolveCommentMedia(c.env.DB, { projectId, authorId: currentUser.id, commentId, mediaIds: prepared.mediaIds, videoIds: prepared.videoIds, previewIds: prepared.previewIds, attachmentIds: prepared.attachmentIds }); if (!media) return c.json({ error: "An image, video, file or link preview in this comment is unavailable.", code: "invalid_media" }, 400);
-  const result = await editProjectComment(c.env.DB, { projectId, commentId, actorId: currentUser.id, auditPrincipal: currentUser, body: prepared.body, contentJson: JSON.stringify(prepared.content), removeMentionIds: maps.filter((map) => !wanted.has(map.mentionedUserId)).map((map) => map.id), addMentions: added, mentionIds: prepared.mentionIds, editedAt: createdAt, occurredAt: createdAt, media }).catch(onSaveLoss); if (result === ARCHIVED_LOSS) return commentArchivedResponse(c); if (!result) return c.json({ error: "An image in this comment is no longer available. Remove it and try again.", code: "media_conflict" }, 409);
+  const result = await editProjectComment(c.env.DB, { projectId, commentId, actorId: currentUser.id, principal: principalOf(c), body: prepared.body, contentJson: JSON.stringify(prepared.content), removeMentionIds: maps.filter((map) => !wanted.has(map.mentionedUserId)).map((map) => map.id), addMentions: added, mentionIds: prepared.mentionIds, editedAt: createdAt, occurredAt: createdAt, media }).catch(onSaveLoss); if (result === ARCHIVED_LOSS) return commentArchivedResponse(c); if (!result) return c.json({ error: "An image in this comment is no longer available. Remove it and try again.", code: "media_conflict" }, 409);
   c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
   if (!result.comment) return c.json({ error: "Comment could not be updated" }, 500);
-  const [edited] = await fillLinkPreviews(c.env.DB, [serializeProjectComment(result.comment)]);
+  const [edited] = await fillLinkPreviews(c.env.DB, [serializeProjectComment(result.comment)], "project_comment");
   const editedVia = (await commentViaClients(c.env.DB, [commentId])).get(commentId) ?? null;
   return c.json(c.get("user").role === "external_editor" ? externalCommentSchema.parse({ ...edited!, viaClient: editedVia }) : { ...edited!, viaClient: editedVia });
 }));
@@ -175,7 +175,7 @@ projectCommentsRoutes.delete("/projects/:projectId/comments/:commentId", termina
   // An impersonated Admin intentionally acts as the effective author here — see the
   // impersonation caveat on this rule in AGENTS.md.
   const currentUser = c.get("user"); if (existing.comment.authorId !== currentUser.id) return c.json({ error: "Forbidden: only the author can delete this comment." }, 403);
-  const result = await deleteProjectComment(c.env.DB, { projectId, commentId, actorId: currentUser.id, auditPrincipal: currentUser, occurredAt: new Date() }).catch((error) => error instanceof CommentProjectArchivedError ? null : Promise.reject(error));
+  const result = await deleteProjectComment(c.env.DB, { projectId, commentId, actorId: currentUser.id, principal: principalOf(c), occurredAt: new Date() }).catch((error) => error instanceof CommentProjectArchivedError ? null : Promise.reject(error));
   if (!result) return commentArchivedResponse(c);
   c.executionCtx.waitUntil(publishOutboxDetached(c.env.NOTIFICATION_QUEUE, c.env.DB, result.notificationOutboxIds));
   // The batch left the comment's media detached and due now. Delete the objects, then the rows, best effort: the daily sweep is the backstop (#493).

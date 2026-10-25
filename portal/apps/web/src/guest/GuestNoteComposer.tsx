@@ -1,5 +1,5 @@
 import { useContext, useEffect, useId, useRef, useState } from "react";
-import { ATTACHMENT_RETRY_OR_REMOVE } from "../lib/attachments-core";
+import { ATTACHMENT_RETRY_OR_REMOVE, WAIT_FOR_UPLOADS } from "../lib/attachments-core";
 import type { GuestEditorTransport } from "./GuestNoteEditor";
 import { useFrameClockSelector, type VideoFrameClock } from "../lib/video-frame-clock";
 import type { RichTextEditorHandle } from "../components/QuincyRichTextEditorBase";
@@ -85,7 +85,7 @@ export function GuestNoteComposer({ strip, clock, timecode, media, verified, onS
   const pen = strip.canDraw ? { onPress: strip.pen, disabled: !verified || (strip.penDisabled && !strip.penDown), ...(strip.penDisabled && strip.lockHint ? { reason: strip.lockHint } : {}) } : undefined;
   const attach = { onPick: () => { editor.current?.pickMedia(); }, disabled: strip.pending || !verified };
   // D2: a drawing alone is not a note.
-  const reason = strip.empty && strip.strokes > 0 ? DRAWING_NEEDS_WORDS : strip.uploading ? "Wait for the upload to finish" : strip.failedFiles > 0 ? ATTACHMENT_RETRY_OR_REMOVE : undefined;
+  const reason = strip.empty && strip.strokes > 0 ? DRAWING_NEEDS_WORDS : strip.uploading ? WAIT_FOR_UPLOADS : strip.failedFiles > 0 ? ATTACHMENT_RETRY_OR_REMOVE : undefined;
   const blocked = busy || strip.uploading || strip.failedFiles > 0 || strip.empty;
 
   const placeholder = phone ? "Add a note…" : "Add a note at this frame…";

@@ -42,7 +42,7 @@ export function QuincyRichTextEditor({ media, linkPreviews, attachments, ...rest
   const attachmentScope = attachments === undefined ? undefined : "projectId" in attachments ? attachments.projectId : null;
   const attachmentOwner = attachments !== undefined && "projectId" in attachments ? attachments.owner : undefined;
   const files = useMemo<EditorAttachmentTransport | undefined>(() => attachmentScope === undefined ? undefined : {
-    maxPerPost: ATTACHMENT_MAX_PER_POST, maxBytes: ATTACHMENT_MAX_BYTES, url: attachmentUrl,
+    maxPerPost: ATTACHMENT_MAX_PER_POST, holder: attachmentOwner === "video_note" ? "note" : "post", maxBytes: ATTACHMENT_MAX_BYTES, url: attachmentUrl,
     upload: (file, options) => attachmentScope === null ? uploadNoticeAttachment(file, options) : uploadAttachment(attachmentScope, file, options, attachmentOwner),
   }, [attachmentScope, attachmentOwner]);
   return <QuincyRichTextEditorBase {...rest} media={transport} linkPreviews={previews} attachments={files} />;

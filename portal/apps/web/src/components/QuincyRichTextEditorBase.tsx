@@ -543,7 +543,7 @@ export function QuincyRichTextEditorBase({
     for (const file of files) {
       // The split (#952 D8), by type and never by size: a photo or video this person may embed stays Embedded media; anything else is an Attachment.
       if (filesTransport && as === undefined && !(transport && isEmbeddedMediaFile(file, { heic: heicRef.current, video: videos }))) {
-        const problem = attachmentProblem(file, filesTransport.maxBytes) ?? (fileSlots <= 0 ? attachmentCountMessage(filesTransport.maxPerPost) : null);
+        const problem = attachmentProblem(file, filesTransport.maxBytes) ?? (fileSlots <= 0 ? attachmentCountMessage(filesTransport.maxPerPost, filesTransport.holder) : null);
         if (problem) { problems.push(problem); continue; }
         fileSlots -= 1;
         const entry: FileEntry = { key: ++uploadSeq.current, file, name: file.name || "File", bytes: file.size, percent: 0, phase: "uploading" };

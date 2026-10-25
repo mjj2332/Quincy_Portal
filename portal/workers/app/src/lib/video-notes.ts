@@ -73,7 +73,7 @@ function threads(rows: NoteRow[], showGuestEmail: boolean): VideoNoteThreadDto[]
 async function withMediaFacts(db: D1Database, roots: VideoNoteThreadDto[]): Promise<VideoNoteThreadDto[]> {
   const dtos = roots.flatMap((root) => [root, ...root.replies]).filter((dto): dto is VideoNoteDto & { content: RichTextDoc } => dto.content !== undefined);
   if (!dtos.length) return roots;
-  const filled = new Map((await fillLinkPreviews(db, dtos)).map((dto) => [dto.id, dto.content]));
+  const filled = new Map((await fillLinkPreviews(db, dtos, "video_note")).map((dto) => [dto.id, dto.content]));
   const apply = <T extends VideoNoteDto>(dto: T): T => (filled.has(dto.id) ? { ...dto, content: filled.get(dto.id)! } : dto);
   return roots.map((root) => ({ ...apply(root), replies: root.replies.map(apply) }));
 }

@@ -50,6 +50,17 @@ describe("a comment with Attachments", () => {
     expect(attachmentNodes(listed.comments.find((item) => item.id === comment.id)!)).toEqual([{ attachmentId: a, name: "Floor plan.pdf", bytes: 40 }, { attachmentId: b, name: "Raws.zip", bytes: 50 }]);
   });
 
+  it("serves a node bare when its file is attached to another owner, so a document cannot borrow another post's file", async () => {
+    const holder = await created(await post("member", fileDoc(await pending({ fileName: "Theirs.pdf", bytes: 70 }))));
+    const theirs = attachmentNodes(holder)[0]!.attachmentId as string;
+    const notice = (await seedAttachment({ ownerKind: "notice_post", state: "attached", fileName: "Notice.pdf" })).id;
+    const borrower = await created(await post("member", { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Mine" }] }] }));
+    await database.DB.prepare("UPDATE project_comments SET content_json = ? WHERE id = ?").bind(JSON.stringify(fileDoc(theirs, notice)), borrower.id).run();
+    const listed = (await (await request(commentsPath, "admin")).json()) as { comments: Served[] };
+    expect(attachmentNodes(listed.comments.find((item) => item.id === borrower.id)!)).toEqual([{ attachmentId: theirs }, { attachmentId: notice }]);
+    expect(attachmentNodes(listed.comments.find((item) => item.id === holder.id)!)).toEqual([{ attachmentId: theirs, name: "Theirs.pdf", bytes: 70 }]);
+  });
+
   it("lets an External editor post their own file (owner decision A1)", async () => {
     const id = await pending({ uploader: ids.external });
     const comment = await created(await post("external", fileDoc(id)));

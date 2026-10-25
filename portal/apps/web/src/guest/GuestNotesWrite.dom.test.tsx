@@ -1779,7 +1779,7 @@ describe("rich notes (#835 C): pictures, no mentions", () => {
     expect(off(post())).toBe(false);
     await uploading("guest-composer-body", true);
     expect(off(post())).toBe(true);
-    expect(post()!.getAttribute("title")).toBe("Wait for the upload to finish");
+    expect(post()!.getAttribute("title")).toBe("Wait for the uploads to finish.");
     await submit("guest-composer");
     expect(requests("POST")).toEqual([]);
     await uploading("guest-composer-body", false);

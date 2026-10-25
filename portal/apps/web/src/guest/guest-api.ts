@@ -158,7 +158,7 @@ export function createGuestMediaTransport(linkId: string, heicEnabled: () => boo
     complete: (attachmentId, body) => postFile(`${fileAt(attachmentId)}/complete`, body),
     abort: (attachmentId) => fetch(`${fileAt(attachmentId)}/abort`, { method: "POST", credentials: "same-origin", keepalive: true, headers: { "content-type": "application/json" }, body: "{}" }).catch(() => undefined),
   };
-  const files: EditorAttachmentTransport = { maxPerPost: ATTACHMENT_GUEST_MAX_PER_NOTE, maxBytes: ATTACHMENT_GUEST_MAX_BYTES, url: fileAt, upload: (file, options) => uploadAttachmentVia(fileIo, file, options) };
+  const files: EditorAttachmentTransport = { maxPerPost: ATTACHMENT_GUEST_MAX_PER_NOTE, holder: "note", maxBytes: ATTACHMENT_GUEST_MAX_BYTES, url: fileAt, upload: (file, options) => uploadAttachmentVia(fileIo, file, options) };
   return {
     get heicEnabled() { return heicEnabled(); },
     video: true,

@@ -1,8 +1,7 @@
 import type { Context, Hono } from "hono";
-import { z } from "zod";
 import { ATTACHMENT_GUEST_MAX_BYTES, guestAttachmentPresignInput } from "@quincy/shared";
 import { auditMeta } from "../lib/audit";
-import { abortAttachmentUpload, completeAttachment, directAttachment, presignAttachment, type AttachmentScope } from "../lib/attachment-upload";
+import { abortAttachmentUpload, attachmentCompleteInput, completeAttachment, directAttachment, presignAttachment, type AttachmentScope } from "../lib/attachment-upload";
 import { guestMediaGuard } from "../lib/guest-fence-sql";
 import { newId } from "../lib/ids";
 import type { AppEnv } from "../env";
@@ -23,9 +22,8 @@ const asApp = <P extends string>(c: Handled<P>): Context<AppEnv> => c as unknown
 const BASE = "/d/api/links/:linkId/attachments";
 /** Complete carries every multipart part's ETag; a 25 MB file is a handful of parts. */
 const COMPLETE_BODY_MAX_BYTES = 64 * 1024;
-const completeInput = z.object({ parts: z.array(z.object({ partNumber: z.number().int().positive(), etag: z.string().min(1) }).strict()).optional() }).strict();
 
-/** The upload core's scope for this guest: the guest column is the uploader, every write repeats the guest fence at its own time, and audit rows name the guest, session and link. */
+/** The upload core's scope for this guest (not `staffAttachmentScope`: the uploader, the fence and the audit row all differ): the guest column is the uploader, every write repeats the guest fence at its own time, and audit rows name the guest, session and link. */
 function scopeOf<P extends string>(c: Handled<P>, admitted: Admitted): AttachmentScope {
   const { session, guestId } = admitted;
   const writer = { guestId, sessionId: session.id, linkId: session.link.id, tokenHash: session.tokenHash };
@@ -63,7 +61,7 @@ async function direct(c: Handled<`${typeof BASE}/:attachmentId/direct`>): Promis
 async function complete(c: Handled<`${typeof BASE}/:attachmentId/complete`>): Promise<Response> {
   const admitted = await admit(c, { id: "attachmentId", writes: true, json: true }); if ("response" in admitted) return admitted.response;
   const answer = answerOf(c, admitted.session, true);
-  const judged = judge(c, await readJson(asApp(c), COMPLETE_BODY_MAX_BYTES), completeInput); if ("response" in judged) return answer(judged.response);
+  const judged = judge(c, await readJson(asApp(c), COMPLETE_BODY_MAX_BYTES), attachmentCompleteInput); if ("response" in judged) return answer(judged.response);
   const response = await completeAttachment(scopeOf(c, admitted), c.req.param("attachmentId"), judged.data);
   return response.ok ? response : answer(response);
 }

@@ -22,6 +22,8 @@ export { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_PER_POST };
 
 /** An Attachment failed to upload (#952, #955, #956): Post, Send and Save wait until it is retried or removed, so a post or note never goes out missing a file. */
 export const ATTACHMENT_RETRY_OR_REMOVE = "Retry or remove the file that failed.";
+/** A file or photo is still uploading: Post, Send and Save wait (every note and post composer, staff and guest). */
+export const WAIT_FOR_UPLOADS = "Wait for the uploads to finish.";
 
 /** Where an Attachment is downloaded from. It carries the id only, never a name or a key. */
 export function attachmentUrl(attachmentId: string): string {
@@ -49,7 +51,9 @@ export function attachmentProblem(file: Pick<File, "type" | "size" | "name">, ma
   return null;
 }
 
-export const attachmentCountMessage = (max: number) => `A post can hold ${max} attachments at most.`;
+/** What holds the files, in the count refusal: a Project comment or a notice is a post; a Video note, staff or guest, is a note. */
+export type AttachmentHolder = "post" | "note";
+export const attachmentCountMessage = (max: number, holder: AttachmentHolder = "post") => `A ${holder} can hold ${max} attachments at most.`;
 
 /** What a chip's icon shows, by extension. */
 export type AttachmentKind = "pdf" | "sheet" | "document" | "slides" | "archive" | "image" | "audio" | "video" | "file";
@@ -128,6 +132,8 @@ export async function uploadAttachmentVia(io: AttachmentIo, file: File, options:
  */
 export type EditorAttachmentTransport = {
   maxPerPost: number;
+  /** What the count refusal calls the thing holding the files ("A note can hold 5 attachments at most."). */
+  holder: AttachmentHolder;
   maxBytes: number;
   url: (attachmentId: string) => string;
   upload: (file: File, options: AttachmentUploadOptions) => Promise<string>;

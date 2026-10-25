@@ -8,6 +8,7 @@ import { chooseCommentAction } from "../testing/comment-menu";
 import { ArchivedFromCache } from "../testing/archived-from-cache";
 import { ARCHIVED_NOTICE_CLASS } from "./archived-notice";
 import { ProjectCommentDraftsProvider } from "../lib/project-comment-drafts";
+import { ProjectSheet } from "./quincy/ProjectSheet";
 
 const state = vi.hoisted(() => ({
   sessionUser: { id: "user-me", role: "editor" as string, impersonatedBy: undefined as string | undefined },
@@ -274,6 +275,22 @@ describe("ProjectDiscussionThread", () => {
       expect(composer().placeholder).toBe("Write a project comment… Use @ to mention project participants.");
       expect(box.textContent).not.toContain("Use @ to mention project participants");
       expect(box.querySelector("[data-testid=note-composer-text]")!.contains(host.querySelector(`[data-testid="editor-project-comment-${projectId}"]`))).toBe(true);
+    });
+
+    it("gives the composer and the edit box's editor their own box's previews region, outside the text, so Link preview cards sit under it (B1)", async () => {
+      render(); await flush();
+      /** Where an editor's preview slot sits: the note composer box it is in, unless it is inside that box's text, and the composer around it. */
+      const placed = (slot: unknown) => {
+        if (!(slot instanceof HTMLElement) || !slot.isConnected) return null;
+        const box = slot.closest("[data-testid=note-composer-box]");
+        return box && !slot.closest("[data-testid=note-composer-text]") ? (box.parentElement as HTMLElement).getAttribute("data-testid") : null;
+      };
+      expect(composer().linkPreviews).toEqual({ projectId });
+      expect(placed(composer().previewContainer)).toBe("discussion-composer-form");
+      await chooseCommentAction(host, "Me", "Edit");
+      expect(editor().linkPreviews).toEqual({ projectId });
+      expect(placed(editor().previewContainer)).toBe("discussion-comment-edit");
+      expect(editor().previewContainer).not.toBe(composer().previewContainer);
     });
 
     it("posts with Send, which is held, with its reason, while empty or while a photo or video uploads", async () => {
@@ -629,5 +646,30 @@ describe("ProjectDiscussionThread comment Delete confirmation (#568)", () => {
     expect(document.activeElement).not.toBe(document.body);
     expect(document.activeElement!.closest('[data-testid="discussion-composer"]')).not.toBeNull();
     expect(document.activeElement!.getAttribute("contenteditable")).toBe("true");
+  });
+});
+
+describe("Escape in the comment edit box (owner decision: keep today's behaviour)", () => {
+  it("is not taken by the box: it reaches the Project sheet, which asks to close", async () => {
+    (HTMLElement.prototype as unknown as { getAnimations: () => unknown[] }).getAnimations = () => [];
+    const onRequestClose = vi.fn();
+    act(() => {
+      root.render(<QueryClientProvider client={client}><ProjectCommentDraftsProvider>
+        <ProjectSheet open kind="project" sheetKey="p:1" backdropHref="/" onRequestClose={onRequestClose}>
+          <ProjectDiscussionThread projectId={projectId} currentUserId={state.sessionUser.id} />
+        </ProjectSheet>
+      </ProjectCommentDraftsProvider></QueryClientProvider>);
+    });
+    await flush();
+    await chooseCommentAction(document, "Me", "Edit");
+    const editBox = document.querySelector<HTMLElement>("article [data-testid=discussion-comment-edit]");
+    expect(editBox).not.toBeNull();
+    const inside = editBox!.querySelector<HTMLElement>("button")!;
+    await act(async () => { inside.focus(); await Promise.resolve(); });
+    const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    await act(async () => { inside.dispatchEvent(escape); await Promise.resolve(); await Promise.resolve(); });
+    expect(onRequestClose).toHaveBeenCalled();
+    // The edit is not ended by the box: closing the sheet is the sheet's call (its draft guard), not the box's.
+    expect(document.querySelector("article [data-testid=discussion-comment-edit]")).not.toBeNull();
   });
 });

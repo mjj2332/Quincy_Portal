@@ -9,7 +9,8 @@ import { RichTextContent } from "./RichTextContent";
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
 import type { RichTextEditorHandle } from "./QuincyRichTextEditorBase";
 import { META_TEXT } from "./quincy/Eyebrow";
-import { NoteComposerBox, type NoteSaveControl, type NoteSendControl } from "./quincy/NoteComposerBox";
+import { NOTE_BOX_LINE as BOX_LINE, NoteComposerBox, noteComposerBoxOf as boxOf, type NoteSaveControl, type NoteSendControl } from "./quincy/NoteComposerBox";
+import { ATTACHMENT_RETRY_OR_REMOVE as RETRY_OR_REMOVE, WAIT_FOR_UPLOADS } from "../lib/attachments";
 import { PHONE_VIEWPORT_QUERY, useMediaQuery } from "../lib/use-media-query";
 import { EmptyState } from "./quincy/EmptyState";
 import { Notice } from "./quincy/Notice";
@@ -24,16 +25,9 @@ import type { NoticeBoardPost } from "../lib/notice-board-data";
 // lose the padding drop the edit composer needs (§5.4, Sol r2 #3).
 const CREATE_COMPOSER = "px-[var(--space-5)] py-[var(--space-4)]";
 const EDIT_COMPOSER = "pt-[var(--space-4)] px-0 pb-0";
-const WAIT_FOR_UPLOADS = "Wait for the uploads to finish.";
-/** An Attachment failed to upload (#954, as on the Project discussion, #952): Post and Save wait until it is retried or removed. */
-const RETRY_OR_REMOVE = "Retry or remove the file that failed.";
 /** The paperclip takes any file (#954): a photo lands inline in the page, anything else is an Attachment. */
 const ATTACH_LABEL = "Add files";
 const TOO_LARGE = "This notice is too large to post; shorten it or remove formatting.";
-/** A refused Post or Save, in the box that sent it above its row, beside Send or Save (the Collaboration box's line, #950). */
-const BOX_LINE = "m-0 [font:var(--type-label)] text-destructive";
-/** The box's bubbles dock to the box on a phone (frame P2; the table bar too, owner decision N3, and on a desktop since the review). */
-const boxOf = (field: HTMLElement | null) => field?.closest('[data-testid="note-composer-box"]') ?? null;
 /**
  * Room above the box for its docked table bar while the bar is up (review of #951): the bar sits a `--space-2` offset above the box's top
  * edge, so without this it covered the notice above. The bar is 38px on a desktop (28px controls), 54px below 721px (44px), with that offset:
@@ -279,14 +273,15 @@ type NoticeBoxProps = {
   problem: string | undefined;
 } & ({ send: NoteSendControl; save?: never } | { save: NoteSaveControl; send?: never });
 
+/** The editor's file transport on the Notice board (#954): no Project. */
+const NOTICE_FILES = { noticeBoard: true } as const;
+
 /**
  * A notice's box (#951): the note composer box's post variant around the document editor (`boxed`), keeping what makes a notice a page:
  * headings, the checklist and tables through "/", alignment and highlight in the selection bubble (N4), the table bar (docked above the
  * box at every width, N3, in room kept for it) and the outline rail (N2). No seven-line cap (N1). Photos land inline at the caret; link preview cards sit under the
  * text (B1), and Attachments (#954) are C4 chips in the box's strip under them. The byte and length limits, the mentions (active staff) and the upload hold are the editor's, as before.
  */
-const NOTICE_FILES = { noticeBoard: true } as const;
-
 function NoticeBox({ label, id, phone, value, onChange, disabled, loadMentionables, placeholder, onSubmit, onUploadingChange, onFailedFilesChange, problem, ...action }: NoticeBoxProps) {
   const editor = useRef<RichTextEditorHandle>(null);
   const field = useRef<HTMLDivElement>(null);
