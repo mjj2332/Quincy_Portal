@@ -4,7 +4,7 @@ An **Attachment** is any file shared on a post for people to download. It is nev
 Portal can show in a post stay **Embedded media** (`docs/maps/` and `packages/shared/src/embedded-media.ts`). Spec #945, tracer #952.
 
 Status: #952 covers **Project discussion comments** only, for staff and External editors (owner decision A1). The table already
-allows the other owner kinds and a guest uploader. The Notice board (#954), Video notes (#955), guest notes on a Review link (#956),
+allows the other owner kinds and a guest uploader. The Notice board (#954), Video notes (#955), guest notes on a Review link (#956)
 are later tickets. The clean-up sweep (#953) and notifications (#957, Project comments only so far) are below.
 
 ## Limits
