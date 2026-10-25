@@ -300,8 +300,8 @@ async function typeDraft(text: string) {
   // but #376 shows it only near the limit.
   const postEnabled = () => {
     const post = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-testid="discussion-composer"] button'))
-      .find((button) => button.textContent?.trim() === "Post");
-    return post !== undefined && !post.disabled;
+      .find((button) => button.getAttribute("aria-label") === "Post comment");
+    return post !== undefined && !post.disabled && post.getAttribute("aria-disabled") !== "true";
   };
   for (let i = 0; i < 50 && !postEnabled(); i += 1) await settle();
   expect(postEnabled()).toBe(true);
@@ -351,7 +351,7 @@ describe("Project comment drafts (#375)", () => {
     const host = await renderDashboardAt("table");
     await openProject(host, 0);
     await typeDraft("hello");
-    const form = document.querySelector<HTMLFormElement>('[data-testid="discussion-composer"]')!;
+    const form = document.querySelector<HTMLFormElement>('[data-testid="discussion-composer"] form')!;
     await act(async () => { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); await Promise.resolve(); });
     await settle();
     expect(apiPostMock).toHaveBeenCalledTimes(1);
@@ -367,7 +367,7 @@ describe("Project comment drafts (#375)", () => {
     const host = await renderDashboardAt("table");
     await openProject(host, 0);
     await typeDraft("hello");
-    const form = document.querySelector<HTMLFormElement>('[data-testid="discussion-composer"]')!;
+    const form = document.querySelector<HTMLFormElement>('[data-testid="discussion-composer"] form')!;
     await act(async () => { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); await Promise.resolve(); });
     await settle();
     expect(apiPostMock).toHaveBeenCalledTimes(1);

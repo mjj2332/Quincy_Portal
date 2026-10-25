@@ -7,6 +7,7 @@ import { ProjectDiscussionThread } from "./ProjectDiscussionThread";
 import { chooseCommentAction } from "../testing/comment-menu";
 import { ArchivedFromCache } from "../testing/archived-from-cache";
 import { ARCHIVED_NOTICE_CLASS } from "./archived-notice";
+import { ProjectCommentDraftsProvider } from "../lib/project-comment-drafts";
 
 const state = vi.hoisted(() => ({
   sessionUser: { id: "user-me", role: "editor" as string, impersonatedBy: undefined as string | undefined },
@@ -109,6 +110,11 @@ async function typeComposer(text: string) {
   await act(async () => { composer.onChange(doc(text)); await Promise.resolve(); });
 }
 const wait = (ms: number) => act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, ms)); });
+/**
+ * The refusal reaches the thread through a cache write, and react-query notifies its observers on a `setTimeout(0)` that can be nested
+ * (docs/lessons.md "Pasted HEIC flake: one setTimeout(0) does not cover react-query's notify (#576)"); microtask flushes alone race it.
+ */
+const settleCache = async () => { await wait(0); await wait(0); };
 const deleteDialog = () => document.querySelector<HTMLElement>('[data-testid="comment-delete-confirm"]');
 const deleteAction = () => document.querySelector<HTMLButtonElement>('[data-testid="comment-delete-confirm-action"]')!;
 /** Delete from the "⋯" now only asks; this confirms in the alert dialog and waits out its exit transition. */
@@ -229,7 +235,7 @@ describe("ProjectDiscussionThread", () => {
     expect(updatedComposer.limit).toBe(10_000);
     const byteOversized = doc("x".repeat(40_000));
     await act(async () => { updatedComposer.onChange(byteOversized); await Promise.resolve(); });
-    expect(host.querySelector<HTMLButtonElement>(`[data-testid=discussion-composer] button[type="submit"]`)?.disabled).toBe(true);
+    expect(host.querySelector<HTMLButtonElement>(`[data-testid=discussion-composer] button[type="submit"]`)?.getAttribute("aria-disabled")).toBe("true");
     expect(apiPostMock).not.toHaveBeenCalled();
   });
 
@@ -240,22 +246,107 @@ describe("ProjectDiscussionThread", () => {
     expect(composer().media).toEqual({ projectId });
     await act(async () => { composer().onChange(doc("Ready to post")); await Promise.resolve(); });
     const post = () => host.querySelector<HTMLButtonElement>(`[data-testid=discussion-composer] button[type="submit"]`)!;
-    expect(post().disabled).toBe(false);
+    expect(post().getAttribute("aria-disabled")).toBeNull();
     await act(async () => { composer().onUploadingChange(true); await Promise.resolve(); });
-    expect(post().disabled).toBe(true);
+    expect(post().getAttribute("aria-disabled")).toBe("true");
     await act(async () => { composer().onUploadingChange(false); await Promise.resolve(); });
-    expect(post().disabled).toBe(false);
+    expect(post().getAttribute("aria-disabled")).toBeNull();
   });
 
-  // #927 moved the note composers' toolbar into a tray; the discussion composer keeps its toolbar inside the field.
-  it("keeps the discussion composer's toolbar, with Insert image and Insert video, inside the field (#927)", async () => {
-    state.realEditor = true;
-    render(); await flush();
-    const composer = host.querySelector<HTMLElement>("[data-testid=discussion-composer]")!;
-    const toolbar = composer.querySelector<HTMLElement>('[role="toolbar"]');
-    expect(toolbar).not.toBeNull();
-    expect(toolbar!.querySelector('[data-testid="rich-text-media-tools"] button[aria-label="Insert image"]')).not.toBeNull();
-    expect(toolbar!.querySelector('[data-testid="rich-text-media-tools"] button[aria-label="Insert video"]')).not.toBeNull();
+  describe("in the note composer box (#950)", () => {
+    const composerBox = () => host.querySelector<HTMLElement>("[data-testid=discussion-composer] [data-testid=discussion-composer-form]")!;
+    const editBox = () => host.querySelector<HTMLElement>("article [data-testid=discussion-comment-edit]")!;
+    const button = (scope: HTMLElement, name: string) => [...scope.querySelectorAll<HTMLButtonElement>("button")].find((candidate) => (candidate.getAttribute("aria-label") ?? candidate.textContent) === name);
+    const held = (element: HTMLElement | undefined) => element!.getAttribute("aria-disabled") === "true" || (element as HTMLButtonElement).disabled;
+    const composer = () => state.editors.find((editor) => editor.id === `project-comment-${projectId}`)!;
+    const editor = () => state.editors.find((candidate) => candidate.id === undefined)!;
+
+    it("writes a comment in the box's post variant: the note preset, link previews, the paperclip and a round Send, and no hint line", async () => {
+      render(); await flush();
+      const box = composerBox();
+      expect(box.tagName).toBe("FORM");
+      expect(box.getAttribute("data-variant")).toBe("post");
+      expect([...box.querySelectorAll<HTMLElement>("[data-testid=note-composer-tools] button")].map((b) => b.getAttribute("aria-label"))).toEqual(["Add photos or videos", "Post comment"]);
+      expect(composer().preset).toBe("note");
+      expect(composer().linkPreviews).toEqual({ projectId });
+      expect(composer().media).toEqual({ projectId });
+      expect(composer().placeholder).toBe("Write a project comment… Use @ to mention project participants.");
+      expect(box.textContent).not.toContain("Use @ to mention project participants");
+      expect(box.querySelector("[data-testid=note-composer-text]")!.contains(host.querySelector(`[data-testid="editor-project-comment-${projectId}"]`))).toBe(true);
+    });
+
+    it("posts with Send, which is held, with its reason, while empty or while a photo or video uploads", async () => {
+      render(); await flush();
+      const send = () => button(composerBox(), "Post comment") ?? button(composerBox(), "Posting…");
+      expect(held(send())).toBe(true);
+      await typeComposer("Ready to post");
+      expect(held(send())).toBe(false);
+      await act(async () => { composer().onUploadingChange(true); await Promise.resolve(); });
+      expect(held(send())).toBe(true);
+      expect(send()!.getAttribute("title")).toBe("Wait for the uploads to finish.");
+      await act(async () => { composer().onUploadingChange(false); await Promise.resolve(); });
+      await click(send()!); await flush();
+      expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content: doc("Ready to post") });
+    });
+
+    it("shows the limit and a refused post inside the box, above Send", async () => {
+      render(); await flush();
+      await typeComposer("x".repeat(10_001));
+      const limit = composerBox().querySelector<HTMLElement>("[data-testid=discussion-composer-problem]");
+      expect(limit?.textContent).toBe("Comments can be 10,000 characters at most.");
+      expect(held(button(composerBox(), "Post comment"))).toBe(true);
+      apiPostMock.mockRejectedValueOnce(new ApiError("The server refused this comment.", 400));
+      await typeComposer("Fine length");
+      await click(button(composerBox(), "Post comment")!); await flush();
+      const problem = composerBox().querySelector<HTMLElement>("[data-testid=discussion-composer-problem]")!;
+      expect(problem.getAttribute("role")).toBe("alert");
+      expect(problem.textContent).toBe("The server refused this comment.");
+      expect(problem.nextElementSibling?.getAttribute("data-testid")).toBe("note-composer-tools");
+    });
+
+    it("opens the photo and video picker from the paperclip, with no fixed toolbar in the field", async () => {
+      state.realEditor = true;
+      render(); await flush();
+      expect(composerBox().querySelector('[role="toolbar"][aria-label="Formatting"]')).toBeNull();
+      await click(button(composerBox(), "Add photos or videos")!); await flush();
+      const picker = composerBox().querySelector<HTMLInputElement>('[data-testid="rich-text-media-picker"]');
+      expect(picker).not.toBeNull();
+      expect(picker!.accept).toContain("video/");
+    });
+
+    it("edits in the same box with Cancel and Save; Save is held while uploading and a refused save shows beside it", async () => {
+      render(); await flush();
+      await chooseCommentAction(host, "Me", "Edit");
+      const box = editBox();
+      expect(box.getAttribute("data-variant")).toBe("post");
+      expect(editor().preset).toBe("note");
+      expect(editor().linkPreviews).toEqual({ projectId });
+      expect([...box.querySelectorAll<HTMLElement>("[data-testid=note-composer-tools] button")].map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Add photos or videos", "Cancel", "Save"]);
+      await act(async () => { editor().onChange(doc("Edited text")); editor().onUploadingChange(true); await Promise.resolve(); });
+      expect(held(button(editBox(), "Save"))).toBe(true);
+      await act(async () => { editor().onUploadingChange(false); await Promise.resolve(); });
+      apiPatchMock.mockRejectedValueOnce(new ApiError("The server refused this edit.", 400));
+      await click(button(editBox(), "Save")!); await flush();
+      expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/${ownComment.id}`, { content: doc("Edited text") });
+      const problem = editBox().querySelector<HTMLElement>("[data-testid=discussion-edit-problem]")!;
+      expect(problem.textContent).toBe("The server refused this edit.");
+      expect(composerBox().querySelector("[data-testid=discussion-composer-problem]")).toBeNull();
+      await click(button(editBox(), "Cancel")!);
+      expect(host.querySelector("article [data-testid=discussion-comment-edit]")).toBeNull();
+      expect(apiPatchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("reopens a saved draft in the box unchanged", async () => {
+      const draft = doc("Half a thought");
+      const tree = (open: boolean) => <QueryClientProvider client={client}><ProjectCommentDraftsProvider>{open ? <ProjectDiscussionThread projectId={projectId} currentUserId={state.sessionUser.id} /> : null}</ProjectCommentDraftsProvider></QueryClientProvider>;
+      act(() => { root.render(tree(true)); }); await flush();
+      await act(async () => { composer().onChange(draft); await Promise.resolve(); });
+      act(() => { root.render(tree(false)); }); await flush();
+      state.editors = [];
+      act(() => { root.render(tree(true)); }); await flush();
+      expect(composer().value).toEqual(draft);
+      expect(composerBox().getAttribute("data-variant")).toBe("post");
+    });
   });
 
   it("consumes a discussion-only 403 locally with no composer or close/purge callback", async () => {
@@ -346,7 +437,7 @@ describe("ProjectDiscussionThread", () => {
       render(); await flush();
       await typeComposer("Draft to keep");
       const surface = host.querySelector<HTMLElement>('[contenteditable="true"]')!; surface.focus();
-      await click(host.querySelector<HTMLElement>(`[data-testid="submit-project-comment-${projectId}"]`)!); await flush();
+      await click(host.querySelector<HTMLElement>(`[data-testid="submit-project-comment-${projectId}"]`)!); await flush(); await settleCache();
       expect(host.querySelector("[data-testid=discussion-composer]")).toBeNull();
       expect(notice()?.textContent).toBe(COPY);
       expect(host.querySelector('[role="alert"]')).toBeNull();
@@ -366,7 +457,7 @@ describe("ProjectDiscussionThread", () => {
       render(); await flush();
       await typeComposer("Elsewhere");
       outside.focus();
-      await click(host.querySelector<HTMLElement>(`[data-testid="submit-project-comment-${projectId}"]`)!); await flush();
+      await click(host.querySelector<HTMLElement>(`[data-testid="submit-project-comment-${projectId}"]`)!); await flush(); await settleCache();
       expect(notice()).not.toBeNull();
       expect(document.activeElement).toBe(outside);
     });

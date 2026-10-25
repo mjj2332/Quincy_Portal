@@ -18,12 +18,12 @@ let root: Root | null = null;
 let latest: RichTextDoc = plain();
 let reset: ((doc: RichTextDoc) => void) | null = null;
 type Scope = { projectId: string } | { noticeBoard: true } | null;
-function Harness({ initial, preset, scope }: { initial: RichTextDoc; preset: "composer" | "document"; scope: Scope }) {
+function Harness({ initial, preset, scope }: { initial: RichTextDoc; preset: "composer" | "document" | "note"; scope: Scope }) {
   const [value, setValue] = useState(initial);
   reset = setValue;
   return <QuincyRichTextEditor preset={preset} value={value} onChange={(next) => { latest = next; setValue(next); }} limit={10_000} loadMentionables={async () => []} {...(scope ? { linkPreviews: scope, media: scope } : {})} />;
 }
-async function mount(initial: RichTextDoc = plain(), preset: "composer" | "document" = "composer", scope: Scope = { projectId: "p1" }) {
+async function mount(initial: RichTextDoc = plain(), preset: "composer" | "document" | "note" = "composer", scope: Scope = { projectId: "p1" }) {
   const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
   await act(async () => root!.render(<Harness initial={initial} preset={preset} scope={scope} />));
   return host;
@@ -148,6 +148,22 @@ describe("a typed web address gets its Link preview at a boundary (#948)", () =>
     expect(request).toHaveBeenCalledExactlyOnceWith({ projectId: "p1" }, "https://example.test/new", expect.anything());
     expect(links().map((link) => link.href)).toEqual(["https://example.test/held", "https://example.test/new"]);
     expect(storedCards()).toEqual([id(2)]);
+  });
+
+  it("does the same in the Project discussion's note box preset (#950), and holds it to ten cards with a notice", async () => {
+    request.mockImplementation(async (_scope: unknown, href: string) => { const n = Number(href.split("/").pop()); return cardFor(`00000000-0000-4000-8000-${String(n).padStart(12, "0")}`, href); });
+    const host = await mount(plain(), "note", { projectId: "p1" });
+    await type(host, " https://example.test/0 ");
+    expect(request).toHaveBeenCalledExactlyOnceWith({ projectId: "p1" }, "https://example.test/0", expect.anything());
+    expect(latest.content.map((block) => block.type)).toEqual(["paragraph", "linkPreview"]);
+    expect(shownCards(host)).toHaveLength(1);
+    // The caret stays in the text (a card goes in after the link's block), so the next addresses are typed in the same line.
+    await type(host, Array.from({ length: 10 }, (_, index) => `https://example.test/${index + 1} `).join(""), 1 + " https://example.test/0 ".length + 5);
+    expect(request).toHaveBeenCalledTimes(10);
+    expect(storedCards()).toHaveLength(10);
+    expect(shownCards(host)).toHaveLength(10);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("A post can show 10 link previews at most.");
+    expect(links().map((link) => link.href)).toContain("https://example.test/10");
   });
 
   it("does the same in the Notice board's document editor", async () => {
