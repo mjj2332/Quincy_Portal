@@ -34,6 +34,8 @@ export type VideoReviewEmit = {
   mentions?: Array<{ id: string; userId: string }>;
   /** An edit: only the mentions are told, the ordinary kind goes to nobody (an edit notifies nothing else). */
   mentionsOnly?: boolean;
+  /** How many Attachments the note or reply carries (#955, the count #957 gives Project comments); recorded on a note, reply or mention when positive. */
+  attachmentCount?: number;
 };
 
 export type Candidate = { userId: string; role: string; name: string; membershipId: string | null };
@@ -86,7 +88,7 @@ export async function videoReviewOutboxStatements(db: D1Database, input: VideoRe
       schemaVersion: 1,
       event: { type: eventType, sourceKey, recipientId },
       authorizationAtOccurrence: { kind: "project_member", membershipIds: [...person.membershipIds].sort() },
-      video: { kind, projectId: input.projectId, videoId: input.videoId, assetId: input.assetId, sourceId },
+      video: { kind, projectId: input.projectId, videoId: input.videoId, assetId: input.assetId, sourceId, ...(input.attachmentCount ? { attachmentCount: input.attachmentCount } : {}) },
     };
     const outboxId = newId(); outboxIds.push(outboxId);
     statements.push(db.prepare(`

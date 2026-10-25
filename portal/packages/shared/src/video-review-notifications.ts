@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ATTACHMENT_MAX_PER_POST } from "./attachments";
 
 /**
  * Staff video-review notifications (#741 15a): ONE durable outbox event carrying six notification types. The payload names the source row and nothing else; the title is composed at
@@ -34,7 +35,8 @@ export const videoReviewNotificationPayloadSchema = z.object({
     z.object({ kind: z.literal("admin") }).strict(),
     z.object({ kind: z.literal("project_member"), membershipIds: z.array(id) }).strict(),
   ]),
-  video: z.object({ kind: z.enum(VIDEO_REVIEW_NOTIFICATION_TYPES), projectId: id, videoId: id, assetId: id, sourceId: id }).strict(),
+  // `attachmentCount` (#955, after #957): how many files the note or reply carries, for a note, reply or mention; omitted when it has none. The count only, never a name.
+  video: z.object({ kind: z.enum(VIDEO_REVIEW_NOTIFICATION_TYPES), projectId: id, videoId: id, assetId: id, sourceId: id, attachmentCount: z.number().int().min(1).max(ATTACHMENT_MAX_PER_POST).optional() }).strict(),
 }).strict();
 export type VideoReviewNotificationPayload = z.infer<typeof videoReviewNotificationPayloadSchema>;
 

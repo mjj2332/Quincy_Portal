@@ -101,7 +101,14 @@ async function mediaRefusal(response: Response): Promise<Error> {
 /**
  * The guest's media routes (`/d/api/links/:linkId/media`, #835 C) as the shared upload flows run them, and the editor transport built on them: images and videos, and HEIC only while the session read says the owner has it open (`heicEnabled`; the server applies the same two gates). Same-origin cookies only, like every other call here.
  */
-export function createGuestMediaTransport(linkId: string, heicEnabled: () => boolean = () => false): EditorMediaTransport {
+/**
+ * The link's media transport, plus where its notes' files download from (#955): `/d/api/links/:linkId/attachments/:id`, the public staff notes' files only. Optional for a reader
+ * (`NoteText`), always given here.
+ */
+export type GuestMediaTransport = EditorMediaTransport & { attachmentUrl: (attachmentId: string) => string };
+export type GuestReadMedia = EditorMediaTransport & { attachmentUrl?: (attachmentId: string) => string };
+
+export function createGuestMediaTransport(linkId: string, heicEnabled: () => boolean = () => false): GuestMediaTransport {
   const base = `/d/api/links/${linkId}/media`;
   const at = (mediaId: string) => `${base}/${encodeURIComponent(mediaId)}`;
   const post = async (url: string, body: unknown): Promise<unknown> => {
@@ -126,6 +133,7 @@ export function createGuestMediaTransport(linkId: string, heicEnabled: () => boo
     video: true,
     mediaUrl: at,
     posterUrl: (mediaId) => `${at(mediaId)}/poster`,
+    attachmentUrl: (attachmentId) => `/d/api/links/${linkId}/attachments/${encodeURIComponent(attachmentId)}`,
     uploadImage: (file, onProgress, options) => uploadImageVia(io, file, onProgress, options),
     uploadVideo: (file, options) => uploadVideoVia(io, file, options),
     abort: (mediaId) => io.abort(mediaId),
@@ -134,7 +142,7 @@ export function createGuestMediaTransport(linkId: string, heicEnabled: () => boo
 
 export type GuestApi = {
   /** The link's media (#835 C): where a note's pictures are read from, and what the editor uploads through. One per page, so its identity is stable. */
-  media: EditorMediaTransport;
+  media: GuestMediaTransport;
   /** The Download all route (#741 14b). The page only ever links to it: a download is the browser's, so the page cannot read its status. */
   downloadAllUrl: string;
   decide(assetId: string, decision: GuestDecisionInput["decision"], note?: string): Promise<DecisionResult>;

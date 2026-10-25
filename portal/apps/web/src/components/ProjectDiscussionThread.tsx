@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useQueryClient } from "@tanstack/react-query";
 import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost } from "../lib/api";
+import { ATTACHMENT_RETRY_OR_REMOVE as RETRY_OR_REMOVE } from "../lib/attachments";
 import { externalApiGet } from "../lib/external-api-response";
 import { useSession } from "../lib/auth";
 import {
@@ -62,8 +63,6 @@ const emptyDoc = (): RichTextDoc => ({ type: "doc", content: [{ type: "paragraph
 const COMMENT_LIMIT = 10_000;
 const COMMENT_TOO_LONG = `Comments can be ${new Intl.NumberFormat("en").format(COMMENT_LIMIT)} characters at most.`;
 const WAIT_FOR_UPLOADS = "Wait for the uploads to finish.";
-/** An Attachment failed to upload (#952): Post and Save wait until it is retried or removed, so a post never goes out missing a file. */
-const RETRY_OR_REMOVE = "Retry or remove the file that failed.";
 /** The paperclip takes any file on a Project comment (#952): photos and videos embed, everything else is attached. */
 const ATTACH_LABEL = "Add files";
 const TOO_LARGE = "This formatting is too large to save; remove list items or formatting.";

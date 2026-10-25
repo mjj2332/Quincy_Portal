@@ -9,6 +9,7 @@ import { guestReplyInsertSql, projectFence, REPLY_INSERT_SQL, VERSION_FROM } fro
 import { guestDigestStatements } from "./guest-digest";
 import { videoReviewOutboxStatements } from "./video-review-notifications";
 import { isMediaGuardFailure, ownedMediaStatements, type MediaUploader } from "./embedded-media";
+import { deleteWonByAudit, deletedOwnerAttachmentStatements, isAttachmentGuardFailure, ownedAttachmentStatements } from "./attachments";
 import type { VideoReviewGateState } from "./video-review-gate";
 
 /** Notes and replies on a Video Version (#741, 5a): scoped reads and the atomic writes. Routes decide who may call; every write repeats its fence in SQL. */
@@ -181,8 +182,9 @@ export type WriteOutcome<T> = { kind: "ok"; value: T; outboxIds?: string[] } | {
 /**
  * A staff note's rich content (#835), already parsed and checked by `prepareNoteContent` (lib/video-note-content.ts). `mentionUserIds` is every person the document mentions; the write turns them
  * into `video_note_mentions` rows (an edit: only the ones the note did not hold) and into `video_mention` notifications. `uploader` is who the attached media must belong to.
+ * `attachmentIds` (#955) are the files a STAFF note names: its batch attaches the author's pending ones and detaches the rest, each audited. A guest's note never has any (#956).
  */
-export type NoteRich = { contentJson: string; mentionUserIds: string[]; mediaIds: string[]; videoIds: string[]; uploader: MediaUploader };
+export type NoteRich = { contentJson: string; mentionUserIds: string[]; mediaIds: string[]; videoIds: string[]; attachmentIds?: string[]; uploader: MediaUploader };
 export type StoredMention = { id: string; userId: string };
 
 /** The mention rows a note holds. */
@@ -191,16 +193,27 @@ export async function readNoteMentions(db: D1Database, noteId: string): Promise<
 }
 
 const AUDIT_FENCE = (auditId: string) => ({ sql: "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)", binds: [auditId] });
-/** The note's media statements, fenced on the winner's audit row. Appended after every statement whose result is read by position. */
-function richMediaStatements(db: D1Database, input: { projectId: string; noteId: string; rich: NoteRich; now: number; auditId: string }): D1PreparedStatement[] {
-  return ownedMediaStatements(db, { ownerKind: "video_note", ownerId: input.noteId, projectId: input.projectId, uploader: input.rich.uploader, ids: input.rich.mediaIds, videoIds: input.rich.videoIds, now: input.now, fence: AUDIT_FENCE(input.auditId), guardId: input.auditId });
+/**
+ * The note's media and Attachment statements, fenced on the winner's audit row. Appended after every statement whose result is read by position. Attachments are a staff author's only:
+ * a guest's write never runs the Attachment statements (the guest profile refused the node already), so no guest write can attach or detach a staff file.
+ */
+function richMediaStatements(db: D1Database, input: { projectId: string; noteId: string; rich: NoteRich; author: NoteAuthor; now: number; auditId: string }): D1PreparedStatement[] {
+  const fence = AUDIT_FENCE(input.auditId);
+  return [
+    ...ownedMediaStatements(db, { ownerKind: "video_note", ownerId: input.noteId, projectId: input.projectId, uploader: input.rich.uploader, ids: input.rich.mediaIds, videoIds: input.rich.videoIds, now: input.now, fence, guardId: input.auditId }),
+    ...(input.author.kind === "user"
+      ? ownedAttachmentStatements(db, { ownerKind: "video_note", ownerId: input.noteId, projectId: input.projectId, uploader: input.rich.uploader, ids: input.rich.attachmentIds ?? [], now: input.now, fence, guardId: input.auditId, principal: input.author.principal })
+      : []),
+  ];
 }
+/** How many files a write carries, for the notification copy (#957's count); undefined for none. */
+const attachmentCountOf = (rich: NoteRich | undefined): number | undefined => (rich?.attachmentIds?.length ? rich.attachmentIds.length : undefined);
 const mentionInserts = (db: D1Database, noteId: string, mentions: StoredMention[], now: number, auditId: string): D1PreparedStatement[] =>
   mentions.map((mention) => db.prepare("INSERT INTO video_note_mentions (id, note_id, mentioned_user_id, created_at) SELECT ?1, ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM audit_log WHERE id = ?5) AND EXISTS (SELECT 1 FROM video_notes WHERE id = ?2)")
     .bind(mention.id, noteId, mention.userId, now, auditId));
-/** A batch that tripped the media guard's CHECK, which rolled the whole write back. Anything else is rethrown. */
+/** A batch that tripped the media or Attachment guard's CHECK, which rolled the whole write back. Anything else is rethrown. */
 function mediaFailure(error: unknown, rich: NoteRich | undefined): "media" {
-  if (rich && isMediaGuardFailure(error, rich.mediaIds)) return "media";
+  if (rich && (isMediaGuardFailure(error, rich.mediaIds) || isAttachmentGuardFailure(error, rich.attachmentIds))) return "media";
   throw error;
 }
 const outboxActor = (author: NoteAuthor): { actorId: string; excludeUserId: string | null } =>
@@ -220,7 +233,7 @@ export async function createVideoNote<T = VideoNoteThreadDto>(db: D1Database, in
   // A guest's writes carry the guest fence (`guestNoteGuard`): the session, link, gate and Version are re-checked in THIS statement at `input.now`, so a revoke or an ungrant that lands after the route's checks writes nothing.
   const auditGuard = guardOf(author, 11, "?5", "?7"); const insertGuard = guardOf(author, 14, "?8", "?9");
   // 15a: staff are told of a new root note (public or internal), with no text; appended to this batch and fenced on its audit row.
-  const notify = await videoReviewOutboxStatements(db, { kind: "video_note", projectId: input.projectId, videoId: video.id, assetId: input.assetId, sourceId: noteId, ...outboxActor(author), auditId, occurredAt: input.now, gate: input.gate, mentions });
+  const notify = await videoReviewOutboxStatements(db, { kind: "video_note", projectId: input.projectId, videoId: video.id, assetId: input.assetId, sourceId: noteId, ...outboxActor(author), auditId, occurredAt: input.now, gate: input.gate, mentions, attachmentCount: attachmentCountOf(rich) });
   const results = await db.batch([
     // The drawing-frame rule rides the audit statement, so a drawing outside the note inserts nothing at all.
     db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.create', 'video_note', ?3, ?4, ?5
@@ -238,7 +251,7 @@ export async function createVideoNote<T = VideoNoteThreadDto>(db: D1Database, in
     ...notify.statements,
     // 15b: a STAFF root note that is public goes to the client digest; an internal note and a guest's own note produce nothing.
     ...(author.kind === "user" && input.visibility === "public" ? guestDigestStatements(db, { kind: "public_note", noteId }, auditId, input.now) : []),
-    ...(rich ? richMediaStatements(db, { projectId: input.projectId, noteId, rich, now: input.now, auditId }) : []),
+    ...(rich ? richMediaStatements(db, { projectId: input.projectId, noteId, rich, author, now: input.now, auditId }) : []),
     db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId),
   ]).catch((error) => mediaFailure(error, rich));
   if (results === "media") return { kind: "media" };
@@ -254,7 +267,7 @@ export async function createVideoNoteReply<T = VideoNoteThreadDto>(db: D1Databas
   const rootAsset = "(SELECT x.asset_id FROM video_notes x WHERE x.id = ?7)";
   const auditGuard = guardOf(author, 8, "?5", rootAsset); const insertGuard = guardOf(author, author.kind === "guest" ? 10 : 9, "?5", "p.asset_id");
   // 15a: the thread's authors and the Version's uploader are told of a reply (no text); read before the batch, fenced on its audit row.
-  const notify = await videoReviewOutboxStatements(db, { kind: "video_reply", projectId: input.projectId, videoId: input.parent.video_id, assetId: input.parent.asset_id, sourceId: replyId, ...outboxActor(author), auditId, occurredAt: input.now, gate: input.gate, mentions });
+  const notify = await videoReviewOutboxStatements(db, { kind: "video_reply", projectId: input.projectId, videoId: input.parent.video_id, assetId: input.parent.asset_id, sourceId: replyId, ...outboxActor(author), auditId, occurredAt: input.now, gate: input.gate, mentions, attachmentCount: attachmentCountOf(rich) });
   const results = await db.batch([
     db.prepare(`${AUDIT_INSERT} SELECT ?1, ?2, 'video_note.reply', 'video_note', ?3, ?4, ?5
       WHERE ${projectFence(6)} AND EXISTS (SELECT 1 FROM video_notes p WHERE p.id = ?7 AND p.project_id = ?6 AND p.parent_id IS NULL AND p.deleted_at IS NULL AND ${LIVE_VERSION_EXISTS("p.asset_id")}${author.kind === "guest" ? " AND p.visibility = 'public'" : ""})${auditGuard.sql}`)
@@ -266,7 +279,7 @@ export async function createVideoNoteReply<T = VideoNoteThreadDto>(db: D1Databas
     ...notify.statements,
     // 15b: a STAFF reply under a public root goes to the guests of that thread; a reply under an internal root and a guest's reply produce nothing.
     ...(author.kind === "user" && input.parent.visibility === "public" ? guestDigestStatements(db, { kind: "staff_reply", replyId, rootId: input.parent.id }, auditId, input.now) : []),
-    ...(rich ? richMediaStatements(db, { projectId: input.projectId, noteId: replyId, rich, now: input.now, auditId }) : []),
+    ...(rich ? richMediaStatements(db, { projectId: input.projectId, noteId: replyId, rich, author, now: input.now, auditId }) : []),
     db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId),
   ]).catch((error) => mediaFailure(error, rich));
   if (results === "media") return { kind: "media" };
@@ -318,7 +331,7 @@ export async function editVideoNote<T = VideoNoteThreadDto>(db: D1Database, inpu
         ON CONFLICT (note_id) DO UPDATE SET strokes_json = excluded.strokes_json, updated_at = excluded.updated_at`).bind(note.id, markup.json, input.now, auditId)]
     : markup ? [db.prepare("DELETE FROM video_note_markup WHERE note_id = ?1 AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?2)").bind(note.id, auditId)] : [];
   // An edit tells only the people it newly mentions (story 8); the ordinary kind goes to nobody.
-  const notify = added.length ? await videoReviewOutboxStatements(db, { kind: note.parent_id === null ? "video_note" : "video_reply", projectId: input.projectId, videoId: note.video_id, assetId: note.asset_id, sourceId: note.id, ...outboxActor(author), auditId, occurredAt: input.now, mentions: added, mentionsOnly: true })
+  const notify = added.length ? await videoReviewOutboxStatements(db, { kind: note.parent_id === null ? "video_note" : "video_reply", projectId: input.projectId, videoId: note.video_id, assetId: note.asset_id, sourceId: note.id, ...outboxActor(author), auditId, occurredAt: input.now, mentions: added, mentionsOnly: true, attachmentCount: attachmentCountOf(rich) })
     : { statements: [] as D1PreparedStatement[], outboxIds: [] as string[] };
   const results = await db.batch([
     db.prepare(`UPDATE video_notes SET body = ?1, start_frame = ?2, end_frame = ?3, revision = revision + 1, edited_at = ?4${set}
@@ -338,7 +351,7 @@ export async function editVideoNote<T = VideoNoteThreadDto>(db: D1Database, inpu
     ...removed.map((mention) => db.prepare("DELETE FROM video_note_mentions WHERE id = ?1 AND note_id = ?2 AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?3)").bind(mention.id, note.id, auditId)),
     ...mentionInserts(db, note.id, added, input.now, auditId),
     ...notify.statements,
-    ...(rich ? richMediaStatements(db, { projectId: input.projectId, noteId: note.id, rich, now: input.now, auditId }) : []),
+    ...(rich ? richMediaStatements(db, { projectId: input.projectId, noteId: note.id, rich, author, now: input.now, auditId }) : []),
     db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId),
   ]).catch((error) => mediaFailure(error, rich));
   if (results === "media") return { kind: "media" };
@@ -377,6 +390,11 @@ export async function deleteVideoNote<T = VideoNoteThreadDto>(db: D1Database, in
   // The hard-delete conditions, shared by the audit that precedes the DELETE and the DELETE itself (?1 note, ?2 Project, ?3 author, ?4 revision).
   const hardWhere = `FROM video_notes n WHERE n.id = ?1 AND n.project_id = ?2 AND ${authorPredicate(author, "n", "?3")} AND n.revision = ?4 AND n.deleted_at IS NULL AND ${projectFence(2)} AND ${LIVE_VERSION_EXISTS("n.asset_id")}
       AND NOT EXISTS (SELECT 1 FROM video_notes c WHERE c.parent_id = ?1 AND ${notAuthorPredicate(author, "c", "?3")})`;
+  // #955: a deleted note's Attachments (and those of the replies a hard delete takes), each with a detach audit row, so a download stops the moment the note is gone. The sweep (#953)
+  // reclaims the objects. A guest's note has none, and its audit principal is null.
+  const principal = author.kind === "user" ? author.principal : null;
+  const hardFiles = deletedOwnerAttachmentStatements(db, { ownerKind: "video_note", ownerId: note.id, ownerIdsIn: { sql: "SELECT id FROM video_notes WHERE id = ? OR parent_id = ?", binds: [note.id, note.id] }, now: input.now, principal, won: deleteWonByAudit(hardAudit) });
+  const tombFiles = deletedOwnerAttachmentStatements(db, { ownerKind: "video_note", ownerId: note.id, now: input.now, principal, won: deleteWonByAudit(tombAudit) });
   const results = await db.batch([
     // The audit goes first so the author's replies are counted before the DELETE cascades them: the winning audit records what was actually removed.
     db.prepare(`${AUDIT_INSERT} SELECT ?5, ?8, 'video_note.delete', 'video_note', ?1, json_set(?6, '$.ownRepliesRemoved', (SELECT COUNT(*) FROM video_notes r WHERE r.parent_id = ?1 AND ${authorPredicate(author, "r", "?3")}), '$.hadMarkup', json(CASE WHEN EXISTS (SELECT 1 FROM video_note_markup k WHERE k.note_id = ?1) THEN 'true' ELSE 'false' END)), ?7 ${hardWhere}${hardAuditGuard.sql}`)
@@ -384,6 +402,7 @@ export async function deleteVideoNote<T = VideoNoteThreadDto>(db: D1Database, in
     // #835: the media of the note and of the replies the DELETE is about to cascade is detached and due now, before they go (a polymorphic owner has no foreign key to carry the delete).
     db.prepare("UPDATE embedded_media SET state = 'detached', detached_at = 0, updated_at = ?1 WHERE owner_kind = 'video_note' AND state IN ('attached', 'detached') AND owner_id IN (SELECT id FROM video_notes WHERE id = ?2 OR parent_id = ?2) AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?3)")
       .bind(input.now, note.id, hardAudit),
+    ...hardFiles,
     db.prepare(`DELETE FROM video_notes WHERE id = ?1 AND project_id = ?2 AND ${authorPredicate(author, "", "?3")} AND revision = ?4 AND deleted_at IS NULL AND ${projectFence(2)} AND ${LIVE_VERSION_EXISTS("video_notes.asset_id")}
       AND NOT EXISTS (SELECT 1 FROM video_notes c WHERE c.parent_id = ?1 AND ${notAuthorPredicate(author, "c", "?3")}) AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?5)${hardDeleteGuard.sql}`)
       .bind(...deleteBinds, ...hardDeleteGuard.binds),
@@ -395,9 +414,12 @@ export async function deleteVideoNote<T = VideoNoteThreadDto>(db: D1Database, in
       .bind(tombAudit, actorOf(author), note.id, metaOf(author, { ...base, mode: "tombstone", ownRepliesRemoved: 0 }), input.now),
     db.prepare("DELETE FROM video_note_markup WHERE note_id = ?1 AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?2)").bind(note.id, tombAudit),
     db.prepare("UPDATE embedded_media SET state = 'detached', detached_at = 0, updated_at = ?1 WHERE owner_kind = 'video_note' AND owner_id = ?2 AND state IN ('attached', 'detached') AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?3)").bind(input.now, note.id, tombAudit),
+    ...tombFiles,
     db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId),
   ]);
-  const removed = (results[2]?.meta.changes ?? 0) >= 1; const tombstoned = !removed && (results[3]?.meta.changes ?? 0) === 1;
+  // The DELETE and the tombstone UPDATE, read by position: the DELETE follows the audit, the media detach and the hard path's Attachment statements.
+  const deleteAt = 2 + hardFiles.length;
+  const removed = (results[deleteAt]?.meta.changes ?? 0) >= 1; const tombstoned = !removed && (results[deleteAt + 1]?.meta.changes ?? 0) === 1;
   const rootId = note.parent_id ?? note.id;
   if (removed || tombstoned) return { kind: "ok", mode: removed ? "removed" : "tombstone", value: removed && note.parent_id === null ? null : await read(rootId) };
   if (archivedInSnapshot(results.at(-1))) return { kind: "archived" };

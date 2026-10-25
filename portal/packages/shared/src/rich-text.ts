@@ -85,9 +85,15 @@ export const COMMENT_MEDIA_RICH_TEXT_PROFILE: RichTextProfile = { ...COMMENT_RIC
 
 /**
  * Video notes (#835): the discussion's profile without link previews (`link_previews.owner_kind` has no video-note value, and a note is a reference, not a post).
- * Attachments are set off explicitly: the spread would otherwise inherit them, and a note has no attachment reconciler until #955.
+ * Attachments (#955) are on, ten per note: a staff note and reply reconcile them in their own batch. The guest read path parses with this profile too, so a Guest reviewer
+ * sees a public staff note's files.
  */
-export const VIDEO_NOTE_RICH_TEXT_PROFILE: RichTextProfile = { ...COMMENT_MEDIA_RICH_TEXT_PROFILE, allowLinkPreviews: false, allowAttachments: false, maxAttachments: 0 };
+export const VIDEO_NOTE_RICH_TEXT_PROFILE: RichTextProfile = { ...COMMENT_MEDIA_RICH_TEXT_PROFILE, allowLinkPreviews: false, allowAttachments: true, maxAttachments: ATTACHMENT_MAX_PER_POST };
+/**
+ * What a Guest reviewer's own note may store: the video-note profile without Attachments, which are #956's (guest uploads, their own limits). Set off explicitly so a flag
+ * added to the video-note profile later is a decision here too (lessons, "A profile built by spreading another inherits every flag added to it later").
+ */
+export const GUEST_NOTE_RICH_TEXT_PROFILE: RichTextProfile = { ...VIDEO_NOTE_RICH_TEXT_PROFILE, allowAttachments: false, maxAttachments: 0 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const encoder = new TextEncoder();

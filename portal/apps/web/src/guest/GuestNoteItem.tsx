@@ -4,7 +4,7 @@ import { NoteComposerBox } from "../components/quincy/NoteComposerBox";
 import { useNoteDraft, type GuestDrafts } from "./guest-drafts";
 import { PencilIcon } from "lucide-react";
 import { legacyBodyToRichTextDoc, type GuestNoteDto, type GuestNoteThreadDto, type RichTextDoc } from "@quincy/shared";
-import type { EditorMediaTransport } from "../lib/embedded-media-core";
+import type { GuestReadMedia } from "./guest-api";
 import { NoteBody } from "../components/quincy/NoteMediaStrip";
 import { noteAnchorLabel } from "../lib/video-note-view";
 import { cn } from "../lib/utils";
@@ -38,8 +38,8 @@ export type Writing = {
   /** The link allows comments and the Project is not archived. */
   canWrite: boolean;
   verified: boolean;
-  /** The link's media routes (#835 C): where a note's pictures are read from, and what a reply's editor uploads through. */
-  media: EditorMediaTransport;
+  /** The link's media routes (#835 C): where a note's pictures are read from, and what a reply's editor uploads through. Its files download from `attachmentUrl` (#955). */
+  media: GuestReadMedia;
   actions: NoteActions;
   /** The reply and reply-edit drafts, which outlive the list (the phone drawer closing, a re-verification). */
   drafts: GuestDrafts;
@@ -64,9 +64,9 @@ function Author({ note }: { note: GuestNoteDto }) {
 }
 
 /** The note as the guest reads it: the rich document when the note has one (pictures from the link's media routes; a mention is already the plain "@Name"), else its text. */
-export function NoteText({ note, media }: { note: GuestNoteDto; media: EditorMediaTransport }) {
+export function NoteText({ note, media }: { note: GuestNoteDto; media: GuestReadMedia }) {
   if (note.deleted) return <p data-testid="guest-note-tombstone" className="m-0 text-foreground-secondary italic [font:var(--type-body-sm)]">Note deleted</p>;
-  if (note.content) return <div data-testid="guest-note-body" className="text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [overflow-wrap:anywhere]"><NoteBody content={note.content} mediaUrl={media.mediaUrl} posterUrl={media.posterUrl} /></div>;
+  if (note.content) return <div data-testid="guest-note-body" className="text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [overflow-wrap:anywhere]"><NoteBody content={note.content} mediaUrl={media.mediaUrl} posterUrl={media.posterUrl} attachmentUrl={media.attachmentUrl} /></div>;
   return <p data-testid="guest-note-body" className={BODY}>{note.body}</p>;
 }
 

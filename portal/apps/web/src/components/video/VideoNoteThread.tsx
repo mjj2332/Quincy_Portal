@@ -25,6 +25,7 @@ import { Button as ReuiButton } from "../reui/button";
 import { Item } from "../reui/item";
 import { NoteBody } from "../quincy/NoteMediaStrip";
 import { NoteComposerBox, rangeChip, type NoteAnchorChip } from "../quincy/NoteComposerBox";
+import { ATTACHMENT_RETRY_OR_REMOVE as RETRY_OR_REMOVE } from "../../lib/attachments";
 import { VideoNoteEditor } from "./VideoNoteEditor";
 import { MARKUP_FULL_TEXT, type NoteDrawControls } from "./VideoMarkupOverlay";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../reui/tooltip";
@@ -134,6 +135,10 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
   const deletePending = useRef(false);
   const replying = form?.kind === "reply";
   const editing = form?.kind === "edit" ? form : null;
+  // How many of the open form's files failed to upload (#955): Send reply and Save wait until each is retried or removed, as a comment's do (#952).
+  const [failedFiles, setFailedFiles] = useState(0);
+  const openFormKey = form ? `${form.kind}:${form.noteId}` : null;
+  useEffect(() => { setFailedFiles(0); }, [openFormKey]);
   const marks = effectiveMarks(marksHeld, clock).value;
   const sending = op?.form === "open" && form !== null;
   const busy = resolving || sending;
@@ -221,27 +226,27 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
   </header>;
 
   const saveEdit = () => { void store.save(assetId, { clock, frameCount, send: actions.edit, markup: drawings?.on ?? false }); };
-  const editBlocked = (open: { text: string }) => busy || uploading || open.text.trim() === "" || open.text.length > VIDEO_NOTE_BODY_MAX;
+  const editBlocked = (open: { text: string }) => busy || uploading || failedFiles > 0 || open.text.trim() === "" || open.text.length > VIDEO_NOTE_BODY_MAX;
   // The root's edit is the note composer box (E1). A reply's edit (it has no anchor of its own) is the field with Cancel and Save only, as the guest's is.
   const editForm = (note: VideoNoteDto) => editing && editing.noteId === note.id && (note.id === thread.id && editing.base.startFrame !== null
     ? <NoteEditBox
-      thread={thread} editing={editing} store={store} assetId={assetId} clock={clock} timecode={timecode} busy={busy} saving={sending} uploading={uploading} onUploadingChange={setUploading}
+      thread={thread} editing={editing} store={store} assetId={assetId} clock={clock} timecode={timecode} busy={busy} saving={sending} uploading={uploading} onUploadingChange={setUploading} failedFiles={failedFiles} onFailedFilesChange={setFailedFiles}
       onSave={saveEdit} blocked={editBlocked(editing)} phone={phone} rich={rich} {...(drawings ? { drawings } : {})} {...(draw ? { draw } : {})}
     />
     : <form data-notes-form="edit" className="grid gap-[var(--space-2)]" onSubmit={(event) => { event.preventDefault(); saveEdit(); }}>
       <label className="sr-only" htmlFor={`video-note-edit-${note.id}`}>Edit note</label>
       <div data-testid="video-note-edit-body" className={FIELD_SHELL}><VideoNoteEditor id={`video-note-edit-${note.id}`} projectId={rich.projectId} role={rich.role} value={draftDoc(editing.content, editing.text)} disabled={busy} placeholder="Edit note… Use @ to mention a colleague."
-        onChange={(doc) => { if (!busy) store.setOpenContent(assetId, doc); }} onSubmit={saveEdit} onUploadingChange={setUploading} /></div>
+        onChange={(doc) => { if (!busy) store.setOpenContent(assetId, doc); }} onSubmit={saveEdit} onUploadingChange={setUploading} onFailedFilesChange={setFailedFiles} /></div>
       {editing.conflict && <ConflictNotice body={editing.conflict.body} />}
       <div className="flex justify-end gap-[var(--space-2)]">
         <Button type="button" variant="secondary" data-testid="video-note-edit-cancel" disabled={busy} onClick={() => { store.close(assetId); }}>Cancel</Button>
-        <Button type="submit" data-testid="video-note-edit-save" disabled={editBlocked(editing)}>{busy ? "Saving…" : editing.conflict ? "Save anyway" : "Save"}</Button>
+        <Button type="submit" data-testid="video-note-edit-save" disabled={editBlocked(editing)} {...(failedFiles > 0 ? { title: RETRY_OR_REMOVE } : {})}>{busy ? "Saving…" : editing.conflict ? "Save anyway" : "Save"}</Button>
       </div>
     </form>);
 
   const sendReply = () => { void store.reply(assetId, { send: actions.reply }); };
   const replyTooLong = form?.kind === "reply" && form.text.length > VIDEO_NOTE_BODY_MAX;
-  const replyReason = uploading ? "Wait for the uploads to finish." : replyTooLong ? `Replies can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.` : undefined;
+  const replyReason = uploading ? "Wait for the uploads to finish." : failedFiles > 0 ? RETRY_OR_REMOVE : replyTooLong ? `Replies can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.` : undefined;
 
   const label = noteAnchorLabel(thread, timecode);
   const resolvedLine = thread.resolved ? `Resolved by ${thread.resolved.by.name}` : null;
@@ -286,13 +291,13 @@ export function VideoNoteThread({ thread, selected, userId, readOnly, now, timec
           <label className="sr-only" htmlFor={`video-note-reply-${thread.id}`}>Write a reply</label>
           <VideoNoteEditor
             ref={replyEditor} id={`video-note-reply-${thread.id}`} projectId={rich.projectId} role={rich.role} value={draftDoc(form.content, form.text)} disabled={busy} placeholder="Reply…"
-            onChange={(doc) => { if (!busy) store.setOpenContent(assetId, doc); }} onSubmit={sendReply} onUploadingChange={setUploading}
+            onChange={(doc) => { if (!busy) store.setOpenContent(assetId, doc); }} onSubmit={sendReply} onUploadingChange={setUploading} onFailedFilesChange={setFailedFiles}
             stripContainer={replyStrip} bubbleDocked={phone} bubbleDockTo={() => replyField.current?.closest('[data-testid="note-composer-box"]') ?? null}
           />
         </div>}
         strip={<div ref={setReplyStrip} className="empty:hidden" />}
         attach={{ onPick: () => { replyEditor.current?.pickMedia(); }, disabled: busy }}
-        send={{ label: "Send reply", onSend: sendReply, disabled: busy || uploading || form.text.trim() === "" || replyTooLong, pending: sending, ...(replyReason ? { reason: replyReason } : {}) }}
+        send={{ label: "Send reply", onSend: sendReply, disabled: busy || uploading || failedFiles > 0 || form.text.trim() === "" || replyTooLong, pending: sending, ...(replyReason ? { reason: replyReason } : {}) }}
       />}
       {thread.resolved && (readOnly || replying || editing !== null) && <div className="flex justify-end"><ResolvedTick data-testid="video-note-resolved-status" /></div>}
     </div>
@@ -330,9 +335,9 @@ type OpenEdit = NonNullable<ReturnType<NoteFormStore["slot"]>["open"]>;
  * (`draw`). D4: changing the frames locks the pen (the hook's reason), and a drawing locks the frames (`FRAMES_FOLLOW`); one Save sends either. Visibility is a fixed label.
  * It is its own component so only the open edit follows the frame clock (the chip's live Out).
  */
-function NoteEditBox({ thread, editing, store, assetId, clock, timecode, busy, saving, uploading, onUploadingChange, onSave, blocked, phone, rich, drawings, draw }: {
+function NoteEditBox({ thread, editing, store, assetId, clock, timecode, busy, saving, uploading, onUploadingChange, failedFiles, onFailedFilesChange, onSave, blocked, phone, rich, drawings, draw }: {
   thread: VideoNoteThreadDto; editing: OpenEdit; store: NoteFormStore; assetId: string; clock: VideoFrameClock | null; timecode: (frame: number) => string;
-  busy: boolean; saving: boolean; uploading: boolean; onUploadingChange: (uploading: boolean) => void; onSave: () => void; blocked: boolean; phone: boolean;
+  busy: boolean; saving: boolean; uploading: boolean; onUploadingChange: (uploading: boolean) => void; failedFiles: number; onFailedFilesChange: (count: number) => void; onSave: () => void; blocked: boolean; phone: boolean;
   rich: { projectId: string; role: Role }; drawings?: { on: boolean; canAnnotate: boolean; projectId: string; role: Role }; draw?: NoteDrawControls;
 }) {
   const editor = useRef<RichTextEditorHandle>(null);
@@ -364,7 +369,7 @@ function NoteEditBox({ thread, editing, store, assetId, clock, timecode, busy, s
   useEffect(() => { if (clearedNew && !drawingNow) store.removeDrawing(assetId); }, [clearedNew, drawingNow, store, assetId]);
 
   const tooLong = editing.text.length > VIDEO_NOTE_BODY_MAX;
-  const saveReason = uploading ? "Wait for the uploads to finish." : tooLong ? `Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.` : undefined;
+  const saveReason = uploading ? "Wait for the uploads to finish." : failedFiles > 0 ? RETRY_OR_REMOVE : tooLong ? `Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.` : undefined;
   const notice = <>
     {drawings?.on && drawings.canAnnotate && <SavedDrawingStatus store={store} assetId={assetId} note={thread} editing={editing} projectId={drawings.projectId} role={drawings.role} />}
     {draw?.full && <p role="status" data-testid="video-note-edit-markup-full" className={cn(LINE, "text-warning-foreground")}>{MARKUP_FULL_TEXT}</p>}
@@ -378,7 +383,7 @@ function NoteEditBox({ thread, editing, store, assetId, clock, timecode, busy, s
       <label className="sr-only" htmlFor={`video-note-edit-${thread.id}`}>Edit note</label>
       <VideoNoteEditor
         ref={editor} id={`video-note-edit-${thread.id}`} projectId={rich.projectId} role={rich.role} value={draftDoc(editing.content, editing.text)} disabled={busy} placeholder="Edit note… Use @ to mention a colleague."
-        onChange={(doc) => { if (!busy) store.setOpenContent(assetId, doc); }} onSubmit={onSave} onUploadingChange={onUploadingChange}
+        onChange={(doc) => { if (!busy) store.setOpenContent(assetId, doc); }} onSubmit={onSave} onUploadingChange={onUploadingChange} onFailedFilesChange={onFailedFilesChange}
         stripContainer={strip} bubbleDocked={phone} bubbleDockTo={() => fieldRef.current?.closest('[data-testid="note-composer-box"]') ?? null}
       />
     </div>}

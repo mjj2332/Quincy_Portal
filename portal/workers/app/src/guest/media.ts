@@ -14,6 +14,7 @@ import { guestMediaGuard, noteWriteParts } from "../lib/guest-fence-sql";
 import { newId } from "../lib/ids";
 import { serveR2Object } from "../lib/r2-serve";
 import { attachedVideoNote } from "../lib/video-note-media";
+import { attachmentDownloadHeaders, getAttachment, type AttachmentRow } from "../lib/attachments";
 import type { AppEnv } from "../env";
 import { classifyRefusal } from "./fence";
 import { guestNotFound, guestRoute, INVALID, originRejection, readJson, TOO_LARGE, tooMany, UUID } from "./http";
@@ -190,7 +191,34 @@ async function renditionStatus(c: Handled<`${typeof MEDIA_BASE}/:mediaId/renditi
     : guestNotFound(asApp(c)));
 }
 
+/**
+ * A Guest reviewer's Attachment download (#955), under the link's cookie `Path`: the one stub unless the file is ATTACHED to a staff note or reply of this link's Project that is live,
+ * PUBLIC, and on a Version this link reaches. An internal note's file, a pending or removed file, another Project's and a revoked link are all that miss. Guests read only here; their
+ * own uploads are #956. The headers are the staff download's (`attachmentDownloadHeaders`): a forced download as octet-stream, never cached, never sniffed.
+ */
+const ATTACHMENT_PATH = "/d/api/links/:linkId/attachments/:attachmentId";
+export async function readableGuestAttachment(db: D1Database, session: Pick<GuestSession, "link">, attachmentId: string): Promise<AttachmentRow | null> {
+  const row = await getAttachment(db, attachmentId);
+  if (!row || row.ownerKind !== "video_note" || row.state !== "attached" || row.projectId !== session.link.projectId) return null;
+  const note = await attachedVideoNote(db, row);
+  return note?.visibility === "public" && await resolveGrantedVersion(db, session.link.id, session.link.projectId, note.assetId) !== null ? row : null;
+}
+
+async function serveAttachment(c: Handled<typeof ATTACHMENT_PATH>): Promise<Response> {
+  const attachmentId = c.req.param("attachmentId");
+  if (!UUID.test(attachmentId)) return guestNotFound(asApp(c));
+  const session = await resolveSession(asApp(c), c.req.param("linkId"), Date.now());
+  if (!session || !session.link.parts.includes("guest")) return guestNotFound(asApp(c));
+  const row = await readableGuestAttachment(c.env.DB, session, attachmentId);
+  if (!row) return guestNotFound(asApp(c));
+  // The last admission, after R2 has answered and before a byte leaves: revoking the link, making the note internal or removing the Version meanwhile is a miss.
+  const still = async () => await sessionStillValid(c.env.DB, session, Date.now()) && await readableGuestAttachment(c.env.DB, session, attachmentId) !== null;
+  const served = await serveR2Object(asApp(c), row.storageKey, attachmentDownloadHeaders(row.fileName), "File not found", still);
+  return served.status === 404 ? guestNotFound(asApp(c)) : served;
+}
+
 export function mountGuestMedia(app: Hono<AppEnv>): void {
+  app.get(ATTACHMENT_PATH, guestRoute(ATTACHMENT_PATH, serveAttachment));
   app.post(MEDIA_BASE, guestRoute(MEDIA_BASE, presign));
   app.put(`${MEDIA_BASE}/:mediaId/direct`, guestRoute(`${MEDIA_BASE}/:mediaId/direct`, direct));
   app.post(`${MEDIA_BASE}/:mediaId/complete`, guestRoute(`${MEDIA_BASE}/:mediaId/complete`, complete));

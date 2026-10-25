@@ -78,6 +78,10 @@ describe("uploadAttachment over the staff routes", () => {
     expect(apiPost.mock.calls[0]![1]).toEqual({ name: "Plan.pdf", contentType: "application/pdf", bytes: 8 });
     expect(uploadMultipartFile.mock.calls[0]![2]).toBe(`/api/projects/p%201/attachments/${ID}/direct`);
   });
+  it("names the owner for a Video note's file, so the server takes the note gate (#955)", async () => {
+    await uploadAttachment("p1", new File([new Uint8Array(8)], "Plan.pdf", { type: "application/pdf" }), {}, "video_note");
+    expect(apiPost.mock.calls[0]![1]).toEqual({ name: "Plan.pdf", contentType: "application/pdf", bytes: 8, owner: "video_note" });
+  });
   it("reports byte progress over the controlled path", async () => {
     uploadMultipartFile.mockImplementation(async (_file, _presign, _url, _progress, control) => { control.onBytes(4, 8); return {}; });
     const seen: number[] = [];

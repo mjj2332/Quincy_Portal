@@ -101,6 +101,37 @@ function guestContent(json: string | null): RichTextDoc | null {
   try { return richTextMentionsToText(parseRichTextDoc(JSON.parse(json), VIDEO_NOTE_RICH_TEXT_PROFILE)); } catch { return null; }
 }
 
+/**
+ * Fills each Attachment node's name and size (#955) for a guest, from the file's row, and only when that row is ATTACHED to the very note that names it (a staff note's own file: the
+ * public notes the guest query already chose). Any other node is served bare, which renders "File unavailable" and downloads nothing. One query per ninety ids (D1's bind limit).
+ */
+async function withGuestAttachmentFacts<T extends GuestNoteDto>(db: D1Database, dtos: T[]): Promise<T[]> {
+  const ids = [...new Set(dtos.flatMap((dto) => (dto.content?.content ?? []).flatMap((block) => (block.type === "attachment" ? [block.attrs.attachmentId] : []))))];
+  if (!ids.length) return dtos;
+  const files = new Map<string, { owner: string; name: string; bytes: number }>();
+  for (let index = 0; index < ids.length; index += 90) {
+    const chunk = ids.slice(index, index + 90);
+    const found = await db.prepare(`SELECT id, owner_id, file_name, bytes FROM attachments WHERE owner_kind = 'video_note' AND state = 'attached' AND id IN (${chunk.map(() => "?").join(", ")})`).bind(...chunk)
+      .all<{ id: string; owner_id: string; file_name: string; bytes: number }>();
+    for (const row of found.results) files.set(row.id, { owner: row.owner_id, name: row.file_name, bytes: Number(row.bytes) });
+  }
+  return dtos.map((dto) => {
+    if (!dto.content?.content.some((block) => block.type === "attachment")) return dto;
+    const content = dto.content.content.map((block) => {
+      if (block.type !== "attachment") return block;
+      const file = files.get(block.attrs.attachmentId);
+      return file && file.owner === dto.id ? { type: "attachment" as const, attrs: { attachmentId: block.attrs.attachmentId, name: file.name, bytes: file.bytes } } : { type: "attachment" as const, attrs: { attachmentId: block.attrs.attachmentId } };
+    });
+    return { ...dto, content: { ...dto.content, content } };
+  });
+}
+
+/** Every root and reply of these threads, Attachment facts filled. */
+async function withThreadAttachmentFacts(db: D1Database, threads: GuestNoteThreadDto[]): Promise<GuestNoteThreadDto[]> {
+  const filled = new Map((await withGuestAttachmentFacts(db, threads.flatMap((thread) => [thread as GuestNoteDto, ...thread.replies]))).map((dto) => [dto.id, dto]));
+  return threads.map((thread) => ({ ...thread, ...filled.get(thread.id), replies: thread.replies.map((reply) => filled.get(reply.id) ?? reply) }));
+}
+
 /** `viewer` is the guest id of the session reading (null while unverified): `self` is true only for the viewer's own notes, and no guest is ever shown another's email or id. */
 function noteDto(row: NoteRow, viewer: string | null): GuestNoteDto {
   const deleted = row.deleted_at !== null;
@@ -125,7 +156,7 @@ export async function listGuestNotes(db: D1Database, link: { id: string; project
   const threads = new Map<string, GuestNoteThreadDto>(); const order: GuestNoteThreadDto[] = [];
   for (const row of rows) if (row.parent_id === null) { const thread = { ...noteDto(row, viewer), replies: [] as GuestNoteDto[] }; threads.set(row.id, thread); order.push(thread); }
   for (const row of rows) if (row.parent_id !== null) threads.get(row.parent_id)?.replies.push(noteDto(row, viewer));
-  return guestNoteListResponseSchema.parse({ notes: order.filter((thread) => !thread.deleted || thread.replies.length > 0) });
+  return guestNoteListResponseSchema.parse({ notes: await withThreadAttachmentFacts(db, order.filter((thread) => !thread.deleted || thread.replies.length > 0)) });
 }
 
 /**
@@ -156,5 +187,6 @@ export async function readGuestThread(db: D1Database, link: { id: string; projec
     ORDER BY (n.parent_id IS NOT NULL), n.created_at, n.id`).bind(link.id, link.projectId, rootId).all<NoteRow>()).results;
   const root = rows.find((row) => row.parent_id === null);
   if (!root) return null;
-  return guestNoteThreadDtoSchema.parse({ ...noteDto(root, viewer), replies: rows.filter((row) => row.parent_id !== null).map((row) => noteDto(row, viewer)) });
+  const [thread] = await withThreadAttachmentFacts(db, [{ ...noteDto(root, viewer), replies: rows.filter((row) => row.parent_id !== null).map((row) => noteDto(row, viewer)) }]);
+  return guestNoteThreadDtoSchema.parse(thread);
 }

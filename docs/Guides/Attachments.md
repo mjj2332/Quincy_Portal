@@ -4,9 +4,9 @@ An **Attachment** is any file shared on a post for people to download. It is nev
 Portal can show in a post stay **Embedded media** (`docs/maps/` and `packages/shared/src/embedded-media.ts`). Spec #945, tracer #952.
 
 Status: #952 covers **Project discussion comments**, for staff and External editors (owner decision A1). #954 adds **Notice board
-posts**, for staff only. The table already allows the other owner kinds and a guest uploader. Video notes (#955) and guest notes on
-a Review link (#956) are later tickets. The clean-up sweep (#953) and notifications (#957, Project comments and Notice board posts)
-are below.
+posts**, for staff only. #955 adds **staff Video notes and replies**, with Guest reviewers downloading a public note's files. The
+table already allows a guest uploader; guest notes on a Review link (#956) are a later ticket. The clean-up sweep (#953) and
+notifications (#957: Project comments, Notice board posts, Video notes and replies) are below.
 
 ## Limits
 
@@ -77,6 +77,22 @@ name that ends up empty is refused.
   sandbox`, `cache-control: private, no-store`, `cross-origin-resource-policy: same-origin`, `referrer-policy: no-referrer`. Range
   requests return 206. The row's state is checked again after R2 answers and before any byte is sent.
 
+## Video notes (#955)
+
+- A staff note, reply or edit takes files through the note box's paper clip (`VideoNoteEditor`, `owner: "video_note"`), with the
+  comment's limits, blocklist and Send hold. Uploads go through `videoNoteUploadGate` (the people who may write a note), as the
+  note's Embedded media does. Only the author's own pending files can be attached, in the note's batch; an edit that drops a chip
+  detaches it, and a deleted note (and the replies a hard delete takes) detaches all of its files at once.
+- A guest's note never carries one: the guest profile refuses the node until #956.
+- Staff download at `GET /media/attachments/:id` when they can open the note: the Video review `notes` part, `viewVideo`, Project
+  access, and a live note on a live Version. Public and Internal notes alike.
+- A Guest reviewer downloads at `GET /d/api/links/:linkId/attachments/:id`, under the link's cookie path. It serves only a file
+  attached to a live **public** staff note or reply on a Version this link reaches; an Internal note's file, another Project's and a
+  revoked link all get the same not-found stub. The headers are the staff route's (`attachmentDownloadHeaders`), and the link and
+  note are checked again after R2 answers.
+- A posted note reads its text, then its photo and video strip, then its files as C4 chips (`splitNoteFiles`, `NoteBody`).
+- Notifications for a note or reply with files say how many (`attachmentCount` on the Video review payload, #957's suffix).
+
 ## No malware scan in v1
 
 This is a known limit. The mitigation is the blocklist on name and type, a forced download as octet-stream with `nosniff` and a
@@ -114,4 +130,9 @@ composes from the stored copy. The count rides on the activity's `safePayload.at
 `createProjectCommentActivityIntent`, omitted at zero; the edit records the comment's count after the edit) and is rendered by
 `attachmentCountSuffix` in `packages/shared/src/project-activity.ts`. A Notice board post (#954) has no activity row: its mention
 notification and email say the same ("You were mentioned in a notice-board post with 2 attachments."), from the count the route
-passes to `notifyNoticeBoardMentions`. The other owner kinds join this when their tickets land.
+passes to `notifyNoticeBoardMentions`.
+
+A staff Video note or reply (#955) does the same on its Video review notification: "Mia left a note with 2 attachments on Main
+walkthrough", "replied with 1 attachment", and a mention "mentioned you in a note with 3 attachments". The count rides on the
+outbox payload's `video.attachmentCount` (`videoReviewOutboxStatements`, omitted at zero; a mention-on-edit records the note's count
+after the edit).
