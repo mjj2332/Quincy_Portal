@@ -207,6 +207,8 @@ export function createProjectCommentActivityIntent(input: {
   actorId: string;
   commentId: string;
   occurredAt: Date;
+  /** How many Attachments the comment carries (#957); recorded on created and edited only, and only when positive. */
+  attachmentCount?: number;
 }): ProjectCommentActivityOutboxIntent {
   const activityId = newId();
   const registryKey = `project.comment.${input.type}` as ProjectCommentActivityOutboxIntent["activity"]["type"];
@@ -224,7 +226,7 @@ export function createProjectCommentActivityIntent(input: {
       actorId: input.actorId,
       occurredAt: input.occurredAt.toISOString(),
       source: { kind: "project_comment", id: input.commentId, key: sourceKey },
-      safePayload: { commentId: input.commentId },
+      safePayload: input.type !== "deleted" && input.attachmentCount ? { commentId: input.commentId, attachmentCount: input.attachmentCount } : { commentId: input.commentId },
       deepLink: { kind: "project_collaboration", path: staffPathFor({ kind: "project", projectId: input.projectId, arrivalTab: "collaboration" }) },
     },
     broadDelivery: {
@@ -374,7 +376,7 @@ export async function findProjectComment(db: CommentDb, projectId: string, comme
 
 export async function createProjectComment(db: D1Database, input: CreateProjectCommentInput): Promise<ProjectCommentMutationResult> {
   assertUniqueMentions(input.mentions);
-  const activity = createProjectCommentActivityIntent({ type: "created", projectId: input.projectId, actorId: input.authorId, commentId: input.id, occurredAt: input.occurredAt });
+  const activity = createProjectCommentActivityIntent({ type: "created", projectId: input.projectId, actorId: input.authorId, commentId: input.id, occurredAt: input.occurredAt, attachmentCount: input.media?.attachmentIds?.length });
   const snapshots = await mentionOccurrenceSnapshots(db, input.projectId, input.mentions);
   const auditId = newId();
   const insert = db.prepare(`
@@ -416,7 +418,7 @@ export async function createProjectComment(db: D1Database, input: CreateProjectC
 
 export async function editProjectComment(db: D1Database, input: EditProjectCommentInput): Promise<ProjectCommentMutationResult> {
   assertUniqueMentions(input.addMentions);
-  const activity = createProjectCommentActivityIntent({ type: "edited", projectId: input.projectId, actorId: input.actorId, commentId: input.commentId, occurredAt: input.occurredAt });
+  const activity = createProjectCommentActivityIntent({ type: "edited", projectId: input.projectId, actorId: input.actorId, commentId: input.commentId, occurredAt: input.occurredAt, attachmentCount: input.media?.attachmentIds?.length });
   const snapshots = await mentionOccurrenceSnapshots(db, input.projectId, input.addMentions);
   const desiredMentionIds = input.mentionIds ?? [];
   const mentionChanged = input.mentionIds === undefined

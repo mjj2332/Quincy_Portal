@@ -13,6 +13,7 @@ import {
   projectActivityCoalesce,
   projectActivityCoalescingDeclaration,
   renderProjectActivityNotification,
+  attachmentCountSuffix,
   EXTERNAL_PROJECT_ACTIVITY_POLICY,
   EXTERNAL_LEGACY_NOTIFICATION_POLICY,
   NOTIFICATION_TYPES,
@@ -237,7 +238,7 @@ type ProjectCommentMentionPayload = {
       actorId: string;
       occurredAt: string;
       source: { kind: "project_comment"; id: string; key: string };
-      safePayload: { commentId: string };
+      safePayload: { commentId: string; attachmentCount?: number };
       deepLink: { kind: "project_collaboration"; path: string };
     };
     broadDelivery: {
@@ -1394,6 +1395,7 @@ async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRe
     };
   }
   const excerpt = truncateForEmail(first.commentBody ?? "");
+  const withFiles = attachmentCountSuffix(payload.projectCommentActivity.activity.safePayload.attachmentCount);
   return {
     ok: true,
     kind: "legacy",
@@ -1403,10 +1405,10 @@ async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRe
     delivery: {
       notificationType: "mentioned",
       title: "You were mentioned",
-      body: "You were mentioned in a project comment.",
+      body: `You were mentioned in a project comment${withFiles}.`,
       emailSubject: "You were mentioned",
-      emailText: `${first.authorName} commented on ${first.projectStreet ?? ""}:\n\n“${excerpt}”\n\n${commentPath}`,
-      emailHtml: `<p>${htmlEscape(first.authorName ?? "")} commented on ${htmlEscape(first.projectStreet ?? "")}:</p><p>“${htmlEscape(excerpt)}”</p><p><a href="${htmlEscape(commentPath)}">View project</a></p>`,
+      emailText: `${first.authorName} commented${withFiles} on ${first.projectStreet ?? ""}:\n\n“${excerpt}”\n\n${commentPath}`,
+      emailHtml: `<p>${htmlEscape(first.authorName ?? "")} commented${withFiles} on ${htmlEscape(first.projectStreet ?? "")}:</p><p>“${htmlEscape(excerpt)}”</p><p><a href="${htmlEscape(commentPath)}">View project</a></p>`,
     },
   };
 }
