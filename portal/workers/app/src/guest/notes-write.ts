@@ -1,10 +1,11 @@
 import type { Context, Hono } from "hono";
 import {
-  GUEST_NOTE_BODY_MAX_BYTES, GUEST_REPLY_BODY_MAX_BYTES, VIDEO_MARKUP_MAX_BYTES, guestNoteCreateInputSchema, guestNoteDeleteInputSchema, guestNoteDeleteResponseSchema, guestNoteEditInputSchema, guestNoteReplyInputSchema,
+  ATTACHMENT_GUEST_MAX_PER_NOTE, GUEST_NOTE_BODY_MAX_BYTES, GUEST_REPLY_BODY_MAX_BYTES, VIDEO_MARKUP_MAX_BYTES, guestNoteCreateInputSchema, guestNoteDeleteInputSchema, guestNoteDeleteResponseSchema, guestNoteEditInputSchema, guestNoteReplyInputSchema,
   type GuestNoteThreadDto,
 } from "@quincy/shared";
 import { noteWriteParts, type GuestWriter } from "../lib/guest-fence-sql";
 import { preflightOwnedMedia } from "../lib/embedded-media";
+import { preflightOwnedAttachments } from "../lib/attachments";
 import { prepareGuestNoteContent } from "../lib/video-note-content";
 import {
   canonicalMarkup, createVideoNote, createVideoNoteReply, deleteVideoNote, drawingFrameFits, editVideoNote, findNoteHeadForLink, readNoteMarkup, versionFrameCount,
@@ -127,7 +128,9 @@ async function richOf<P extends string>(c: Handled<P>, v: Verified, projectId: s
   if ("error" in prepared) return c.json({ error: CONTENT_ERRORS.includes(prepared.error) ? prepared.error : "invalid_request" }, 400);
   const uploader = { guestId: v.guestId };
   if (!await preflightOwnedMedia(c.env.DB, { ownerKind: "video_note", ownerId, projectId, uploader, ids: prepared.mediaIds, videoIds: prepared.videoIds })) return c.json({ error: "media_unavailable" }, 409);
-  return { rich: { contentJson: prepared.contentJson, mentionUserIds: [], mediaIds: prepared.mediaIds, videoIds: prepared.videoIds, uploader }, body: prepared.body };
+  // #956: the files are this guest's own fresh uploads or this note's own, five at most (advisory, as above: the batch re-checks every id in SQL, fenced on the guest's audit row).
+  if (!await preflightOwnedAttachments(c.env.DB, { ownerKind: "video_note", ownerId, projectId, uploader, ids: prepared.attachmentIds, max: ATTACHMENT_GUEST_MAX_PER_NOTE })) return c.json({ error: "media_unavailable" }, 409);
+  return { rich: { contentJson: prepared.contentJson, mentionUserIds: [], mediaIds: prepared.mediaIds, videoIds: prepared.videoIds, attachmentIds: prepared.attachmentIds, uploader }, body: prepared.body };
 }
 
 const tooLarge = <P extends string>(c: Handled<P>) => c.json({ error: "markup_too_large", maxBytes: VIDEO_MARKUP_MAX_BYTES }, 413);

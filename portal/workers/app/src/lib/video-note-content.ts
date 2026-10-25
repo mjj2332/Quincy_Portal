@@ -17,7 +17,7 @@ export async function videoMentionableUsers(db: D1Database, projectId: string): 
   return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
 
-/** `attachmentIds` (#955): the files a staff note names, which its batch attaches. Always empty for a guest's note (the guest profile refuses the node until #956). */
+/** `attachmentIds` (#955, #956): the files a note names, which its batch attaches: ten at most on a staff note, five on a guest's (the guest profile). */
 export type PreparedNoteContent = { content: RichTextDoc; contentJson: string; body: string; mentionIds: string[]; mediaIds: string[]; videoIds: string[]; attachmentIds: string[] };
 export type PrepareFailure = { error: "invalid_content" | "content_too_large" | "mentions_not_allowed" | "too_many_media" | "body_too_long" };
 
@@ -50,7 +50,7 @@ export async function prepareNoteContent(db: D1Database, projectId: string, raw:
 }
 
 /**
- * A GUEST's note `content` (#835 C): the same document as a staff note's, minus the people and minus Attachments (the guest profile; guest files are #956). A mention node of any kind
+ * A GUEST's note `content` (#835 C): the same document as a staff note's, minus the people, with five Attachments at most (the guest profile, #956). A mention node of any kind
  * is `mentions_not_allowed` (a guest has no audience to mention). Media is counted, the body derived and bounded like the staff path.
  */
 export function prepareGuestNoteContent(raw: unknown): PreparedNoteContent | PrepareFailure {

@@ -17,7 +17,7 @@ export const ATTACHMENT_RETENTION_MS = EMBEDDED_MEDIA_RETENTION_MS;
 export const ATTACHMENT_NAME_MAX_BYTES = 255;
 /** Every Attachment object is stored, and served, as this type, whatever the file is. */
 export const ATTACHMENT_STORED_CONTENT_TYPE = "application/octet-stream";
-/** The owners an Attachment row may have. #952 writes `project_comment` only; the rest are for #954-#956. */
+/** The owners an Attachment row may have: a Project comment (#952), a Notice board post (#954), a Video note or reply, staff (#955) or a Guest reviewer's (#956). */
 export const ATTACHMENT_OWNER_KINDS = ["project_comment", "notice_post", "video_note"] as const;
 export type AttachmentOwnerKind = (typeof ATTACHMENT_OWNER_KINDS)[number];
 
@@ -146,6 +146,10 @@ export const attachmentPresignInput = z.object({
   owner: z.enum(["discussion", "video_note"]).optional(),
 }).strict();
 export type AttachmentPresignInput = z.infer<typeof attachmentPresignInput>;
+
+/** The body of a Guest reviewer's `POST /d/api/links/:linkId/attachments` (#956): the file alone. A guest's file is always for a note, so there is no `owner` to choose. */
+export const guestAttachmentPresignInput = z.object({ name: z.string().min(1).max(1024), contentType: z.string().max(255), bytes: z.number().int().min(0) }).strict();
+export type GuestAttachmentPresignInput = z.infer<typeof guestAttachmentPresignInput>;
 
 export const attachmentPresignResponseSchema = z.object({
   attachmentId: z.string().uuid(),

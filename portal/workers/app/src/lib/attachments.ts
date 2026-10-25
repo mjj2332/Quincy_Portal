@@ -137,14 +137,15 @@ export async function preflightOwnedAttachments(db: D1Database, input: Attachmen
  * per id, one UPDATE takes a fresh pending upload of this uploader (and one re-attaches this owner's recently detached row), each followed by its own `attachment.attach` audit row
  * written only when that UPDATE changed a row; then an audit row per attachment about to be detached and the detach itself, under the same predicate; then a guard that violates
  * `bytes > 0` (rolling the whole batch back) unless every wanted id is attached to this owner. The audit rows are written in SQL so they name exactly what the batch did.
+ * `auditExtra` is what the rows say about a writer who is no user: a Guest reviewer's guest, session and link (#956), whose `principal` is null.
  */
-export function ownedAttachmentStatements(db: D1Database, input: AttachmentOwner & { uploader: MediaUploader; ids: string[]; now: number; fence: { sql: string; binds: unknown[] }; guardId: string; principal: AuditPrincipal }): D1PreparedStatement[] {
+export function ownedAttachmentStatements(db: D1Database, input: AttachmentOwner & { uploader: MediaUploader; ids: string[]; now: number; fence: { sql: string; binds: unknown[] }; guardId: string; principal: AuditPrincipal; auditExtra?: Record<string, unknown> }): D1PreparedStatement[] {
   const { fence, ids, now } = input;
   const cutoff = now - ATTACHMENT_RETENTION_MS;
   const scope = input.projectId === null ? "project_id IS NULL" : "project_id = ?";
   const scopeBinds = input.projectId === null ? [] : [input.projectId];
   const actor = input.principal?.id ?? null;
-  const meta = auditMeta(input.principal, { ownerKind: input.ownerKind, ownerId: input.ownerId });
+  const meta = auditMeta(input.principal, { ...input.auditExtra, ownerKind: input.ownerKind, ownerId: input.ownerId });
   const attachAudit = (id: string) => db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ${SQL_UUID_V4}, ?, 'attachment.attach', 'attachment', ?, ?, ? WHERE changes() = 1`).bind(actor, id, meta, now);
   const statements: D1PreparedStatement[] = [];
   for (const id of ids) {
@@ -180,10 +181,10 @@ export function ownedAttachmentStatements(db: D1Database, input: AttachmentOwner
  * own delete audit row (`deleteWonByAudit`), or a Notice board post being gone (#954). The objects and rows are reclaimed by the sweep (#953). `ownerIdsIn` widens the owners to a
  * sub-select (a Video note's hard delete takes its replies too, #955); without it the owner is `ownerId` alone.
  */
-export function deletedOwnerAttachmentStatements(db: D1Database, input: { ownerKind: AttachmentOwnerKind; ownerId: string; ownerIdsIn?: { sql: string; binds: unknown[] }; now: number; principal: AuditPrincipal; won: { sql: string; binds: unknown[] } }): D1PreparedStatement[] {
+export function deletedOwnerAttachmentStatements(db: D1Database, input: { ownerKind: AttachmentOwnerKind; ownerId: string; ownerIdsIn?: { sql: string; binds: unknown[] }; now: number; principal: AuditPrincipal; won: { sql: string; binds: unknown[] }; auditExtra?: Record<string, unknown> }): D1PreparedStatement[] {
   const { won } = input;
   const owners = input.ownerIdsIn ? { sql: `owner_id IN (${input.ownerIdsIn.sql})`, binds: input.ownerIdsIn.binds } : { sql: "owner_id = ?", binds: [input.ownerId] };
-  const meta = auditMeta(input.principal, { ownerKind: input.ownerKind, ownerId: input.ownerId, reason: "owner_deleted" });
+  const meta = auditMeta(input.principal, { ...input.auditExtra, ownerKind: input.ownerKind, ownerId: input.ownerId, reason: "owner_deleted" });
   return [
     db.prepare(`INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) SELECT ${SQL_UUID_V4}, ?, 'attachment.detach', 'attachment', id, ?, ? FROM attachments
       WHERE owner_kind = ? AND ${owners.sql} AND state = 'attached' AND ${won.sql}`).bind(input.principal?.id ?? null, meta, input.now, input.ownerKind, ...owners.binds, ...won.binds),

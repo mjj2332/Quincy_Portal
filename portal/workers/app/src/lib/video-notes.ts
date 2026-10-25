@@ -182,7 +182,7 @@ export type WriteOutcome<T> = { kind: "ok"; value: T; outboxIds?: string[] } | {
 /**
  * A staff note's rich content (#835), already parsed and checked by `prepareNoteContent` (lib/video-note-content.ts). `mentionUserIds` is every person the document mentions; the write turns them
  * into `video_note_mentions` rows (an edit: only the ones the note did not hold) and into `video_mention` notifications. `uploader` is who the attached media must belong to.
- * `attachmentIds` (#955) are the files a STAFF note names: its batch attaches the author's pending ones and detaches the rest, each audited. A guest's note never has any (#956).
+ * `attachmentIds` (#955, #956) are the files the note names: its batch attaches the author's own pending ones (a staff user's, or a Guest reviewer's) and detaches the rest, each audited.
  */
 export type NoteRich = { contentJson: string; mentionUserIds: string[]; mediaIds: string[]; videoIds: string[]; attachmentIds?: string[]; uploader: MediaUploader };
 export type StoredMention = { id: string; userId: string };
@@ -194,18 +194,22 @@ export async function readNoteMentions(db: D1Database, noteId: string): Promise<
 
 const AUDIT_FENCE = (auditId: string) => ({ sql: "EXISTS (SELECT 1 FROM audit_log WHERE id = ?)", binds: [auditId] });
 /**
- * The note's media and Attachment statements, fenced on the winner's audit row. Appended after every statement whose result is read by position. Attachments are a staff author's only:
- * a guest's write never runs the Attachment statements (the guest profile refused the node already), so no guest write can attach or detach a staff file.
+ * The note's media and Attachment statements, fenced on the winner's audit row (for a guest, written only under the guest fence). Appended after every statement whose result is read by position.
+ * Only the author's own uploads attach (the uploader column is matched in SQL), and only the note's own files detach, so a guest's write can never take or drop a staff file (#956), nor the reverse.
  */
 function richMediaStatements(db: D1Database, input: { projectId: string; noteId: string; rich: NoteRich; author: NoteAuthor; now: number; auditId: string }): D1PreparedStatement[] {
   const fence = AUDIT_FENCE(input.auditId);
+  const { author } = input;
   return [
     ...ownedMediaStatements(db, { ownerKind: "video_note", ownerId: input.noteId, projectId: input.projectId, uploader: input.rich.uploader, ids: input.rich.mediaIds, videoIds: input.rich.videoIds, now: input.now, fence, guardId: input.auditId }),
-    ...(input.author.kind === "user"
-      ? ownedAttachmentStatements(db, { ownerKind: "video_note", ownerId: input.noteId, projectId: input.projectId, uploader: input.rich.uploader, ids: input.rich.attachmentIds ?? [], now: input.now, fence, guardId: input.auditId, principal: input.author.principal })
-      : []),
+    ...ownedAttachmentStatements(db, {
+      ownerKind: "video_note", ownerId: input.noteId, projectId: input.projectId, uploader: input.rich.uploader, ids: input.rich.attachmentIds ?? [], now: input.now, fence, guardId: input.auditId,
+      principal: author.kind === "user" ? author.principal : null, ...(author.kind === "guest" ? { auditExtra: guestAuditMeta(author) } : {}),
+    }),
   ];
 }
+/** What an audit row says about a Guest reviewer writer (they are no user, so the actor is null). */
+const guestAuditMeta = (author: Extract<NoteAuthor, { kind: "guest" }>): Record<string, unknown> => ({ guest: { guestId: author.guestId, sessionId: author.sessionId }, linkId: author.linkId });
 /** How many files a write carries, for the notification copy (#957's count); undefined for none. */
 const attachmentCountOf = (rich: NoteRich | undefined): number | undefined => (rich?.attachmentIds?.length ? rich.attachmentIds.length : undefined);
 const mentionInserts = (db: D1Database, noteId: string, mentions: StoredMention[], now: number, auditId: string): D1PreparedStatement[] =>
@@ -391,10 +395,11 @@ export async function deleteVideoNote<T = VideoNoteThreadDto>(db: D1Database, in
   const hardWhere = `FROM video_notes n WHERE n.id = ?1 AND n.project_id = ?2 AND ${authorPredicate(author, "n", "?3")} AND n.revision = ?4 AND n.deleted_at IS NULL AND ${projectFence(2)} AND ${LIVE_VERSION_EXISTS("n.asset_id")}
       AND NOT EXISTS (SELECT 1 FROM video_notes c WHERE c.parent_id = ?1 AND ${notAuthorPredicate(author, "c", "?3")})`;
   // #955: a deleted note's Attachments (and those of the replies a hard delete takes), each with a detach audit row, so a download stops the moment the note is gone. The sweep (#953)
-  // reclaims the objects. A guest's note has none, and its audit principal is null.
+  // reclaims the objects. A guest's note (#956) is the same, with a null audit principal and the guest in the meta.
   const principal = author.kind === "user" ? author.principal : null;
-  const hardFiles = deletedOwnerAttachmentStatements(db, { ownerKind: "video_note", ownerId: note.id, ownerIdsIn: { sql: "SELECT id FROM video_notes WHERE id = ? OR parent_id = ?", binds: [note.id, note.id] }, now: input.now, principal, won: deleteWonByAudit(hardAudit) });
-  const tombFiles = deletedOwnerAttachmentStatements(db, { ownerKind: "video_note", ownerId: note.id, now: input.now, principal, won: deleteWonByAudit(tombAudit) });
+  const auditExtra = author.kind === "guest" ? { auditExtra: guestAuditMeta(author) } : {};
+  const hardFiles = deletedOwnerAttachmentStatements(db, { ownerKind: "video_note", ownerId: note.id, ownerIdsIn: { sql: "SELECT id FROM video_notes WHERE id = ? OR parent_id = ?", binds: [note.id, note.id] }, now: input.now, principal, won: deleteWonByAudit(hardAudit), ...auditExtra });
+  const tombFiles = deletedOwnerAttachmentStatements(db, { ownerKind: "video_note", ownerId: note.id, now: input.now, principal, won: deleteWonByAudit(tombAudit), ...auditExtra });
   const results = await db.batch([
     // The audit goes first so the author's replies are counted before the DELETE cascades them: the winning audit records what was actually removed.
     db.prepare(`${AUDIT_INSERT} SELECT ?5, ?8, 'video_note.delete', 'video_note', ?1, json_set(?6, '$.ownRepliesRemoved', (SELECT COUNT(*) FROM video_notes r WHERE r.parent_id = ?1 AND ${authorPredicate(author, "r", "?3")}), '$.hadMarkup', json(CASE WHEN EXISTS (SELECT 1 FROM video_note_markup k WHERE k.note_id = ?1) THEN 'true' ELSE 'false' END)), ?7 ${hardWhere}${hardAuditGuard.sql}`)

@@ -98,3 +98,46 @@ describe("the guest's media transport (#835 C)", () => {
     } finally { vi.useRealTimers(); }
   });
 });
+
+describe("the guest's file transport (#956)", () => {
+  const FILES = `/d/api/links/${LINK}/attachments`;
+  const FILE = "44444444-4444-4444-8444-444444444444";
+  const pdf = () => new File([new Uint8Array(8)], "brief.pdf", { type: "application/pdf" });
+  const files = () => createGuestApi(LINK).media.files;
+
+  it("carries the guest's own limits, 25 MB a file and five a note, and downloads from the link", () => {
+    expect(files().maxBytes).toBe(25 * 1024 * 1024);
+    expect(files().maxPerPost).toBe(5);
+    expect(files().url("a b")).toBe(`${FILES}/a%20b`);
+  });
+
+  it("uploads a file: presign with the file alone, bytes to the link's direct route, complete; no owner and no staff path", async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => String(input) === FILES ? json({ attachmentId: FILE, devDirect: true }) : String(input).endsWith("/complete") ? json({ attachmentId: FILE, state: "pending" }) : new Response(null, { status: 204 }));
+    await expect(files().upload(pdf(), {})).resolves.toBe(FILE);
+    const [presign, complete] = calls();
+    expect(presign!.url).toBe(FILES);
+    expect(presign!.init).toMatchObject({ method: "POST", credentials: "same-origin" });
+    expect(JSON.parse(String(presign!.init.body))).toEqual({ name: "brief.pdf", contentType: "application/pdf", bytes: 8 });
+    expect(uploadMultipartFile.mock.calls[0]![2]).toBe(`${FILES}/${FILE}/direct`);
+    expect(complete!.url).toBe(`${FILES}/${FILE}/complete`);
+    expect(calls().every((call) => !call.url.startsWith("/api/"))).toBe(true);
+  });
+
+  it("a cancelled upload tells the link's abort route", async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => String(input) === FILES ? json({ attachmentId: FILE, devDirect: true }) : new Response(null, { status: 204 }));
+    const controller = new AbortController();
+    // The byte upload honours the signal, as `uploadMultipartFile` does.
+    uploadMultipartFile.mockImplementation(() => { controller.abort(); return Promise.reject(Object.assign(new Error("Upload cancelled"), { name: "AbortError" })); });
+    await expect(files().upload(pdf(), { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+    expect(calls().map((call) => call.url)).toContain(`${FILES}/${FILE}/abort`);
+  });
+
+  it("a refusal of the file itself shows the server's words; the link's own refusals and the throttle are in words for the guest", async () => {
+    fetchMock.mockImplementation(async () => json({ error: "brief.exe can't be attached: this kind of file can run code.", code: "attachment_blocked" }, 400));
+    await expect(files().upload(pdf(), {})).rejects.toMatchObject({ status: 400, message: "brief.exe can't be attached: this kind of file can run code." });
+    fetchMock.mockImplementation(async () => json({ error: "comments_disabled" }, 403));
+    await expect(files().upload(pdf(), {})).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/turned off/i) });
+    fetchMock.mockImplementation(async () => json({ error: "too_many_attempts", retryAfterSeconds: 60 }, 429));
+    await expect(files().upload(pdf(), {})).rejects.toMatchObject({ status: 429, message: expect.stringMatching(/too quickly/i) });
+  });
+});

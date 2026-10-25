@@ -1,5 +1,5 @@
 import { EMBEDDED_IMAGE_MAX_DIMENSION } from "./embedded-media";
-import { ATTACHMENT_MAX_PER_POST } from "./attachments";
+import { ATTACHMENT_GUEST_MAX_PER_NOTE, ATTACHMENT_MAX_PER_POST } from "./attachments";
 
 /**
  * The small, portable rich-text document accepted by collaboration surfaces.
@@ -90,10 +90,10 @@ export const COMMENT_MEDIA_RICH_TEXT_PROFILE: RichTextProfile = { ...COMMENT_RIC
  */
 export const VIDEO_NOTE_RICH_TEXT_PROFILE: RichTextProfile = { ...COMMENT_MEDIA_RICH_TEXT_PROFILE, allowLinkPreviews: false, allowAttachments: true, maxAttachments: ATTACHMENT_MAX_PER_POST };
 /**
- * What a Guest reviewer's own note may store: the video-note profile without Attachments, which are #956's (guest uploads, their own limits). Set off explicitly so a flag
- * added to the video-note profile later is a decision here too (lessons, "A profile built by spreading another inherits every flag added to it later").
+ * What a Guest reviewer's own note may store: the video-note profile with the guest's own Attachment limit (#956), five a note. Set explicitly so a flag added to the video-note
+ * profile later is a decision here too (lessons, "A profile built by spreading another inherits every flag added to it later").
  */
-export const GUEST_NOTE_RICH_TEXT_PROFILE: RichTextProfile = { ...VIDEO_NOTE_RICH_TEXT_PROFILE, allowAttachments: false, maxAttachments: 0 };
+export const GUEST_NOTE_RICH_TEXT_PROFILE: RichTextProfile = { ...VIDEO_NOTE_RICH_TEXT_PROFILE, allowAttachments: true, maxAttachments: ATTACHMENT_GUEST_MAX_PER_NOTE };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const encoder = new TextEncoder();

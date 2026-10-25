@@ -20,6 +20,9 @@ import { uploadMultipartFile } from "./multipart-upload";
  */
 export { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_PER_POST };
 
+/** An Attachment failed to upload (#952, #955, #956): Post, Send and Save wait until it is retried or removed, so a post or note never goes out missing a file. */
+export const ATTACHMENT_RETRY_OR_REMOVE = "Retry or remove the file that failed.";
+
 /** Where an Attachment is downloaded from. It carries the id only, never a name or a key. */
 export function attachmentUrl(attachmentId: string): string {
   return `/media/attachments/${encodeURIComponent(attachmentId)}`;
@@ -121,7 +124,7 @@ export async function uploadAttachmentVia(io: AttachmentIo, file: File, options:
 
 /**
  * What the rich-text editor needs to attach files (#952): injected by the host, so the editor itself imports no network module. Absent, the
- * editor's picker, paste and drop behave exactly as before (Video notes and Guest notes, until their tickets).
+ * editor's picker, paste and drop take photos and videos only. The staff hosts build one over `lib/api` (`lib/attachments.ts`); the Review link builds its own (`guest/guest-api.ts`, #956).
  */
 export type EditorAttachmentTransport = {
   maxPerPost: number;

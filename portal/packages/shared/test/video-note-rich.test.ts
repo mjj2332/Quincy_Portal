@@ -33,11 +33,12 @@ describe("#835 video note rich text", () => {
     expect(videoNoteBody(doc({ type: "attachment", attrs: { attachmentId: a } }))).toBe("[1 file]");
   });
 
-  it("a guest's own note takes no Attachment until #956, while a guest still reads a staff note's", () => {
-    const withFile = { type: "doc", content: [{ type: "paragraph", content: [text("x")] }, { type: "attachment", attrs: { attachmentId: a } }] };
-    expect(GUEST_NOTE_RICH_TEXT_PROFILE).toEqual({ ...VIDEO_NOTE_RICH_TEXT_PROFILE, allowAttachments: false, maxAttachments: 0 });
-    expect(() => parseRichTextDoc(withFile, GUEST_NOTE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
-    expect(parseRichTextDoc(withFile, VIDEO_NOTE_RICH_TEXT_PROFILE).content[1]).toEqual({ type: "attachment", attrs: { attachmentId: a } });
+  it("a guest's own note takes five Attachments at most (#956), and a staff note ten", () => {
+    const withFiles = (count: number) => ({ type: "doc", content: [{ type: "paragraph", content: [text("x")] }, ...Array.from({ length: count }, (_, n) => ({ type: "attachment", attrs: { attachmentId: `${(n + 1).toString(16).padStart(8, "0")}-0000-4000-8000-000000000000` } }))] });
+    expect(GUEST_NOTE_RICH_TEXT_PROFILE).toEqual({ ...VIDEO_NOTE_RICH_TEXT_PROFILE, allowAttachments: true, maxAttachments: 5 });
+    expect(parseRichTextDoc(withFiles(5), GUEST_NOTE_RICH_TEXT_PROFILE).content).toHaveLength(6);
+    expect(() => parseRichTextDoc(withFiles(6), GUEST_NOTE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+    expect(parseRichTextDoc(withFiles(10), VIDEO_NOTE_RICH_TEXT_PROFILE).content).toHaveLength(11);
   });
 
   it("a media-only note still has a body", () => {

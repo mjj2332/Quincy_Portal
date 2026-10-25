@@ -1,4 +1,5 @@
 import {
+  ATTACHMENT_GUEST_MAX_BYTES, ATTACHMENT_GUEST_MAX_PER_NOTE,
   guestArchivePrepareResponseSchema, guestDecisionResponseSchema, guestDownloadManifestSchema, guestDownloadPolicySchema, guestEmailCodeErrorSchema, guestEmailCodeResponseSchema, guestNoteConflictSchema, guestNoteDeleteResponseSchema, guestNoteListResponseSchema, guestNoteMarkupResponseSchema, guestNotePasteCommitResponseSchema,
   guestNotePastePreviewResponseSchema, guestNotePasteStaleSchema, guestNoteWriteResponseSchema, guestPasscodeErrorSchema, guestSessionResponseSchema, guestSocialOverlaysResponseSchema, guestSubscriptionResponseSchema, guestVideoListResponseSchema, videoVersionSummariesResponseSchema,
   type GuestArchivePrepareResponse, type GuestDecision, type GuestDecisionInput, type GuestDownloadManifest, type GuestDownloadPolicy, type GuestNoteCreateInput, type GuestNoteEditInput, type GuestNoteMarkupResponse, type GuestNotePasteCommitInput, type GuestNotePasteCommitResponse,
@@ -6,6 +7,7 @@ import {
   type RichTextDoc, type VideoVersionSummariesResponse,
 } from "@quincy/shared";
 import { uploadImageVia, uploadVideoVia, type EditorMediaTransport, type MediaIo } from "../lib/embedded-media-core";
+import { uploadAttachmentVia, type AttachmentIo, type EditorAttachmentTransport } from "../lib/attachments-core";
 
 /**
  * The guest page's own fetch wrapper (#741 12b). It is not `lib/api`: it carries no staff session, base URL or error type, only relative `/d/api/links/<linkId>/...` paths with
@@ -99,13 +101,27 @@ async function mediaRefusal(response: Response): Promise<Error> {
 }
 
 /**
+ * In words for the guest: why a file upload was refused (#956). A refusal of the file itself (a 400 the upload core answers with a `code`: a blocked type, too large, empty, a bad name) carries
+ * the server's own words, which name the file; the link's refusals (verify, comments off, archived, gone, the throttle) are `mediaRefusal`'s.
+ */
+async function fileRefusal(response: Response): Promise<Error> {
+  if (response.status === 400) {
+    try {
+      const body = await response.clone().json() as { error?: unknown; code?: unknown };
+      if (typeof body.code === "string" && typeof body.error === "string") return Object.assign(new Error(body.error), { status: response.status });
+    } catch { /* a body that does not read says nothing more */ }
+  }
+  return mediaRefusal(response);
+}
+
+/**
  * The guest's media routes (`/d/api/links/:linkId/media`, #835 C) as the shared upload flows run them, and the editor transport built on them: images and videos, and HEIC only while the session read says the owner has it open (`heicEnabled`; the server applies the same two gates). Same-origin cookies only, like every other call here.
  */
 /**
  * The link's media transport, plus where its notes' files download from (#955): `/d/api/links/:linkId/attachments/:id`, the public staff notes' files only. Optional for a reader
  * (`NoteText`), always given here.
  */
-export type GuestMediaTransport = EditorMediaTransport & { attachmentUrl: (attachmentId: string) => string };
+export type GuestMediaTransport = EditorMediaTransport & { attachmentUrl: (attachmentId: string) => string; files: EditorAttachmentTransport };
 export type GuestReadMedia = EditorMediaTransport & { attachmentUrl?: (attachmentId: string) => string };
 
 export function createGuestMediaTransport(linkId: string, heicEnabled: () => boolean = () => false): GuestMediaTransport {
@@ -128,12 +144,28 @@ export function createGuestMediaTransport(linkId: string, heicEnabled: () => boo
     abort: (mediaId) => fetch(`${at(mediaId)}/abort`, { method: "POST", credentials: "same-origin", keepalive: true, headers: { "content-type": "application/json" }, body: "{}" }).catch(() => undefined),
     putPoster: (mediaId, frame, signal) => fetch(`${at(mediaId)}/poster`, { method: "PUT", credentials: "same-origin", headers: { "content-type": "image/jpeg" }, body: frame, ...(signal ? { signal } : {}) }).then((response) => response.ok, () => false),
   };
+  // The guest's own files (#956): the link's Attachment routes, beside the download #955 added there, with the guest's limits (25 MB a file, five a note); the server re-checks both.
+  const filesBase = `/d/api/links/${linkId}/attachments`;
+  const fileAt = (attachmentId: string) => `${filesBase}/${encodeURIComponent(attachmentId)}`;
+  const postFile = async (url: string, body: unknown): Promise<unknown> => {
+    const response = await fetch(url, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    if (!response.ok) throw await fileRefusal(response);
+    return response.json();
+  };
+  const fileIo: AttachmentIo = {
+    presign: (body) => postFile(filesBase, body),
+    directUrl: (attachmentId) => `${fileAt(attachmentId)}/direct`,
+    complete: (attachmentId, body) => postFile(`${fileAt(attachmentId)}/complete`, body),
+    abort: (attachmentId) => fetch(`${fileAt(attachmentId)}/abort`, { method: "POST", credentials: "same-origin", keepalive: true, headers: { "content-type": "application/json" }, body: "{}" }).catch(() => undefined),
+  };
+  const files: EditorAttachmentTransport = { maxPerPost: ATTACHMENT_GUEST_MAX_PER_NOTE, maxBytes: ATTACHMENT_GUEST_MAX_BYTES, url: fileAt, upload: (file, options) => uploadAttachmentVia(fileIo, file, options) };
   return {
     get heicEnabled() { return heicEnabled(); },
     video: true,
     mediaUrl: at,
     posterUrl: (mediaId) => `${at(mediaId)}/poster`,
-    attachmentUrl: (attachmentId) => `/d/api/links/${linkId}/attachments/${encodeURIComponent(attachmentId)}`,
+    attachmentUrl: fileAt,
+    files,
     uploadImage: (file, onProgress, options) => uploadImageVia(io, file, onProgress, options),
     uploadVideo: (file, options) => uploadVideoVia(io, file, options),
     abort: (mediaId) => io.abort(mediaId),

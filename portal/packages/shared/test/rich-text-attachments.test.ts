@@ -29,11 +29,13 @@ describe("attachment node (#952)", () => {
     expect(richTextAttachmentIds(doc)).toEqual([id(1)]);
   });
 
-  it("is refused on the comment and Guest note profiles until their tickets turn it on", () => {
-    for (const profile of [COMMENT_RICH_TEXT_PROFILE, GUEST_NOTE_RICH_TEXT_PROFILE]) {
-      expect(() => parse([para("x"), attachment(1)], profile)).toThrow(RichTextValidationError);
-    }
-    expect(GUEST_NOTE_RICH_TEXT_PROFILE.allowAttachments).toBe(false);
+  it("is refused on the plain comment profile", () => {
+    expect(() => parse([para("x"), attachment(1)], COMMENT_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+  });
+
+  it("is accepted on a Guest note, five at most (#956)", () => {
+    expect(richTextAttachmentIds(parse([para("x"), attachment(1)], GUEST_NOTE_RICH_TEXT_PROFILE))).toEqual([id(1)]);
+    expect(() => parse([para("x"), ...Array.from({ length: 6 }, (_, n) => attachment(n + 1))], GUEST_NOTE_RICH_TEXT_PROFILE)).toThrow("A post may have at most 5 attachments");
   });
 
   it("is accepted on a staff Video note, ten at most (#955)", () => {

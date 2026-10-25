@@ -27,6 +27,9 @@ export const GUEST_LIMITS = {
   pastePreviewGuest: 60, pastePreviewLink: 300,
   // Guest media uploads (#835 C): a presign is one upload and costs one; a guest may start 20 in 15 minutes and a link 100. No daily byte bucket in v1 (the staff per-file caps bound each upload).
   mediaGuest: 20, mediaLink: 100,
+  // Guest Attachment uploads (#956): buckets of their own, so files and photos never spend each other's quota. A presign is one upload; a guest may start 20 in 15 minutes and a link 100. Each file is
+  // at most 25 MB, so a guest moves at most 500 MB in a window.
+  attachmentGuest: 20, attachmentLink: 100,
   // Delivery unlock request (#787 slice 8): an address may ask 5 times in 15 minutes and a page 30 in a day (a request costs one in each, valid or not); one item is asked about once a day.
   unlockIp: 5, unlockPage: 30, unlockItem: 1,
   // Delivery photo zips (#787 slice 7), per 15 minutes. A zip start costs the most (an address 10, a page 60); preparing queues work but streams nothing (20, 120); a check is a manifest read or a zip GET that

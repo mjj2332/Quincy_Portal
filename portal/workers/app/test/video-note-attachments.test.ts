@@ -232,13 +232,13 @@ describe("a Guest reviewer's download", () => {
     expect((await guestDownload(link, id)).status).toBe(404);
   });
 
-  it("refuses a file on a guest's own note until guest uploads ship (#956), and attaches nothing", async () => {
+  it("never lets a guest's own note take a staff member's pending file (#956: guests attach only their own), and attaches nothing", async () => {
     const { v, link } = await world();
     const guest = await verifySession(link);
     expect(guest.guestId).toBeTruthy();
     const id = await pending();
     const response = await guestFetch(linkPath(link.id, `/versions/${v.assetId}/notes`), { method: "POST", cookie: link.cookie, body: { startFrame: 10, content: files(id) } });
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(409);
     expect(await attachmentRow(id)).toMatchObject({ state: "pending", owner_id: null });
   });
 });

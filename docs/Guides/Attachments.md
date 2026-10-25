@@ -4,8 +4,8 @@ An **Attachment** is any file shared on a post for people to download. It is nev
 Portal can show in a post stay **Embedded media** (`docs/maps/` and `packages/shared/src/embedded-media.ts`). Spec #945, tracer #952.
 
 Status: #952 covers **Project discussion comments**, for staff and External editors (owner decision A1). #954 adds **Notice board
-posts**, for staff only. #955 adds **staff Video notes and replies**, with Guest reviewers downloading a public note's files. The
-table already allows a guest uploader; guest notes on a Review link (#956) are a later ticket. The clean-up sweep (#953) and
+posts**, for staff only. #955 adds **staff Video notes and replies**, with Guest reviewers downloading a public note's files.
+#956 lets **Guest reviewers attach files** to their own notes, replies and edits on a Review link. The clean-up sweep (#953) and
 notifications (#957: Project comments, Notice board posts, Video notes and replies) are below.
 
 ## Limits
@@ -13,7 +13,8 @@ notifications (#957: Project comments, Notice board posts, Video notes and repli
 | | Staff and External | Guest (#956) |
 |---|---|---|
 | Size per file | 100 MB (`ATTACHMENT_MAX_BYTES`) | 25 MB |
-| Per post | 10 Attachments, counted apart from the 10 photos or videos | 5 per note |
+| Per post | 10 Attachments, counted apart from the 10 photos or videos | 5 per note (`ATTACHMENT_GUEST_MAX_PER_NOTE`) |
+| Uploads | No upload limit | 20 per guest and 100 per link in 15 minutes (`GUEST_LIMITS.attachmentGuest` / `attachmentLink`) |
 
 They live in `portal/packages/shared/src/attachments.ts`, which the composer and the API both import. The composer checks them
 before an upload starts. That check is only a convenience: the server checks every one again, and when the two disagree the
@@ -83,7 +84,7 @@ name that ends up empty is refused.
   comment's limits, blocklist and Send hold. Uploads go through `videoNoteUploadGate` (the people who may write a note), as the
   note's Embedded media does. Only the author's own pending files can be attached, in the note's batch; an edit that drops a chip
   detaches it, and a deleted note (and the replies a hard delete takes) detaches all of its files at once.
-- A guest's note never carries one: the guest profile refuses the node until #956.
+- A guest's note takes at most 5 (`GUEST_NOTE_RICH_TEXT_PROFILE`, #956, below).
 - Staff download at `GET /media/attachments/:id` when they can open the note: the Video review `notes` part, `viewVideo`, Project
   access, and a live note on a live Version. Public and Internal notes alike.
 - A Guest reviewer downloads at `GET /d/api/links/:linkId/attachments/:id`, under the link's cookie path. It serves only a file
@@ -93,12 +94,35 @@ name that ends up empty is refused.
 - A posted note reads its text, then its photo and video strip, then its files as C4 chips (`splitNoteFiles`, `NoteBody`).
 - Notifications for a note or reply with files say how many (`attachmentCount` on the Video review payload, #957's suffix).
 
+## Guest reviewers' files (#956)
+
+- The paper clip in the Guest note box (new note, edit of the guest's own root note, reply) takes any file, as the staff box does.
+  The link's own transport (`createGuestMediaTransport(...).files` in `apps/web/src/guest/guest-api.ts`) carries the guest limits.
+  Post, Send and Save wait while a file is uploading or has failed.
+- Upload routes, under the link's cookie path: `POST /d/api/links/:linkId/attachments` (presign: the file alone, with no `owner`),
+  and `.../:id/direct` (dev only), `.../:id/complete` and `.../:id/abort` (`workers/app/src/guest/attachments.ts`). They run the
+  staff upload core with the guest as uploader. The checks run in the guest media routes' order (`admit` in `guest/media.ts`):
+  the link, its gate and its `guest` and `guest_comments` parts, then Origin, the session, a verified email (401), comments on (403)
+  and an unarchived Project (409). A presign then takes one attempt from the guest's bucket and one from the link's (429) before
+  the body is checked. These buckets are separate from the media quota. Every write repeats the guest fence in SQL
+  (`guestMediaGuard`: the exact session and token, a verified guest, a live link with comments on). Abort is allowed with comments
+  off. Audit rows have a null actor, with the guest, the session and the link in the meta.
+- A file is attached only by the guest's own note write, in the note's batch: only files this guest uploaded and that are still
+  pending, or files already on this note. A staff upload, another guest's file or another note's file is refused (409) and nothing
+  is attached. A guest edits only their own notes, so they can remove only their own files. A reply under an Internal note gets the
+  stub, so a guest's file never lands on an Internal note.
+- A guest's files are public, as the guest's notes are. Staff download them at `GET /media/attachments/:id`, and every guest on
+  the link downloads them at `GET /d/api/links/:linkId/attachments/:id`, with the same forced-download headers.
+
 ## No malware scan in v1
 
 This is a known limit. The mitigation is the blocklist on name and type, a forced download as octet-stream with `nosniff` and a
 sandbox CSP, `no-store`, and reads limited to staff and the Project's own people. A renamed binary is served under its cleaned-up,
-allowed name, so a file called `report.pdf` opens as a PDF. That is why there is no byte sniffing. Revisit this before guests can
-upload (#956).
+allowed name, so a file called `report.pdf` opens as a PDF. That is why there is no byte sniffing.
+
+Since #956, a Guest reviewer can upload, so anyone holding a Review link who verifies an email can put a file in front of staff
+and the link's other guests. #956 adds the guest limits (25 MB, 5 a note, the upload rate limit) but no scan. Whether guest
+uploads need a scan before they ship is still open for the owner.
 
 ## Clean-up
 
