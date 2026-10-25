@@ -4,8 +4,9 @@ An **Attachment** is any file shared on a post for people to download. It is nev
 Portal can show in a post stay **Embedded media** (`docs/maps/` and `packages/shared/src/embedded-media.ts`). Spec #945, tracer #952.
 
 Status: #952 covers **Project discussion comments**, for staff and External editors (owner decision A1). #954 adds **Notice board
-posts**, for staff only. The table already allows the other owner kinds and a guest uploader. Video notes (#955), guest notes on a
-Review link (#956), and the clean-up sweep (#953) are later tickets. Notifications (#957) are covered for both below.
+posts**, for staff only. The table already allows the other owner kinds and a guest uploader. Video notes (#955) and guest notes on
+a Review link (#956) are later tickets. The clean-up sweep (#953) and notifications (#957, Project comments and Notice board posts)
+are below.
 
 ## Limits
 
@@ -89,9 +90,14 @@ upload (#956).
   immediately.
 - A Project hard delete aborts started uploads and queues every Attachment key into `embedded_media_cleanup` in the same batch as
   the cascade.
-- Rows that were never posted or have been removed, and their objects, build up until the sweep in #953 ships. Ship #953 with
-  this, or before this reaches production. The #549 orphan sweep does not recognise Attachment keys; #953 decides how to cover
-  orphans.
+- The background Worker's daily embedded media sweep (`sweepAttachments` in `workers/background/src/embedded-media-sweep.ts`, #953)
+  reclaims the rest, the lifecycle of Embedded media: an Attachment removed from its post is deleted seven days later, and one that was
+  uploaded and never posted is deleted seven days after upload. A deleted comment's Attachments are detached at 0, so they are due on
+  the next run. Backstop: an `attached` row whose comment, Notice board post or Video note no longer exists is detached at 0 and
+  reclaimed. An expired `uploading` row is moved to `embedded_media_cleanup` so its multipart upload is aborted before the object goes.
+  At most 100 rows a run. Tests: `workers/background/test/attachment-sweep.test.ts`.
+- The #549 orphan sweep does not recognise Attachment keys. An object with no row and no queue entry (a double R2 and D1 failure) is
+  not covered; that gap is accepted for now.
 
 ## Rollback
 
