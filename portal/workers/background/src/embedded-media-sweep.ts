@@ -40,7 +40,7 @@ export const ENQUEUE_SQL = `
  * - The queue is then drained: abort the upload (a missing upload counts as terminal), delete the object, delete the entry. A failure
  *   keeps the entry and counts an attempt, so the next run retries.
  */
-export async function sweepEmbeddedMedia(env: Pick<Env, "DB" | "MEDIA">, now = Date.now()): Promise<{ scanned: number; reclaimed: number; failed: number; drained: number }> {
+export async function sweepEmbeddedMedia(env: Pick<Env, "DB" | "MEDIA">, now = Date.now()): Promise<{ scanned: number; reclaimed: number; failed: number; drained: number; attachments: { scanned: number; reclaimed: number; failed: number } }> {
   const cutoff = now - EMBEDDED_MEDIA_RETENTION_MS;
   // Backstop (#835): a video note's media whose note is gone (a cascade through a purge, a hard delete) is detached, due now, and reclaimed by this run.
   await env.DB.prepare("UPDATE embedded_media SET state = 'detached', detached_at = 0, updated_at = ? WHERE owner_kind = 'video_note' AND state = 'attached' AND NOT EXISTS (SELECT 1 FROM video_notes n WHERE n.id = embedded_media.owner_id)").bind(now).run();
