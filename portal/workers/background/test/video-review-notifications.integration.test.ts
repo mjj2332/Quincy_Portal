@@ -26,6 +26,7 @@ type Role = "admin" | "editor" | "external_editor" | "photographer";
 type Options = {
   kind?: VideoReviewNotificationType; actor?: "member" | "guest"; role?: Role; member?: boolean; recipientActive?: boolean; internal?: boolean; version?: number; decision?: "approved" | "changes_requested";
   authorization?: "member" | "admin"; notifyStaff?: boolean; gateOpen?: boolean; archived?: boolean; cadence?: string | null; noSource?: boolean; deletedNote?: boolean; withdrawnRelease?: boolean; /** #776 B: the Version, or its whole Video, is in Trash when the message is processed. */ removedVersion?: boolean; removedVideo?: boolean; videoTitle?: string; guestName?: string;
+  /** #955: the note or reply's Attachment count, as the write records it on the payload. */ attachmentCount?: number;
 };
 
 async function seed(options: Options = {}) {
@@ -75,7 +76,7 @@ async function seed(options: Options = {}) {
     schemaVersion: 1,
     event: { type: VIDEO_REVIEW_NOTIFICATION_EVENT, sourceKey, recipientId },
     authorizationAtOccurrence: options.authorization === "admin" || (role === "admin" && options.authorization !== "member") ? { kind: "admin" } : { kind: "project_member", membershipIds: [membershipId] },
-    video: { kind, projectId, videoId, assetId, sourceId },
+    video: { kind, projectId, videoId, assetId, sourceId, ...(options.attachmentCount ? { attachmentCount: options.attachmentCount } : {}) },
   };
   statements.push(
     database.DB.prepare("INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, recipient_authorization_epoch, payload_json, status, available_at, created_at, updated_at) SELECT ?, 1, ?, ?, ?, ?, ?, authorization_epoch, ?, 'queued', ?, ?, ? FROM user WHERE id = ?").bind(outboxId, VIDEO_REVIEW_NOTIFICATION_EVENT, sourceKey, projectId, actorId, recipientId, JSON.stringify(payload), now - 1, now, now, recipientId),
@@ -112,6 +113,9 @@ describe("delivery: copy and the sentinel", () => {
     ["an upload", { kind: "video_version_uploaded", actor: "member", version: 4 }, "New Version 4 of “Kitchen walkthrough”"],
     ["a release", { kind: "video_released", actor: "member" }, "Alex Actor released “Kitchen walkthrough” v3"],
     ["a mention", { kind: "video_mention", actor: "member" }, "Alex Actor mentioned you on “Kitchen walkthrough” v3"],
+    ["a staff note with files (#955)", { kind: "video_note", actor: "member", attachmentCount: 2 }, "Alex Actor left a note with 2 attachments on “Kitchen walkthrough” v3"],
+    ["a staff reply with a file (#955)", { kind: "video_reply", actor: "member", attachmentCount: 1 }, "Alex Actor replied with 1 attachment on “Kitchen walkthrough” v3"],
+    ["a mention in a note with files (#955)", { kind: "video_mention", actor: "member", attachmentCount: 3 }, "Alex Actor mentioned you in a note with 3 attachments on “Kitchen walkthrough” v3"],
     ["an approval", { kind: "video_decision", actor: "guest", decision: "approved" }, "Jane Smith (client) approved “Kitchen walkthrough” v3"],
     ["a change request", { kind: "video_decision", actor: "guest", decision: "changes_requested" }, "Jane Smith (client) requested changes on “Kitchen walkthrough” v3"],
   ] as Array<[string, Options, string]>)("%s: composes the title at delivery, emails it, and carries no note text anywhere", async (_name, options, title) => {

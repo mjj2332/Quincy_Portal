@@ -5,18 +5,21 @@ import { uploadAttachmentVia, type AttachmentIo, type AttachmentUploadOptions } 
 // This module is the staff app's side: the flow runs over `lib/api`.
 export * from "./attachments-core";
 
+/** What a staff file is for (#955): the Project's discussion (no owner sent, the default) or a staff Video note, which the server gates as note writing. */
+export type AttachmentOwner = "video_note";
+
 /** A Project's staff routes. The abort is `fetch` with `keepalive`, so it survives the page closing. */
-function staffIo(projectId: string): AttachmentIo {
+function staffIo(projectId: string, owner?: AttachmentOwner): AttachmentIo {
   const base = `/api/projects/${encodeURIComponent(projectId)}/attachments`;
   const at = (attachmentId: string) => `${base}/${encodeURIComponent(attachmentId)}`;
   return {
-    presign: (body) => apiPost<unknown, typeof body>(base, body),
+    presign: (body) => apiPost<unknown, typeof body & { owner?: AttachmentOwner }>(base, owner ? { ...body, owner } : body),
     directUrl: (attachmentId) => `${at(attachmentId)}/direct`,
     complete: (attachmentId, body) => apiPost<unknown, typeof body>(`${at(attachmentId)}/complete`, body),
     abort: (attachmentId) => fetch(`${at(attachmentId)}/abort`, { method: "POST", credentials: "include", keepalive: true, headers: { "content-type": "application/json" }, body: "{}" }).catch(() => undefined),
   };
 }
 
-export function uploadAttachment(projectId: string, file: File, options: AttachmentUploadOptions = {}): Promise<string> {
-  return uploadAttachmentVia(staffIo(projectId), file, options);
+export function uploadAttachment(projectId: string, file: File, options: AttachmentUploadOptions = {}, owner?: AttachmentOwner): Promise<string> {
+  return uploadAttachmentVia(staffIo(projectId, owner), file, options);
 }

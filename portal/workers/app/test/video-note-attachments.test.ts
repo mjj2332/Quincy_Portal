@@ -64,10 +64,10 @@ describe("uploading a file for a Video note", () => {
     expect((await presign("member", { name: "huge.zip", contentType: "application/zip", bytes: 100 * 1024 * 1024 + 1, owner: "video_note" })).status).toBe(400);
   });
 
-  it("is closed when the notes part is off (404), to a role that cannot annotate video (403) and to staff off the Project (403)", async () => {
+  it("is closed when the notes part is off (404), to a role that cannot annotate video (403) and to an External outside the Project (404)", async () => {
     const body = { name: "a.pdf", contentType: "application/pdf", bytes: 10, owner: "video_note" };
     expect((await presign("photographer", body)).status).toBe(403);
-    expect((await presign("other", body)).status).toBe(403);
+    expect((await presign("externalOutsider", body)).status).toBe(404);
     await clearVideoFlags();
     expect((await presign("member", body)).status).toBe(404);
   });
@@ -172,11 +172,12 @@ describe("GET /media/attachments/:id for a Video note", () => {
     expect((await served.arrayBuffer()).byteLength).toBe(40);
   });
 
-  it("is 404 off the Project, without the notes part, for a pending file and on a removed Version", async () => {
+  it("follows note access (an Editor who can see the Project by stage reads it), and is 404 outside the Project, without the notes part, for a pending file and on a removed Version", async () => {
     const v = await seedVideoVersion();
     const id = await pending();
     await create("member", v.assetId, files(id));
-    expect((await download("other", id)).status).toBe(404);
+    const editorSees = (await request(notesUrl(v.assetId), "other")).status === 200;
+    expect((await download("other", id)).status).toBe(editorSees ? 200 : 404);
     expect((await download("externalOutsider", id)).status).toBe(404);
     expect((await download("member", await pending())).status).toBe(404);
     await clearVideoFlags();
@@ -239,5 +240,20 @@ describe("a Guest reviewer's download", () => {
     const response = await guestFetch(linkPath(link.id, `/versions/${v.assetId}/notes`), { method: "POST", cookie: link.cookie, body: { startFrame: 10, content: files(id) } });
     expect(response.status).toBe(400);
     expect(await attachmentRow(id)).toMatchObject({ state: "pending", owner_id: null });
+  });
+});
+
+describe("notifications say how many Attachments a note or reply has (#955, the count #957 gives comments)", () => {
+  const counts = async (kind: string) => (await database.DB.prepare("SELECT payload_json AS p FROM notification_outbox WHERE event_type = 'project.video_review.notification' AND json_extract(payload_json, '$.video.kind') = ? ORDER BY created_at").bind(kind).all<{ p: string }>()).results
+    .map((row) => (JSON.parse(row.p) as { video: { attachmentCount?: number } }).video.attachmentCount ?? null);
+  beforeEach(async () => { await setVideoFlags(...OPEN, "video_review_notify_staff"); await database.DB.prepare("DELETE FROM notification_outbox").run(); });
+
+  it("records the count on a note and a reply with files, and none on one without", async () => {
+    const v = await seedVideoVersion();
+    const note = await (await create("member", v.assetId, files(await pending(), await pending()))).json() as Json;
+    await create("member", v.assetId, { type: "doc", content: [para("No files")] });
+    expect(await counts("video_note")).toEqual([2, null]);
+    expect((await reply("member", note.id, files(await pending()))).status).toBe(201);
+    expect(await counts("video_reply")).toEqual([1]);
   });
 });

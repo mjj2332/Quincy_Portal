@@ -1,4 +1,13 @@
-import type { RichTextBlock, RichTextDoc, RichTextMediaNode } from "@quincy/shared";
+import type { RichTextAttachment, RichTextBlock, RichTextDoc, RichTextMediaNode } from "@quincy/shared";
+
+/**
+ * A posted note's Attachments (#955), apart from the rest: the note reads its text, its media strip, then its files as one list of download
+ * chips (C4 `.cmp-file`). An Attachment is top-level only, so this is a partition of the blocks, in order. Display only, like `splitNoteMedia`.
+ */
+export function splitNoteFiles(doc: RichTextDoc): { rest: RichTextDoc; files: RichTextAttachment[] } {
+  const files = doc.content.filter((block): block is RichTextAttachment => block.type === "attachment");
+  return { rest: files.length ? { type: "doc", content: doc.content.filter((block) => block.type !== "attachment") } : doc, files };
+}
 
 /**
  * A posted note's text and its media, apart (#927 T1): the note reads as its words, then one strip of thumbnails. Media is only ever a

@@ -3,7 +3,7 @@ import { QuincyRichTextEditorBase, type QuincyRichTextEditorBaseProps } from "./
 import { embeddedMediaPosterUrl, embeddedMediaUrl, abortEmbeddedImage, retryEmbeddedRendition, uploadEmbeddedImage, uploadEmbeddedVideo, type EditorMediaTransport, type EmbeddedMediaScope } from "../lib/embedded-media";
 import { useEmbeddedHeicEnabled } from "../lib/use-embedded-heic";
 import { requestLinkPreview } from "../lib/link-previews";
-import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_PER_POST, attachmentUrl, uploadAttachment, type EditorAttachmentTransport } from "../lib/attachments";
+import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_PER_POST, attachmentUrl, uploadAttachment, type AttachmentOwner, type EditorAttachmentTransport } from "../lib/attachments";
 import type { MentionableUser } from "./MentionAutocomplete";
 
 /**
@@ -16,8 +16,11 @@ export type QuincyRichTextEditorProps = Omit<QuincyRichTextEditorBaseProps, "med
   media?: EmbeddedMediaScope;
   /** Turns on link previews (#497): applying a link asks the server for the page's card and inserts it after the link's block. */
   linkPreviews?: EmbeddedMediaScope;
-  /** Turns on Attachments (#952) on a Project discussion comment: any file that is not a photo or video to embed is attached to it. */
-  attachments?: { projectId: string };
+  /**
+   * Turns on Attachments (#952) on a Project discussion comment: any file that is not a photo or video to embed is attached to it. `owner: "video_note"` (#955) uploads a staff
+   * Video note's or reply's files behind the note-writing gate.
+   */
+  attachments?: { projectId: string; owner?: AttachmentOwner };
 };
 
 export function QuincyRichTextEditor({ media, linkPreviews, attachments, ...rest }: QuincyRichTextEditorProps) {
@@ -36,9 +39,10 @@ export function QuincyRichTextEditor({ media, linkPreviews, attachments, ...rest
   }, [media, heicEnabled]);
   const previews = useMemo(() => linkPreviews === undefined ? undefined : (url: string, signal?: AbortSignal) => requestLinkPreview(linkPreviews, url, signal), [linkPreviews]);
   const attachmentProject = attachments?.projectId;
+  const attachmentOwner = attachments?.owner;
   const files = useMemo<EditorAttachmentTransport | undefined>(() => attachmentProject === undefined ? undefined : {
     maxPerPost: ATTACHMENT_MAX_PER_POST, maxBytes: ATTACHMENT_MAX_BYTES, url: attachmentUrl,
-    upload: (file, options) => uploadAttachment(attachmentProject, file, options),
-  }, [attachmentProject]);
+    upload: (file, options) => uploadAttachment(attachmentProject, file, options, attachmentOwner),
+  }, [attachmentProject, attachmentOwner]);
   return <QuincyRichTextEditorBase {...rest} media={transport} linkPreviews={previews} attachments={files} />;
 }

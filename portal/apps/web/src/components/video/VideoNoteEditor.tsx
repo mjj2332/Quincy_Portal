@@ -10,11 +10,11 @@ type Mentionable = MentionableUser[];
 
 /**
  * The rich field every staff video-note form shares (#835): the composer, an edit and a reply. `@` lists the Project's video audience (`scope=video`: the people who can open a video note, not the
- * Collaboration tab's list), images and videos upload as the note's own media, and `onUploadingChange` lets the host hold Post / Save until each has landed. No link previews: the profile does not
+ * Collaboration tab's list), images, videos and files (#955) upload as the note's own, and `onUploadingChange` lets the host hold Post / Save until each has landed. No link previews: the profile does not
  * allow them. It is the `note` preset (#927): no fixed toolbar but a bubble over a selection, and the photos and videos as a strip after the text; the box's
  * paperclip opens the picker through `ref`, and `stripContainer` puts the strip in the box's slot.
  */
-export function VideoNoteEditor({ projectId, role, value, onChange, disabled, id, placeholder, onSubmit, onUploadingChange, ref, stripContainer, bubbleDockTo, bubbleDocked, pill, pillWrap, toolbarContainer, inlineStart, inlineEnd, contentClassName, contentAttributes }: {
+export function VideoNoteEditor({ projectId, role, value, onChange, disabled, id, placeholder, onSubmit, onUploadingChange, onFailedFilesChange, ref, stripContainer, bubbleDockTo, bubbleDocked, pill, pillWrap, toolbarContainer, inlineStart, inlineEnd, contentClassName, contentAttributes }: {
   projectId: string;
   role: Role;
   value: RichTextDoc;
@@ -24,6 +24,8 @@ export function VideoNoteEditor({ projectId, role, value, onChange, disabled, id
   placeholder?: string;
   onSubmit?: () => void;
   onUploadingChange?: (uploading: boolean) => void;
+  /** How many files failed to upload (#955): the host holds Send or Save until each is retried or removed, so a note never goes out missing a file. */
+  onFailedFilesChange?: (count: number) => void;
   /** The editor's handle (#927): `pickMedia()` for the box's paperclip. */
   ref?: Ref<RichTextEditorHandle>;
   /** Where the draft strip renders (#927): see `QuincyRichTextEditorBase`. */
@@ -49,7 +51,7 @@ export function VideoNoteEditor({ projectId, role, value, onChange, disabled, id
   return <QuincyRichTextEditor
     preset="note" ref={ref} {...(stripContainer !== undefined ? { stripContainer } : {})} bubbleDockTo={bubbleDockTo} {...(bubbleDocked !== undefined ? { bubbleDocked } : {})} id={id} value={value} onChange={onChange} limit={VIDEO_NOTE_BODY_MAX} disabled={disabled}
     loadMentionables={loadMentionables} placeholder={placeholder} onSubmit={onSubmit}
-    media={{ projectId, owner: "video_note" }} onUploadingChange={onUploadingChange}
+    media={{ projectId, owner: "video_note" }} attachments={{ projectId, owner: "video_note" }} onUploadingChange={onUploadingChange} onFailedFilesChange={onFailedFilesChange}
     pill={pill} {...(pillWrap !== undefined ? { pillWrap } : {})} toolbarContainer={toolbarContainer} inlineStart={inlineStart} inlineEnd={inlineEnd} contentClassName={contentClassName} {...(contentAttributes ? { contentAttributes } : {})}
   />;
 }

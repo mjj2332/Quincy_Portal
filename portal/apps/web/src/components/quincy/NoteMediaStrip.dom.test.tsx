@@ -32,6 +32,25 @@ const tiles = (host: ParentNode) => [...host.querySelectorAll<HTMLElement>('[dat
 const guestMedia = (mediaId: string) => `/d/review/media/${mediaId}`;
 const guestPoster = (mediaId: string) => `/d/review/media/${mediaId}/poster`;
 
+describe("NoteBody: a note's files (#955)", () => {
+  const file = (attachmentId: string, name?: string, bytes?: number): RichTextBlock => ({ type: "attachment", attrs: { attachmentId, ...(name ? { name } : {}), ...(bytes ? { bytes } : {}) } });
+  const chips = (host: ParentNode) => [...host.querySelectorAll<HTMLElement>('[data-testid="attachment-chip"]')];
+
+  it("draws the text, the media strip, then the files as download chips, at the staff route by default", () => {
+    const host = mount(<NoteBody content={doc(p("Plan"), file(B, "Grade notes.pdf", 40_000), image(A))} />);
+    const order = [...host.querySelectorAll<HTMLElement>('[data-testid="note-body-text"], [data-testid="note-media-strip"], [data-testid="attachment-list"]')].map((node) => node.dataset.testid);
+    expect(order).toEqual(["note-body-text", "note-media-strip", "attachment-list"]);
+    expect(host.querySelector('[data-testid="note-body-text"] [data-testid="attachment-chip"]')).toBeNull();
+    expect(chips(host).map((chip) => [chip.getAttribute("href"), chip.getAttribute("aria-label")])).toEqual([[`/media/attachments/${B}`, "Download Grade notes.pdf, 40 KB"]]);
+  });
+
+  it("downloads from the caller's route on a Review link, and draws a file the server no longer serves as unavailable", () => {
+    const host = mount(<NoteBody content={doc(file(A, "LUT.zip", 2_500_000), file(B))} attachmentUrl={(id) => `/d/api/links/L/attachments/${id}`} />);
+    expect(host.querySelector('[data-testid="note-body-text"]')).toBeNull();
+    expect(chips(host).map((chip) => [chip.dataset.state, chip.getAttribute("href")])).toEqual([["ready", `/d/api/links/L/attachments/${A}`], ["unavailable", null]]);
+  });
+});
+
 describe("NoteBody", () => {
   it("draws the text, then the strip, with the media in document order", () => {
     const host = mount(<NoteBody content={doc(p("Before"), image(A), p("After"), video(B))} />);

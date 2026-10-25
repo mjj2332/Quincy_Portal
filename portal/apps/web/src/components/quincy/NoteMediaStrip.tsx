@@ -1,5 +1,6 @@
 import type { RichTextDoc, RichTextMediaNode } from "@quincy/shared";
-import { splitNoteMedia } from "../../lib/note-media-strip";
+import { splitNoteFiles, splitNoteMedia } from "../../lib/note-media-strip";
+import { AttachmentChip, AttachmentList } from "./AttachmentChip";
 import { RichTextContent, type RichTextMediaUrls } from "../RichTextContent";
 import { EmbeddedImage } from "./EmbeddedImage";
 import { EmbeddedVideo } from "./EmbeddedVideo";
@@ -10,11 +11,14 @@ import { EmbeddedVideo } from "./EmbeddedVideo";
  * (`splitNoteMedia`). No prototype frame shows a posted note's media; the plan settles the strip. Guest-safe: nothing here reaches
  * the staff API, and a Review link passes its own `mediaUrl` / `posterUrl`.
  */
-export function NoteBody({ content, className, mediaUrl, posterUrl }: { content: RichTextDoc; className?: string } & RichTextMediaUrls) {
-  const { text, media } = splitNoteMedia(content);
+export function NoteBody({ content, className, mediaUrl, posterUrl, attachmentUrl }: { content: RichTextDoc; className?: string } & RichTextMediaUrls) {
+  // #955: the files come out first and are drawn last, as the C4 chips (download links at `attachmentUrl`: the staff route, or a Review link's own).
+  const { rest, files } = splitNoteFiles(content);
+  const { text, media } = splitNoteMedia(rest);
   return <div className="flex min-w-0 flex-col gap-[var(--space-2)]">
-    {text && <div data-testid="note-body-text" className="min-w-0"><RichTextContent content={text} className={className} mediaUrl={mediaUrl} posterUrl={posterUrl} /></div>}
+    {text && <div data-testid="note-body-text" className="min-w-0"><RichTextContent content={text} className={className} mediaUrl={mediaUrl} posterUrl={posterUrl} attachmentUrl={attachmentUrl} /></div>}
     {media.length > 0 && <NoteMediaStrip media={media} mediaUrl={mediaUrl} posterUrl={posterUrl} />}
+    {files.length > 0 && <AttachmentList>{files.map((node) => <AttachmentChip key={node.attrs.attachmentId} attachmentId={node.attrs.attachmentId} name={node.attrs.name} bytes={node.attrs.bytes} attachmentUrl={attachmentUrl} />)}</AttachmentList>}
   </div>;
 }
 

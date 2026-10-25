@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { RichTextBlock, RichTextDoc } from "@quincy/shared";
-import { splitNoteMedia } from "./note-media-strip";
+import { splitNoteFiles, splitNoteMedia } from "./note-media-strip";
 
 /** #927 T1: a posted note reads as its text, then one strip of its media. The split is display-only and never rewrites the stored document. */
 const A = "11111111-1111-4111-8111-111111111111";
@@ -15,6 +15,17 @@ const image = (mediaId: string): RichTextBlock => ({ type: "image", attrs: { med
 const video = (mediaId: string): RichTextBlock => ({ type: "video", attrs: { mediaId, hasPoster: true } });
 const list = (...items: string[]): RichTextBlock => ({ type: "bulletList", content: items.map((text) => ({ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text }] }] })) });
 const doc = (...content: RichTextBlock[]): RichTextDoc => ({ type: "doc", content });
+
+describe("splitNoteFiles (#955)", () => {
+  const file = (attachmentId: string): RichTextBlock => ({ type: "attachment", attrs: { attachmentId, name: "Grade notes.pdf", bytes: 40 } });
+  it("takes a note's Attachments out in document order, leaving the rest as it was", () => {
+    expect(splitNoteFiles(doc(p("Plan"), image(A), file(B), file(C)))).toEqual({ rest: doc(p("Plan"), image(A)), files: [file(B), file(C)] });
+  });
+  it("leaves a note with no files as it is", () => {
+    const note = doc(p("Plan"), video(A));
+    expect(splitNoteFiles(note)).toEqual({ rest: note, files: [] });
+  });
+});
 
 describe("splitNoteMedia", () => {
   it("leaves a text-only note whole, with no media", () => {

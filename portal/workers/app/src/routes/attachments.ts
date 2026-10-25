@@ -8,12 +8,14 @@ import type { AppEnv } from "../env";
 import { audit } from "../lib/audit";
 import type { UploadScope } from "../lib/embedded-media-upload";
 import { abortAttachmentUpload, completeAttachment, directAttachment, presignAttachment } from "../lib/attachment-upload";
-import { collaborationGate } from "./embedded-media";
+import { getAttachment } from "../lib/attachments";
+import { collaborationGate, videoNoteUploadGate } from "./embedded-media";
 import { jsonInput } from "./helpers";
 
 /**
  * Attachments on a Project's discussion (#952): presign, the dev direct PUT, complete and abort. The people are the Collaboration tab's, as for Embedded media (owner decision A1:
- * External editors on the Project too), through the same `collaborationGate` (staff off the Project 403, an External outside it 404). The download is `GET /media/attachments/:id`.
+ * External editors on the Project too), through the same `collaborationGate` (staff off the Project 403, an External outside it 404). A staff Video note's file (#955, `owner: "video_note"`)
+ * takes `videoNoteUploadGate` instead (the people who may write a note), as its Embedded media does. The download is `GET /media/attachments/:id`.
  */
 const uuid = z.string().uuid();
 const completeInput = z.object({ parts: z.array(z.object({ partNumber: z.number().int().positive(), etag: z.string().min(1) }).strict()).optional() }).strict();
@@ -29,21 +31,31 @@ function scopeOf(c: Context<AppEnv>, projectId: string): UploadScope {
   return { env: c.env, projectId, uploader: { userId: user.id }, audit: (action, attachmentId, meta) => audit(c.env, user, action, "attachment", attachmentId, meta) };
 }
 
+/** The gate for a request about an existing row: a Video note's file takes the note gate, every other row (and an unknown id) the Collaboration gate. */
+async function gateForRow(c: Context<AppEnv>, projectId: string, attachmentId: string) {
+  const row = await getAttachment(c.env.DB, attachmentId);
+  return row?.ownerKind === "video_note" && row.projectId === projectId ? videoNoteUploadGate(c, projectId) : collaborationGate(c, projectId);
+}
+
 const projectExists = async (c: Context<AppEnv>, projectId: string) => Boolean(await createDb(c.env.DB).select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, projectId)).get());
 
 attachmentRoutes.post("/projects/:projectId/attachments", terminalRoute("/projects/:projectId/attachments", async (c) => {
   const projectId = c.req.param("projectId"); if (!uuid.safeParse(projectId).success) return c.json({ error: "Invalid project id" }, 400);
-  const project = await collaborationGate(c, projectId); if (project instanceof Response) return project;
+  // The owner picks the gate, so it is peeked at before the body is parsed (Hono caches the body; `jsonInput` reads it again).
+  const peek: unknown = await c.req.json().catch(() => null);
+  const videoNote = typeof peek === "object" && peek !== null && (peek as { owner?: unknown }).owner === "video_note";
+  const project = await (videoNote ? videoNoteUploadGate(c, projectId) : collaborationGate(c, projectId)); if (project instanceof Response) return project;
   if (project.archivedAt) return archivedReply(c);
   const data = await jsonInput(c, attachmentPresignInput); if (data instanceof Response) return data;
-  return presignAttachment(scopeOf(c, projectId), { ...data, ownerKind: "project_comment", maxBytes: ATTACHMENT_MAX_BYTES });
+  const { owner, ...file } = data;
+  return presignAttachment(scopeOf(c, projectId), { ...file, ownerKind: owner === "video_note" ? "video_note" : "project_comment", maxBytes: ATTACHMENT_MAX_BYTES });
 }));
 
 attachmentRoutes.put("/projects/:projectId/attachments/:attachmentId/direct", terminalRoute("/projects/:projectId/attachments/:attachmentId/direct", async (c) => {
   if (c.env.APP_ENV !== "dev") return c.json({ error: "Direct uploads are available only in dev" }, 404);
   const projectId = c.req.param("projectId"); const attachmentId = c.req.param("attachmentId");
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(attachmentId).success) return invalid(c);
-  const project = await collaborationGate(c, projectId); if (project instanceof Response) return project;
+  const project = await gateForRow(c, projectId, attachmentId); if (project instanceof Response) return project;
   if (project.archivedAt) return archivedReply(c);
   return directAttachment(scopeOf(c, projectId), attachmentId, c.req.raw.body);
 }));
@@ -53,7 +65,7 @@ attachmentRoutes.post("/projects/:projectId/attachments/:attachmentId/complete",
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(attachmentId).success) return invalid(c);
   // A row whose Project is gone is not ours to clean up: the hard delete queued its keys before the cascade.
   if (!await projectExists(c, projectId)) return stray(c);
-  const project = await collaborationGate(c, projectId); if (project instanceof Response) return project;
+  const project = await gateForRow(c, projectId, attachmentId); if (project instanceof Response) return project;
   if (project.archivedAt) return archivedReply(c);
   const data = await jsonInput(c, completeInput); if (data instanceof Response) return data;
   return completeAttachment(scopeOf(c, projectId), attachmentId, data);
@@ -64,6 +76,6 @@ attachmentRoutes.post("/projects/:projectId/attachments/:attachmentId/abort", te
   const projectId = c.req.param("projectId"); const attachmentId = c.req.param("attachmentId");
   if (!uuid.safeParse(projectId).success || !uuid.safeParse(attachmentId).success) return invalid(c);
   if (!await projectExists(c, projectId)) return stray(c);
-  const project = await collaborationGate(c, projectId); if (project instanceof Response) return project;
+  const project = await gateForRow(c, projectId, attachmentId); if (project instanceof Response) return project;
   return abortAttachmentUpload(scopeOf(c, projectId), attachmentId);
 }));
