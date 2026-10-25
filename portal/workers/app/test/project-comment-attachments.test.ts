@@ -225,3 +225,23 @@ describe("Project hard delete", () => {
     expect(queue.results).toEqual([{ k: stuck.key, u: "s3-att-stuck" }]);
   });
 });
+
+describe("notifications say how many Attachments a comment has (#957)", () => {
+  const payloads = async (commentId: string, type: string) => (await database.DB.prepare("SELECT safe_payload_json AS p FROM project_activity_events WHERE project_id = ? AND event_type = ? AND source_id = ? ORDER BY created_at, id").bind(ids.project, type, commentId).all<{ p: string }>()).results.map((row) => JSON.parse(row.p) as Record<string, unknown>);
+
+  it("carries the count on a created comment and none on one without files", async () => {
+    const [a, b] = [await pending(), await pending()];
+    const withFiles = await created(await post("member", fileDoc(a, b)));
+    expect(await payloads(withFiles.id, "project.comment.created")).toEqual([{ commentId: withFiles.id, attachmentCount: 2 }]);
+    const plain = await created(await post("member", { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "No files" }] }] }));
+    expect(await payloads(plain.id, "project.comment.created")).toEqual([{ commentId: plain.id }]);
+  });
+
+  it("carries the count the comment has after an edit", async () => {
+    const [a, b] = [await pending(), await pending()];
+    const comment = await created(await post("member", fileDoc(a, b)));
+    const response = await edit("member", comment.id, fileDoc(a));
+    expect(response.status).toBe(200);
+    expect(await payloads(comment.id, "project.comment.edited")).toEqual([{ commentId: comment.id, attachmentCount: 1 }]);
+  });
+});

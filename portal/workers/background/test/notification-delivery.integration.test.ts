@@ -59,6 +59,8 @@ type DeliveryFixtureOptions = {
   inAppStatus?: "pending" | "processing" | "sent" | "suppressed" | "failed" | "unknown" | "discarded";
   emailStatus?: "pending" | "processing" | "sent" | "suppressed" | "failed" | "unknown" | "discarded";
   ledgerAttempts?: number;
+  /** The Attachment count the comment's activity carries (#957). */
+  attachmentCount?: number;
 };
 
 async function seedDelivery(options: DeliveryFixtureOptions = {}) {
@@ -87,7 +89,7 @@ async function seedDelivery(options: DeliveryFixtureOptions = {}) {
       actorId,
       occurredAt: new Date(now).toISOString(),
       source: { kind: "project_comment" as const, id: commentId, key: `project-comment:${commentId}:created` },
-      safePayload: { commentId },
+      safePayload: options.attachmentCount ? { commentId, attachmentCount: options.attachmentCount } : { commentId },
       deepLink: { kind: "project_collaboration" as const, path: `/projects/${projectId}?collaboration=open` },
     },
     broadDelivery: { registryKey: "project.comment.created" as const, sourceActivityId: "activity-1", coalesce: null },
@@ -158,7 +160,7 @@ async function seedAssignment(options: AssignmentFixtureOptions = {}) {
   return { now, actorId, recipientId, projectId, membershipId, outboxId, payload };
 }
 
-async function seedBroadDelivery() {
+async function seedBroadDelivery(attachmentCount?: number) {
   const now = Date.now();
   const actorId = crypto.randomUUID();
   const recipientId = crypto.randomUUID();
@@ -181,7 +183,7 @@ async function seedBroadDelivery() {
     database.DB.prepare("INSERT INTO projects (id, street, stage_key, created_at, updated_at) VALUES (?, 'Broad Activity Street', 'editing_autohdr', ?, ?)").bind(projectId, now, now),
     database.DB.prepare("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'editor', ?)").bind(membershipId, projectId, recipientId, now),
     database.DB.prepare("INSERT INTO audit_log (id, actor_id, action, target_type, target_id, meta_json, created_at) VALUES (?, ?, 'project.test', 'projects', ?, '{}', ?)").bind(auditId, actorId, projectId, now),
-    database.DB.prepare("INSERT INTO project_activity_events (id, schema_version, event_type, category, project_id, actor_kind, actor_id, occurred_at, source_kind, source_id, source_key, safe_payload_json, deep_link_kind, deep_link_path, created_at) VALUES (?, 1, 'project.comment.created', 'comment', ?, 'user', ?, ?, 'project_comment', ?, ?, ?, 'project_collaboration', ?, ?)").bind(activityId, projectId, actorId, now, commentId, `project-comment:${commentId}:created`, JSON.stringify({ commentId }), `/projects/${projectId}?collaboration=open`, now),
+    database.DB.prepare("INSERT INTO project_activity_events (id, schema_version, event_type, category, project_id, actor_kind, actor_id, occurred_at, source_kind, source_id, source_key, safe_payload_json, deep_link_kind, deep_link_path, created_at) VALUES (?, 1, 'project.comment.created', 'comment', ?, 'user', ?, ?, 'project_comment', ?, ?, ?, 'project_collaboration', ?, ?)").bind(activityId, projectId, actorId, now, commentId, `project-comment:${commentId}:created`, JSON.stringify(attachmentCount ? { commentId, attachmentCount } : { commentId }), `/projects/${projectId}?collaboration=open`, now),
     database.DB.prepare("INSERT INTO notification_outbox (id, schema_version, event_type, source_key, project_id, actor_id, recipient_id, payload_json, status, available_at, coalesce_key, coalesce_until, recipient_membership_cycle_id, created_at, updated_at) VALUES (?, 1, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, ?, ?, ?)").bind(outboxId, NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad, sourceKey, projectId, actorId, recipientId, JSON.stringify(payload), now - 1, membershipId, now, now),
     database.DB.prepare("INSERT INTO notification_delivery_ledger (id, outbox_id, event_type, source_key, recipient_id, channel, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'in_app', 'pending', ?, ?)").bind(crypto.randomUUID(), outboxId, NOTIFICATION_OUTBOX_EVENT_TYPES.projectActivityBroad, sourceKey, recipientId, now, now),
   ]);
@@ -431,6 +433,32 @@ describe("TB4 notification delivery Worker integration", () => {
     expect((afterDismissal as { ack: ReturnType<typeof vi.fn> }).ack).toHaveBeenCalledOnce();
     expect(send).toHaveBeenCalledOnce();
     expect(await database.DB.prepare("SELECT count(*) AS count FROM notifications WHERE source_key = ?").bind(fixture.mappingId).first()).toEqual({ count: 0 });
+  });
+
+  it("says how many Attachments a mentioning comment has, in the notification and the email, and nothing when it has none (#957)", async () => {
+    const withFiles = await seedDelivery({ attachmentCount: 2 });
+    const send = vi.fn().mockResolvedValue({ messageId: "mention-files" });
+    await processNotificationMessage(deliveryEnv(send), message(withFiles.outboxId));
+    expect(await database.DB.prepare("SELECT body FROM notifications WHERE source_key = ?").bind(withFiles.mappingId).first()).toEqual({ body: "You were mentioned in a project comment with 2 attachments." });
+    expect(send).toHaveBeenCalledOnce();
+    const mail = send.mock.calls[0]![0] as { text: string; html: string };
+    expect(mail.text).toContain("with 2 attachments");
+    expect(mail.html).toContain("with 2 attachments");
+
+    const plain = await seedDelivery();
+    const plainSend = vi.fn().mockResolvedValue({ messageId: "mention-plain" });
+    await processNotificationMessage(deliveryEnv(plainSend), message(plain.outboxId));
+    expect(await database.DB.prepare("SELECT body FROM notifications WHERE source_key = ?").bind(plain.mappingId).first()).toEqual({ body: "You were mentioned in a project comment." });
+    expect((plainSend.mock.calls[0]![0] as { text: string }).text).not.toContain("attachment");
+  });
+
+  it("says how many Attachments a comment has in the Project activity notification, and nothing when it has none (#957)", async () => {
+    const withFiles = await seedBroadDelivery(3);
+    await processNotificationMessage(deliveryEnv(), message(withFiles.outboxId));
+    expect(await database.DB.prepare("SELECT body FROM notifications WHERE source_key = ?").bind(withFiles.sourceKey).first()).toMatchObject({ body: expect.stringContaining("A project comment was added with 3 attachments.") });
+    const plain = await seedBroadDelivery();
+    await processNotificationMessage(deliveryEnv(), message(plain.outboxId));
+    expect(await database.DB.prepare("SELECT body FROM notifications WHERE source_key = ?").bind(plain.sourceKey).first()).toMatchObject({ body: expect.not.stringContaining("attachment") });
   });
 
   it("delivers durable assignments by role, permits self/archived occurrences, and reauthorizes the exact cycle", async () => {
