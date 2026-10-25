@@ -481,6 +481,9 @@ describe("external-editor visibility inventory", () => {
 // fixed formatting toolbar (Bold … Redo, Heading, Insert image/video, its toolbar, group and separator roles) is gone, formatting
 // is the selection bubble; the paperclip ("Add photos or videos") and a round "Post comment" Send replace it and "Post". No data a
 // role may see changed.
+//
+// Re-frozen, deliberately, for #952 (Attachments, owner decision A1): the Discussion paperclip takes any file on a Project comment,
+// so it is named "Add files" for both roles alike. Nothing else moved.
 const FROZEN_EXTERNAL_EDITOR = {
   "RAW": {
     "testids": {
@@ -723,7 +726,7 @@ const FROZEN_EXTERNAL_EDITOR = {
     "controls": [
       "+ Add an item",
       "Activity",
-      "Add photos or videos",
+      "Add files",
       "Collaboration",
       "Collapse checklist",
       "Copy0",
@@ -1021,7 +1024,7 @@ const FROZEN_ADMIN = {
     "controls": [
       "+ Add an item",
       "Activity",
-      "Add photos or videos",
+      "Add files",
       "Collaboration",
       "Collapse checklist",
       "Copy0",
