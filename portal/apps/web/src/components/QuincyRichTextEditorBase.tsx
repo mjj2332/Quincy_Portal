@@ -8,6 +8,8 @@ import { cn } from "../lib/utils";
 import { useMediaQuery } from "../lib/use-media-query";
 import { EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_VIDEO_ACCEPT, RenditionFailedError, embeddedImageAccept, embeddedImageProblem, embeddedVideoProblem, type EditorMediaTransport, type LinkPreviewRequest } from "../lib/embedded-media-core";
 import { splitNoteMedia } from "../lib/note-media-strip";
+import { linkPreviewSlot } from "../lib/link-preview-slot";
+import { PastedWebAddressLinks, pastedLinks, pasteRulesWithoutLink } from "../lib/rich-text-paste-links";
 import {
   EmbeddedImage,
   EmbeddedVideo,
@@ -290,6 +292,7 @@ export function QuincyRichTextEditorBase({
   const contentEpoch = useRef(0);
   const onUploadingChangeRef = useRef(onUploadingChange); onUploadingChangeRef.current = onUploadingChange;
   const addImagesRef = useRef<(files: File[], at?: number, as?: "image" | "video") => void>(() => {});
+  const offerLinkPreviewRef = useRef<(href: string, at?: number) => void>(() => {});
   // Each running upload's way to stop and to give up its place (the busy count and the tray row), once, whichever of finishing and cancelling comes first.
   // `discard` tells the server to drop a HEIC that was being prepared (a Project has an abort route; the Notice board has none); `retry` re-queues a failed one.
   const running = useRef(new Map<number, { controller: AbortController; release: () => void; discard: () => void; retry: () => void }>());
@@ -316,7 +319,12 @@ export function QuincyRichTextEditorBase({
         : extension === EmbeddedVideo ? (preset === "note" ? EmbeddedVideoNoteNode : mediaUrl && posterUrl ? EmbeddedVideoWithView.configure({ mediaUrl, posterUrl }) : EmbeddedVideoWithView)
         : extension),
     ...(preset === "document" ? [RichTextSlashCommand.configure({ items: [...RICH_TEXT_BASIC_SLASH_ITEMS, RICH_TEXT_TABLE_SLASH_ITEM] })] : []),
+    // A pasted web address becomes a link where Link previews are on (#947); the editor then offers it a card.
+    PastedWebAddressLinks.configure({ enabled: () => Boolean(linkPreviewsRef.current) && !disabledRef.current }),
   ], [preset, mentionsOn, mediaUrl, posterUrl]);
+  // Read once, when the editor is built: the hosts with Link previews (#947) always have them.
+  const linksPasted = Boolean(linkPreviews);
+  const pasteRules = useMemo(() => (linksPasted ? pasteRulesWithoutLink(extensions) : true), [linksPasted, extensions]);
   const created = useEditor({
     extensions,
     // The toolbar subscribes to its own formatting snapshot (`useRichTextState`); the field itself
@@ -324,6 +332,8 @@ export function QuincyRichTextEditorBase({
     shouldRerenderOnTransaction: false,
     content: toTiptap(value),
     editable: !disabled,
+    // Where this editor links pasted addresses itself, Tiptap's own Link paste rule (emails, bare domains) is left out (#947).
+    enablePasteRules: pasteRules,
     editorProps: {
       attributes: { class: "rich-text__editor-content " + (preset === "note" ? NOTE_CONTENT_UTILITIES : EDITOR_CONTENT_UTILITIES + (preset === "document" ? DOCUMENT_CONTENT_UTILITIES : "")), "data-placeholder": placeholder, ...(id ? { id } : {}), ...(ariaLabel ? { "aria-label": ariaLabel } : {}) },
       // A file dropped or pasted into the editor is ours to handle: letting the browser have it would
@@ -385,7 +395,7 @@ export function QuincyRichTextEditorBase({
         return false;
       },
     },
-    onUpdate: ({ editor: next, transaction }) => {
+    onUpdate: ({ editor: next, transaction, appendedTransactions }) => {
       const doc = tiptapToRichTextDoc(next.getJSON(), { keepPreviewDisplay: true });
       const serialised = JSON.stringify(doc);
       // Tiptap/ProseMirror can dispatch a no-op transaction (e.g. from a blur triggered by a
@@ -404,6 +414,7 @@ export function QuincyRichTextEditorBase({
       // Likewise a sibling upload landing must not retire the cancel announcement or its re-announce timer.
       if (!isUploadInsert) { clearCancelTimer(); setUploadCancelled(false); }
       setNestingBlocked(false); setMentionDismissed(false); setQuery(mentionsOnRef.current ? mentionQuery(next) : null);
+      for (const { href, at } of pastedLinks(appendedTransactions)) offerLinkPreviewRef.current(href, at);
     },
     onSelectionUpdate: ({ editor: next }) => setQuery(mentionsOnRef.current ? mentionQuery(next) : null),
   });
@@ -554,14 +565,15 @@ export function QuincyRichTextEditorBase({
   const pendingPreviews = useRef(new Set<string>());
   const removedPreviews = useRef(new Map<string, number>());
   const shownPreviews = useRef(new Set<string>());
-  const offerLinkPreview = (href: string) => {
+  // `at` is where the link sits (a pasted one, #947); absent, the selection's end (a link just applied).
+  const offerLinkPreview = (href: string, at?: number) => {
     const request = linkPreviewsRef.current; const current = editorRef.current;
     if (!request || !current || disabledRef.current) return;
     const cards = () => { const found: string[] = []; current.state.doc.forEach((child) => { if (child.type.name === "linkPreview") found.push(String(child.attrs.url ?? "")); }); return found; };
     if (cards().length >= RICH_TEXT_MAX_LINK_PREVIEWS || cards().includes(href) || pendingPreviews.current.has(href)) return;
     const pending = pendingPreviews.current; pending.add(href);
     const key = ++uploadSeq.current; const epoch = contentEpoch.current;
-    const { $to } = current.state.selection;
+    const $to = at === undefined ? current.state.selection.$to : current.state.doc.resolve(at);
     insertAt.current.set(key, $to.depth >= 1 ? $to.after(1) : $to.pos);
     const controller = new AbortController(); previewControllers.current.add(controller);
     void request(href, controller.signal).then((card) => {
@@ -573,11 +585,12 @@ export function QuincyRichTextEditorBase({
       if (cards().length >= RICH_TEXT_MAX_LINK_PREVIEWS || cards().includes(card.url) || hasPreviewId(live.state.doc, card.previewId)) return;
       const size = live.state.doc.content.size;
       const mapped = Math.min(insertAt.current.get(key) ?? size, size);
-      const $at = live.state.doc.resolve(mapped);
       // insertContentAt selects inserted content by default: the arriving card must not take the author's selection, or the next keystroke deletes it.
-      live.chain().insertContentAt($at.depth >= 1 ? $at.after(1) : mapped, { type: "linkPreview", attrs: card }, { updateSelection: false }).run();
+      // Among its block's cards it takes its link's place in the text, not its place in the order the fetches finished (#947).
+      live.chain().insertContentAt(linkPreviewSlot(live.state.doc, mapped, href), { type: "linkPreview", attrs: card }, { updateSelection: false }).run();
     }).catch(() => undefined).finally(() => { pending.delete(href); insertAt.current.delete(key); previewControllers.current.delete(controller); });
   };
+  offerLinkPreviewRef.current = offerLinkPreview;
   useEffect(() => () => { for (const controller of previewControllers.current) controller.abort(); }, []);
   useEffect(() => () => {
     for (const entry of [...running.current.values()]) { entry.controller.abort(); entry.discard(); }

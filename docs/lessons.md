@@ -5832,6 +5832,13 @@ Tags: rich-text, focus-overlays, testing-guards · #562
 - **happy-dom repairs the selection on the focus event, so the race itself is not reproducible deterministically.** The regression test pins the sync instead: it clicks Apply synchronously and asserts `view.focus` was called in the same tick (red without the fix), then forces `domObserver.flush()` and asserts the range survives. The flush call is test-only internals.
 - **The old issue command is stale:** the web tests run with `npx vitest run --config vitest.config.ts <file>` (happy-dom), not a `vitest.dom.config.ts` / jsdom.
 
+## Tiptap's Link links pasted text whatever autolink and linkOnPaste say (#947)
+Tags: rich-text · #947
+
+- **`autolink: false, linkOnPaste: false` does not stop pasted linking.** The Link extension also registers a linkify `addPasteRules` rule, gated only by `shouldAutoLink`, so a pasted email became a `mailto:` link and a bare domain an `http://` one, both of which the server refuses. The four editors with Link previews now leave that rule out (`enablePasteRules: pasteRulesWithoutLink(extensions)`, every other paste rule kept) and link pasted `http://`, `https://` and `www.` addresses themselves (`PastedWebAddressLinks` in `lib/rich-text-paste-links.ts`, detector `findWebAddresses` in `lib/web-address.ts`). Video notes and Guest notes still run the stock rule.
+- **Offer the card from `onUpdate`, not from the plugin.** The links are reported as meta on the appended transaction; `onUpdate` reads `appendedTransactions` after the `transaction` event has mapped every pending insertion point, so a place recorded inside the plugin would be mapped through the paste a second time.
+- **A card's place is its link's place in the block, not its arrival.** `linkPreviewSlot` walks back over the cards already after the block and inserts before the first whose link comes later in it.
+
 ## Pasted HEIC flake: one setTimeout(0) does not cover react-query's notify (#576)
 Tags: rich-text, testing-guards · #576
 
