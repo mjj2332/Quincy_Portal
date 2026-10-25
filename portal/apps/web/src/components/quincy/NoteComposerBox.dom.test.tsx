@@ -387,24 +387,89 @@ describe("NoteComposerBox, post (#950: R1's row, E1's Cancel and Save)", () => {
     const rect = (top: number, height: number) => ({ top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
     afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-    it("caps the text so the whole box, Send included, fits above the keyboard, and scrolls Send into sight", async () => {
+    /**
+     * A page model, as the iPhone 18 Pro measured it (#951 keyboard pass): the box sits at 1000px in the document; its text holds 600px (25 lines,
+     * the caret on the last), capped at 60dvh (524px); the rows and padding around the text are 60px. `scrollBy` moves the page; the text scroller
+     * keeps its own scrollTop, clamped as a browser clamps it.
+     */
+    function pageModel() {
+      const page = { scrollY: 0, scrollTop: 0 };
       vi.stubGlobal("visualViewport", viewport); vi.stubGlobal("innerHeight", 874);
-      const scrollBy = vi.fn(); vi.stubGlobal("scrollBy", scrollBy);
-      // The box is 60px of rows and padding around its text; its foot is at 700px, under the keyboard once it is up.
+      const scrollBy = vi.fn((_x: number, y: number) => { page.scrollY += y; });
+      vi.stubGlobal("scrollBy", scrollBy);
+      const textHeight = () => {
+        const fit = Number.parseFloat(q("note-composer-text")!.style.getPropertyValue("--note-box-fit"));
+        return Math.min(600, 524, Number.isFinite(fit) ? fit : Infinity);
+      };
+      const boxTop = () => 1000 - page.scrollY;
       vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
         const id = this.getAttribute("data-testid");
-        return id === "note-composer-box" ? rect(340, 360) : id === "note-composer-text" ? rect(348, 300) : rect(0, 0);
+        return id === "note-composer-box" ? rect(boxTop(), textHeight() + 60) : id === "note-composer-text" ? rect(boxTop() + 8, textHeight()) : rect(0, 0);
       });
+      const caret = () => rect(boxTop() + 8 + 576 - page.scrollTop, 24);
+      Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: caret });
+      const attach = (text: HTMLElement) => Object.defineProperty(text, "scrollTop", {
+        configurable: true, get: () => page.scrollTop, set: (value: number) => { page.scrollTop = Math.max(0, Math.min(600 - textHeight(), value)); },
+      });
+      return { page, scrollBy, attach, boxTop, boxBottom: () => boxTop() + textHeight() + 60, caret, textHeight };
+    }
+    async function focusAtEnd() {
+      const field = q("field-fixture")!;
+      field.textContent = "Line twenty-five";
+      await act(async () => {
+        field.focus();
+        const range = document.createRange(); range.setStart(field.firstChild!, 16); range.collapse(true);
+        window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+      });
+    }
+    afterEach(() => { delete (Range.prototype as { getBoundingClientRect?: unknown }).getBoundingClientRect; });
+
+    it("caps the text so the whole box fits above the keyboard, keeps the caret in sight in it, and sets the box's foot just above the keyboard", async () => {
+      viewport.height = 874;
+      const model = pageModel();
       await mount(post({ tall: true, phone: true }));
       const text = q("note-composer-text")!;
       expect(text.className.split(/\s+/)).toContain("max-h-[min(60dvh,var(--note-box-fit,60dvh))]");
-      await act(async () => { q("field-fixture")!.focus(); });
+      model.attach(text);
+      await focusAtEnd();
+      text.scrollTop = 76; // the caret's line at the foot of the 524px text
+      // iOS scrolls the page for the caret first, against the box's old 584px height: its foot lands on the keyboard's top edge (420px).
+      model.page.scrollY = 1000 + 584 - 420;
       viewport.height = 420;
       await act(async () => { viewport.dispatchEvent(new Event("resize")); });
       // 420 visible, less the box's 60px of rows and padding, less an 8px margin (`--space-2`).
       expect(text.style.getPropertyValue("--note-box-fit")).toBe("352px");
-      // Its foot (700px) is 280px below the keyboard's top edge (420px): the page moves it up by that and the margin.
-      expect(scrollBy).toHaveBeenCalledWith(0, 288);
+      // The text scroller follows the caret down after it shrank: its last line is in sight.
+      expect(model.caret().bottom).toBeLessThanOrEqual(model.boxTop() + 8 + model.textHeight());
+      expect(model.caret().top).toBeGreaterThanOrEqual(model.boxTop() + 8);
+      // The box's foot sits 8px above the keyboard, not where the taller box's foot was; its top is on screen.
+      expect(model.boxBottom()).toBe(412);
+      expect(model.boxTop()).toBeGreaterThanOrEqual(0);
+    });
+
+    it("puts the box back above the keyboard after iOS's own late scroll, then leaves the page to the person", async () => {
+      vi.useFakeTimers();
+      try {
+        viewport.height = 874;
+        const model = pageModel();
+        await mount(post({ tall: true, phone: true }));
+        model.attach(q("note-composer-text")!);
+        await focusAtEnd();
+        model.page.scrollY = 600;
+        viewport.height = 420;
+        await act(async () => { viewport.dispatchEvent(new Event("resize")); });
+        expect(model.boxBottom()).toBe(412);
+        // iOS scrolls again a moment later (120-190ms after the tap): the box is set back.
+        model.page.scrollY += 150;
+        await act(async () => { vi.advanceTimersByTime(150); window.dispatchEvent(new Event("scroll")); });
+        expect(model.boxBottom()).toBe(412);
+        // Once the keyboard has settled, a pan is the person's own: the page is left where they put it.
+        await act(async () => { vi.advanceTimersByTime(1000); });
+        model.page.scrollY -= 200;
+        model.scrollBy.mockClear();
+        await act(async () => { window.dispatchEvent(new Event("scroll")); viewport.dispatchEvent(new Event("scroll")); });
+        expect(model.scrollBy).not.toHaveBeenCalled();
+      } finally { vi.useRealTimers(); }
     });
 
     it("never scrolls the page for a box the focus is not in", async () => {
