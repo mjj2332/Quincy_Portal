@@ -133,7 +133,7 @@ noticeBoardRoutes.post("/notice-board/posts", terminalRoute("/notice-board/posts
   try { await createNoticeBoardPost(c.env.DB, { id, authorId: user.id, body: prepared.body, contentJson: JSON.stringify(prepared.content), mentions, wallClockMs, media: { authorId: user.id, ids: prepared.mediaIds, previewIds: prepared.previewIds, attachmentIds: prepared.attachmentIds, principal: user } }); }
   catch (error) { if (error instanceof NoticeBoardMediaConflictError) return c.json({ error: "An image in this notice is no longer available. Remove it and try again.", code: "media_conflict" }, 409); throw error; }
   await audit(c.env, user, "notice_board.post", "notice_board_post", id);
-  await notifyNoticeBoardMentions(c.env, { actorId: user.id, authorName: user.name, body: prepared.body, mentions });
+  await notifyNoticeBoardMentions(c.env, { actorId: user.id, authorName: user.name, body: prepared.body, mentions, attachmentCount: prepared.attachmentIds.length });
   const post = await findPost(db, id);
   if (!post) return c.json({ error: "Post could not be created" }, 500);
   const readState = await getNoticeBoardReadState(c.env.DB, user.id);
@@ -167,7 +167,7 @@ noticeBoardRoutes.patch("/notice-board/posts/:id", terminalRoute("/notice-board/
   catch (error) { if (error instanceof NoticeBoardMediaConflictError) return c.json({ error: "An image in this notice is no longer available. Remove it and try again.", code: "media_conflict" }, 409); throw error; }
   if (!edited.updated) return c.json({ error: "Post not found" }, 404);
   await audit(c.env, user, "notice_board.edit", "notice_board_post", id);
-  await notifyNoticeBoardMentions(c.env, { actorId: user.id, authorName: user.name, body: prepared.body, mentions: added });
+  await notifyNoticeBoardMentions(c.env, { actorId: user.id, authorName: user.name, body: prepared.body, mentions: added, attachmentCount: prepared.attachmentIds.length });
   const post = await findPost(db, id);
   if (!post) return c.json({ error: "Post could not be updated" }, 500);
   const readState = await getNoticeBoardReadState(c.env.DB, user.id);

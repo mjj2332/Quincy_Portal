@@ -148,6 +148,16 @@ describe("a notice with Attachments", () => {
     expect(attachmentNodes(notice)).toHaveLength(10);
   });
 
+  it("says how many files a notice carries in the mention it sends (#957's count), and nothing when it has none", async () => {
+    const [a, b] = [await pending(), await pending()];
+    const mention = (attachmentIds: string[]) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "For " }, { type: "mention", attrs: { id: ids.admin, label: "x" } }] }, ...attachmentIds.map((attachmentId) => ({ type: "attachment", attrs: { attachmentId } }))] });
+    const latestBody = async () => (await database.DB.prepare("SELECT body FROM notifications WHERE user_id = ? AND type = 'mentioned' ORDER BY created_at DESC, rowid DESC LIMIT 1").bind(ids.admin).first<{ body: string }>())!.body;
+    await created(await post("member", mention([a, b])));
+    expect(await latestBody()).toBe("You were mentioned in a notice-board post with 2 attachments.");
+    await created(await post("member", mention([])));
+    expect(await latestBody()).toBe("You were mentioned in a notice-board post.");
+  });
+
   it("never lets a notice's file be posted on a Project comment", async () => {
     const id = await pending();
     const response = await request(`/api/projects/${ids.project}/comments`, "member", "POST", { content: fileDoc(id) });

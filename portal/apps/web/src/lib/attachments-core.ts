@@ -121,7 +121,7 @@ export async function uploadAttachmentVia(io: AttachmentIo, file: File, options:
 
 /**
  * What the rich-text editor needs to attach files (#952): injected by the host, so the editor itself imports no network module. Absent, the
- * editor's picker, paste and drop behave exactly as before (Video notes, Guest notes and the Notice board, until their tickets).
+ * editor's picker, paste and drop behave exactly as before (Video notes and Guest notes, until their tickets).
  */
 export type EditorAttachmentTransport = {
   maxPerPost: number;
