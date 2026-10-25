@@ -403,6 +403,48 @@ export const embeddedMedia = sqliteTable(
 );
 
 /**
+ * Attachments (#952, migration 0082): any file shared on a post and only ever downloaded. Separate from `embeddedMedia` on purpose:
+ * every reader of that table serves inline. `ownerId` is polymorphic (no FK), NULL while uploading or pending. Exactly one uploader.
+ * `fileName` is the sanitised original name; `contentType` is the declared type, never used to serve (objects are octet-stream).
+ */
+export const attachments = sqliteTable(
+  "attachments",
+  {
+    id: id(),
+    ownerKind: text("owner_kind", { enum: ["project_comment", "notice_post", "video_note"] as const }).notNull(),
+    ownerId: text("owner_id"),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    uploaderId: text("uploader_id").references(() => user.id),
+    uploaderGuestId: text("uploader_guest_id").references(() => guestReviewers.id),
+    fileName: text("file_name").notNull(),
+    contentType: text("content_type").notNull(),
+    bytes: integer("bytes").notNull(),
+    storageKey: text("storage_key").notNull(),
+    uploadId: text("upload_id"),
+    state: text("state", { enum: ["uploading", "pending", "attached", "detached"] as const }).notNull().default("uploading"),
+    detachedAt: integer("detached_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("attachments_storage_key_unique").on(t.storageKey),
+    index("attachments_owner_idx").on(t.ownerKind, t.ownerId),
+    index("attachments_state_detached_idx").on(t.state, t.detachedAt),
+    index("attachments_state_created_idx").on(t.state, t.createdAt),
+    index("attachments_project_idx").on(t.projectId),
+    index("attachments_uploader_guest_idx").on(t.uploaderGuestId),
+    check("attachments_owner_kind_check", sql`${t.ownerKind} IN ('project_comment','notice_post','video_note')`),
+    check("attachments_file_name_check", sql`length(${t.fileName}) BETWEEN 1 AND 255`),
+    check("attachments_bytes_check", sql`${t.bytes} > 0`),
+    check("attachments_state_check", sql`${t.state} IN ('uploading','pending','attached','detached')`),
+    check("attachments_owner_state_check", sql`(${t.state} IN ('uploading','pending')) = (${t.ownerId} IS NULL)`),
+    check("attachments_detached_check", sql`(${t.state} = 'detached') = (${t.detachedAt} IS NOT NULL)`),
+    check("attachments_project_check", sql`(${t.ownerKind} = 'notice_post') = (${t.projectId} IS NULL)`),
+    check("attachments_one_uploader_check", sql`(${t.uploaderId} IS NULL) <> (${t.uploaderGuestId} IS NULL)`),
+  ],
+);
+
+/**
  * Link previews (#497): the card a post shows for a link. A post stores only `previewId`, and the server fills the rest in when it
  * serves the post. `ownerId` is NULL while the preview is pending and polymorphic once owned, so a post and its previews move
  * together inside one batch in application code. `projectId` cascades. `imageMediaId` is the `preview_image` row, cleared when it goes.
