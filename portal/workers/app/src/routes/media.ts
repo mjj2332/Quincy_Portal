@@ -16,6 +16,8 @@ import { attachedVideoNote } from "../lib/video-note-media";
 import { readVideoReviewGate, videoReviewGate } from "../lib/video-review-gate";
 import { LIVE_VERSION, LIVE_VIDEO, versionIsLive } from "../lib/video-live-sql";
 import { serveR2Object, VIDEO_STREAM_HEADERS } from "../lib/r2-serve";
+import { ATTACHMENT_STORED_CONTENT_TYPE, normalizeAttachmentName } from "@quincy/shared";
+import { attachment as attachmentDisposition } from "../lib/download-name";
 
 export const mediaRoutes = new Hono<AppEnv>();
 
@@ -189,6 +191,48 @@ mediaRoutes.get("/embedded/:mediaId", terminalRoute("/embedded/:mediaId", async 
   const extra: Record<string, string> = {};
   if (c.req.query("download") === "1" && row.kind === "video") extra["content-disposition"] = `attachment; filename="video.${row.contentType === "video/quicktime" ? "mov" : "mp4"}"`;
   return serveR2Object(c, target.key, { "content-type": target.contentType, ...EMBEDDED_RESPONSE_HEADERS, ...extra }, "Media object not found");
+}));
+
+/**
+ * An Attachment (#952): who may download it, deny by default. Only an `attached` row is ever served, for everyone (its uploader too): a file that was never posted, or was removed,
+ * stops working. Each owner kind decides the rest, exhaustively, so a new kind is a compile error here until it says who may read it.
+ */
+async function readableAttachment(c: Context<AppEnv>, attachmentId: string): Promise<{ storageKey: string; fileName: string } | Response> {
+  const notFound = () => c.json({ error: "File not found" }, 404);
+  const row = await c.env.DB.prepare(`
+    SELECT a.owner_kind AS ownerKind, a.project_id AS projectId, a.storage_key AS storageKey, a.file_name AS fileName,
+      EXISTS (SELECT 1 FROM project_comments pc WHERE pc.id = a.owner_id AND pc.project_id = a.project_id) AS commentLive
+    FROM attachments a WHERE a.id = ? AND a.state = 'attached'
+  `).bind(attachmentId).first<{ ownerKind: "project_comment" | "notice_post" | "video_note"; projectId: string | null; storageKey: string; fileName: string; commentLive: number }>();
+  if (!row) return notFound();
+  switch (row.ownerKind) {
+    case "project_comment": {
+      // The Collaboration tab's people (owner decision A1: an External editor on the Project too), as `/media/embedded`: staff off the Project 403, an External outside it 404.
+      if (!row.projectId || !row.commentLive) return notFound();
+      if (!await hasProjectCollaborationAccess(c, row.projectId)) return c.get("user").role === "external_editor" ? notFound() : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
+      return row;
+    }
+    // The Notice board (#954) and Video notes (#955) add their own rules; until then nothing of theirs downloads.
+    case "notice_post": return notFound();
+    case "video_note": return notFound();
+    default: { const unknown: never = row.ownerKind; void unknown; return notFound(); }
+  }
+}
+
+/** Every Attachment is a download as octet-stream, never shown inline, never cached, never sniffed, with a sandbox CSP in case a browser renders it anyway. */
+const ATTACHMENT_RESPONSE_HEADERS = {
+  "content-type": ATTACHMENT_STORED_CONTENT_TYPE, "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox",
+  "cache-control": "private, no-store", "cross-origin-resource-policy": "same-origin", "referrer-policy": "no-referrer",
+} as const;
+
+mediaRoutes.get("/attachments/:attachmentId", terminalRoute("/attachments/:attachmentId", async (c) => {
+  const attachmentId = c.req.param("attachmentId");
+  if (!z.string().uuid().safeParse(attachmentId).success) return c.json({ error: "Invalid file id" }, 400);
+  const row = await readableAttachment(c, attachmentId); if (row instanceof Response) return row;
+  const headers = { ...ATTACHMENT_RESPONSE_HEADERS, "content-disposition": attachmentDisposition(normalizeAttachmentName(row.fileName) ?? "file") };
+  // The last admission, after R2 has answered and before a header or byte leaves: a file removed meanwhile is a 404 (the Video Trash precedent).
+  const stillAttached = async () => Boolean(await c.env.DB.prepare("SELECT 1 FROM attachments WHERE id = ? AND state = 'attached'").bind(attachmentId).first());
+  return serveR2Object(c, row.storageKey, headers, "File not found", stillAttached);
 }));
 
 /** A video's poster frame (#494), under the video's own access rules. */

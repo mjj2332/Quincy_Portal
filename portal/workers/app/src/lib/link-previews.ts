@@ -97,12 +97,14 @@ export async function fillLinkPreviews<T extends { content: RichTextDoc }>(db: D
   const wanted = new Set<string>();
   const wantedVideos = new Set<string>();
   const wantedImages = new Set<string>();
+  const wantedFiles = new Set<string>();
   for (const item of items) for (const block of item.content.content) {
     if (block.type === "linkPreview") wanted.add(block.attrs.previewId);
+    else if (block.type === "attachment") wantedFiles.add(block.attrs.attachmentId);
     else if (block.type === "video") wantedVideos.add(block.attrs.mediaId);
     else if (block.type === "image") wantedImages.add(block.attrs.mediaId);
   }
-  if (!wanted.size && !wantedVideos.size && !wantedImages.size) return items;
+  if (!wanted.size && !wantedVideos.size && !wantedImages.size && !wantedFiles.size) return items;
   const rows = new Map<string, PreviewRow>();
   const all = [...wanted];
   for (let index = 0; index < all.length; index += 90) {
@@ -133,8 +135,17 @@ export async function fillLinkPreviews<T extends { content: RichTextDoc }>(db: D
       if (size) sizes.set(row.id, size);
     }
   }
+  // #952: each Attachment's name and size, for its chip. Only an attached row is filled (only an attached row downloads); a node whose row is gone or detached is served bare and
+  // renders "File unavailable". The name is the one stored at upload, historical by design.
+  const files = new Map<string, { name: string; bytes: number }>();
+  const fileIds = [...wantedFiles];
+  for (let index = 0; index < fileIds.length; index += 90) {
+    const chunk = fileIds.slice(index, index + 90);
+    const found = await db.prepare(`SELECT id, file_name, bytes FROM attachments WHERE state = 'attached' AND id IN (${chunk.map(() => "?").join(", ")})`).bind(...chunk).all<{ id: string; file_name: string; bytes: number }>();
+    for (const row of found.results) files.set(row.id, { name: row.file_name, bytes: Number(row.bytes) });
+  }
   return items.map((item) => {
-    if (!item.content.content.some((block) => block.type === "linkPreview" || block.type === "video" || block.type === "image")) return item;
+    if (!item.content.content.some((block) => block.type === "linkPreview" || block.type === "video" || block.type === "image" || block.type === "attachment")) return item;
     const content: RichTextBlock[] = [];
     for (const block of item.content.content) {
       if (block.type === "image") {
@@ -145,6 +156,11 @@ export async function fillLinkPreviews<T extends { content: RichTextDoc }>(db: D
       if (block.type === "video") {
         const hasPoster = posters.get(block.attrs.mediaId);
         content.push(hasPoster === undefined ? block : { type: "video", attrs: { mediaId: block.attrs.mediaId, hasPoster } });
+        continue;
+      }
+      if (block.type === "attachment") {
+        const file = files.get(block.attrs.attachmentId);
+        content.push(file ? { type: "attachment", attrs: { attachmentId: block.attrs.attachmentId, name: file.name, bytes: file.bytes } } : { type: "attachment", attrs: { attachmentId: block.attrs.attachmentId } });
         continue;
       }
       if (block.type !== "linkPreview") { content.push(block); continue; }

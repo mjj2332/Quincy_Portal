@@ -401,6 +401,7 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "GET", path: "/media/asset/:assetId/:variant", class: "scoped" },
   { method: "GET", path: "/media/embedded/:mediaId", class: "scoped" },
   { method: "GET", path: "/media/embedded/:mediaId/poster", class: "scoped" },
+  { method: "GET", path: "/media/attachments/:attachmentId", class: "scoped" },
   { method: "GET", path: "/media/video/:assetId", class: "scoped" },
   { method: "GET", path: "/media/video/:assetId/poster", class: "scoped" },
   { method: "ALL", path: "/media", class: "terminal-fallback" },

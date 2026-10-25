@@ -1378,7 +1378,8 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
   // Abort any embedded-media upload that was started but never completed, so no upload outlives the Project (fast path).
   // An abort that fails is not forgotten: the batch below queues every media key before the cascade erases the rows, and the
   // queue entries of uploads whose abort failed survive until the background sweep has aborted them and deleted the object.
-  const startedUploads = (await c.env.DB.prepare("SELECT original_key, upload_id FROM embedded_media WHERE project_id = ? AND state = 'uploading'").bind(id).all<{ original_key: string; upload_id: string | null }>()).results;
+  // Attachments (#952) in flight take the same path: a multipart upload completed after the purge would leave an object no row owns.
+  const startedUploads = (await c.env.DB.prepare("SELECT original_key, upload_id FROM embedded_media WHERE project_id = ?1 AND state = 'uploading' UNION ALL SELECT storage_key, upload_id FROM attachments WHERE project_id = ?1 AND state = 'uploading'").bind(id).all<{ original_key: string; upload_id: string | null }>()).results;
   const unresolvedUploadKeys: string[] = [];
   await Promise.all(startedUploads.map(async (row) => {
     // A dev-direct upload has no upload id: nothing to abort, but its key stays queued like any in-flight upload.
@@ -1441,6 +1442,8 @@ projectsRoutes.delete("/projects/:id", terminalRoute("/projects/:id", async (c) 
     c.env.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) SELECT original_key, CASE WHEN state = 'uploading' THEN upload_id END, project_id, ? FROM embedded_media WHERE project_id = ? ON CONFLICT(storage_key) DO NOTHING").bind(deletedAt, id),
     c.env.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) SELECT display_key, NULL, project_id, ? FROM embedded_media WHERE project_id = ? AND display_key IS NOT NULL ON CONFLICT(storage_key) DO NOTHING").bind(deletedAt, id),
     c.env.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) SELECT poster_key, NULL, project_id, ? FROM embedded_media WHERE project_id = ? AND poster_key IS NOT NULL ON CONFLICT(storage_key) DO NOTHING").bind(deletedAt, id),
+    // Every Attachment key of this Project (#952), with the upload id of one still uploading.
+    c.env.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) SELECT storage_key, CASE WHEN state = 'uploading' THEN upload_id END, project_id, ? FROM attachments WHERE project_id = ? ON CONFLICT(storage_key) DO NOTHING").bind(deletedAt, id),
     // The same for a staff video upload still in flight (#741): its reservation row, which carries the upload id, goes with the cascade.
     c.env.DB.prepare("INSERT INTO embedded_media_cleanup (storage_key, upload_id, project_id, queued_at) SELECT r2_key, upload_id, project_id, ? FROM video_upload_reservations WHERE project_id = ? AND status IN ('pending', 'completing', 'aborting') ON CONFLICT(storage_key) DO NOTHING").bind(deletedAt, id),
     c.env.DB.prepare("DELETE FROM projects WHERE id = ?").bind(id),
