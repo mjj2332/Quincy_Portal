@@ -7,6 +7,10 @@ import { createQuincyQueryClient } from "../lib/query-client";
 import { createNoticeBoardPost, noticeBoardDataKeys, useNoticeBoardPresentation, type NoticeBoardReadState } from "../lib/notice-board-data";
 import { NoticeBoard, type NoticeBoardPost } from "./NoticeBoard";
 import { chooseNoticeAction, confirmNoticeDelete } from "../testing/notice-menu";
+/** The new notice's round Post notice (#951: named "Posting…" while it posts). */
+const postButton = (scope: ParentNode) => scope.querySelector<HTMLButtonElement>('[data-slot="notice-board-composer"] button[type="submit"]')!;
+/** Locked: the box's Send and Save stay focusable when locked (aria-disabled), as in Collaboration (#950). */
+const isLocked = (button: HTMLButtonElement) => button.disabled || button.getAttribute("aria-disabled") === "true";
 const advanceTimers = (ms: number) => vi.advanceTimersByTimeAsync(ms);
 
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
@@ -292,7 +296,7 @@ describe("Notice Board presentation freshness", () => {
       expect(currentEditEditor.textContent).toContain("Keep this edit draft");
     };
     const assertCreateComposerPreserved = () => {
-      const currentCreateEditor = host.querySelector<HTMLElement>('form[data-slot="notice-board-composer"] [contenteditable="true"]');
+      const currentCreateEditor = host.querySelector<HTMLElement>('[data-slot="notice-board-composer"] [contenteditable="true"]');
       if (!currentCreateEditor) throw new Error("Create composer editor is missing.");
       expect(currentCreateEditor).toBe(createEditor);
       expect(currentCreateEditor.textContent).toContain("Keep this create draft");
@@ -359,7 +363,7 @@ describe("Notice Board presentation freshness", () => {
     apiPostMock.mockRejectedValueOnce(new Error("publish failed"));
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "Created");
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
+    await click(postButton(host));
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("publish failed");
 
     const listCallsBeforeRecovery = apiGetMock.mock.calls.filter(([path]) => path === "/api/notice-board/posts?limit=50").length;
@@ -368,7 +372,7 @@ describe("Notice Board presentation freshness", () => {
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("publish failed");
 
     apiPostMock.mockResolvedValueOnce({ post: created, readState: state(0, marker(created.id, created.createdAt), created) });
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
+    await click(postButton(host));
     expect(host.querySelector('[role="alert"]')).toBeNull();
   });
 
@@ -435,14 +439,14 @@ describe("Notice Board presentation freshness", () => {
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     await chooseNoticeAction(host, "A", "Edit", advanceTimers);
     const editEditor = host.querySelector<HTMLElement>('[data-slot="notice-board-edit-composer"] [contenteditable="true"]')!;
-    const createEditor = host.querySelector<HTMLElement>('form[data-slot="notice-board-composer"] [contenteditable="true"]')!;
+    const createEditor = host.querySelector<HTMLElement>('[data-slot="notice-board-composer"] [contenteditable="true"]')!;
     await typeIntoEditor(editEditor, "Edited");
     await typeIntoEditor(createEditor, "Created");
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
+    await click(postButton(host));
     expect(apiPostMock).toHaveBeenCalledTimes(1);
 
     const saveButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!;
-    expect(saveButton.disabled).toBe(true);
+    expect(isLocked(saveButton)).toBe(true);
     await click(saveButton);
     await keydown(editEditor, "Enter", { metaKey: true });
     expect(apiPatchMock).not.toHaveBeenCalled();
@@ -462,7 +466,7 @@ describe("Notice Board presentation freshness", () => {
     apiPostMock.mockResolvedValue({ post: { ...newPost, authorId: "user-a" }, readState: state(0, marker(newPost.id, newPost.createdAt), newPost) });
     apiPatchMock.mockImplementationOnce(() => new Promise((resolve) => { resolveEdit = resolve; }));
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
-    const createEditor = host.querySelector<HTMLElement>('form[data-slot="notice-board-composer"] [contenteditable="true"]')!;
+    const createEditor = host.querySelector<HTMLElement>('[data-slot="notice-board-composer"] [contenteditable="true"]')!;
     await typeIntoEditor(createEditor, "Created");
     await chooseNoticeAction(host, "A", "Edit", advanceTimers);
     const editEditor = host.querySelector<HTMLElement>('[data-slot="notice-board-edit-composer"] [contenteditable="true"]')!;
@@ -470,9 +474,9 @@ describe("Notice Board presentation freshness", () => {
     await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
     expect(apiPatchMock).toHaveBeenCalledTimes(1);
 
-    const postButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!;
-    expect(postButton.disabled).toBe(true);
-    await click(postButton);
+    const post = postButton(host);
+    expect(isLocked(post)).toBe(true);
+    await click(post);
     await keydown(createEditor, "Enter", { ctrlKey: true });
     expect(apiPostMock).not.toHaveBeenCalled();
 
@@ -525,7 +529,7 @@ describe("Notice Board presentation freshness", () => {
     expect(listCalls).toBeGreaterThanOrEqual(2);
     apiPostMock.mockResolvedValue({ post: created, readState: state(0, marker(created.id, created.createdAt), created) });
     await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "Created");
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
+    await click(postButton(host));
     expect(queryClient!.getQueryData<NoticeBoardPost[]>(noticeBoardDataKeys.posts)?.[0]?.body).toBe("Created");
     resolveStale({ posts: [oldPost] }); await flush();
     expect(queryClient!.getQueryData<NoticeBoardPost[]>(noticeBoardDataKeys.posts)?.[0]?.body).toBe("Created");
@@ -546,7 +550,7 @@ describe("Notice Board presentation freshness", () => {
     apiPostMock.mockImplementationOnce(() => new Promise((resolve) => { resolveCreate = resolve; }));
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "Created");
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
+    await click(postButton(host));
     expect(apiPostMock).toHaveBeenCalledTimes(1);
 
     emit(false); await flush();
@@ -642,7 +646,7 @@ describe("Notice Board presentation freshness", () => {
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     const initialReadStateCalls = readStateCalls;
     await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "Created notice");
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
+    await click(postButton(host));
     expect(readStateCalls).toBe(initialReadStateCalls);
     expect(queryClient!.getQueryData<NoticeBoardPost[]>(noticeBoardDataKeys.posts)?.[0]?.id).toBe(created.id);
     await chooseNoticeAction(host, "A", "Edit", advanceTimers);

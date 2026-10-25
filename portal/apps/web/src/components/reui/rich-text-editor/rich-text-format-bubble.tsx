@@ -24,11 +24,17 @@
 //    `view` then throws (a note composer closed within 250ms of a selection).
 // 9. Sizes: the installed toggle's `sm` (28px, 44px below 721px, so docked targets are 44px) against the frame's 30px / 40px, with the
 //    icons set to the frame's 16px / 18px. The Strikethrough tooltip names the shortcut that works, ⇧⌘S (Tiptap's), not the frame's ⇧⌘X.
+// 10. `notice` (#951, owner decision N4): the Notice board's box gets the note's controls plus the vendor's Underline (after Italic, the
+//    vendor's order) and a Layout group of alignment and highlight, the installed `RichTextAlignMenu` and `RichTextHighlightPopover`.
+//    Headings, the checklist and tables stay in its "/" menu. Without it the bubble is the note's, unchanged.
 import { useCallback, useLayoutEffect, useMemo, useRef } from "react"
 import type { EditorState } from "@tiptap/pm/state"
 import { isTextSelection, type Editor } from "@tiptap/react"
 import { BubbleMenu } from "@tiptap/react/menus"
-import { BoldIcon, ItalicIcon, ListIcon, ListOrderedIcon, StrikethroughIcon } from "lucide-react"
+import { BoldIcon, ItalicIcon, ListIcon, ListOrderedIcon, StrikethroughIcon, UnderlineIcon } from "lucide-react"
+
+import { RichTextAlignMenu } from "./rich-text-align"
+import { RichTextHighlightPopover } from "./rich-text-highlight"
 
 import { RichTextBubbleBar, setRichTextBubble } from "./rich-text-bubble-bar"
 import { RichTextLinkPopover } from "./rich-text-link"
@@ -70,6 +76,8 @@ interface RichTextFormatBubbleProps {
   docked?: boolean
   /** The element a docked bubble sits on; the editor's field when absent or null. */
   dockTo?: () => Element | null
+  /** The Notice board's set (N4): Underline, then alignment and highlight after the lists. */
+  notice?: boolean
 }
 
 /** Marks, link and lists over a text selection. */
@@ -81,6 +89,7 @@ export function RichTextFormatBubble({
   disabled = false,
   docked = false,
   dockTo,
+  notice = false,
 }: RichTextFormatBubbleProps) {
   const state = useRichTextState(editor)
   const linkOpenRef = useRef(linkOpen)
@@ -149,6 +158,9 @@ export function RichTextFormatBubble({
             <RichTextToggle label="Italic" shortcut={["mod", "I"]} pressed={state.italic} disabled={off(state.canItalic)} onToggle={() => editor.chain().focus().toggleItalic().run()}>
               <ItalicIcon aria-hidden="true" />
             </RichTextToggle>
+            {notice && <RichTextToggle label="Underline" shortcut={["mod", "U"]} pressed={state.underline} disabled={off(state.canUnderline)} onToggle={() => editor.chain().focus().toggleUnderline().run()}>
+              <UnderlineIcon aria-hidden="true" />
+            </RichTextToggle>}
             <RichTextToggle label="Strikethrough" shortcut={["mod", "shift", "S"]} pressed={state.strike} disabled={off(state.canStrike)} onToggle={() => editor.chain().focus().toggleStrike().run()}>
               <StrikethroughIcon aria-hidden="true" />
             </RichTextToggle>
@@ -163,6 +175,13 @@ export function RichTextFormatBubble({
               <ListOrderedIcon aria-hidden="true" />
             </RichTextToggle>
           </RichTextToolbarGroup>
+          {notice && <>
+            <RichTextToolbarSeparator />
+            <RichTextToolbarGroup label="Layout">
+              <RichTextAlignMenu editor={editor} state={state} disabled={disabled} />
+              <RichTextHighlightPopover editor={editor} state={state} />
+            </RichTextToolbarGroup>
+          </>}
         </RichTextBubbleBar>
       </div>
     </BubbleMenu>

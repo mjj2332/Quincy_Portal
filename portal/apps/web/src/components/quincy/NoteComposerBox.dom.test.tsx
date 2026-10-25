@@ -365,6 +365,28 @@ describe("NoteComposerBox, post (#950: R1's row, E1's Cancel and Save)", () => {
     expect(order).toEqual(["note-composer-text", "strip-fixture", "alert", "note-composer-tools"]);
   });
 
+  it("draws its link preview cards under the text, ahead of the strip (owner decision B1)", async () => {
+    await mount(post({ strip, previews: <div data-testid="previews-fixture" />, notice: <p role="alert">Comment could not be posted.</p> }));
+    const order = [...q("note-composer-box")!.children].map((c) => c.getAttribute("data-testid") ?? c.getAttribute("role"));
+    expect(order).toEqual(["note-composer-text", "previews-fixture", "strip-fixture", "alert", "note-composer-tools"]);
+  });
+
+  it("caps the text at seven lines, or lets it grow with the page when tall (the Notice board, N1)", async () => {
+    await mount(post());
+    expect(q("note-composer-text")!.className.split(/\s+/)).toContain("max-h-[calc(var(--space-5)*7)]");
+    await act(async () => { root!.render(<NoteComposerBox {...post({ tall: true })} />); });
+    const classes = q("note-composer-text")!.className.split(/\s+/);
+    expect(classes).not.toContain("max-h-[calc(var(--space-5)*7)]");
+    expect(classes).toContain("max-h-[60dvh]");
+    expect(classes).toContain("overflow-y-auto");
+  });
+
+  it("names the paperclip for what the place takes", async () => {
+    await mount(post({ attach: { onPick: vi.fn(), label: "Add photos" } }));
+    expect(rowNames()).toEqual(["Add photos", "Post comment"]);
+    expect(byLabel("Add photos")!.getAttribute("title")).toBe("Add photos");
+  });
+
   it("draws 44px targets on a phone and 32px on desktop", async () => {
     await mount(post({ phone: true }));
     for (const label of ["Add photos or videos", "Post comment"]) expect(byLabel(label)!.className.split(/\s+/), label).toContain("size-11");
