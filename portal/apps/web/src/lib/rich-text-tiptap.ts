@@ -12,7 +12,7 @@ import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table
 import { TableMap } from "@tiptap/pm/tables";
 import { TextAlign } from "@tiptap/extension-text-align";
 import { embeddedMediaPosterUrl, embeddedMediaUrl } from "./embedded-media-core";
-import { RICH_TEXT_HIGHLIGHT_COLORS, RICH_TEXT_MAX_NESTING, RICH_TEXT_TABLE_MAX_COLUMNS, RICH_TEXT_TABLE_MAX_ROWS, type RichTextDoc } from "@quincy/shared";
+import { isHttpUrl, RICH_TEXT_HIGHLIGHT_COLORS, RICH_TEXT_MAX_NESTING, RICH_TEXT_TABLE_MAX_COLUMNS, RICH_TEXT_TABLE_MAX_ROWS, type RichTextDoc } from "@quincy/shared";
 
 // The Tiptap <-> stored RichTextDoc contract for `QuincyRichTextEditor`, in its two presets:
 // `"composer"` (Project discussion, #491), `"document"` (Notice board, #492) and `"note"` (a note or reply on a Video, #927). The schema here is
@@ -396,7 +396,11 @@ export function createRichTextEditorExtensions(preset: RichTextEditorPreset = "c
       listKeymap: false,
       trailingNode: false,
       undoRedo: {},
-      link: { openOnClick: false, autolink: false, linkOnPaste: false },
+      // No composer links on its own what the server refuses (A5, after #947). Tiptap's Link runs a linkify paste rule whatever `autolink` and
+      // `linkOnPaste` say, linking an email as `mailto:` and a bare domain as `http://`; `shouldAutoLink` is what that rule asks, so it links
+      // nothing. A pasted page's anchor, and the Link popover's address, keep their link only when it is http(s), the one kind the server takes.
+      // Where Link previews are on, the editor links pasted and typed http, https and www. addresses itself (`rich-text-address-links.ts`).
+      link: { openOnClick: false, autolink: false, linkOnPaste: false, shouldAutoLink: () => false, isAllowedUri: (url) => isHttpUrl(url) },
     }),
     ListItem.extend({ content: itemContent }),
     ListItemHardBreak,

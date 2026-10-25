@@ -1,4 +1,4 @@
-import { Extension, combineTransactionSteps, flattenExtensions, getChangedRanges, type Extensions } from "@tiptap/core";
+import { Extension, combineTransactionSteps, getChangedRanges } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey, type EditorState, type Transaction } from "@tiptap/pm/state";
 import { findWebAddresses } from "./web-address";
@@ -14,13 +14,6 @@ export function linkedAddresses(appended: readonly Transaction[]): LinkedAddress
     return ((transaction.getMeta(LINKED_ADDRESSES_META) as LinkedAddress[] | undefined) ?? []).map(({ href, at }) => ({ href, at: later.reduce((pos, next) => next.mapping.map(pos), at) }));
   });
 }
-
-/**
- * Every extension's paste rules but the Link mark's (#947). Tiptap's Link runs a linkify paste rule whatever `autolink` and `linkOnPaste`
- * say, and it links emails (`mailto:`) and bare domains, which the server refuses. Where this editor links pasted addresses itself, that
- * rule is left out; the others (pasted `**bold**` and the like) stay.
- */
-export const pasteRulesWithoutLink = (extensions: Extensions) => flattenExtensions(extensions).map((extension) => extension.name).filter((name) => name !== "link");
 
 /** One textblock's text with each inline leaf (a mention) as one placeholder, so an index in it is an offset into the block's content. */
 const blockText = (block: ProseMirrorNode) => {

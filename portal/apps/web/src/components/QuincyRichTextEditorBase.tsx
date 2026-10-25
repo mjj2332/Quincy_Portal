@@ -9,7 +9,7 @@ import { useMediaQuery } from "../lib/use-media-query";
 import { EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_VIDEO_ACCEPT, RenditionFailedError, embeddedImageAccept, embeddedImageProblem, embeddedVideoProblem, type EditorMediaTransport, type LinkPreviewRequest } from "../lib/embedded-media-core";
 import { splitNoteMedia } from "../lib/note-media-strip";
 import { linkPreviewSlot } from "../lib/link-preview-slot";
-import { PastedWebAddressLinks, TypedWebAddressLinks, linkedAddresses, pasteRulesWithoutLink } from "../lib/rich-text-address-links";
+import { PastedWebAddressLinks, TypedWebAddressLinks, linkedAddresses } from "../lib/rich-text-address-links";
 import {
   EmbeddedImage,
   EmbeddedVideo,
@@ -324,9 +324,6 @@ export function QuincyRichTextEditorBase({
     // So does a typed one, once the author types a space, Enter or closing punctuation after it (#948).
     TypedWebAddressLinks.configure({ enabled: () => Boolean(linkPreviewsRef.current) && !disabledRef.current }),
   ], [preset, mentionsOn, mediaUrl, posterUrl]);
-  // Read once, when the editor is built: the hosts with Link previews (#947) always have them.
-  const linksPasted = Boolean(linkPreviews);
-  const pasteRules = useMemo(() => (linksPasted ? pasteRulesWithoutLink(extensions) : true), [linksPasted, extensions]);
   const created = useEditor({
     extensions,
     // The toolbar subscribes to its own formatting snapshot (`useRichTextState`); the field itself
@@ -334,8 +331,6 @@ export function QuincyRichTextEditorBase({
     shouldRerenderOnTransaction: false,
     content: toTiptap(value),
     editable: !disabled,
-    // Where this editor links pasted addresses itself, Tiptap's own Link paste rule (emails, bare domains) is left out (#947).
-    enablePasteRules: pasteRules,
     editorProps: {
       attributes: { class: "rich-text__editor-content " + (preset === "note" ? NOTE_CONTENT_UTILITIES : EDITOR_CONTENT_UTILITIES + (preset === "document" ? DOCUMENT_CONTENT_UTILITIES : "")), "data-placeholder": placeholder, ...(id ? { id } : {}), ...(ariaLabel ? { "aria-label": ariaLabel } : {}) },
       // A file dropped or pasted into the editor is ours to handle: letting the browser have it would
