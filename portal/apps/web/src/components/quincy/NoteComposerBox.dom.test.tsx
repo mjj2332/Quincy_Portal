@@ -377,8 +377,48 @@ describe("NoteComposerBox, post (#950: R1's row, E1's Cancel and Save)", () => {
     await act(async () => { root!.render(<NoteComposerBox {...post({ tall: true })} />); });
     const classes = q("note-composer-text")!.className.split(/\s+/);
     expect(classes).not.toContain("max-h-[calc(var(--space-5)*7)]");
-    expect(classes).toContain("max-h-[60dvh]");
+    expect(classes).toContain("max-h-[min(60dvh,var(--note-box-fit,60dvh))]");
     expect(classes).toContain("overflow-y-auto");
+  });
+
+  describe("tall, with the on-screen keyboard up (review of #951)", () => {
+    // A stand-in visual viewport: the layout viewport is 874px; the keyboard leaves 420px above it.
+    const viewport = Object.assign(new EventTarget(), { height: 874, offsetTop: 0, scale: 1 });
+    const rect = (top: number, height: number) => ({ top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+    afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+    it("caps the text so the whole box, Send included, fits above the keyboard, and scrolls Send into sight", async () => {
+      vi.stubGlobal("visualViewport", viewport); vi.stubGlobal("innerHeight", 874);
+      const scrollBy = vi.fn(); vi.stubGlobal("scrollBy", scrollBy);
+      // The box is 60px of rows and padding around its text; its foot is at 700px, under the keyboard once it is up.
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+        const id = this.getAttribute("data-testid");
+        return id === "note-composer-box" ? rect(340, 360) : id === "note-composer-text" ? rect(348, 300) : rect(0, 0);
+      });
+      await mount(post({ tall: true, phone: true }));
+      const text = q("note-composer-text")!;
+      expect(text.className.split(/\s+/)).toContain("max-h-[min(60dvh,var(--note-box-fit,60dvh))]");
+      await act(async () => { q("field-fixture")!.focus(); });
+      viewport.height = 420;
+      await act(async () => { viewport.dispatchEvent(new Event("resize")); });
+      // 420 visible, less the box's 60px of rows and padding, less an 8px margin (`--space-2`).
+      expect(text.style.getPropertyValue("--note-box-fit")).toBe("352px");
+      // Its foot (700px) is 280px below the keyboard's top edge (420px): the page moves it up by that and the margin.
+      expect(scrollBy).toHaveBeenCalledWith(0, 288);
+    });
+
+    it("never scrolls the page for a box the focus is not in", async () => {
+      viewport.height = 874;
+      vi.stubGlobal("visualViewport", viewport); vi.stubGlobal("innerHeight", 874);
+      const scrollBy = vi.fn(); vi.stubGlobal("scrollBy", scrollBy);
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+        return this.getAttribute("data-testid") === "note-composer-box" ? rect(340, 360) : rect(348, 300);
+      });
+      await mount(post({ tall: true, phone: true }));
+      viewport.height = 420;
+      await act(async () => { viewport.dispatchEvent(new Event("resize")); });
+      expect(scrollBy).not.toHaveBeenCalled();
+    });
   });
 
   it("names the paperclip for what the place takes", async () => {

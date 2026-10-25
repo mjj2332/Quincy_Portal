@@ -230,6 +230,11 @@ export type QuincyRichTextEditorBaseProps = {
    * `null`: that element is not mounted yet, so no cards for now.
    */
   previewContainer?: HTMLElement | null;
+  /**
+   * Boxed only: where the docked table bar mounts (review of #951). The host keeps room for it there, above the box, so the bar never covers
+   * what sits outside the box. The surface scope when absent.
+   */
+  tableBarRoot?: () => HTMLElement | null;
 };
 
 /** What a host can ask of the editor without owning its state (#927): open the picker, or put the caret back in the text. */
@@ -276,6 +281,7 @@ export function QuincyRichTextEditorBase({
   bubbleDocked,
   boxed: boxedProp = false,
   previewContainer,
+  tableBarRoot,
 }: QuincyRichTextEditorBaseProps) {
   const valueRef = useRef(JSON.stringify(value));
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
@@ -945,10 +951,10 @@ export function QuincyRichTextEditorBase({
     {previewContainer ? createPortal(draftCards, previewContainer) : null}
     {toolbarContainer && !isNote && !boxed ? createPortal(toolbar, toolbarContainer) : null}
     {isDocument && <>
-      {/* Boxed (#951): floating around the table on a desktop, mounted outside the box's scrolling text; docked to the box's top edge on a
-          phone, and on a desktop when the floating bar has no room (tier "none"), since there is no toolbar to take its controls (N3). */}
-      {(boxed ? !docked : !phone) && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tier={tableTier} onTierChange={setTableTier} {...(boxed ? { appendTo: bubbleRoot, yieldToSelection: true } : { ceiling: () => addonRef.current?.getBoundingClientRect().bottom ?? 0 })} />}
-      {boxed && (docked || tableTier === "none") && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} docked dockTo={bubbleDockTo} appendTo={bubbleRoot} yieldToSelection />}
+      {/* Boxed (#951): docked to the box's top edge at every width (N3 on a phone; on a desktop too since the review, where a bar floating
+          over a table at the top of the box covered the notice above it). Mounted in the host's `tableBarRoot`, which keeps room for it. */}
+      {!boxed && !phone && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tier={tableTier} onTierChange={setTableTier} ceiling={() => addonRef.current?.getBoundingClientRect().bottom ?? 0} />}
+      {boxed && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} docked dockTo={bubbleDockTo} appendTo={() => tableBarRoot?.() ?? bubbleRoot()} yieldToSelection />}
       <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
     </>}
     {picking !== null && <Input

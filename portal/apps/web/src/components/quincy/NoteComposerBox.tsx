@@ -1,8 +1,9 @@
-import type { FormEvent, KeyboardEvent, ReactNode } from "react";
+import { useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { ArrowRightFromLineIcon, ChevronDownIcon, GlobeIcon, LockIcon, PaperclipIcon, PencilIcon, SendIcon, XIcon, type LucideIcon } from "lucide-react";
 import type { VideoNoteVisibility } from "@quincy/shared";
 import { cn } from "@/lib/utils";
 import { rangeStep, type NoteMarks } from "@/lib/video-note-marks";
+import { useFitAboveKeyboard } from "@/lib/use-visual-viewport";
 import { Button } from "@/components/reui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/reui/dropdown-menu";
 import { Spinner } from "@/components/reui/spinner";
@@ -25,7 +26,7 @@ import { NOTE_TARGET, NOTE_TARGET_PHONE, NOTE_TOOL, NoteDrawRow, keepFocus, type
  * Presentational and Guest-safe: no `lib/api`, no form store. The field (the rich editor) and the strip are slots; every state is a prop.
  * The box's text region is the scroller (seven 24px lines, then it scrolls), so the field inside should not scroll on its own, and the chip
  * floats so the first line of text runs beside it. `tall` (the Notice board, owner decision N1) lifts the seven-line cap: the text grows
- * with the page up to about 60% of the viewport, then scrolls. Link preview cards (`previews`, owner decision B1) and the media strip sit
+ * with the page up to about 60% of the viewport, or less with the on-screen keyboard up so Send stays above it (`useFitAboveKeyboard`), then scrolls. Link preview cards (`previews`, owner decision B1) and the media strip sit
  * under the scroller, so a card never scrolls away with the text.
  *
  * Escape inside the box (not in a portaled popup: those close themselves) ends drawing first, else goes to `onEscape`; a handled one is
@@ -146,6 +147,10 @@ export function NoteComposerBox(props: NoteComposerBoxProps) {
   const save = variant === "edit" || variant === "post" ? props.save ?? null : null;
   const blocked = send ? send.disabled : save!.disabled;
   const attachLabel = attach.label ?? "Add photos or videos";
+  // Tall (N1): the text's cap also follows the visual viewport, so the box, Send included, fits above the on-screen keyboard (review of #951).
+  const [boxElement, setBoxElement] = useState<HTMLDivElement | null>(null);
+  const [textElement, setTextElement] = useState<HTMLDivElement | null>(null);
+  useFitAboveKeyboard(tall, boxElement, textElement);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -200,13 +205,13 @@ export function NoteComposerBox(props: NoteComposerBoxProps) {
     onSubmit={submit}
   >
     <div
-      data-testid="note-composer-box" onKeyDown={onKeyDown} onPointerDownCapture={keepFocusOnPress} onMouseDownCapture={keepFocusOnPress}
+      ref={setBoxElement} data-testid="note-composer-box" onKeyDown={onKeyDown} onPointerDownCapture={keepFocusOnPress} onMouseDownCapture={keepFocusOnPress}
       className={cn(
         "relative flex flex-col gap-[var(--space-2)] rounded-[var(--radius-lg)] border border-solid border-[length:var(--border-width-hair)] border-border-faint pt-[var(--space-2)] pe-[var(--space-2)] pb-[var(--space-1)] ps-[var(--space-3)] transition-colors focus-within:border-border-hover",
         floating ? "bg-[color-mix(in_srgb,var(--card)_92%,transparent)] shadow-[var(--shadow-lg)] backdrop-blur-md" : "bg-surface-sunken",
       )}
     >
-      <div data-testid="note-composer-text" {...textAttributes} className={cn("relative min-h-[var(--space-5)] overflow-y-auto", tall ? "max-h-[60dvh]" : "max-h-[calc(var(--space-5)*7)]", "leading-[var(--space-5)] text-foreground", phone ? "text-[length:var(--text-base)]" : "text-[length:var(--text-sm)]", textClassName)}>
+      <div ref={setTextElement} data-testid="note-composer-text" {...textAttributes} className={cn("relative min-h-[var(--space-5)] overflow-y-auto", tall ? "max-h-[min(60dvh,var(--note-box-fit,60dvh))]" : "max-h-[calc(var(--space-5)*7)]", "leading-[var(--space-5)] text-foreground", phone ? "text-[length:var(--text-base)]" : "text-[length:var(--text-sm)]", textClassName)}>
         {anchored && <AnchorChip chip={anchored.chip} drawn={anchored.drawn === true} phone={phone} />}
         {field}
       </div>

@@ -907,7 +907,56 @@ describe("the Notice board's note box (#951)", () => {
     const tools = [...composer.querySelectorAll<HTMLButtonElement>('[data-testid="note-composer-tools"] button')].map((button) => button.getAttribute("aria-label") ?? button.textContent);
     expect(tools).toEqual(["Add photos", "Post notice"]);
     // No seven-line cap (owner decision N1): the text grows with the page to about 60% of the viewport.
-    expect(composer.querySelector('[data-testid="note-composer-text"]')!.className.split(/\s+/)).toContain("max-h-[60dvh]");
+    expect(composer.querySelector('[data-testid="note-composer-text"]')!.className.split(/\s+/)).toContain("max-h-[min(60dvh,var(--note-box-fit,60dvh))]");
+  });
+
+  it("locks Post notice on an empty or blank draft, and neither a click nor ⌘↵ sends it (the Discussion's rule)", async () => {
+    apiGetMock.mockResolvedValue({ posts: [] });
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    const composer = createBox(host)!;
+    const editor = composer.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    const post = composer.querySelector<HTMLButtonElement>('button[aria-label="Post notice"]')!;
+    expect(isLocked(post)).toBe(true);
+    await click(post);
+    await keydown(editor, "Enter", { metaKey: true });
+    await typeIntoEditor(editor, "   ");
+    expect(isLocked(post)).toBe(true);
+    await click(post);
+    await keydown(editor, "Enter", { metaKey: true });
+    expect(apiPostMock).not.toHaveBeenCalled();
+    await typeIntoEditor(editor, "Now it has words");
+    expect(isLocked(post)).toBe(false);
+  });
+
+  it("locks Save when an edit empties the notice, and sends no PATCH", async () => {
+    apiGetMock.mockResolvedValue({ posts: [oldPost] });
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    await chooseNoticeAction(host, "A", "Edit", advance);
+    const edit = editBox(host)!;
+    const editor = edit.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await typeIntoEditor(editor, "");
+    const save = [...edit.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!;
+    expect(isLocked(save)).toBe(true);
+    await click(save);
+    await keydown(editor, "Enter", { metaKey: true });
+    expect(apiPatchMock).not.toHaveBeenCalled();
+  });
+
+  it("docks the table bar above its own box on a desktop, where the box keeps room for it, never over the notice above", async () => {
+    apiGetMock.mockResolvedValue({ posts: [oldPost] });
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    const composer = createBox(host)!;
+    await slash(composer.querySelector<HTMLElement>('[contenteditable="true"]')!, "Table");
+    await advance(300);
+    const bar = document.querySelector<HTMLElement>('[data-testid="rich-text-table-bubble"]')!;
+    expect(bar, "table bar").not.toBeNull();
+    const wrapper = bar.closest("[data-docked]")!;
+    expect(wrapper.getAttribute("data-docked")).toBe("true");
+    expect(wrapper.parentElement!.getAttribute("data-testid")).toBe("notice-box-room");
+    expect(wrapper.parentElement!.contains(composer)).toBe(true);
   });
 
   it("edits a notice in the box with Cancel and Save", async () => {
