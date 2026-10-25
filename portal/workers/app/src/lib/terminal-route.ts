@@ -387,6 +387,8 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "GET", path: "/d/api/links/:linkId/media/:mediaId/rendition", class: "guest-link" },
   { method: "GET", path: "/d/api/links/:linkId/media/:mediaId", class: "guest-link" },
   { method: "GET", path: "/d/api/links/:linkId/media/:mediaId/poster", class: "guest-link" },
+  // #955: a public staff note's Attachment, downloaded by a Guest reviewer.
+  { method: "GET", path: "/d/api/links/:linkId/attachments/:attachmentId", class: "guest-link" },
   { method: "POST", path: "/d/api/unsubscribe", class: "guest-link" },
   { method: "PUT", path: "/d/api/links/:linkId/subscription", class: "guest-link" },
   { method: "GET", path: "/d/:slug", class: "delivery-public" },
