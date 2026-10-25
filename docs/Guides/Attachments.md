@@ -5,7 +5,7 @@ Portal can show in a post stay **Embedded media** (`docs/maps/` and `packages/sh
 
 Status: #952 covers **Project discussion comments** only, for staff and External editors (owner decision A1). The table already
 allows the other owner kinds and a guest uploader. The Notice board (#954), Video notes (#955), guest notes on a Review link (#956),
-notifications (#957) and the clean-up sweep (#953) are later tickets.
+and the clean-up sweep (#953) are later tickets. Notifications (#957) are covered for Project comments below.
 
 ## Limits
 
@@ -92,3 +92,12 @@ upload (#956).
 Migration 0082 only adds a table. An old Worker ignores it, so rolling back the code is safe (`CI-Deploy.md`, "Attachments (0082,
 #952)"). If you roll back the code, a comment that holds an Attachment shows no file in an old client, and its text and media are
 unaffected.
+
+## Notifications (#957)
+
+No new notification kind. A Project comment's existing notifications say how many Attachments it has, as a count only (never a
+name): the Project activity notification (`project.comment.created` / `edited`, "A project comment was added with 2 attachments."),
+the mention notification and its email ("You were mentioned in a project comment with 2 attachments."), and the digest, which
+composes from the stored copy. The count rides on the activity's `safePayload.attachmentCount` (written by
+`createProjectCommentActivityIntent`, omitted at zero; the edit records the comment's count after the edit) and is rendered by
+`attachmentCountSuffix` in `packages/shared/src/project-activity.ts`. The other owner kinds join this when their tickets land.
