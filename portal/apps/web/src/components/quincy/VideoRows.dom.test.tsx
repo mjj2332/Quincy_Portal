@@ -230,6 +230,8 @@ describe("VideoRows — compact (phone)", () => {
     // Drawn "2", read "2 open notes on v3".
     expect(notes.textContent).toBe("22 open notes on v3");
     expect(meta.textContent).toBe("v3 · 1:32 · In review · 22 open notes on v3");
+    // The status is its own piece, apart from the Version and duration that give way to an ellipsis first (design review: "In revie…" on a 402pt phone).
+    expect(meta.querySelector('[data-testid="video-row-meta-status"]')!.textContent).toBe("In review");
     // The very pieces of the table's Notes cell: icon, number and words.
     const compactPieces = notes.innerHTML;
     await rerender(<VideoRows items={[film()]} columns={STAFF} label="Films" testIds={TEST_IDS} />);

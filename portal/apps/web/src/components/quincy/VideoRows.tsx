@@ -386,15 +386,21 @@ function CompactList({ items, columns, rowAttributes }: { items: readonly VideoR
 function CompactRow({ item, columns, attributes }: { item: VideoRowItem; columns: readonly VideoRowColumn[]; attributes: ReturnType<ReturnType<typeof useRowAttributes>> }) {
   const { showStatus } = useContext(SettingsContext);
   const { className, ...rest } = attributes;
-  const meta = item.locked ? [] : [item.version !== null ? `v${item.version}` : null, item.durationMs !== null ? formatDuration(item.durationMs) : null, showStatus && item.status ? item.status.short : null].filter((part): part is string => part !== null);
+  const meta = item.locked ? [] : [item.version !== null ? `v${item.version}` : null, item.durationMs !== null ? formatDuration(item.durationMs) : null].filter((part): part is string => part !== null);
+  const status = !item.locked && showStatus && item.status ? item.status.short : null;
   const notes = columns.includes("notes") && openNotesShown(item) !== null;
   return <li {...rest} className={cn(className, "relative flex items-start gap-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-3)] last:border-b-0")}>
     {columns.includes("select") && item.select && <div className="-my-[var(--space-2)] -ms-[var(--space-2)]"><Tick item={item} /></div>}
     {columns.includes("poster") && <Thumb item={item} />}
     <div className="flex min-w-0 flex-1 flex-col gap-[var(--space-1)]">
-      <TitleBlock item={item} withVersion={false} meta={meta.length > 0 || notes
-        // One line, so the row stays two (S9): the text gives way to an ellipsis before the note count does.
-        ? <span data-testid="video-row-meta" className={cn(META, "flex min-w-0 items-center whitespace-pre")}><span className="min-w-0 truncate">{meta.join(" · ")}{notes && meta.length > 0 && " · "}</span>{notes && <OpenNotes item={item} className="shrink-0" />}</span>
+      <TitleBlock item={item} withVersion={false} meta={meta.length > 0 || status !== null || notes
+        // One line, so the row stays two (S9): the Version and duration give way to an ellipsis before the status or the note count does.
+        ? <span data-testid="video-row-meta" className={cn(META, "flex min-w-0 items-center whitespace-pre")}>
+          <span className="min-w-0 truncate">{meta.join(" · ")}{meta.length > 0 && (status !== null || notes) && " · "}</span>
+          {status !== null && <span data-testid="video-row-meta-status" className="shrink-0">{status}</span>}
+          {status !== null && notes && <span className="shrink-0">{" · "}</span>}
+          {notes && <OpenNotes item={item} className="shrink-0" />}
+        </span>
         : null} />
     </div>
     {columns.includes("menu") && <div className="-my-[var(--space-2)]"><Menu item={item} /></div>}
