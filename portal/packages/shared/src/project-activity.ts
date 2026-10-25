@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ATTACHMENT_MAX_PER_POST } from "./attachments";
 import { CANONICAL_LOWERCASE_UUID_REGEX, staffPathFor } from "./staff-routes";
 import { TB4D_SCHEDULE_ACTIVITY_CUTOVER_DATE } from "./checklist-schedule-config";
 
@@ -88,8 +89,9 @@ const payloadSchemas = {
   "project.checklist.item_deleted": z.object({ itemId: identifier, checklistTitle }).strict(),
   // Historic rows (pre ADR 0011) may carry unscheduled/due_only; the enum stays for reading them. Writers only emit "range".
   "project.checklist.schedule_changed": z.object({ itemId: identifier, checklistTitle, scheduleState: z.enum(["unscheduled", "due_only", "range"]), version: z.number().int().min(1) }).strict(),
-  "project.comment.created": z.object({ commentId: identifier }).strict(),
-  "project.comment.edited": z.object({ commentId: identifier }).strict(),
+  // `attachmentCount` (#957): how many Attachments the comment carries; omitted when it has none. The count only, never a name.
+  "project.comment.created": z.object({ commentId: identifier, attachmentCount: z.number().int().min(1).max(ATTACHMENT_MAX_PER_POST).optional() }).strict(),
+  "project.comment.edited": z.object({ commentId: identifier, attachmentCount: z.number().int().min(1).max(ATTACHMENT_MAX_PER_POST).optional() }).strict(),
   "project.comment.deleted": z.object({ commentId: identifier }).strict(),
   "project.collection.video_link_added": z.object({ linkId: identifier, collectionKind: z.literal("video") }).strict(),
   "project.collection.video_link_changed": z.object({ linkId: identifier, collectionKind: z.literal("video"), changedFields: z.array(z.enum(["url", "label"])).min(1).max(2).refine((fields) => new Set(fields).size === fields.length, "Changed fields must be unique") }).strict(),
@@ -444,6 +446,11 @@ export function parseProjectActivityRow(value: unknown, projection?: "feed"): Pr
   return { ...intent.activity, category, createdAt };
 }
 
+/** " with 2 attachments" for a positive count, "" otherwise (#957). */
+export function attachmentCountSuffix(count: unknown): string {
+  return typeof count === "number" && Number.isInteger(count) && count > 0 ? ` with ${count} ${count === 1 ? "attachment" : "attachments"}` : "";
+}
+
 export type ProjectActivityNotificationCopy = { title: string; body: string };
 
 export function renderProjectActivityNotification(
@@ -465,8 +472,8 @@ export function renderProjectActivityNotification(
     case "project.checklist.item_created": return { title: "Checklist item added", body: `${actor}Checklist “${String(safe.checklistTitle ?? "item")}” was added.` };
     case "project.checklist.item_updated": return { title: "Checklist item updated", body: `${actor}Checklist “${String(safe.checklistTitle ?? "item")}” was updated.` };
     case "project.checklist.item_deleted": return { title: "Checklist item removed", body: `${actor}Checklist “${String(safe.checklistTitle ?? "item")}” was removed.` };
-    case "project.comment.created": return { title: "Project comment added", body: `${actor}A project comment was added.` };
-    case "project.comment.edited": return { title: "Project comment edited", body: `${actor}A project comment was edited.` };
+    case "project.comment.created": return { title: "Project comment added", body: `${actor}A project comment was added${attachmentCountSuffix(safe.attachmentCount)}.` };
+    case "project.comment.edited": return { title: "Project comment edited", body: `${actor}A project comment was edited${attachmentCountSuffix(safe.attachmentCount)}.` };
     case "project.comment.deleted": return { title: "Project comment removed", body: `${actor}A project comment was removed.` };
     case "project.collection.video_link_added":
     case "project.collection.video_link_changed":
