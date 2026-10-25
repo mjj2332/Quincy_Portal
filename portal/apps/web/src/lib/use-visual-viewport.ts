@@ -114,8 +114,12 @@ const FIT_MIN_PX = 48;
  *
  * - The text region's `--note-box-fit` follows the visual viewport: its height, less the box's own rows and padding around the text (measured, so a preview card or the
  *   media strip counts), less a margin. The region's class caps it at `min(60dvh, var(--note-box-fit))`.
- * - While the focus is in the box and the keyboard is up (the viewport 150px or more below the layout height), a box whose foot falls below the keyboard's top edge is
- *   scrolled up by the difference: when the keyboard rises, and when the box grows as the text does. Never on the viewport's own scroll, so the person can still pan the page.
+ * - While the focus is in the box and the keyboard is up (the viewport 150px or more below the layout height), each viewport resize re-caps the text, then brings the
+ *   caret back into sight inside the text's own scroller (shrinking it keeps its scrollTop, which hid the caret's line), then sets the box's foot `FIT_MARGIN_PX` above the
+ *   keyboard's top edge, scrolling the page either way. iOS scrolls the page for the caret first, against the box's old, taller height, so a one-way "scroll up if
+ *   under" left the shrunk box's top off screen and a gap above the keyboard (#951 keyboard pass, iPhone 18 Pro).
+ * - iOS scrolls again 120-190ms after the tap (see `useVisualViewport`): for `FIT_SETTLE_MS` after the last resize, a page or viewport scroll puts the box back the same way.
+ *   After that a scroll is the person's own pan, and is left alone. The box growing with the text only ever scrolls its foot back up out from under the keyboard.
  *
  * Unlike `useVisualViewport` it writes no root and puts back no page scroll: the box sits in an ordinary scrolling page, not a fixed screen.
  */
@@ -128,20 +132,58 @@ export function useFitAboveKeyboard(enabled: boolean, box: HTMLElement | null, t
       const rows = box.getBoundingClientRect().height - text.getBoundingClientRect().height;
       text.style.setProperty("--note-box-fit", `${Math.max(FIT_MIN_PX, Math.round(viewport.height - rows - FIT_MARGIN_PX))}px`);
     };
-    const reveal = () => {
-      if (viewport.scale > 1.01 || window.innerHeight - viewport.height < KEYBOARD_MIN_PX || !box.contains(document.activeElement)) return;
-      const below = box.getBoundingClientRect().bottom - (viewport.offsetTop + viewport.height);
-      if (below > 0) window.scrollBy(0, Math.round(below + FIT_MARGIN_PX));
+    const keyboardUp = () => viewport.scale <= 1.01 && window.innerHeight - viewport.height >= KEYBOARD_MIN_PX && box.contains(document.activeElement);
+    const keepCaret = () => {
+      const caret = caretRect(text);
+      if (!caret) return;
+      const region = text.getBoundingClientRect();
+      if (caret.bottom > region.bottom) text.scrollTop += caret.bottom - region.bottom;
+      else if (caret.top < region.top) text.scrollTop -= region.top - caret.top;
     };
-    const onResize = () => { fit(); reveal(); };
+    /** The page scroll that puts the box's foot `FIT_MARGIN_PX` above the keyboard's top edge; `upOnly` only lifts a foot that is under it. */
+    const place = (upOnly: boolean) => {
+      const gap = box.getBoundingClientRect().bottom - (viewport.offsetTop + viewport.height - FIT_MARGIN_PX);
+      if (gap > 1 || (!upOnly && gap < -1)) window.scrollBy(0, Math.round(gap));
+    };
+    let settling: ReturnType<typeof setTimeout> | undefined;
+    const onResize = () => {
+      fit();
+      if (!keyboardUp()) return;
+      keepCaret(); place(false);
+      clearTimeout(settling);
+      settling = setTimeout(() => { settling = undefined; }, FIT_SETTLE_MS);
+    };
+    const onScroll = () => { if (settling !== undefined && keyboardUp()) { keepCaret(); place(false); } };
+    const onGrow = () => { if (keyboardUp()) place(true); };
     fit();
     viewport.addEventListener("resize", onResize);
-    const grows = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(reveal);
+    viewport.addEventListener("scroll", onScroll);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    const grows = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(onGrow);
     grows?.observe(box);
     return () => {
       viewport.removeEventListener("resize", onResize);
+      viewport.removeEventListener("scroll", onScroll);
+      window.removeEventListener("scroll", onScroll);
+      clearTimeout(settling);
       grows?.disconnect();
       text.style.removeProperty("--note-box-fit");
     };
   }, [enabled, box, text]);
+}
+
+/** How long after the keyboard's last resize a scroll still counts as iOS's own (it lands 120-190ms after the tap), not the person's pan. */
+const FIT_SETTLE_MS = 400;
+
+/** The caret's rect when the selection is in `region`; a collapsed range on an empty line can measure as nothing, so its line's element stands in. */
+function caretRect(region: HTMLElement): DOMRect | null {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(0);
+  const node = range.endContainer;
+  if (!region.contains(node)) return null;
+  const rect = typeof range.getBoundingClientRect === "function" ? range.getBoundingClientRect() : null;
+  if (rect && (rect.height > 0 || rect.top !== 0)) return rect;
+  const line = node instanceof Element ? node : node.parentElement;
+  return line ? line.getBoundingClientRect() : null;
 }
