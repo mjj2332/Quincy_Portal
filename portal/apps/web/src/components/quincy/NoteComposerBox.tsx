@@ -18,13 +18,15 @@ import { NOTE_TARGET, NOTE_TARGET_PHONE, NOTE_TOOL, NoteDrawRow, keepFocus, type
  * inherits its note's anchor and visibility; no visible Cancel, Esc and the reply toggle dismiss it), `edit` (Cancel and Save, and a fixed
  * visibility label when the host gives one: staff do, a guest's edit shows none, owner decision 2026-10-20), `post` (#950, a Project
  * discussion comment and its edit: R1's row, the paperclip and Send, with E1's Cancel and Save in place of Send for an edit; no chip,
- * in/out, pen or visibility, and its paperclip keeps the field's focus too). `phone` gives every target
+ * in/out, pen or visibility, and its paperclip keeps the field's focus too; the Notice board's create and edit use it too, #951, `tall`). `phone` gives every target
  * 44px; `floating` is Full screen's box over the film; `foot` draws the composer's own foot (a hairline above, the card ground and the
  * gutter, prototype `.cmp-wrap`) for a host that has none of its own. Without it the form draws nothing around the box.
  *
  * Presentational and Guest-safe: no `lib/api`, no form store. The field (the rich editor) and the strip are slots; every state is a prop.
  * The box's text region is the scroller (seven 24px lines, then it scrolls), so the field inside should not scroll on its own, and the chip
- * floats so the first line of text runs beside it.
+ * floats so the first line of text runs beside it. `tall` (the Notice board, owner decision N1) lifts the seven-line cap: the text grows
+ * with the page up to about 60% of the viewport, then scrolls. Link preview cards (`previews`, owner decision B1) and the media strip sit
+ * under the scroller, so a card never scrolls away with the text.
  *
  * Escape inside the box (not in a portaled popup: those close themselves) ends drawing first, else goes to `onEscape`; a handled one is
  * `preventDefault`ed, so the screen's own Escape (Full screen) can skip it, and one already handled (the staff viewer's Escape ladder
@@ -47,12 +49,17 @@ interface BaseProps {
   label: string;
   /** The text field (the rich editor). */
   field: ReactNode;
+  /** The link preview cards under the text (owner decision B1), ahead of the media strip. */
+  previews?: ReactNode;
   /** The media strip under the text. */
   strip?: ReactNode;
   /** A problem or lock line above the tools (too long, a failed post, "Finish or cancel the open edit first"). */
   notice?: ReactNode;
-  attach: { onPick: () => void } & NoteControl;
+  /** The paperclip. `label` names what the place takes ("Add photos" where there is no video); "Add photos or videos" by default. */
+  attach: { onPick: () => void; label?: string } & NoteControl;
   phone?: boolean;
+  /** No seven-line cap: the text grows with the page to about 60% of the viewport, then scrolls (the Notice board, N1). */
+  tall?: boolean;
   floating?: boolean;
   /** Draw the composer's own foot around the box (the hairline above, the card ground, the gutter). Off: the host draws it. */
   foot?: boolean;
@@ -130,7 +137,7 @@ function AnchorChip({ chip, drawn, phone }: { chip: NoteAnchorChip; drawn: boole
 }
 
 export function NoteComposerBox(props: NoteComposerBoxProps) {
-  const { variant, label, field, strip, notice, attach, phone = false, floating = false, foot = false, onEscape, testId = "note-composer", className, textClassName, textAttributes, formAttributes } = props;
+  const { variant, label, field, previews, strip, notice, attach, phone = false, tall = false, floating = false, foot = false, onEscape, testId = "note-composer", className, textClassName, textAttributes, formAttributes } = props;
   const anchored = variant === "reply" || variant === "post" ? null : props;
   const draw = anchored?.draw ?? null;
   const target = phone ? NOTE_TARGET_PHONE : NOTE_TARGET;
@@ -138,6 +145,7 @@ export function NoteComposerBox(props: NoteComposerBoxProps) {
   const send = variant === "edit" ? null : props.send ?? null;
   const save = variant === "edit" || variant === "post" ? props.save ?? null : null;
   const blocked = send ? send.disabled : save!.disabled;
+  const attachLabel = attach.label ?? "Add photos or videos";
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -161,7 +169,7 @@ export function NoteComposerBox(props: NoteComposerBoxProps) {
       title={anchored.range.disabled && anchored.range.reason ? anchored.range.reason : RANGE_TITLE[step]}
       className={tool} {...lockProps(anchored.range)} {...KEEP_FOCUS_MARKER} onClick={() => { anchored.range.onPress(step); }}
     ><ArrowRightFromLineIcon aria-hidden="true" /></Button>}
-    <Button type="button" variant="ghost" size="icon" aria-label="Add photos or videos" title={attach.disabled && attach.reason ? attach.reason : "Add photos or videos"} className={tool} {...lockProps(attach)} {...(variant === "post" ? KEEP_FOCUS_MARKER : {})} onClick={attach.onPick}>
+    <Button type="button" variant="ghost" size="icon" aria-label={attachLabel} title={attach.disabled && attach.reason ? attach.reason : attachLabel} className={tool} {...lockProps(attach)} {...(variant === "post" ? KEEP_FOCUS_MARKER : {})} onClick={attach.onPick}>
       <PaperclipIcon aria-hidden="true" />
     </Button>
     {anchored?.pen && <Button type="button" variant="ghost" size="icon" aria-label="Draw on the frame" title={anchored.pen.disabled && anchored.pen.reason ? anchored.pen.reason : "Draw on the frame"} className={tool} {...lockProps(anchored.pen)} onClick={anchored.pen.onPress}>
@@ -198,10 +206,11 @@ export function NoteComposerBox(props: NoteComposerBoxProps) {
         floating ? "bg-[color-mix(in_srgb,var(--card)_92%,transparent)] shadow-[var(--shadow-lg)] backdrop-blur-md" : "bg-surface-sunken",
       )}
     >
-      <div data-testid="note-composer-text" {...textAttributes} className={cn("relative min-h-[var(--space-5)] max-h-[calc(var(--space-5)*7)] overflow-y-auto leading-[var(--space-5)] text-foreground", phone ? "text-[length:var(--text-base)]" : "text-[length:var(--text-sm)]", textClassName)}>
+      <div data-testid="note-composer-text" {...textAttributes} className={cn("relative min-h-[var(--space-5)] overflow-y-auto", tall ? "max-h-[60dvh]" : "max-h-[calc(var(--space-5)*7)]", "leading-[var(--space-5)] text-foreground", phone ? "text-[length:var(--text-base)]" : "text-[length:var(--text-sm)]", textClassName)}>
         {anchored && <AnchorChip chip={anchored.chip} drawn={anchored.drawn === true} phone={phone} />}
         {field}
       </div>
+      {previews}
       {strip}
       {notice}
       {draw ? <NoteDrawRow {...draw} phone={phone} /> : tools}

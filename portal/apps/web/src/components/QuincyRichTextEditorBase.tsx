@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import { exitSuggestion } from "@tiptap/suggestion";
 import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon, VideoIcon, XIcon } from "lucide-react";
-import { RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_LINK_PREVIEWS, imageAltFromFileName, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc, type RichTextMediaNode } from "@quincy/shared";
+import { RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_LINK_PREVIEWS, imageAltFromFileName, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc, type RichTextLinkPreview, type RichTextMediaNode } from "@quincy/shared";
 import { cn } from "../lib/utils";
 import { useMediaQuery } from "../lib/use-media-query";
 import { EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_VIDEO_ACCEPT, RenditionFailedError, embeddedImageAccept, embeddedImageProblem, embeddedVideoProblem, type EditorMediaTransport, type LinkPreviewRequest } from "../lib/embedded-media-core";
@@ -28,7 +28,7 @@ import { MentionAutocomplete, type MentionAutocompleteHandle, type MentionableUs
 import { Button } from "./reui/button";
 import { Input } from "./reui/input";
 import { EmbeddedUploadTray, type EmbeddedUpload } from "./quincy/EmbeddedUploadTray";
-import { LinkPreviewWithView } from "./quincy/LinkPreviewEditorNode";
+import { LinkPreviewApartNode, LinkPreviewDraftCards, LinkPreviewWithView } from "./quincy/LinkPreviewEditorNode";
 import { EmbeddedImageAltPopover, EmbeddedImageNoteNode, EmbeddedImageWithView } from "./quincy/EmbeddedImageEditorNode";
 import { EmbeddedVideoNoteNode, EmbeddedVideoWithView } from "./quincy/EmbeddedVideoEditorNode";
 import { EmbeddedImage as EmbeddedImageThumb } from "./quincy/EmbeddedImage";
@@ -73,6 +73,9 @@ import {
  * no fixed toolbar but a formatting bubble over a selection (`reui/rich-text-editor/rich-text-format-bubble`, docked to the box on a
  * phone), no field chrome (the box draws it), one picker for photos and videos that the box's paperclip opens through the handle, and
  * every photo or video added landing at the end of the note, drawn as a strip of chips after the text rather than in it (frame C4).
+ * `preset="document"` with `boxed` (#951) is the Notice board's page inside the same box: the document's schema, "/" menu, table bar and
+ * outline rail, with no fixed toolbar or field chrome. Formatting is the note's bubble plus Underline, alignment and highlight (owner
+ * decision N4); the table bar docks to the box's top edge on a phone (N3); photos land inline at the caret, as on the page.
  *
  * What is deliberately NOT the vendor's:
  * - The extension set. The composer builds on `createRichTextEditorExtensions()` (the schema
@@ -142,6 +145,12 @@ const PILL_GROUP =
 const PILL_TEXT = "flex flex-1 flex-col py-[var(--space-2)] group-data-[wrapped=true]/input-group:order-first group-data-[wrapped=true]/input-group:basis-full";
 const PILL_SCROLLER = "min-h-0 w-full min-w-0 flex-1";
 
+/**
+ * The boxed document's text (#951): the note's bare surface (the box draws the field, its type and its 24px line) with room for the
+ * outline rail. No toolbar sticks above it, so headings take no scroll margin: a rail jump scrolls the box's own text region.
+ */
+const BOXED_CONTENT_UTILITIES = "min-h-[var(--space-5)] w-full min-w-0 bg-transparent focus-visible:!outline-none min-[721px]:pe-12";
+
 /** The character counter appears only from 90% of the limit (or when over it). */
 const COUNTER_THRESHOLD = 0.9;
 
@@ -205,6 +214,14 @@ export type QuincyRichTextEditorBaseProps = {
   /** Whether the note preset's bubble docks (frame P2) rather than floating over the selection. The host's phone layout says so (a phone
    * held sideways is wider than the editor's own phone width); absent, below 721px. */
   bubbleDocked?: boolean;
+  /** The document preset inside the note box (#951, the Notice board): no fixed toolbar or field chrome; a selection bubble instead. */
+  boxed?: boolean;
+  /**
+   * Where the link preview cards render (owner decision B1, #951: the note box's slot under its scrolling text, like the media strip). Absent:
+   * in the text after each link's block, as ever. An element: drawn there, and the text holds each card as an invisible atom in its place.
+   * `null`: that element is not mounted yet, so no cards for now.
+   */
+  previewContainer?: HTMLElement | null;
 };
 
 /** What a host can ask of the editor without owning its state (#927): open the picker, or put the caret back in the text. */
@@ -245,6 +262,8 @@ export function QuincyRichTextEditorBase({
   stripContainer,
   bubbleDockTo,
   bubbleDocked,
+  boxed: boxedProp = false,
+  previewContainer,
 }: QuincyRichTextEditorBaseProps) {
   const valueRef = useRef(JSON.stringify(value));
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
@@ -253,6 +272,7 @@ export function QuincyRichTextEditorBase({
   const maxBytesRef = useRef(maxBytes); maxBytesRef.current = maxBytes;
   const isDocument = preset === "document";
   const isNote = preset === "note";
+  const boxed = boxedProp && preset === "document";
   const disabledRef = useRef(disabled); disabledRef.current = disabled;
   const editorRef = useRef<Editor | null>(null);
   const menu = useRef<MentionAutocompleteHandle>(null);
@@ -310,10 +330,12 @@ export function QuincyRichTextEditorBase({
   const pickerRef = useRef<HTMLInputElement>(null);
   // The nodes show a medium from where the host says it is read (the staff route by default, a Review link's own for a guest, #835).
   const mediaUrl = media?.mediaUrl; const posterUrl = media?.posterUrl;
+  // Read once, when the editor is built: a host draws its cards apart (B1) for the editor's life.
+  const previewsApart = previewContainer !== undefined;
   const extensions = useMemo(() => [
     ...createRichTextEditorExtensions(preset)
       .filter((extension) => mentionsOn || extension.name !== "mention")
-      .map((extension) => extension === LinkPreview ? LinkPreviewWithView
+      .map((extension) => extension === LinkPreview ? (previewsApart ? LinkPreviewApartNode : LinkPreviewWithView)
         // A note's media is drawn by its strip, so in the text it is an invisible atom (#927).
         : extension === EmbeddedImage ? (preset === "note" ? EmbeddedImageNoteNode : mediaUrl ? EmbeddedImageWithView.configure({ mediaUrl }) : EmbeddedImageWithView)
         : extension === EmbeddedVideo ? (preset === "note" ? EmbeddedVideoNoteNode : mediaUrl && posterUrl ? EmbeddedVideoWithView.configure({ mediaUrl, posterUrl }) : EmbeddedVideoWithView)
@@ -323,7 +345,7 @@ export function QuincyRichTextEditorBase({
     PastedWebAddressLinks.configure({ enabled: () => Boolean(linkPreviewsRef.current) && !disabledRef.current }),
     // So does a typed one, once the author types a space, Enter or closing punctuation after it (#948).
     TypedWebAddressLinks.configure({ enabled: () => Boolean(linkPreviewsRef.current) && !disabledRef.current }),
-  ], [preset, mentionsOn, mediaUrl, posterUrl]);
+  ], [preset, mentionsOn, mediaUrl, posterUrl, previewsApart]);
   const created = useEditor({
     extensions,
     // The toolbar subscribes to its own formatting snapshot (`useRichTextState`); the field itself
@@ -332,7 +354,7 @@ export function QuincyRichTextEditorBase({
     content: toTiptap(value),
     editable: !disabled,
     editorProps: {
-      attributes: { class: "rich-text__editor-content " + (preset === "note" ? NOTE_CONTENT_UTILITIES : EDITOR_CONTENT_UTILITIES + (preset === "document" ? DOCUMENT_CONTENT_UTILITIES : "")), "data-placeholder": placeholder, ...(id ? { id } : {}), ...(ariaLabel ? { "aria-label": ariaLabel } : {}) },
+      attributes: { class: "rich-text__editor-content " + (preset === "note" ? NOTE_CONTENT_UTILITIES : boxed ? BOXED_CONTENT_UTILITIES : EDITOR_CONTENT_UTILITIES + (preset === "document" ? DOCUMENT_CONTENT_UTILITIES : "")), "data-placeholder": placeholder, ...(id ? { id } : {}), ...(ariaLabel ? { "aria-label": ariaLabel } : {}) },
       // A file dropped or pasted into the editor is ours to handle: letting the browser have it would
       // navigate away from the page (and the unsaved comment) or paste a foreign <img>.
       handlePaste: (_view, event) => {
@@ -726,10 +748,26 @@ export function QuincyRichTextEditorBase({
     onAlt={(mediaId, alt) => { const at = findMedia(mediaId); if (at) editor.view.dispatch(editor.state.tr.setNodeMarkup(at.pos, undefined, { ...at.attrs, alt })); }}
     onFocusText={() => editor.commands.focus()}
   /> : null;
+  // The note box's cards (B1): every card the draft holds, in document order, drawn under the box's text.
+  const draftCards = previewsApart ? <LinkPreviewDraftCards
+    cards={value.content.filter((block): block is RichTextLinkPreview => block.type === "linkPreview")} disabled={disabled} {...(mediaUrl ? { mediaUrl } : {})}
+    onRemove={(previewId) => {
+      if (!editor.isEditable) return;
+      let at: { pos: number; size: number } | null = null;
+      editor.state.doc.forEach((child, offset) => { if (!at && child.type.name === "linkPreview" && child.attrs.previewId === previewId) at = { pos: offset, size: child.nodeSize }; });
+      const found = at as { pos: number; size: number } | null;
+      if (found) editor.view.dispatch(editor.state.tr.delete(found.pos, found.pos + found.size));
+    }}
+    onFocusText={() => { if (!editor.isDestroyed) editor.view.focus(); editor.commands.focus(); }}
+  /> : null;
   // The live region stays mounted so screen readers announce a message when it appears, but it takes no space while empty.
   const CANCELLED_MESSAGE = "Upload cancelled";
   const liveMessage = overBytes ? "This formatting is too large to save; remove list items or formatting." : nestingBlocked ? "Maximum list nesting is four levels" : uploadCancelled ? CANCELLED_MESSAGE : "";
   const off = (can: boolean) => disabled || !can;
+  // The note box's bubbles dock on the host's phone layout (frame P2), else below 721px.
+  const docked = bubbleDocked ?? phone;
+  // A bubble mounts outside the box's scrolling text, which would clip it: at the surface scope, as the format bubble does.
+  const bubbleRoot = () => (editor.view.dom.closest("[data-surface]") as HTMLElement | null) ?? document.body;
 
   // Built once and placed in one of two homes: the field's own toolbar row (the default), or the host's element (`toolbarContainer`).
   const toolbar = <RichTextToolbar aria-label="Formatting" className="w-full min-w-0 gap-[var(--space-2)]">
@@ -790,25 +828,29 @@ export function QuincyRichTextEditorBase({
 
   // The note box (#927) draws the field, so outside the phone pill a note is the bare text. Block, not grid: the box's anchor chip floats
   // beside the first line, which a grid's own formatting context would push the whole editor away from.
-  const bareNote = isNote && !pill;
+  const bareNote = (isNote || boxed) && !pill;
   const content = <div ref={pageRef} {...contentAttributes} className={cn("relative min-w-0", pill ? PILL_TEXT : "w-full", contentClassName)}>
     <EditorContent editor={editor} className={pill ? PILL_SCROLLER : "w-full min-w-0"} />
     {isDocument && outline.length >= 2 && <RichTextOutlineRail outline={outline} activeIndex={activeHeading} onSelect={(index) => scrollToRichTextHeading(editor, index)} className="absolute end-1 top-2 z-[1] max-[721px]:hidden" />}
   </div>;
   return <div ref={wrapperRef} className={bareNote ? "group block min-w-0" : "group grid gap-[var(--space-2)]"} data-disabled={disabled || undefined}>
     {bareNote ? <div ref={fieldRef} data-testid="rich-text-field" className="min-w-0">{content}</div> : <InputGroup ref={fieldRef} data-testid="rich-text-field" variant={pill ? "pill" : "default"} className={pill ? PILL_GROUP : FIELD_GROUP} data-disabled={disabled || undefined}>
-      {toolbarContainer === undefined && !isNote ? <InputGroupAddon ref={addonRef} align="block-start" className={cn("p-[var(--space-1)] cursor-default", isDocument && "rich-text-toolbar-sticky")}>
+      {toolbarContainer === undefined && !isNote && !boxed ? <InputGroupAddon ref={addonRef} align="block-start" className={cn("p-[var(--space-1)] cursor-default", isDocument && "rich-text-toolbar-sticky")}>
         {toolbar}
       </InputGroupAddon> : null}
       {inlineStart !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-start" className={cn("cursor-default", pill && "gap-[var(--space-1)] pb-[calc(var(--space-1)*1.5)] pl-[var(--space-1)] has-[>button]:ml-0 group-data-[wrapped=true]/input-group:order-none")}>{inlineStart}</InputGroupAddon> : null}
       {content}
       {inlineEnd !== undefined ? <InputGroupAddon data-testid="rich-text-addon" align="inline-end" className={cn("cursor-default", pill && "pb-[calc(var(--space-1)*1.5)] pr-[var(--space-1)] group-data-[wrapped=true]/input-group:ms-auto")}>{inlineEnd}</InputGroupAddon> : null}
     </InputGroup>}
-    {isNote && <RichTextFormatBubble editor={editor} linkOpen={linkOpen} onLinkOpenChange={setLinkOpen} onLinkApplied={offerLinkPreview} disabled={disabled} docked={bubbleDocked ?? phone} dockTo={bubbleDockTo} />}
+    {(isNote || boxed) && <RichTextFormatBubble editor={editor} linkOpen={linkOpen} onLinkOpenChange={setLinkOpen} onLinkApplied={offerLinkPreview} disabled={disabled} docked={docked} dockTo={bubbleDockTo} notice={boxed} />}
     {isNote && (stripContainer === undefined ? strip : stripContainer ? createPortal(strip, stripContainer) : null)}
-    {toolbarContainer && !isNote ? createPortal(toolbar, toolbarContainer) : null}
+    {previewContainer ? createPortal(draftCards, previewContainer) : null}
+    {toolbarContainer && !isNote && !boxed ? createPortal(toolbar, toolbarContainer) : null}
     {isDocument && <>
-      {!phone && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tier={tableTier} onTierChange={setTableTier} ceiling={() => addonRef.current?.getBoundingClientRect().bottom ?? 0} />}
+      {/* Boxed (#951): floating around the table on a desktop, mounted outside the box's scrolling text; docked to the box's top edge on a
+          phone, and on a desktop when the floating bar has no room (tier "none"), since there is no toolbar to take its controls (N3). */}
+      {(boxed ? !docked : !phone) && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} tier={tableTier} onTierChange={setTableTier} {...(boxed ? { appendTo: bubbleRoot, yieldToSelection: true } : { ceiling: () => addonRef.current?.getBoundingClientRect().bottom ?? 0 })} />}
+      {boxed && (docked || tableTier === "none") && <RichTextTableBubble editor={editor} onDeleteTable={() => setDeleteTableOpen(true)} docked dockTo={bubbleDockTo} appendTo={bubbleRoot} yieldToSelection />}
       <DeleteTableDialog editor={editor} open={deleteTableOpen} onOpenChange={setDeleteTableOpen} />
     </>}
     {picking !== null && <Input

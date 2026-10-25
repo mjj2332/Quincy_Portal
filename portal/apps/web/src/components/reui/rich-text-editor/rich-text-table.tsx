@@ -31,6 +31,10 @@
 //    control sideways; the Insert-table slot becomes the `RichTextTableMenu` below, so the toolbar keeps its order.
 //    Only the phone still leads with `RichTextTableTools`.)
 // 9. The bar takes an optional `ceiling` (#594): the sticky composer toolbar's bottom, a second chrome edge under the header.
+// 10. The Notice board's box (#951, owner decision N3): `docked` puts the bar on the box's top edge (`dockTo`), start-aligned and never
+//    flipped, as the format bubble docks on a phone (frame P2), under its own plugin key so it can stand beside the floating bar.
+//    `appendTo` mounts either bar outside the box's scrolling text, which would clip it. `yieldToSelection` hides the bar while a
+//    text selection is up, so it never sits on the format bubble: a collapsed caret gets the table controls, a selection the formatting.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react"
 import { findParentNodeClosestToPos, type Editor } from "@tiptap/react"
 import { BubbleMenu } from "@tiptap/react/menus"
@@ -128,6 +132,9 @@ function readTable(editor: Editor | null): TableSnapshot {
 }
 
 const TABLE_BUBBLE_KEY = "richTextTableBubble"
+const TABLE_DOCKED_KEY = "richTextTableDocked"
+// Docked, it keeps to the box's top edge: flipping it under the box would put it over the keyboard (the format bubble's rule).
+const DOCKED_OPTIONS = { placement: "top-start", offset: 8, flip: false } as const
 
 /** The DOM element of the table cell holding the selection anchor, or null outside a table. */
 export function getActiveCellElement(editor: Editor): HTMLElement | null {
@@ -179,10 +186,16 @@ function showInTable({
   element: HTMLElement
 }) {
   return (
+    !editor.isDestroyed &&
     editor.isEditable &&
     editor.isActive("table") &&
     (editor.view.hasFocus() || element.contains(document.activeElement))
   )
+}
+
+/** The same, but stepping aside for the format bubble while a text selection is up (edit 10). */
+function showInTableBesideSelection(props: { editor: Editor; element: HTMLElement }) {
+  return showInTable(props) && props.editor.state.selection.empty
 }
 
 interface RichTextTableBubbleProps {
@@ -195,6 +208,14 @@ interface RichTextTableBubbleProps {
   onTierChange?: (tier: TableBubbleTier) => void
   /** Client-Y of a second chrome edge below the shell header (the stuck composer toolbar's bottom): the bar never docks above it. */
   ceiling?: () => number
+  /** On the box's top edge instead of around the table (edit 10): no tier, never inert. */
+  docked?: boolean
+  /** The element a docked bar sits on; the editor's field when absent or null. */
+  dockTo?: () => Element | null
+  /** Where the bar mounts; beside the editor when absent. */
+  appendTo?: () => HTMLElement
+  /** Hide while a text selection is up, so the format bubble has the room. */
+  yieldToSelection?: boolean
 }
 
 interface RichTextTableControlsProps {
@@ -312,6 +333,10 @@ export function RichTextTableBubble({
   tier = null,
   onTierChange,
   ceiling,
+  docked = false,
+  dockTo,
+  appendTo,
+  yieldToSelection = false,
 }: RichTextTableBubbleProps) {
   // The anchor and the zone share ONE rect (the whole table's vertical extent and the active cell's column, `tableBubbleAnchor`); re-resolved on each pass.
   const readAnchor = useCallback(() => {
@@ -323,7 +348,13 @@ export function RichTextTableBubble({
     return tableBubbleAnchor(readActiveTableRect(editor) ?? readActiveRowRect(editor), cell)
   }, [editor])
 
+  const dockToRef = useRef(dockTo)
+
   const getCellRect = useCallback(() => {
+    if (docked) {
+      const anchor = dockToRef.current?.() ?? editor.view.dom.closest("[data-testid='rich-text-field']") ?? editor.view.dom
+      return { getBoundingClientRect: () => anchor.getBoundingClientRect(), getClientRects: () => [anchor.getBoundingClientRect()], contextElement: anchor }
+    }
     const dom = getActiveCellElement(editor)
 
     if (!dom) return null
@@ -337,7 +368,7 @@ export function RichTextTableBubble({
       getClientRects: () => [dom.getBoundingClientRect()],
       contextElement: dom,
     }
-  }, [editor, readAnchor])
+  }, [editor, readAnchor, docked])
 
   // Options are rebuilt when the caret enters or leaves a table, so the tier's "only on change" memory starts over.
   const inTable = useRichTextSelector(editor, (current) => current?.isActive("table") ?? false)
@@ -347,11 +378,13 @@ export function RichTextTableBubble({
   useLayoutEffect(() => {
     onTierChangeRef.current = onTierChange
     ceilingRef.current = ceiling
-  }, [onTierChange, ceiling])
+    dockToRef.current = dockTo
+  }, [onTierChange, ceiling, dockTo])
 
   const options = useMemo(
     () => {
       void inTable
+      if (docked) return DOCKED_OPTIONS
 
       return tableBubbleOptions({
         surface: () => editor.view.dom.getBoundingClientRect(),
@@ -364,25 +397,28 @@ export function RichTextTableBubble({
         },
       })
     },
-    [editor, readAnchor, inTable]
+    [editor, readAnchor, inTable, docked]
   )
+  const pluginKey = docked ? TABLE_DOCKED_KEY : TABLE_BUBBLE_KEY
 
   return (
     <BubbleMenu
       editor={editor}
-      pluginKey={TABLE_BUBBLE_KEY}
-      shouldShow={showInTable}
+      pluginKey={pluginKey}
+      shouldShow={yieldToSelection ? showInTableBesideSelection : showInTable}
       getReferencedVirtualElement={getCellRect}
       options={options}
+      {...(appendTo ? { appendTo } : {})}
       className="z-[var(--z-popover)]"
+      data-docked={docked ? "true" : "false"}
     >
       <RichTextBubbleBar
         editor={editor}
-        pluginKey={TABLE_BUBBLE_KEY}
+        pluginKey={pluginKey}
         label="Table"
         testId="rich-text-table-bubble"
-        inactive={tier === "none"}
-        tier={tier ?? undefined}
+        inactive={!docked && tier === "none"}
+        tier={docked ? undefined : (tier ?? undefined)}
       >
         <RichTextTableControls editor={editor} onDeleteTable={onDeleteTable} />
       </RichTextBubbleBar>
