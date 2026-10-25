@@ -48,7 +48,7 @@ export const NOTICE_RICH_TEXT_JSON_MAX_BYTES = 64 * 1024;
 export const NOTICE_BODY_MAX_LENGTH = 10_000;
 export const RICH_TEXT_MAX_NESTING = 8;
 /** At most this many link preview cards in one document (#497). */
-export const RICH_TEXT_MAX_LINK_PREVIEWS = 3;
+export const RICH_TEXT_MAX_LINK_PREVIEWS = 10;
 const LINK_PREVIEW_DISPLAY_KEYS = ["url", "title", "description", "siteName", "imageMediaId"] as const;
 export const RICH_TEXT_TABLE_MAX_ROWS = 50;
 export const RICH_TEXT_TABLE_MAX_COLUMNS = 12;
@@ -345,7 +345,7 @@ export function parseRichTextDoc(value: unknown, profile: RichTextProfile = COMM
   const mediaIds = richTextMediaIds(parsed);
   if (new Set(mediaIds).size !== mediaIds.length) throw new RichTextValidationError("A media item may be placed only once in a document");
   const previewIds = richTextLinkPreviewIds(parsed);
-  if (previewIds.length > RICH_TEXT_MAX_LINK_PREVIEWS) throw new RichTextValidationError("A post may have at most 3 link previews");
+  if (previewIds.length > RICH_TEXT_MAX_LINK_PREVIEWS) throw new RichTextValidationError(`A post may have at most ${RICH_TEXT_MAX_LINK_PREVIEWS} link previews`);
   if (new Set(previewIds).size !== previewIds.length) throw new RichTextValidationError("A link preview may be placed only once in a document");
   if (!richTextPlainText(parsed).trim()) throw new RichTextValidationError("Rich-text document must not be empty");
   return parsed;

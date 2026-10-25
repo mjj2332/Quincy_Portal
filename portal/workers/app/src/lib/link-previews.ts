@@ -1,5 +1,5 @@
 import {
-  LINK_PREVIEW_MAX_IMAGE_BYTES, LINK_PREVIEW_RATE_LIMIT_PER_HOUR, LINK_PREVIEW_RATE_WINDOW_MS, EMBEDDED_MEDIA_RETENTION_MS, checkPreviewTarget, embeddedMediaObjectKey, noticeEmbeddedMediaObjectKey, sniffEmbeddedImageType,
+  LINK_PREVIEW_MAX_IMAGE_BYTES, LINK_PREVIEW_MAX_PER_POST, LINK_PREVIEW_RATE_LIMIT_PER_HOUR, LINK_PREVIEW_RATE_WINDOW_MS, EMBEDDED_MEDIA_RETENTION_MS, checkPreviewTarget, embeddedMediaObjectKey, noticeEmbeddedMediaObjectKey, sniffEmbeddedImageType,
   type LinkPreviewCard, type RichTextBlock, type RichTextDoc,
 } from "@quincy/shared";
 import type { Env, SessionUser } from "../env";
@@ -14,12 +14,12 @@ const scopeOf = (projectId: string | null) => (projectId === null ? { sql: "proj
 
 /**
  * Pre-checks the previews a save names before its batch, so an obvious mistake is a clean 400. Advisory only: the batch's own
- * statements (`linkPreviewStatements`) re-validate every id in SQL. At most three, none repeated; each must be this author's fresh
+ * statements (`linkPreviewStatements`) re-validate every id in SQL. At most LINK_PREVIEW_MAX_PER_POST, none repeated; each must be this author's fresh
  * pending preview in this scope, or one this owner already holds.
  */
 export async function preflightLinkPreviews(db: D1Database, input: PreviewOwner & { requesterId: string; ids: string[]; now?: number }): Promise<boolean> {
   if (!input.ids.length) return true;
-  if (input.ids.length > 3 || new Set(input.ids).size !== input.ids.length) return false;
+  if (input.ids.length > LINK_PREVIEW_MAX_PER_POST || new Set(input.ids).size !== input.ids.length) return false;
   const cutoff = (input.now ?? Date.now()) - EMBEDDED_MEDIA_RETENTION_MS;
   const marks = input.ids.map(() => "?").join(", ");
   const found = (await db.prepare(`SELECT id, owner_kind, owner_id, project_id, requester_id, created_at FROM link_previews WHERE id IN (${marks})`).bind(...input.ids).all<{ id: string; owner_kind: string; owner_id: string | null; project_id: string | null; requester_id: string; created_at: number }>()).results;

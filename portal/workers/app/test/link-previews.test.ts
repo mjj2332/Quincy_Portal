@@ -399,6 +399,12 @@ describe("saving a comment with link previews", () => {
     expect((await request(`/media/embedded/${preview.imageId}`, "other")).status).toBe(403);
   });
 
+  it("saves a comment with ten cards", async () => {
+    const ten: Awaited<ReturnType<typeof seedPreview>>[] = []; for (let n = 0; n < 10; n++) ten.push(await seedPreview());
+    const comment = await savedComment(await postComment("member", cardDoc(...ten.map((item) => item.id))));
+    expect(cards(comment)).toHaveLength(10);
+  });
+
   it("serves the filled-in card to an External editor in the same shape, and omits the image id when the image is gone", async () => {
     const preview = await seedPreview({ requester: ids.external });
     const comment = await savedComment(await postComment("external", cardDoc(preview.id)));
@@ -419,14 +425,14 @@ describe("saving a comment with link previews", () => {
     expect(stored!.content_json).not.toContain("FORGED");
   });
 
-  it("refuses 400, and saves nothing, for a fourth card, another person's preview, another Project's, an unknown id, an expired one and one already in a comment", async () => {
+  it("refuses 400, and saves nothing, for an eleventh card, another person's preview, another Project's, an unknown id, an expired one and one already in a comment", async () => {
     const mine = await seedPreview();
     const foreign = await seedPreview({ requester: ids.admin });
     const elsewhere = await seedPreview({ projectId: ids.otherProject });
     const noticeCard = await seedPreview({ ownerKind: "notice_post" });
     const stale = await seedPreview({ createdAt: Date.now() - 8 * day });
     const taken = await seedPreview(); await savedComment(await postComment("member", cardDoc(taken.id)));
-    const four = [await seedPreview(), await seedPreview(), await seedPreview(), await seedPreview()];
+    const four: Awaited<ReturnType<typeof seedPreview>>[] = []; for (let n = 0; n < 11; n++) four.push(await seedPreview());
     const before = (await database.DB.prepare("SELECT count(*) AS n FROM project_comments").first<{ n: number }>())!.n;
     for (const doc of [cardDoc(...four.map((item) => item.id)), cardDoc(mine.id, foreign.id), cardDoc(mine.id, elsewhere.id), cardDoc(mine.id, noticeCard.id), cardDoc(mine.id, crypto.randomUUID()), cardDoc(mine.id, stale.id), cardDoc(mine.id, taken.id), cardDoc(mine.id, mine.id)]) {
       expect((await postComment("member", doc)).status).toBe(400);
@@ -522,11 +528,16 @@ describe("saving a Notice board post with link previews", () => {
     expect((await request(`/media/embedded/${preview.imageId}`, "external")).status).toBe(404);
   });
 
-  it("refuses 400 for a fourth card, a comment preview, someone else's preview and a forged id", async () => {
+  it("saves a Notice board post with ten cards", async () => {
+    const ten: Awaited<ReturnType<typeof seedPreview>>[] = []; for (let n = 0; n < 10; n++) ten.push(await seedPreview({ ownerKind: "notice_post" }));
+    expect(cards(await savedNotice(await postNotice("member", cardDoc(...ten.map((item) => item.id)))))).toHaveLength(10);
+  });
+
+  it("refuses 400 for an eleventh card, a comment preview, someone else's preview and a forged id", async () => {
     const mine = await seedPreview({ ownerKind: "notice_post" });
     const comment = await seedPreview();
     const foreign = await seedPreview({ ownerKind: "notice_post", requester: ids.admin });
-    const four = [await seedPreview({ ownerKind: "notice_post" }), await seedPreview({ ownerKind: "notice_post" }), await seedPreview({ ownerKind: "notice_post" }), await seedPreview({ ownerKind: "notice_post" })];
+    const four: Awaited<ReturnType<typeof seedPreview>>[] = []; for (let n = 0; n < 11; n++) four.push(await seedPreview({ ownerKind: "notice_post" }));
     for (const doc of [cardDoc(...four.map((item) => item.id)), cardDoc(mine.id, comment.id), cardDoc(mine.id, foreign.id), cardDoc(crypto.randomUUID())]) expect((await postNotice("member", doc)).status).toBe(400);
     expect((await previewRow(mine.id))?.owner_id).toBeNull();
   });

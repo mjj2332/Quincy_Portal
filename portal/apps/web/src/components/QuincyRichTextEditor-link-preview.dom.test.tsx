@@ -38,9 +38,9 @@ async function mount(initial: RichTextDoc, preset: "composer" | "document" = "co
 }
 const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 const click = (element: Element) => act(async () => { (element as HTMLElement).click(); });
-async function apply(host: HTMLElement, href: string) {
+async function apply(host: HTMLElement, href: string, paragraph = 0) {
   const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
-  const text = document.createTreeWalker(editor.querySelector("p")!, NodeFilter.SHOW_TEXT).nextNode()!;
+  const text = document.createTreeWalker([...editor.children].filter((child) => child.tagName === "P")[paragraph]!, NodeFilter.SHOW_TEXT).nextNode()!;
   await act(async () => {
     editor.focus();
     const range = document.createRange(); range.setStart(text, 0); range.setEnd(text, text.textContent!.length);
@@ -122,12 +122,24 @@ describe("applying a link offers a card (#497)", () => {
     expect(request).not.toHaveBeenCalled();
   });
 
-  it("asks for nothing past three cards, or for an address that already has one", async () => {
-    const three: RichTextDoc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Link me" }] }, node(P1, "https://example.test/1"), node(P2, "https://example.test/2"), node("44444444-4444-4444-8444-444444444444", "https://example.test/3")] };
-    const full = await mount(three);
-    await apply(full, "https://example.test/4");
-    expect(request).not.toHaveBeenCalled();
-    act(() => root!.unmount()); document.body.replaceChildren();
+  it("gives each of ten links its card in the Collaboration composer and the Notice board composer, and the eleventh stays a link with a notice", async () => {
+    const lines = Array.from({ length: 11 }, (_, index) => `Link ${index}`);
+    const many: RichTextDoc = { type: "doc", content: lines.map((text) => ({ type: "paragraph", content: [{ type: "text", text }] })) };
+    request.mockImplementation(async (_scope: unknown, href: string) => { const n = Number(href.split("/").pop()); return cardFor(`00000000-0000-4000-8000-${String(n).padStart(12, "0")}`, href); });
+    for (const [preset, scope] of [["composer", { projectId: "p1" }], ["document", { noticeBoard: true }]] as const) {
+      request.mockClear();
+      const host = await mount(many, preset, scope);
+      for (let index = 0; index < 11; index++) await apply(host, `https://example.test/${index}`, index);
+      expect(request).toHaveBeenCalledTimes(10);
+      expect(storedPreviews()).toHaveLength(10);
+      expect(cards(host)).toHaveLength(10);
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain("A post can show 10 link previews at most.");
+      expect(JSON.stringify(latest)).toContain("https://example.test/10");
+      act(() => root!.unmount()); document.body.replaceChildren();
+    }
+  });
+
+  it("asks for nothing for an address that already has a card", async () => {
     const one: RichTextDoc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Link me" }] }, node(P1, "https://example.test/1")] };
     const dup = await mount(one);
     await apply(dup, "https://example.test/1");
