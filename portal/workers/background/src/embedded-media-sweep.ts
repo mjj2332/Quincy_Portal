@@ -1,4 +1,4 @@
-import { EMBEDDED_MEDIA_RETENTION_MS } from "@quincy/shared";
+import { ATTACHMENT_RETENTION_MS, EMBEDDED_MEDIA_RETENTION_MS } from "@quincy/shared";
 import type { Env } from "./env";
 
 type SweepRow = {
@@ -94,7 +94,70 @@ export async function sweepEmbeddedMedia(env: Pick<Env, "DB" | "MEDIA">, now = D
   await env.DB.prepare("DELETE FROM link_previews WHERE owner_id IS NULL AND created_at <= ?").bind(cutoff).run();
   // The attempts behind the hourly limit (#497) are only needed for that hour, so a day is a wide margin.
   await env.DB.prepare("DELETE FROM link_preview_attempts WHERE created_at <= ?").bind(now - 24 * 60 * 60 * 1000).run();
-  return { scanned: rows.results.length, reclaimed, failed, drained: await drainCleanupQueue(env, now) };
+  // Attachments (#953) follow the same lifecycle in their own table; run before the drain so a key they queue is drained in this run.
+  const attachments = await sweepAttachments(env, now);
+  return { scanned: rows.results.length, reclaimed, failed, drained: await drainCleanupQueue(env, now), attachments };
+}
+
+type AttachmentSweepRow = { id: string; state: "uploading" | "pending" | "detached"; storageKey: string; projectId: string | null };
+
+/**
+ * Reclaims Attachments nobody holds (#953), the lifecycle of `sweepEmbeddedMedia` for the `attachments` table: removed a week ago or
+ * longer (a deleted comment's are detached at 0, so due now), or uploaded and never posted for a week. An attached row is never touched,
+ * except by the backstop below. A Project's delete queues its Attachment keys itself, so the drain covers it. At most 100 rows a run.
+ *
+ * - An expired `uploading` row may still have a multipart upload a late completion could finish: one batch moves its key and upload id
+ *   to `embedded_media_cleanup` and deletes the row, and the drain aborts the upload and deletes the object.
+ * - A `pending` or `detached` row is claimed first (flipped to detached at 0, which no attach statement accepts), then its object goes,
+ *   then the row. If R2 refuses, the key is queued before the row is dropped.
+ * - Backstop: an `attached` row whose post is gone (a hard delete the app did not detach) is detached at 0 first, so it is due now.
+ */
+export async function sweepAttachments(env: Pick<Env, "DB" | "MEDIA">, now: number): Promise<{ scanned: number; reclaimed: number; failed: number }> {
+  const cutoff = now - ATTACHMENT_RETENTION_MS;
+  await env.DB.prepare(`
+    UPDATE attachments SET state = 'detached', detached_at = 0, updated_at = ?
+    WHERE state = 'attached' AND (
+      (owner_kind = 'project_comment' AND NOT EXISTS (SELECT 1 FROM project_comments c WHERE c.id = attachments.owner_id))
+      OR (owner_kind = 'notice_post' AND NOT EXISTS (SELECT 1 FROM notice_board_posts p WHERE p.id = attachments.owner_id))
+      OR (owner_kind = 'video_note' AND NOT EXISTS (SELECT 1 FROM video_notes n WHERE n.id = attachments.owner_id)))
+  `).bind(now).run();
+  const rows = await env.DB.prepare(`
+    SELECT id, state, storage_key AS storageKey, project_id AS projectId FROM attachments
+    WHERE (state = 'detached' AND detached_at <= ?) OR (state IN ('uploading', 'pending') AND created_at <= ?)
+    ORDER BY id LIMIT ?
+  `).bind(cutoff, cutoff, SWEEP_LIMIT).all<AttachmentSweepRow>();
+  let reclaimed = 0; let failed = 0;
+  for (const row of rows.results) {
+    try {
+      if (row.state === "uploading") {
+        const predicate = "id = ? AND state = 'uploading' AND created_at <= ?";
+        const results = await env.DB.batch([
+          env.DB.prepare(ENQUEUE_SQL.replace("VALUES (?, ?, ?, ?)", `SELECT storage_key, upload_id, project_id, ? FROM attachments WHERE ${predicate}`)).bind(now, row.id, cutoff),
+          env.DB.prepare(`DELETE FROM attachments WHERE ${predicate}`).bind(row.id, cutoff),
+        ]);
+        if ((results[1]!.meta.changes ?? 0) === 1) reclaimed += 1;
+        continue;
+      }
+      const claim = await env.DB.prepare(`
+        UPDATE attachments SET state = 'detached', detached_at = 0, owner_id = COALESCE(owner_id, id), updated_at = ?
+        WHERE id = ? AND ((state = 'detached' AND detached_at <= ?) OR (state = 'pending' AND created_at <= ?))
+        RETURNING storage_key AS storageKey
+      `).bind(now, row.id, cutoff, cutoff).all<{ storageKey: string }>();
+      const claimed = claim.results[0];
+      if (!claimed) continue;
+      try { await env.MEDIA.delete(claimed.storageKey); }
+      catch (error) {
+        console.error("Attachment object delete failed, queued for cleanup", { attachmentId: row.id, error: errorText(error) });
+        await env.DB.prepare(ENQUEUE_SQL).bind(claimed.storageKey, null, row.projectId, now).run();
+      }
+      const deleted = await env.DB.prepare("DELETE FROM attachments WHERE id = ? AND state = 'detached' AND detached_at = 0").bind(row.id).run();
+      if ((deleted.meta.changes ?? 0) === 1) reclaimed += 1;
+    } catch (error) {
+      failed += 1;
+      console.error("Attachment sweep failed", { attachmentId: row.id, error: errorText(error) });
+    }
+  }
+  return { scanned: rows.results.length, reclaimed, failed };
 }
 
 /**
