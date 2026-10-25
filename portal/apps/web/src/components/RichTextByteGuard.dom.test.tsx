@@ -34,7 +34,9 @@ let root: Root | null = null;
 function mount() { const host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); return host; }
 async function render(node: ReactNode) { await act(async () => { root!.render(<QuincyQueryProvider principalId="user-me" role="photographer">{node}</QuincyQueryProvider>); await Promise.resolve(); await Promise.resolve(); }); }
 async function click(element: Element) { await act(async () => { element.dispatchEvent(new MouseEvent("click", { bubbles: true })); await Promise.resolve(); await Promise.resolve(); }); }
-const button = (host: HTMLElement, label: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === label)!;
+const button = (host: HTMLElement, label: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === label || item.getAttribute("aria-label") === label)!;
+// The note composer box (#950) locks Send and Save with aria-disabled, focusable so the reason reads; a plain button uses `disabled`.
+const held = (element: HTMLButtonElement) => element.disabled || element.getAttribute("aria-disabled") === "true";
 
 beforeEach(() => {
   mocks.apiGet.mockReset(); mocks.apiPost.mockReset(); mocks.apiPatch.mockReset();
@@ -45,22 +47,22 @@ afterEach(async () => { if (root) await act(async () => { root!.unmount(); await
 describe("rich-text serialized-width submit guards", () => {
   it("disables and re-enables both notice submit buttons at the 560/540 task-item boundary (64 KiB)", async () => {
     mocks.apiGet.mockResolvedValue({ posts: [ownPost] }); const host = mount(); await render(<NoticeBoard currentUserId="user-me" />);
-    await click(button(host, "Use oversized formatting")); expect(button(host, "Post notice").disabled).toBe(true);
-    await click(button(host, "Use accepted formatting")); expect(button(host, "Post notice").disabled).toBe(false); await click(button(host, "Post notice")); expect(mocks.apiPost).toHaveBeenCalledWith("/api/notice-board/posts", { content: noticeAccepted });
+    await click(button(host, "Use oversized formatting")); expect(held(button(host, "Post notice"))).toBe(true);
+    await click(button(host, "Use accepted formatting")); expect(held(button(host, "Post notice"))).toBe(false); await click(button(host, "Post notice")); expect(mocks.apiPost).toHaveBeenCalledWith("/api/notice-board/posts", { content: noticeAccepted });
     await chooseNoticeAction(host, "Me", "Edit", (ms) => new Promise((resolve) => setTimeout(resolve, ms))); const edit = host.querySelector('[data-slot="notice-board-edit-composer"]')!;
-    await click(button(edit as HTMLElement, "Use oversized formatting")); expect(button(edit as HTMLElement, "Save").disabled).toBe(true);
-    await click(button(edit as HTMLElement, "Use accepted formatting")); expect(button(edit as HTMLElement, "Save").disabled).toBe(false); await click(button(edit as HTMLElement, "Save"));
+    await click(button(edit as HTMLElement, "Use oversized formatting")); expect(held(button(edit as HTMLElement, "Save"))).toBe(true);
+    await click(button(edit as HTMLElement, "Use accepted formatting")); expect(held(button(edit as HTMLElement, "Save"))).toBe(false); await click(button(edit as HTMLElement, "Save"));
     expect(mocks.apiPatch).toHaveBeenCalledWith(`/api/notice-board/posts/${ownPost.id}`, { content: noticeAccepted });
   });
 
   it("disables and re-enables both project-comment submit buttons at the 280/270 task-item boundary", async () => {
     mocks.apiGet.mockImplementation((path) => Promise.resolve(path.includes("subtasks") ? { subtasks: [] } : { project: { id: projectId, street: "Guard Street" }, comments: [ownComment] }));
     mocks.apiPost.mockResolvedValue({ ...ownComment, id: "comment-new", content: accepted }); const host = mount(); await render(<ProjectCollaborationPanel projectId={projectId} />);
-    await click(button(host, "Use oversized formatting")); expect(button(host, "Post").disabled).toBe(true);
-    await click(button(host, "Use accepted formatting")); expect(button(host, "Post").disabled).toBe(false); await click(button(host, "Post")); expect(mocks.apiPost).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content: accepted });
+    await click(button(host, "Use oversized formatting")); expect(held(button(host, "Post comment"))).toBe(true);
+    await click(button(host, "Use accepted formatting")); expect(held(button(host, "Post comment"))).toBe(false); await click(button(host, "Post comment")); expect(mocks.apiPost).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content: accepted });
     await chooseCommentAction(host, "Me", "Edit"); const article = host.querySelector("article")!;
-    await click(button(article as HTMLElement, "Use oversized formatting")); expect(button(article as HTMLElement, "Save").disabled).toBe(true);
-    await click(button(article as HTMLElement, "Use accepted formatting")); expect(button(article as HTMLElement, "Save").disabled).toBe(false); await click(button(article as HTMLElement, "Save"));
+    await click(button(article as HTMLElement, "Use oversized formatting")); expect(held(button(article as HTMLElement, "Save"))).toBe(true);
+    await click(button(article as HTMLElement, "Use accepted formatting")); expect(held(button(article as HTMLElement, "Save"))).toBe(false); await click(button(article as HTMLElement, "Save"));
     expect(mocks.apiPatch).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/comment-own`, { content: accepted });
   });
 });

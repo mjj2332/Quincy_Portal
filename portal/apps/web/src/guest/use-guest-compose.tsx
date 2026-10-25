@@ -61,6 +61,9 @@ export type GuestStrip = {
   setDoc: (doc: RichTextDoc) => void;
   /** An upload starting is the note starting, as the first text is. */
   setUploading: (uploading: boolean) => void;
+  /** How many files failed to upload (#956): Post / Save wait until each is retried or removed, so the note never goes out missing one. */
+  failedFiles: number;
+  setFailedFiles: (failed: number) => void;
   pending: boolean; problem: string | null;
   /** Nothing to post (no text and no media): Send is disabled (#927 D2: a drawing alone is not a note). */
   empty: boolean; uploading: boolean;
@@ -152,6 +155,7 @@ export function useGuestCompose({ clock, frameCount, markupAllowed, post, edit, 
   const [doc, setDoc] = useState<RichTextDoc>(EMPTY_DOC);
   // A picture still going up holds Post / Save: the note would go without it.
   const [uploading, setUploading] = useState(false);
+  const [failedFiles, setFailedFiles] = useState(0);
   const [marks, setMarksState] = useState<NoteMarks>(EMPTY_MARKS);
   const [items, setItems] = useState<MarkupItem[]>(NO_ITEMS);
   const [drawFrame, setDrawFrame] = useState<number | null>(null);
@@ -214,7 +218,7 @@ export function useGuestCompose({ clock, frameCount, markupAllowed, post, edit, 
   const reset = useCallback(() => {
     opId.current += 1; drawOp.current += 1;
     resetHistoryRef.current(); // a new draft starts with no undo / redo steps from the last one
-    setDoc(EMPTY_DOC); setUploading(false); setMarks(EMPTY_MARKS); setItems(NO_ITEMS); setDrawFrame(null); setPhase("off"); setProblem(null); setPending(false); setRefusedFor(null); setTarget(null); setRemoved(false); drawingFor.current = null;
+    setDoc(EMPTY_DOC); setUploading(false); setFailedFiles(0); setMarks(EMPTY_MARKS); setItems(NO_ITEMS); setDrawFrame(null); setPhase("off"); setProblem(null); setPending(false); setRefusedFor(null); setTarget(null); setRemoved(false); drawingFor.current = null;
     setFixed(null); setInMarked(false);
   }, [setMarks, setFixed, setInMarked]);
   const begin = useCallback(() => { reset(); setMarks({ in: here(), out: null }); setOpen(true); live.current = { open: true, editing: false }; }, [reset, here, setMarks]);
@@ -332,7 +336,7 @@ export function useGuestCompose({ clock, frameCount, markupAllowed, post, edit, 
   // With only In marked, Out is the playhead (the chip shows it live): a post takes the frame on screen as Out, or is a point at In when the film never left it.
   const sentMarks = (): NoteMarks => (inMarked && marks.in !== null && marks.out === null && here() > marks.in ? { in: marks.in, out: here() } : marks);
   const submit = async () => {
-    if (pending || phase !== "off" || uploading) return;
+    if (pending || phase !== "off" || uploading || failedFiles > 0) return;
     let send: () => Promise<PostOutcome>;
     if (target === null) {
       const built = composeInput({ doc, marks: sentMarks(), frameCount, items, drawingFrame: drawFrame });
@@ -388,7 +392,7 @@ export function useGuestCompose({ clock, frameCount, markupAllowed, post, edit, 
 
   const empty = noteText(doc) === "";
   // Pristine: a new draft nothing has been put into, which a phone's blur gives back. A phone's focus stamp alone does not count.
-  const pristine = isOpen && target === null && empty && marks.out === null && !inMarked && items.length === 0 && phase === "off" && !pending && problem === null && !uploading;
+  const pristine = isOpen && target === null && empty && marks.out === null && !inMarked && items.length === 0 && phase === "off" && !pending && problem === null && !uploading && failedFiles === 0;
   const penDown = phase !== "off";
   const draw: GuestDrawRow | null = penDown ? {
     tool: pen.kind, color: pen.color,
@@ -410,6 +414,7 @@ export function useGuestCompose({ clock, frameCount, markupAllowed, post, edit, 
       if (next) { if (!live.current.open) begin(); startNote(); }
       setUploading(next);
     },
+    failedFiles, setFailedFiles,
     following: !isOpen || (target === null && fixed === null && !inMarked),
     frames, rangeMarks: inMarked || marks.out !== null ? marks : EMPTY_MARKS, marksLocked,
     lockHint: hint, latest: target !== null && latest !== null && latest.revision !== target.baseRevision ? latest.body : null,

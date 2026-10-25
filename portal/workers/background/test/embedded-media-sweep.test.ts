@@ -276,7 +276,7 @@ describe("embedded media sweep (#493)", () => {
     expect(await sweepEmbeddedMedia(env, now)).toMatchObject({ scanned: 100, reclaimed: 100 });
     expect(await count()).toBe(1);
     expect(await sweepEmbeddedMedia(env, now)).toMatchObject({ scanned: 1, reclaimed: 1 });
-    expect(await sweepEmbeddedMedia(env, now)).toEqual({ scanned: 0, reclaimed: 0, failed: 0, drained: 0 });
+    expect(await sweepEmbeddedMedia(env, now)).toEqual({ scanned: 0, reclaimed: 0, failed: 0, drained: 0, attachments: { scanned: 0, reclaimed: 0, failed: 0 } });
   });
 });
 

@@ -1,6 +1,6 @@
 import {
-  LINK_PREVIEW_MAX_IMAGE_BYTES, LINK_PREVIEW_RATE_LIMIT_PER_HOUR, LINK_PREVIEW_RATE_WINDOW_MS, EMBEDDED_MEDIA_RETENTION_MS, checkPreviewTarget, embeddedMediaObjectKey, noticeEmbeddedMediaObjectKey, sniffEmbeddedImageType,
-  type LinkPreviewCard, type RichTextBlock, type RichTextDoc,
+  LINK_PREVIEW_MAX_IMAGE_BYTES, LINK_PREVIEW_MAX_PER_POST, LINK_PREVIEW_RATE_LIMIT_PER_HOUR, LINK_PREVIEW_RATE_WINDOW_MS, EMBEDDED_MEDIA_RETENTION_MS, checkPreviewTarget, embeddedMediaObjectKey, noticeEmbeddedMediaObjectKey, sniffEmbeddedImageType,
+  type AttachmentOwnerKind, type LinkPreviewCard, type RichTextBlock, type RichTextDoc,
 } from "@quincy/shared";
 import type { Env, SessionUser } from "../env";
 import { audit } from "./audit";
@@ -14,12 +14,12 @@ const scopeOf = (projectId: string | null) => (projectId === null ? { sql: "proj
 
 /**
  * Pre-checks the previews a save names before its batch, so an obvious mistake is a clean 400. Advisory only: the batch's own
- * statements (`linkPreviewStatements`) re-validate every id in SQL. At most three, none repeated; each must be this author's fresh
+ * statements (`linkPreviewStatements`) re-validate every id in SQL. At most LINK_PREVIEW_MAX_PER_POST, none repeated; each must be this author's fresh
  * pending preview in this scope, or one this owner already holds.
  */
 export async function preflightLinkPreviews(db: D1Database, input: PreviewOwner & { requesterId: string; ids: string[]; now?: number }): Promise<boolean> {
   if (!input.ids.length) return true;
-  if (input.ids.length > 3 || new Set(input.ids).size !== input.ids.length) return false;
+  if (input.ids.length > LINK_PREVIEW_MAX_PER_POST || new Set(input.ids).size !== input.ids.length) return false;
   const cutoff = (input.now ?? Date.now()) - EMBEDDED_MEDIA_RETENTION_MS;
   const marks = input.ids.map(() => "?").join(", ");
   const found = (await db.prepare(`SELECT id, owner_kind, owner_id, project_id, requester_id, created_at FROM link_previews WHERE id IN (${marks})`).bind(...input.ids).all<{ id: string; owner_kind: string; owner_id: string | null; project_id: string | null; requester_id: string; created_at: number }>()).results;
@@ -93,16 +93,18 @@ type PreviewRow = { id: string; url: string; title: string | null; description: 
  * since D1 takes a hundred bound values). A node whose row is gone is dropped. The image id is given only while its row is
  * attached, so a card never points at media nobody can read. Returns new documents and leaves the input untouched.
  */
-export async function fillLinkPreviews<T extends { content: RichTextDoc }>(db: D1Database, items: T[]): Promise<T[]> {
+export async function fillLinkPreviews<T extends { id: string; content: RichTextDoc }>(db: D1Database, items: T[], ownerKind: AttachmentOwnerKind): Promise<T[]> {
   const wanted = new Set<string>();
   const wantedVideos = new Set<string>();
   const wantedImages = new Set<string>();
+  const wantedFiles = new Set<string>();
   for (const item of items) for (const block of item.content.content) {
     if (block.type === "linkPreview") wanted.add(block.attrs.previewId);
+    else if (block.type === "attachment") wantedFiles.add(block.attrs.attachmentId);
     else if (block.type === "video") wantedVideos.add(block.attrs.mediaId);
     else if (block.type === "image") wantedImages.add(block.attrs.mediaId);
   }
-  if (!wanted.size && !wantedVideos.size && !wantedImages.size) return items;
+  if (!wanted.size && !wantedVideos.size && !wantedImages.size && !wantedFiles.size) return items;
   const rows = new Map<string, PreviewRow>();
   const all = [...wanted];
   for (let index = 0; index < all.length; index += 90) {
@@ -133,8 +135,19 @@ export async function fillLinkPreviews<T extends { content: RichTextDoc }>(db: D
       if (size) sizes.set(row.id, size);
     }
   }
+  // #952: each Attachment's name and size, for its chip. Only a row ATTACHED to the very item that names it is filled (`ownerKind` and the item's id), as the guest twin
+  // `withGuestAttachmentFacts` does; a node whose row is gone, detached or held by another owner is served bare and renders "File unavailable". The name is the one stored at upload,
+  // historical by design.
+  const files = new Map<string, { owner: string; name: string; bytes: number }>();
+  const fileIds = [...wantedFiles];
+  for (let index = 0; index < fileIds.length; index += 90) {
+    const chunk = fileIds.slice(index, index + 90);
+    const found = await db.prepare(`SELECT id, owner_id, file_name, bytes FROM attachments WHERE owner_kind = ? AND state = 'attached' AND id IN (${chunk.map(() => "?").join(", ")})`).bind(ownerKind, ...chunk)
+      .all<{ id: string; owner_id: string; file_name: string; bytes: number }>();
+    for (const row of found.results) files.set(row.id, { owner: row.owner_id, name: row.file_name, bytes: Number(row.bytes) });
+  }
   return items.map((item) => {
-    if (!item.content.content.some((block) => block.type === "linkPreview" || block.type === "video" || block.type === "image")) return item;
+    if (!item.content.content.some((block) => block.type === "linkPreview" || block.type === "video" || block.type === "image" || block.type === "attachment")) return item;
     const content: RichTextBlock[] = [];
     for (const block of item.content.content) {
       if (block.type === "image") {
@@ -145,6 +158,11 @@ export async function fillLinkPreviews<T extends { content: RichTextDoc }>(db: D
       if (block.type === "video") {
         const hasPoster = posters.get(block.attrs.mediaId);
         content.push(hasPoster === undefined ? block : { type: "video", attrs: { mediaId: block.attrs.mediaId, hasPoster } });
+        continue;
+      }
+      if (block.type === "attachment") {
+        const file = files.get(block.attrs.attachmentId);
+        content.push(file && file.owner === item.id ? { type: "attachment", attrs: { attachmentId: block.attrs.attachmentId, name: file.name, bytes: file.bytes } } : { type: "attachment", attrs: { attachmentId: block.attrs.attachmentId } });
         continue;
       }
       if (block.type !== "linkPreview") { content.push(block); continue; }

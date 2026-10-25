@@ -693,11 +693,11 @@ describe("a comment with a video (#494)", () => {
     expect(edit.status).toBe(400);
     expect(await mediaRow(id)).toMatchObject({ state: "attached", owner_id: comment.id });
     const commentId = crypto.randomUUID(); const own = await image();
-    await expect(createProjectComment(database.DB, { id: commentId, projectId: ids.project, authorId: ids.member, body: "[video]", contentJson: JSON.stringify(videoDoc(own)), mentions: [], wallClockMs: Date.now(), occurredAt: new Date(), media: { authorId: ids.member, ids: [own], videoIds: [own] } })).rejects.toBeInstanceOf(CommentMediaConflictError);
+    await expect(createProjectComment(database.DB, { id: commentId, projectId: ids.project, authorId: ids.member, principal: { id: ids.member, impersonatedBy: null }, body: "[video]", contentJson: JSON.stringify(videoDoc(own)), mentions: [], wallClockMs: Date.now(), occurredAt: new Date(), media: { authorId: ids.member, ids: [own], videoIds: [own] } })).rejects.toBeInstanceOf(CommentMediaConflictError);
     expect(await mediaRow(own)).toMatchObject({ state: "pending", owner_id: null });
     const edited = await created(await post("member", imageDoc(await image())));
     const attachedImage = (await database.DB.prepare("SELECT id FROM embedded_media WHERE owner_id = ?").bind(edited.id).first<{ id: string }>())!.id;
-    await expect(editProjectComment(database.DB, { projectId: ids.project, commentId: edited.id, actorId: ids.member, body: "[video]", contentJson: JSON.stringify(videoDoc(attachedImage)), removeMentionIds: [], addMentions: [], mentionIds: [], editedAt: new Date(), occurredAt: new Date(), media: { authorId: ids.member, ids: [attachedImage], videoIds: [attachedImage] } })).rejects.toBeInstanceOf(CommentMediaConflictError);
+    await expect(editProjectComment(database.DB, { projectId: ids.project, commentId: edited.id, actorId: ids.member, principal: { id: ids.member, impersonatedBy: null }, body: "[video]", contentJson: JSON.stringify(videoDoc(attachedImage)), removeMentionIds: [], addMentions: [], mentionIds: [], editedAt: new Date(), occurredAt: new Date(), media: { authorId: ids.member, ids: [attachedImage], videoIds: [attachedImage] } })).rejects.toBeInstanceOf(CommentMediaConflictError);
     expect(await mediaRow(attachedImage)).toMatchObject({ state: "attached", owner_id: edited.id });
   });
 

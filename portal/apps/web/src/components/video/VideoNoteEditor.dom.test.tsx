@@ -33,6 +33,13 @@ describe("VideoNoteEditor (#835)", () => {
     expect(props.limit).toBe(VIDEO_NOTE_BODY_MAX);
   });
 
+  it("attaches files as the note's own (#955), and tells the host when one has failed", async () => {
+    const onFailedFilesChange = vi.fn();
+    const props = await render({ onFailedFilesChange });
+    expect(props.attachments).toEqual({ projectId: P, owner: "video_note" });
+    expect(props.onFailedFilesChange).toBe(onFailedFilesChange);
+  });
+
   it("@ lists the Project's video audience, through the staff or the External route by role", async () => {
     api.apiGet.mockResolvedValue({ users: [{ id: "u1", name: "Mia" }] });
     const staff = await render();

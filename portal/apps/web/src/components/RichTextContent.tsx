@@ -2,7 +2,8 @@ import { Fragment, type ReactNode } from "react";
 import { EmbeddedImage } from "./quincy/EmbeddedImage";
 import { EmbeddedVideo } from "./quincy/EmbeddedVideo";
 import { LinkPreviewCard } from "./quincy/LinkPreviewCard";
-import type { RichTextBlock, RichTextDoc, RichTextInline, RichTextListItem, RichTextMark, RichTextTableCell, RichTextTableRow, RichTextTaskItem } from "@quincy/shared";
+import { AttachmentChip, AttachmentList } from "./quincy/AttachmentChip";
+import type { RichTextAttachment, RichTextBlock, RichTextDoc, RichTextInline, RichTextListItem, RichTextMark, RichTextTableCell, RichTextTableRow, RichTextTaskItem } from "@quincy/shared";
 
 function marked(node: ReactNode, marks: RichTextMark[] | undefined): ReactNode {
   return (marks ?? []).reduce<ReactNode>((content, mark) => {
@@ -38,8 +39,8 @@ const alignClass = (align: string | undefined) => align ? `rich-text__align-${al
 /** Matches Tiptap's `cellMinWidth` (96px per column): the table overflows its scroller below that. */
 const TABLE_CELL_MIN_WIDTH = 96;
 
-/** Where embedded media is read from (#835): the staff routes by default, a Review link's own for a guest. */
-export type RichTextMediaUrls = { mediaUrl?: (mediaId: string) => string; posterUrl?: (mediaId: string) => string };
+/** Where embedded media is read from (#835), and Attachments downloaded from (#952): the staff routes by default, a Review link's own for a guest. */
+export type RichTextMediaUrls = { mediaUrl?: (mediaId: string) => string; posterUrl?: (mediaId: string) => string; attachmentUrl?: (attachmentId: string) => string };
 
 function block(node: RichTextBlock | RichTextListItem | RichTextTaskItem | RichTextTableRow | RichTextTableCell, key: number, urls: RichTextMediaUrls): ReactNode {
   if (node.type === "paragraph") return <p key={key} className={alignClass(node.attrs?.textAlign)}>{(node.content ?? []).map(inline)}</p>;
@@ -75,8 +76,27 @@ function block(node: RichTextBlock | RichTextListItem | RichTextTaskItem | RichT
   return <Fragment key={key}>{fallbackText(node)}</Fragment>;
 }
 
+/**
+ * The top-level blocks, with each run of consecutive Attachments (#952) drawn as one list of download chips. An Attachment is top-level only
+ * (the parser refuses one anywhere else), and the editor keeps them at the end with the media, so a comment shows one list after its text.
+ * The name and size are the server's served display fields; an old client that does not know the node draws nothing for it.
+ */
+function blocks(content: readonly RichTextBlock[], urls: RichTextMediaUrls): ReactNode[] {
+  const out: ReactNode[] = [];
+  for (let index = 0; index < content.length; index += 1) {
+    const child = content[index]!;
+    if (child.type !== "attachment") { out.push(block(child, index, urls)); continue; }
+    const run: RichTextAttachment[] = [];
+    const start = index;
+    while (index < content.length && content[index]!.type === "attachment") { run.push(content[index] as RichTextAttachment); index += 1; }
+    index -= 1;
+    out.push(<AttachmentList key={`attachments-${start}`}>{run.map((node) => <AttachmentChip key={node.attrs.attachmentId} attachmentId={node.attrs.attachmentId} name={node.attrs.name} bytes={node.attrs.bytes} attachmentUrl={urls.attachmentUrl} />)}</AttachmentList>);
+  }
+  return out;
+}
+
 /** Safe renderer for the deliberately narrow shared document model. */
-export function RichTextContent({ content, className = "", mediaUrl, posterUrl }: { content: RichTextDoc; className?: string } & RichTextMediaUrls) {
-  const urls: RichTextMediaUrls = { mediaUrl, posterUrl };
-  return <div className={`rich-text${className ? ` ${className}` : ""}`}>{content.content.map((child, index) => block(child, index, urls))}</div>;
+export function RichTextContent({ content, className = "", mediaUrl, posterUrl, attachmentUrl }: { content: RichTextDoc; className?: string } & RichTextMediaUrls) {
+  const urls: RichTextMediaUrls = { mediaUrl, posterUrl, attachmentUrl };
+  return <div className={`rich-text${className ? ` ${className}` : ""}`}>{blocks(content.content, urls)}</div>;
 }

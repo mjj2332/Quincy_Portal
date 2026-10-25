@@ -277,6 +277,17 @@ Owner steps after the deploy:
 
 **Rollback.** An old Worker ignores the extra Video rows, so a code rollback is safe. Removing the rows means a Time Travel restore, which loses every write since the bookmark.
 
+### Attachments (0082, #952)
+
+Migration 0082 creates the `attachments` table and its four indexes (`attachments_storage_key_unique`, `attachments_owner_idx`, `attachments_state_detached_idx`, `attachments_state_created_idx`). It is additive only: one CREATE TABLE, no rebuild, no PRAGMA, no trigger, no data. The new Worker writes rows only when someone attaches a file to a Project comment (`docs/Guides/Attachments.md`). Apply it with a Time Travel bookmark first (the "A PR that adds a D1 migration" flow above), listing only 0082, then merge. Before merging, check that 0082 is still free on `main`. Ship #953 (the clean-up sweep) with this or before it reaches production: rows that were never posted, and their objects, build up until then.
+
+Owner steps after the deploy:
+
+1. Post-check: `PRAGMA table_info(attachments)` lists 15 columns, and `PRAGMA index_list(attachments)` lists the four indexes.
+2. Attach a PDF to a comment on a test Project and download it. Expected: the browser saves the file under its own name, and the page does not navigate away.
+
+**Rollback.** An old Worker ignores the table, so rolling back the code is safe. An old client draws no file on a comment that holds one, and the comment's text and media are unaffected. Dropping the table means a Time Travel restore, which loses every write made since the bookmark.
+
 ### Subtask presets (0052)
 
 0052 converts every date-only Subtask range to a 09:00 start and a 17:00 end (the presets, ADR 0016)

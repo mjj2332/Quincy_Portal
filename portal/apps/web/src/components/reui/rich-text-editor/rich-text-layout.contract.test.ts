@@ -67,7 +67,10 @@ describe("rich-text editor layout contracts", () => {
   it("mounts the floating table bar only when the phone path is off, and the toolbar group on the phone or when the bar has no room (tier none)", () => {
     const source = readFileSync(new URL("../../QuincyRichTextEditorBase.tsx", import.meta.url), "utf8");
     expect(source).toContain("useMediaQuery(RICH_TEXT_PHONE_QUERY)");
-    expect(source).toMatch(/!phone && <RichTextTableBubble/);
+    expect(source).toMatch(/!boxed && !phone && <RichTextTableBubble/);
+    // #951 (N3, and the review): the Notice board's box has no toolbar to take the controls, so its bar docks to the box's top edge at every
+    // width, mounted where the host keeps room for it.
+    expect(source).toMatch(/boxed && <RichTextTableBubble[^\n]*? docked dockTo=[^\n]*? appendTo=\{\(\) => tableBarRoot\?\.\(\) \?\? bubbleRoot\(\)\}/);
     expect(source).toMatch(/const presentation = phone \? "tools" : tableTier === "none" \? "menu" : "bubble"/);
     // #595: only the phone leads the toolbar with the group; on a desktop the Insert-table slot becomes the Table menu.
     expect(source).toMatch(/phone && state\.inTable && <RichTextTableTools/);
@@ -81,7 +84,7 @@ describe("rich-text editor layout contracts", () => {
   it("the composer toolbar is sticky on the document preset only, and the table bar takes its bottom as a ceiling (#594)", () => {
     const source = readFileSync(new URL("../../QuincyRichTextEditorBase.tsx", import.meta.url), "utf8");
     expect(source).toMatch(/isDocument && "rich-text-toolbar-sticky"/);
-    expect(source).toMatch(/ceiling=\{/);
+    expect(source).toMatch(/ceiling=\{\(\) => addonRef\.current/);
     const table = read("rich-text-table.tsx");
     expect(table).toMatch(/ceiling\?: \(\) => number/);
     expect(table).toContain("viewport: viewportBelow(");
@@ -104,7 +107,7 @@ describe("rich-text editor layout contracts", () => {
     expect(bar).toMatch(/aria-hidden=\{inactive/);
     expect(bar).toContain("data-tier={tier}");
     expect(bar).toMatch(/inactive && "invisible"/);
-    expect(read("rich-text-table.tsx")).toMatch(/inactive=\{tier === "none"\}/);
+    expect(read("rich-text-table.tsx")).toMatch(/inactive=\{!docked && tier === "none"\}/);
   });
 
   it("outline rows read as menu items: sentence case, no tracking, --text-sm", () => {

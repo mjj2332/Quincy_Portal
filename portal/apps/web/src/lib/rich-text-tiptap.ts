@@ -12,7 +12,7 @@ import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table
 import { TableMap } from "@tiptap/pm/tables";
 import { TextAlign } from "@tiptap/extension-text-align";
 import { embeddedMediaPosterUrl, embeddedMediaUrl } from "./embedded-media-core";
-import { RICH_TEXT_HIGHLIGHT_COLORS, RICH_TEXT_MAX_NESTING, RICH_TEXT_TABLE_MAX_COLUMNS, RICH_TEXT_TABLE_MAX_ROWS, type RichTextDoc } from "@quincy/shared";
+import { isHttpUrl, RICH_TEXT_HIGHLIGHT_COLORS, RICH_TEXT_MAX_NESTING, RICH_TEXT_TABLE_MAX_COLUMNS, RICH_TEXT_TABLE_MAX_ROWS, type RichTextDoc } from "@quincy/shared";
 
 // The Tiptap <-> stored RichTextDoc contract for `QuincyRichTextEditor`, in its two presets:
 // `"composer"` (Project discussion, #491), `"document"` (Notice board, #492) and `"note"` (a note or reply on a Video, #927). The schema here is
@@ -53,6 +53,10 @@ export function toTiptap(doc: RichTextDoc): Record<string, unknown> {
       return { type: "video", attrs: { mediaId: attrs?.mediaId, ...(typeof attrs?.hasPoster === "boolean" ? { hasPoster: attrs.hasPoster } : {}) } };
     }
     if (valueNode.type === "linkPreview") return { type: "linkPreview", attrs: { ...(valueNode.attrs as Record<string, unknown>) } };
+    if (valueNode.type === "attachment") {
+      const attrs = valueNode.attrs as Record<string, unknown> | undefined;
+      return { type: "attachment", attrs: { attachmentId: attrs?.attachmentId, ...(typeof attrs?.name === "string" ? { name: attrs.name } : {}), ...(typeof attrs?.bytes === "number" ? { bytes: attrs.bytes } : {}) } };
+    }
     if (valueNode.type === "heading" || valueNode.type === "taskItem") return { type: valueNode.type, attrs: { ...(valueNode.attrs as Record<string, unknown>) }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
     if (valueNode.type === "paragraph" && valueNode.attrs) return { type: "paragraph", attrs: tiptapTextAlign(valueNode.attrs as Record<string, unknown>), ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
     if (valueNode.type === "tableCell" || valueNode.type === "tableHeader") {
@@ -227,6 +231,69 @@ export const LinkPreview = TiptapNode.create({
   renderHTML({ node }) { return ["div", { "data-link-preview": String(node.attrs.previewId ?? ""), class: "rich-text__link-preview" }, String(node.attrs.title ?? node.attrs.url ?? "")]; },
 });
 
+/**
+ * An Attachment (#952): an atom that names a stored file by id, at the top level only. `name` and `bytes` are what the server serves for the
+ * chip and live on the editor node only so it can draw; `tiptapToRichTextDoc` strips them back to the id. No `parseHTML` rule, so pasted
+ * HTML never becomes one: the only way in is the editor's own upload. In the note preset (a Project discussion comment) and the document
+ * preset (a notice, #954), where the box's strip draws it; it renders nothing in the text.
+ */
+export const Attachment = TiptapNode.create({
+  name: "attachment",
+  group: "block",
+  atom: true,
+  draggable: false,
+  // Like a note's photo or video: an invisible atom the caret steps over, removed by its chip's x, a selection deleted over it, Backspace or Delete.
+  selectable: false,
+  addAttributes() { return { attachmentId: { default: null }, name: { default: null, rendered: false }, bytes: { default: null, rendered: false } }; },
+  parseHTML() { return []; },
+  renderHTML({ node }) { return ["div", { "data-attachment-id": String(node.attrs.attachmentId ?? ""), class: "rich-text__attachment", hidden: "" }]; },
+  addNodeView() {
+    return () => {
+      const dom = document.createElement("div");
+      dom.hidden = true; dom.contentEditable = "false"; dom.dataset.noteMedia = "attachment";
+      return { dom, ignoreMutation: () => true };
+    };
+  },
+});
+
+/** The address a link or card names, as the server normalises it (a card's `url` is the normalised form of the link it was fetched for). */
+function previewAddress(href: unknown): string {
+  const raw = String(href ?? "");
+  try { return new URL(raw).href; } catch { return raw; }
+}
+function linkAddresses(doc: ProseMirrorNode): Set<string> {
+  const found = new Set<string>();
+  doc.descendants((child) => { for (const mark of child.marks) if (mark.type.name === "link") found.add(previewAddress(mark.attrs.href)); });
+  return found;
+}
+
+/**
+ * A link preview goes with its link (#949): a change that removes the last link to an address removes that address's card in an
+ * appended transaction, which the undo history folds into the same step, so one undo brings back both. A card stays while any link to
+ * its address remains, and a card whose link was never in the editor (an older post) is left alone. Nothing here touches the host
+ * replacing the content (`preventUpdate`) or an undo / redo, so history stays an exact inverse.
+ */
+export const LinkPreviewFollowsLink = Extension.create({
+  name: "linkPreviewFollowsLink",
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      appendTransaction(transactions, oldState, newState) {
+        if (!transactions.some((tr) => tr.docChanged)) return null;
+        if (transactions.some((tr) => tr.getMeta("preventUpdate") || tr.getMeta("history$"))) return null;
+        const carded: { node: ProseMirrorNode; pos: number; address: string }[] = [];
+        newState.doc.forEach((child, offset) => { if (child.type.name === "linkPreview") carded.push({ node: child, pos: offset, address: previewAddress(child.attrs.url) }); });
+        if (carded.length === 0) return null;
+        const before = linkAddresses(oldState.doc); const after = linkAddresses(newState.doc);
+        const orphaned = carded.filter(({ address }) => before.has(address) && !after.has(address));
+        if (orphaned.length === 0) return null;
+        const tr = newState.tr;
+        for (const { node, pos } of orphaned.reverse()) tr.delete(pos, pos + node.nodeSize);
+        return tr;
+      },
+    })];
+  },
+});
+
 /** Rows x columns of a table node, spans included (what the server's limits count). */
 export function tableDimensions(table: ProseMirrorNode): { rows: number; columns: number } {
   const map = TableMap.get(table);
@@ -296,18 +363,21 @@ const NoteTaskList = TaskList.extend({
 });
 const noteTaskItem = (content: string) => TaskItem.extend({ content, parseHTML() { return []; }, addInputRules() { return []; } }).configure({ nested: true });
 
-const isMediaNode = (node: ProseMirrorNode) => node.type.name === "image" || node.type.name === "video";
-const mediaIdOf = (node: ProseMirrorNode) => String(node.attrs.mediaId ?? "");
-/** Where the run of media that ends the note starts (the document's size when it does not end with media). */
-export function noteMediaTailStart(doc: ProseMirrorNode): number {
+// An Attachment (#952) is drawn by the same strip, so it is part of the same tail.
+const isMediaNode = (node: ProseMirrorNode) => node.type.name === "image" || node.type.name === "video" || node.type.name === "attachment";
+const mediaIdOf = (node: ProseMirrorNode) => String(node.attrs.mediaId ?? node.attrs.attachmentId ?? "");
+/** Where the run of `isTailNode` nodes that ends the document starts (its size when it does not end with one). */
+function tailStartOf(doc: ProseMirrorNode, isTailNode: (node: ProseMirrorNode) => boolean): number {
   let start = doc.content.size;
   for (let index = doc.childCount - 1; index >= 0; index -= 1) {
     const child = doc.child(index);
-    if (!isMediaNode(child)) break;
+    if (!isTailNode(child)) break;
     start -= child.nodeSize;
   }
   return start;
 }
+/** Where the run of media that ends the note starts (the document's size when it does not end with media). */
+export const noteMediaTailStart = (doc: ProseMirrorNode): number => tailStartOf(doc, isMediaNode);
 
 /**
  * A note's photos and videos are a strip after its text (#927, frame C4), drawn outside the text (`QuincyRichTextEditorBase`), so the
@@ -317,28 +387,36 @@ export function noteMediaTailStart(doc: ProseMirrorNode): number {
  * or Delete all remove it, and undo brings it back. Nothing here touches the host replacing the content (`preventUpdate`) or an undo /
  * redo, and a photo an old note holds between paragraphs stays where it is: the stored order is never rewritten.
  */
-export const NoteMediaTail = Extension.create({
-  name: "noteMediaTail",
-  addProseMirrorPlugins() {
-    return [new Plugin({
-      appendTransaction(transactions, oldState, newState) {
-        if (!transactions.some((tr) => tr.docChanged)) return null;
-        if (transactions.some((tr) => tr.getMeta("preventUpdate") || tr.getMeta("history$"))) return null;
-        const known = new Set<string>();
-        oldState.doc.forEach((child) => { if (isMediaNode(child)) known.add(mediaIdOf(child)); });
-        // What is new to the note and landed before the run that ends it, in document order.
-        const tail = noteMediaTailStart(newState.doc);
-        const stray: { node: ProseMirrorNode; pos: number }[] = [];
-        newState.doc.forEach((child, offset) => { if (isMediaNode(child) && offset < tail && !known.has(mediaIdOf(child))) stray.push({ node: child, pos: offset }); });
-        if (stray.length === 0) return null;
-        const tr = newState.tr;
-        for (const { node, pos } of [...stray].reverse()) tr.delete(pos, pos + node.nodeSize);
-        tr.insert(tr.doc.content.size, stray.map(({ node }) => node));
-        return tr;
-      },
-    })];
-  },
-});
+function mediaTail(name: string, isTailNode: (node: ProseMirrorNode) => boolean) {
+  return Extension.create({
+    name,
+    addProseMirrorPlugins() {
+      return [new Plugin({
+        appendTransaction(transactions, oldState, newState) {
+          if (!transactions.some((tr) => tr.docChanged)) return null;
+          if (transactions.some((tr) => tr.getMeta("preventUpdate") || tr.getMeta("history$"))) return null;
+          const known = new Set<string>();
+          oldState.doc.forEach((child) => { if (isTailNode(child)) known.add(mediaIdOf(child)); });
+          // What is new to the post and landed before the run that ends it, in document order.
+          const tail = tailStartOf(newState.doc, isTailNode);
+          const stray: { node: ProseMirrorNode; pos: number }[] = [];
+          newState.doc.forEach((child, offset) => { if (isTailNode(child) && offset < tail && !known.has(mediaIdOf(child))) stray.push({ node: child, pos: offset }); });
+          if (stray.length === 0) return null;
+          const tr = newState.tr;
+          for (const { node, pos } of [...stray].reverse()) tr.delete(pos, pos + node.nodeSize);
+          tr.insert(tr.doc.content.size, stray.map(({ node }) => node));
+          return tr;
+        },
+      })];
+    },
+  });
+}
+export const NoteMediaTail = mediaTail("noteMediaTail", isMediaNode);
+/**
+ * A notice's Attachments (#954) are the same kind of tail: the box's strip draws them under the page, and the posted notice shows them as one
+ * list of chips after its text. Its photos stay inline where they were put, so only an Attachment is moved.
+ */
+export const DocumentAttachmentTail = mediaTail("documentAttachmentTail", (node) => node.type.name === "attachment");
 
 /** The editor schema for a preset, shared with direct schema regression tests. */
 export function createRichTextEditorExtensions(preset: RichTextEditorPreset = "composer") {
@@ -358,7 +436,11 @@ export function createRichTextEditorExtensions(preset: RichTextEditorPreset = "c
       listKeymap: false,
       trailingNode: false,
       undoRedo: {},
-      link: { openOnClick: false, autolink: false, linkOnPaste: false },
+      // No composer links on its own what the server refuses (A5, after #947). Tiptap's Link runs a linkify paste rule whatever `autolink` and
+      // `linkOnPaste` say, linking an email as `mailto:` and a bare domain as `http://`; `shouldAutoLink` is what that rule asks, so it links
+      // nothing. A pasted page's anchor, and the Link popover's address, keep their link only when it is http(s), the one kind the server takes.
+      // Where Link previews are on, the editor links pasted and typed http, https and www. addresses itself (`rich-text-address-links.ts`).
+      link: { openOnClick: false, autolink: false, linkOnPaste: false, shouldAutoLink: () => false, isAllowedUri: (url) => isHttpUrl(url) },
     }),
     ListItem.extend({ content: itemContent }),
     ListItemHardBreak,
@@ -368,9 +450,10 @@ export function createRichTextEditorExtensions(preset: RichTextEditorPreset = "c
     ListNestingBoundary,
     EmbeddedImage,
     LinkPreview,
+    LinkPreviewFollowsLink,
     ...(preset === "composer" || note ? [EmbeddedVideo] : []),
-    ...(note ? [NoteMediaTail] : []),
-    ...(preset === "document" ? documentExtensions() : []),
+    ...(note ? [Attachment, NoteMediaTail] : []),
+    ...(preset === "document" ? [...documentExtensions(), Attachment, DocumentAttachmentTail] : []),
   ];
 }
 
@@ -410,6 +493,11 @@ export function tiptapToRichTextDoc(value: unknown, options: { keepPreviewDispla
       if (options.keepPreviewDisplay) return { type: "linkPreview", attrs: { previewId: attrs?.previewId, url: attrs?.url, title: attrs?.title ?? null, description: attrs?.description ?? null, siteName: attrs?.siteName ?? null, imageMediaId: attrs?.imageMediaId ?? null } };
       return { type: "linkPreview", attrs: { previewId: attrs?.previewId } };
     }
+    if (valueNode.type === "attachment") {
+      const attrs = valueNode.attrs as Record<string, unknown> | undefined;
+      // The stored form is the id alone. A local draft (`keepPreviewDisplay`) also keeps the name and size the chip shows.
+      return { type: "attachment", attrs: { attachmentId: attrs?.attachmentId, ...(options.keepPreviewDisplay && typeof attrs?.name === "string" ? { name: attrs.name } : {}), ...(options.keepPreviewDisplay && typeof attrs?.bytes === "number" ? { bytes: attrs.bytes } : {}) } };
+    }
     if (valueNode.type === "heading") {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;
       return { type: "heading", attrs: { level: attrs?.level, ...alignAttrs(attrs) }, ...children };
@@ -434,11 +522,18 @@ export function tiptapToRichTextDoc(value: unknown, options: { keepPreviewDispla
   return copy(value) as RichTextDoc;
 }
 
-/** The form a post is sent in: every link card is its preview id alone and every video its media id alone, whatever a local draft or the server's served form kept for drawing them (a link card's text and image, a video's `hasPoster`), and an image its id and alt without the served `width` and `height` (#611). */
+/** The form a post is sent in: every link card is its preview id alone, every video its media id alone and every Attachment its id alone, whatever a local draft or the server's served form kept for drawing them (a link card's text and image, a video's `hasPoster`, a file's name and size), and an image its id and alt without the served `width` and `height` (#611). */
 export function stripEmbeddedDisplay(doc: RichTextDoc): RichTextDoc {
-  const needsStrip = (block: RichTextDoc["content"][number]) => (block.type === "linkPreview" && Object.keys(block.attrs).length > 1) || (block.type === "video" && "hasPoster" in block.attrs) || (block.type === "image" && ("width" in block.attrs || "height" in block.attrs));
+  const needsStrip = (block: RichTextDoc["content"][number]) => (block.type === "linkPreview" && Object.keys(block.attrs).length > 1) || (block.type === "video" && "hasPoster" in block.attrs) || (block.type === "image" && ("width" in block.attrs || "height" in block.attrs)) || (block.type === "attachment" && ("name" in block.attrs || "bytes" in block.attrs));
   if (!doc.content.some(needsStrip)) return doc;
-  return { ...doc, content: doc.content.map((block) => !needsStrip(block) ? block : block.type === "linkPreview" ? { type: "linkPreview" as const, attrs: { previewId: block.attrs.previewId } } : block.type === "image" ? { type: "image" as const, attrs: { mediaId: block.attrs.mediaId, ...(block.attrs.alt ? { alt: block.attrs.alt } : {}) } } : { type: "video" as const, attrs: { mediaId: (block as Extract<typeof block, { type: "video" }>).attrs.mediaId } }) };
+  const strip = (block: RichTextDoc["content"][number]): RichTextDoc["content"][number] => {
+    if (!needsStrip(block)) return block;
+    if (block.type === "linkPreview") return { type: "linkPreview", attrs: { previewId: block.attrs.previewId } };
+    if (block.type === "image") return { type: "image", attrs: { mediaId: block.attrs.mediaId, ...(block.attrs.alt ? { alt: block.attrs.alt } : {}) } };
+    if (block.type === "attachment") return { type: "attachment", attrs: { attachmentId: block.attrs.attachmentId } };
+    return { type: "video", attrs: { mediaId: (block as Extract<typeof block, { type: "video" }>).attrs.mediaId } };
+  };
+  return { ...doc, content: doc.content.map(strip) };
 }
 
 export function mentionQuery(editor: NonNullable<ReturnType<typeof useEditor>>): string | null {

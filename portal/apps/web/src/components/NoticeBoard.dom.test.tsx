@@ -7,6 +7,10 @@ import { NoticeBoard, type NoticeBoardPost } from "./NoticeBoard";
 import { createQuincyQueryClient } from "../lib/query-client";
 import { ApiError } from "../lib/api";
 import { cancelNoticeDelete, chooseNoticeAction, confirmNoticeDelete } from "../testing/notice-menu";
+/** Locked: the box's Send and Save stay focusable when locked (aria-disabled), as in Collaboration (#950). */
+const isLocked = (button: HTMLButtonElement) => button.disabled || button.getAttribute("aria-disabled") === "true";
+/** The new notice's round Post notice (#951: named "Posting…" while it posts). */
+const postButton = (scope: ParentNode) => scope.querySelector<HTMLButtonElement>('[data-slot="notice-board-composer"] button[type="submit"]')!;
 
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
@@ -71,6 +75,22 @@ async function selectText(editor: HTMLElement, node: Node, start: number, end: n
   });
 }
 
+/** A "/" command from an empty line (#951: headings and the checklist moved from the toolbar to the "/" menu). */
+async function slash(editor: HTMLElement, query: string) {
+  await act(async () => {
+    editor.focus();
+    editor.querySelector("p")!.textContent = `/${query}`;
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: query }));
+    await Promise.resolve(); await Promise.resolve();
+  });
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(document.querySelector('[data-testid="rich-text-slash-menu"]'), "slash menu").not.toBeNull();
+  await keydown(editor, "Enter");
+}
+const tiptapIn = (editor: HTMLElement) => (editor as unknown as { editor: import("@tiptap/core").Editor }).editor;
+/** The selection bubble's control (#951: Underline and Strikethrough moved from the toolbar to the bubble, N4). */
+const bubbleControl = (label: string) => document.querySelector<HTMLButtonElement>(`[data-testid="rich-text-format-bubble"] [aria-label="${label}"]`);
+
 async function selectOption(select: HTMLSelectElement, value: string) {
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(select, value);
@@ -125,9 +145,10 @@ describe("NoticeBoard disclosure and polling", () => {
     const content = { type: "doc" as const, content: [{ type: "taskList" as const, content: [{ type: "taskItem" as const, attrs: { checked: false }, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "Notice task" }] }] }] }] };
     apiGetMock.mockResolvedValue({ posts: [] }); apiPostMock.mockResolvedValue({ post: { ...newPost, body: "Notice task", content }, readState: { marker: null, latest: { postId: newPost.id, createdAt: newPost.createdAt }, unreadCount: 0 } });
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
-    await typeIntoEditor(host.querySelector<HTMLElement>('[contenteditable="true"]')!, "Notice task");
-    await click(host.querySelector<HTMLButtonElement>('[aria-label="Checklist"]')!);
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!); await flush();
+    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await slash(editor, "check");
+    await act(async () => { tiptapIn(editor).commands.insertContent("Notice task"); });
+    await click(postButton(host)); await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/notice-board/posts", { content });
     expect(host.querySelector('[data-slot="notice-board-post"] input')).toBeNull();
     apiPostMock.mockClear(); apiPatchMock.mockClear();
@@ -142,10 +163,9 @@ describe("NoticeBoard disclosure and polling", () => {
     apiGetMock.mockResolvedValue({ posts: [] }); apiPostMock.mockResolvedValue({ post: { ...newPost, body: "Notice section", content }, readState: { marker: null, latest: { postId: newPost.id, createdAt: newPost.createdAt }, unreadCount: 0 } });
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
-    await typeIntoEditor(editor, "Notice section");
-    await click(host.querySelector<HTMLButtonElement>('[aria-label="Heading"]')!);
-    await click([...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((item) => item.textContent === "Section")!);
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
+    await slash(editor, "section");
+    await act(async () => { tiptapIn(editor).commands.insertContent("Notice section"); });
+    await click(postButton(host));
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/notice-board/posts", { content });
     expect(host.querySelector('[data-slot="notice-board-post"] h2')?.textContent).toBe("Notice section");
@@ -158,9 +178,10 @@ describe("NoticeBoard disclosure and polling", () => {
     const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await typeIntoEditor(editor, "Marked notice");
     await selectText(editor, editor.querySelector("p")!.firstChild!, 0, "Marked notice".length);
-    await click(host.querySelector<HTMLButtonElement>('[aria-label="Underline"]')!);
-    await click(host.querySelector<HTMLButtonElement>('[aria-label="Strikethrough"]')!);
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
+    await advance(300);
+    await click(bubbleControl("Underline")!);
+    await click(bubbleControl("Strikethrough")!);
+    await click(postButton(host));
     await flush();
     expect(apiPostMock).toHaveBeenCalledWith("/api/notice-board/posts", { content });
     expect(host.querySelector("u")?.textContent).toBe("Marked notice"); expect(host.querySelector("s")?.textContent).toBe("Marked notice");
@@ -463,7 +484,7 @@ describe("NoticeBoard disclosure and polling", () => {
       expect(action.textContent).toBe("Deleting…");
       expect(action.disabled).toBe(true);
       expect(document.querySelector<HTMLButtonElement>('[data-testid="notice-delete-cancel"]')!.disabled).toBe(true);
-      expect([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!.disabled).toBe(true);
+      expect(isLocked(postButton(host))).toBe(true);
       await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape" })); await Promise.resolve(); });
       await advance(300);
       expect(dialog()).not.toBeNull();
@@ -640,7 +661,7 @@ describe("NoticeBoard disclosure and polling", () => {
       await chooseNoticeAction(host, "B", "Delete", advance);
       await act(async () => { document.querySelector<HTMLElement>('[data-testid="notice-delete-confirm-action"]')!.click(); await Promise.resolve(); });
       // create: a submit that bypasses the disabled button is refused by the shared lock
-      await act(async () => { host.querySelector<HTMLFormElement>('[data-slot="notice-board-composer"]')!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); await Promise.resolve(); });
+      await act(async () => { host.querySelector<HTMLFormElement>('[data-slot="notice-board-composer"] form')!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); await Promise.resolve(); });
       expect(apiPostMock).not.toHaveBeenCalled();
       // edit: the other notice's menu items are disabled and Edit starts nothing
       const trigger = triggerOf(host, "A")!;
@@ -681,7 +702,7 @@ describe("NoticeBoard disclosure and polling", () => {
       apiPostMock.mockImplementation(() => new Promise((resolve) => { finishPost = resolve; }));
       const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
       await typeIntoEditor(host.querySelector<HTMLElement>('[data-slot="notice-board-composer"] [contenteditable="true"]')!, "Pending post");
-      await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
+      await click(postButton(host));
       expect(apiPostMock).toHaveBeenCalledTimes(1);
       const trigger = triggerOf(host, "B")!;
       await act(async () => { trigger.click(); await Promise.resolve(); await Promise.resolve(); });
@@ -748,7 +769,7 @@ describe("NoticeBoard disclosure and polling", () => {
     await render(<NoticeBoard currentUserId="user-a" />);
     const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await typeIntoEditor(editor, "A typed notice");
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
+    await click(postButton(host));
     expect(apiPostMock).toHaveBeenCalledWith("/api/notice-board/posts", { content: doc("A typed notice") });
   });
 
@@ -799,7 +820,7 @@ describe("NoticeBoard disclosure and polling", () => {
     expect(editor.getAttribute("aria-activedescendant")).toBe(listbox.querySelector('[role="option"]')?.id);
     await keydown(editor, "ArrowDown");
     await keydown(editor, "Enter");
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
+    await click(postButton(host));
     expect(apiPostMock).toHaveBeenCalledWith("/api/notice-board/posts", {
       content: {
         type: "doc",
@@ -825,7 +846,7 @@ describe("NoticeBoard disclosure and polling", () => {
     await typeIntoEditor(editor, "@");
     await flush();
     await keydown(editor, "Enter");
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
+    await click(postButton(host));
     expect(apiPostMock).toHaveBeenCalledWith("/api/notice-board/posts", {
       content: {
         type: "doc",
@@ -863,8 +884,132 @@ describe("NoticeBoard disclosure and polling", () => {
     await render(<NoticeBoard currentUserId="user-a" />);
     const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
     await typeIntoEditor(editor, "Draft survives");
-    await click([...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Post notice")!);
+    await click(postButton(host));
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("Publishing is unavailable.");
     expect(editor.textContent).toContain("Draft survives");
   });
 });
+
+describe("the Notice board's note box (#951)", () => {
+  const createBox = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-slot="notice-board-composer"] [data-testid="note-composer-box"]');
+  const editBox = (host: HTMLElement) => host.querySelector<HTMLElement>('[data-slot="notice-board-edit-composer"] [data-testid="note-composer-box"]');
+  const card = { type: "linkPreview" as const, attrs: { previewId: "22222222-2222-4222-8222-222222222222", url: "https://example.test/a", title: "A page", description: "About it", siteName: "Example", imageMediaId: null } };
+
+  it("writes a new notice in the post box: no fixed toolbar, the paperclip for photos and files and a round Post notice", async () => {
+    apiGetMock.mockResolvedValue({ posts: [] });
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    const composer = createBox(host)!;
+    expect(composer).not.toBeNull();
+    expect(composer.closest("form")!.getAttribute("data-variant")).toBe("post");
+    expect(composer.querySelector('[contenteditable="true"]')).not.toBeNull();
+    expect(host.querySelector('[role="toolbar"][aria-label="Formatting"]')).toBeNull();
+    const tools = [...composer.querySelectorAll<HTMLButtonElement>('[data-testid="note-composer-tools"] button')].map((button) => button.getAttribute("aria-label") ?? button.textContent);
+    expect(tools).toEqual(["Add files", "Post notice"]);
+    // No seven-line cap (owner decision N1): the text grows with the page to about 60% of the viewport.
+    expect(composer.querySelector('[data-testid="note-composer-text"]')!.className.split(/\s+/)).toContain("max-h-[min(60dvh,var(--note-box-fit,60dvh))]");
+  });
+
+  it("locks Post notice on an empty or blank draft, and neither a click nor ⌘↵ sends it (the Discussion's rule)", async () => {
+    apiGetMock.mockResolvedValue({ posts: [] });
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    const composer = createBox(host)!;
+    const editor = composer.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    const post = composer.querySelector<HTMLButtonElement>('button[aria-label="Post notice"]')!;
+    expect(isLocked(post)).toBe(true);
+    await click(post);
+    await keydown(editor, "Enter", { metaKey: true });
+    await typeIntoEditor(editor, "   ");
+    expect(isLocked(post)).toBe(true);
+    await click(post);
+    await keydown(editor, "Enter", { metaKey: true });
+    expect(apiPostMock).not.toHaveBeenCalled();
+    await typeIntoEditor(editor, "Now it has words");
+    expect(isLocked(post)).toBe(false);
+  });
+
+  it("locks Save when an edit empties the notice, and sends no PATCH", async () => {
+    apiGetMock.mockResolvedValue({ posts: [oldPost] });
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    await chooseNoticeAction(host, "A", "Edit", advance);
+    const edit = editBox(host)!;
+    const editor = edit.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await typeIntoEditor(editor, "");
+    const save = [...edit.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!;
+    expect(isLocked(save)).toBe(true);
+    await click(save);
+    await keydown(editor, "Enter", { metaKey: true });
+    expect(apiPatchMock).not.toHaveBeenCalled();
+  });
+
+  it("docks the table bar above its own box on a desktop, where the box keeps room for it, never over the notice above", async () => {
+    apiGetMock.mockResolvedValue({ posts: [oldPost] });
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    const composer = createBox(host)!;
+    await slash(composer.querySelector<HTMLElement>('[contenteditable="true"]')!, "Table");
+    await advance(300);
+    const bar = document.querySelector<HTMLElement>('[data-testid="rich-text-table-bubble"]')!;
+    expect(bar, "table bar").not.toBeNull();
+    const wrapper = bar.closest("[data-docked]")!;
+    expect(wrapper.getAttribute("data-docked")).toBe("true");
+    expect(wrapper.parentElement!.getAttribute("data-testid")).toBe("notice-box-room");
+    expect(wrapper.parentElement!.contains(composer)).toBe(true);
+  });
+
+  it("edits a notice in the box with Cancel and Save", async () => {
+    apiGetMock.mockResolvedValue({ posts: [oldPost] });
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    await chooseNoticeAction(host, "A", "Edit", advance);
+    const edit = editBox(host)!;
+    expect(edit).not.toBeNull();
+    const tools = [...edit.querySelectorAll<HTMLButtonElement>('[data-testid="note-composer-tools"] button')].map((button) => button.getAttribute("aria-label") ?? button.textContent);
+    expect(tools).toEqual(["Add files", "Cancel", "Save"]);
+    await appendToEditor(edit.querySelector<HTMLElement>('[contenteditable="true"]')!, "!");
+    await click([...edit.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
+    expect(apiPatchMock).toHaveBeenCalled();
+  });
+
+  it("shows a refused post inside the box that sent it, beside Post notice, and keeps the draft", async () => {
+    apiGetMock.mockResolvedValue({ posts: [] });
+    apiPostMock.mockRejectedValue(new Error("Publishing is unavailable."));
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    const composer = createBox(host)!;
+    await typeIntoEditor(composer.querySelector<HTMLElement>('[contenteditable="true"]')!, "Draft survives");
+    await click(composer.querySelector<HTMLButtonElement>('button[aria-label="Post notice"]')!);
+    const problem = composer.querySelector('[role="alert"]')!;
+    expect(problem.textContent).toBe("Publishing is unavailable.");
+    expect(problem.nextElementSibling?.getAttribute("data-testid")).toBe("note-composer-tools");
+    expect(host.querySelectorAll('[role="alert"]')).toHaveLength(1);
+  });
+
+  it("shows a refused save inside the edit box, and not in the new-notice box", async () => {
+    apiGetMock.mockResolvedValue({ posts: [oldPost] });
+    apiPatchMock.mockRejectedValue(new Error("Saving is unavailable."));
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    await chooseNoticeAction(host, "A", "Edit", advance);
+    const edit = editBox(host)!;
+    await click([...edit.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save")!);
+    expect(edit.querySelector('[role="alert"]')?.textContent).toBe("Saving is unavailable.");
+    expect(createBox(host)!.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("draws an edited notice's link preview cards under the box's text (owner decision B1)", async () => {
+    const withCard: NoticeBoardPost = { ...oldPost, content: { ...doc("Old notice"), content: [...doc("Old notice").content, card] } };
+    apiGetMock.mockImplementation(async (path: string) => path.includes("read-state") ? { marker: null, latest: null, unreadCount: 0 } : { posts: [withCard], hasMore: false, nextCursor: null });
+    const host = mount();
+    await render(<NoticeBoard currentUserId="user-a" />);
+    await chooseNoticeAction(host, "A", "Edit", advance);
+    const edit = editBox(host)!;
+    expect(edit.querySelector('[data-testid="note-composer-text"] [data-testid="link-preview-card-editor"]')).toBeNull();
+    const cards = edit.querySelector('[data-testid="link-preview-draft-cards"]')!;
+    expect(cards.parentElement!.parentElement).toBe(edit);
+    expect(cards.textContent).toContain("A page");
+  });
+});
+

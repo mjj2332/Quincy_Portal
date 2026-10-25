@@ -13,7 +13,7 @@ import { GuestApp } from "./GuestApp";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 if (!Element.prototype.getAnimations) Element.prototype.getAnimations = () => [];
 /** The rich field is a textarea handle on its props: this file is about what the page does with the document and the upload state (the field itself is tested in GuestNoteEditor.dom.test.tsx). Typing sends a one-paragraph document, which is what the real field sends for plain text. */
-const field = vi.hoisted(() => ({ props: new Map<string, { media: unknown; onUploadingChange?: (uploading: boolean) => void; onChange: (doc: unknown) => void; value: unknown; label: string }>() }));
+const field = vi.hoisted(() => ({ props: new Map<string, { media: unknown; onUploadingChange?: (uploading: boolean) => void; onFailedFilesChange?: (failed: number) => void; onChange: (doc: unknown) => void; value: unknown; label: string }>() }));
 vi.mock("./GuestNoteEditor", async () => {
   const shared = await import("@quincy/shared");
   const { createPortal } = await import("react-dom");
@@ -1779,7 +1779,7 @@ describe("rich notes (#835 C): pictures, no mentions", () => {
     expect(off(post())).toBe(false);
     await uploading("guest-composer-body", true);
     expect(off(post())).toBe(true);
-    expect(post()!.getAttribute("title")).toBe("Wait for the upload to finish");
+    expect(post()!.getAttribute("title")).toBe("Wait for the uploads to finish.");
     await submit("guest-composer");
     expect(requests("POST")).toEqual([]);
     await uploading("guest-composer-body", false);
@@ -1882,6 +1882,61 @@ describe("collapsing the notes pane keeps its work (#859)", () => {
     expect(off(labelled("Send reply"))).toBe(true);
     await act(async () => { field.props.get("guest-reply-body")!.onUploadingChange!(false); });
     expect(off(labelled("Send reply"))).toBe(false);
+  });
+});
+
+describe("files on a guest's note (#956)", () => {
+  const props = (testId: string) => field.props.get(testId)!;
+  const failed = async (testId: string, count: number) => { await act(async () => { props(testId).onFailedFilesChange!(count); }); await flush(); };
+  const post = () => inBox("Post note");
+  type Files = { files: { url: (id: string) => string; maxPerPost: number; maxBytes: number } };
+
+  it("every field (the composer, a reply, an edit) attaches through the link's own file routes, with the guest's limits", async () => {
+    const reply = (({ replies: _replies, ...rest }) => rest)(mine(7, { parentId: noteId(1), startFrame: null, body: "Will do", revision: 2 }));
+    notes = { [asset(10)]: [{ ...note(1), replies: [reply] }] };
+    await open();
+    const transport = props("guest-composer-body").media as Files;
+    expect(transport.files.url("f")).toBe(`${BASE}/attachments/f`);
+    expect(transport.files).toMatchObject({ maxPerPost: 5, maxBytes: 25 * 1024 * 1024 });
+    await click(byId("guest-note-reply-button"));
+    expect(props("guest-reply-body").media).toBe(transport);
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Edit"));
+    expect(props("guest-note-edit-body").media).toBe(transport);
+  });
+
+  it("holds Post while a file has failed to upload, saying to retry or remove it, and releases it once none has", async () => {
+    await open();
+    await typeInto(byId("guest-composer-body"), "The brief");
+    await failed("guest-composer-body", 1);
+    expect(off(post())).toBe(true);
+    expect(post()!.getAttribute("title")).toBe("Retry or remove the file that failed.");
+    await submit("guest-composer");
+    expect(requests("POST")).toEqual([]);
+    await failed("guest-composer-body", 0);
+    expect(off(post())).toBe(false);
+  });
+
+  it("holds Send reply and a reply's Save while a file has failed", async () => {
+    const reply = (({ replies: _replies, ...rest }) => rest)(mine(7, { parentId: noteId(1), startFrame: null, body: "Will do", revision: 2 }));
+    notes = { [asset(10)]: [{ ...note(1), replies: [reply] }] };
+    await open();
+    await click(byId("guest-note-reply-button"));
+    await typeInto(byId("guest-reply-body"), "See this");
+    await failed("guest-reply-body", 1);
+    expect(off(labelled("Send reply"))).toBe(true);
+    await failed("guest-reply-body", 0);
+    expect(off(labelled("Send reply"))).toBe(false);
+
+    await click(byId("guest-note-actions"));
+    await click(menuItem("Edit"));
+    await typeInto(byId("guest-note-edit-body"), "Done");
+    await failed("guest-note-edit-body", 2);
+    expect((byId("guest-note-edit-save") as HTMLButtonElement).disabled).toBe(true);
+    await submit("guest-note-edit-form");
+    expect(requests("PATCH")).toEqual([]);
+    await failed("guest-note-edit-body", 0);
+    expect((byId("guest-note-edit-save") as HTMLButtonElement).disabled).toBe(false);
   });
 });
 

@@ -231,7 +231,7 @@ describe("creating a post with images", () => {
   it("rolls the whole post back when the guard trips in the batch: no post, mention, read marker or audit, and no notification", async () => {
     const claimedId = crypto.randomUUID(); const claimed = (await seedMedia({ id: claimedId, ownerKind: "notice_post", state: "detached", ownerId: claimedId, detachedAt: 0 })).id;
     const postId = crypto.randomUUID(); const markers = await count("notice_board_read_markers"); const notifications = await count("notifications"); const posts = await count("notice_board_posts");
-    await expect(createNoticeBoardPost(database.DB, { id: postId, authorId: ids.member, body: "[image]", contentJson: JSON.stringify(imageDoc(claimed)), mentions: [{ id: crypto.randomUUID(), postId, mentionedUserId: ids.other, createdAt: new Date() }], wallClockMs: Date.now(), media: { authorId: ids.member, ids: [claimed] } })).rejects.toBeInstanceOf(NoticeBoardMediaConflictError);
+    await expect(createNoticeBoardPost(database.DB, { id: postId, authorId: ids.member, principal: { id: ids.member, impersonatedBy: null }, body: "[image]", contentJson: JSON.stringify(imageDoc(claimed)), mentions: [{ id: crypto.randomUUID(), postId, mentionedUserId: ids.other, createdAt: new Date() }], wallClockMs: Date.now(), media: { authorId: ids.member, ids: [claimed] } })).rejects.toBeInstanceOf(NoticeBoardMediaConflictError);
     expect(await count("notice_board_posts")).toBe(posts); expect(await count("notice_board_read_markers")).toBe(markers); expect(await count("notifications")).toBe(notifications);
     expect(await database.DB.prepare("SELECT count(*) AS n FROM notice_board_post_mentions WHERE post_id = ?").bind(postId).first()).toEqual({ n: 0 });
     expect(await database.DB.prepare("SELECT count(*) AS n FROM audit_log WHERE target_id = ?").bind(postId).first()).toEqual({ n: 0 });
@@ -241,7 +241,7 @@ describe("creating a post with images", () => {
 
   it("two creates racing for one pending image: exactly one wins and the loser creates no post", async () => {
     const id = await notice(); const posts = await count("notice_board_posts");
-    const make = (postId: string) => createNoticeBoardPost(database.DB, { id: postId, authorId: ids.member, body: "[image]", contentJson: JSON.stringify(imageDoc(id)), mentions: [], wallClockMs: Date.now(), media: { authorId: ids.member, ids: [id] } });
+    const make = (postId: string) => createNoticeBoardPost(database.DB, { id: postId, authorId: ids.member, principal: { id: ids.member, impersonatedBy: null }, body: "[image]", contentJson: JSON.stringify(imageDoc(id)), mentions: [], wallClockMs: Date.now(), media: { authorId: ids.member, ids: [id] } });
     const results = await Promise.allSettled([make(crypto.randomUUID()), make(crypto.randomUUID())]);
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     expect(await count("notice_board_posts")).toBe(posts + 1);
@@ -298,7 +298,7 @@ describe("editing a post with images", () => {
 
   it("a save whose post was deleted mid-way attaches nothing and leaves the image pending", async () => {
     const id = await notice(); const postId = crypto.randomUUID();
-    const result = await editNoticeBoardPost(database.DB, { id: postId, authorId: ids.member, body: "[image]", contentJson: JSON.stringify(imageDoc(id)), editedAt: new Date(), removeMentionIds: [], addMentions: [], media: { authorId: ids.member, ids: [id] } });
+    const result = await editNoticeBoardPost(database.DB, { id: postId, authorId: ids.member, principal: { id: ids.member, impersonatedBy: null }, body: "[image]", contentJson: JSON.stringify(imageDoc(id)), editedAt: new Date(), removeMentionIds: [], addMentions: [], media: { authorId: ids.member, ids: [id] } });
     expect(result.updated).toBe(false);
     expect(await mediaRow(id)).toMatchObject({ state: "pending", owner_id: null });
     expect(await database.DB.prepare("SELECT count(*) AS n FROM embedded_media WHERE id LIKE 'guard-%'").first()).toEqual({ n: 0 });
@@ -308,7 +308,7 @@ describe("editing a post with images", () => {
     const [a, b] = [await notice(), await notice()]; const result = await created(await post("member", imageDoc(a, b)));
     const before = await database.DB.prepare("SELECT body, content_json, edited_at FROM notice_board_posts WHERE id = ?").bind(result.id).first();
     await database.DB.prepare("UPDATE embedded_media SET state = 'detached', detached_at = 0, owner_id = id WHERE id = ?").bind(b).run();
-    await expect(editNoticeBoardPost(database.DB, { id: result.id, authorId: ids.member, body: "Changed", contentJson: JSON.stringify(imageDoc(a, b)), editedAt: new Date(), removeMentionIds: [], addMentions: [], media: { authorId: ids.member, ids: [a, b] } })).rejects.toBeInstanceOf(NoticeBoardMediaConflictError);
+    await expect(editNoticeBoardPost(database.DB, { id: result.id, authorId: ids.member, principal: { id: ids.member, impersonatedBy: null }, body: "Changed", contentJson: JSON.stringify(imageDoc(a, b)), editedAt: new Date(), removeMentionIds: [], addMentions: [], media: { authorId: ids.member, ids: [a, b] } })).rejects.toBeInstanceOf(NoticeBoardMediaConflictError);
     expect(await database.DB.prepare("SELECT body, content_json, edited_at FROM notice_board_posts WHERE id = ?").bind(result.id).first()).toEqual(before);
     expect(await mediaRow(a)).toMatchObject({ state: "attached", owner_id: result.id });
   });
@@ -344,9 +344,9 @@ describe("deleting a post with images", () => {
 
   it("detaches the media in the same batch as the delete, and a delete that matches no post detaches nothing", async () => {
     const id = await notice(); const result = await created(await post("member", imageDoc(id)));
-    expect(await deleteNoticeBoardPost(database.DB, { id: result.id, authorId: ids.other })).toBe(false);
+    expect(await deleteNoticeBoardPost(database.DB, { id: result.id, authorId: ids.other, principal: { id: ids.other, impersonatedBy: null }})).toBe(false);
     expect((await mediaRow(id))?.state).toBe("attached");
-    expect(await deleteNoticeBoardPost(database.DB, { id: result.id, authorId: ids.member })).toBe(true);
+    expect(await deleteNoticeBoardPost(database.DB, { id: result.id, authorId: ids.member, principal: { id: ids.member, impersonatedBy: null }})).toBe(true);
     expect(await mediaRow(id)).toMatchObject({ state: "detached", detached_at: 0 });
   });
 });

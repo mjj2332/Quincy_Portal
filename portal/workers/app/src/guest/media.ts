@@ -14,6 +14,7 @@ import { guestMediaGuard, noteWriteParts } from "../lib/guest-fence-sql";
 import { newId } from "../lib/ids";
 import { serveR2Object } from "../lib/r2-serve";
 import { attachedVideoNote } from "../lib/video-note-media";
+import { attachmentDownloadHeaders, getAttachment, type AttachmentRow } from "../lib/attachments";
 import type { AppEnv } from "../env";
 import { classifyRefusal } from "./fence";
 import { guestNotFound, guestRoute, INVALID, originRejection, readJson, TOO_LARGE, tooMany, UUID } from "./http";
@@ -43,19 +44,20 @@ const presignInput = z.object({ contentType: z.enum([...EMBEDDED_IMAGE_CONTENT_T
   .superRefine((value, context) => { if (value.bytes > embeddedMediaMaxBytes(embeddedMediaKindFor(value.contentType)!)) context.addIssue({ code: "custom", path: ["bytes"], message: "File is too large" }); });
 const completeInput = z.object({ parts: z.array(z.object({ partNumber: z.number().int().positive(), etag: z.string().min(1) }).strict()).optional(), ...embeddedImageDimensionsShape }).strict().superRefine(requireBothImageDimensions);
 
-type Admitted = { session: GuestSession; guestId: string };
+export type Admitted = { session: GuestSession; guestId: string };
 
 /** The refusal (stub, `comments_disabled`, `project_archived`) if there is one now, else `response`: the only way a non-success leaves a write handler once admitted. */
-const answerOf = <P extends string>(c: Handled<P>, session: GuestSession, writes: boolean) => async (response: Response | Promise<Response>): Promise<Response> =>
+export const answerOf = <P extends string>(c: Handled<P>, session: GuestSession, writes: boolean) => async (response: Response | Promise<Response>): Promise<Response> =>
   await classifyRefusal(asApp(c), session, true, writes ? { parts: noteWriteParts(false), comments: true } : { parts: noteWriteParts(false), archived: false }) ?? await response;
 
 /**
- * Steps 1 to 7 of the write order: the link and media ids, the link and its parts, Origin, the session, verified (401), comments (403, writes only), archived (409, writes only). `json` false is a byte body
- * (the dev PUT and the poster): the Origin alone is checked. A route that only cleans up (abort) passes `writes: false`, so a link whose comments went off can still drop what it started.
+ * Steps 1 to 7 of the write order: the link and the path's own id (`id`, the media's or an Attachment's, #956), the link and its parts, Origin, the session, verified (401), comments (403, writes only),
+ * archived (409, writes only). `json` false is a byte body (the dev PUT and the poster): the Origin alone is checked. A route that only cleans up (abort) passes `writes: false`, so a link whose comments
+ * went off can still drop what it started. Shared with the guest's Attachment uploads (`guest/attachments.ts`), so both follow one order.
  */
-async function admit<P extends string>(c: Handled<P>, input: { mediaId?: boolean; writes: boolean; json: boolean }): Promise<{ response: Response } | Admitted> {
+export async function admit<P extends string>(c: Handled<P>, input: { id?: "mediaId" | "attachmentId"; writes: boolean; json: boolean }): Promise<{ response: Response } | Admitted> {
   const stub = async () => ({ response: await guestNotFound(asApp(c)) });
-  if (input.mediaId && !UUID.test(c.req.param("mediaId" as never) as string)) return stub();
+  if (input.id && !UUID.test(c.req.param(input.id as never) as string)) return stub();
   const linkId = c.req.param("linkId" as never) as string;
   const link = await loadActiveLink(asApp(c), linkId, Date.now());
   if (!link || !link.parts.includes("guest") || !link.parts.includes("guest_comments")) return stub();
@@ -89,7 +91,7 @@ async function heicRefusal<P extends string>(c: Handled<P>): Promise<Response | 
 }
 
 /** A body for a JSON route: 413 over `max`, 400 not JSON or not the schema. */
-function judge<T, P extends string>(c: Handled<P>, raw: unknown, schema: { safeParse: (raw: unknown) => { success: true; data: T } | { success: false } }): { data: T } | { response: Response } {
+export function judge<T, P extends string>(c: Handled<P>, raw: unknown, schema: { safeParse: (raw: unknown) => { success: true; data: T } | { success: false } }): { data: T } | { response: Response } {
   if (raw === TOO_LARGE) return { response: c.json({ error: "payload_too_large" }, 413) };
   const parsed = raw === INVALID ? null : schema.safeParse(raw);
   return parsed?.success ? { data: parsed.data } : { response: c.json({ error: "invalid_request" }, 400) };
@@ -109,14 +111,14 @@ async function presign(c: Handled<typeof MEDIA_BASE>): Promise<Response> {
 }
 
 async function direct(c: Handled<`${typeof MEDIA_BASE}/:mediaId/direct`>): Promise<Response> {
-  const admitted = await admit(c, { mediaId: true, writes: true, json: false }); if ("response" in admitted) return admitted.response;
+  const admitted = await admit(c, { id: "mediaId", writes: true, json: false }); if ("response" in admitted) return admitted.response;
   if (c.env.APP_ENV !== "dev") return guestNotFound(asApp(c));
   const response = await directEmbeddedMedia(scopeOf(c, admitted), c.req.param("mediaId"), c.req.raw.body);
   return response.ok ? response : answerOf(c, admitted.session, true)(response);
 }
 
 async function complete(c: Handled<`${typeof MEDIA_BASE}/:mediaId/complete`>): Promise<Response> {
-  const admitted = await admit(c, { mediaId: true, writes: true, json: true }); if ("response" in admitted) return admitted.response;
+  const admitted = await admit(c, { id: "mediaId", writes: true, json: true }); if ("response" in admitted) return admitted.response;
   const answer = answerOf(c, admitted.session, true);
   const judged = judge(c, await readJson(asApp(c), COMPLETE_BODY_MAX_BYTES), completeInput); if ("response" in judged) return answer(judged.response);
   const response = await completeEmbeddedMedia(scopeOf(c, admitted), c.req.param("mediaId"), judged.data, () => heicRefusal(c));
@@ -124,13 +126,13 @@ async function complete(c: Handled<`${typeof MEDIA_BASE}/:mediaId/complete`>): P
 }
 
 async function poster(c: Handled<`${typeof MEDIA_BASE}/:mediaId/poster`>): Promise<Response> {
-  const admitted = await admit(c, { mediaId: true, writes: true, json: false }); if ("response" in admitted) return admitted.response;
+  const admitted = await admit(c, { id: "mediaId", writes: true, json: false }); if ("response" in admitted) return admitted.response;
   const response = await posterEmbeddedMedia(scopeOf(c, admitted), c.req.param("mediaId"), { body: (max) => readBoundedBytes(c.req.raw, max) });
   return response.ok ? response : answerOf(c, admitted.session, true)(response);
 }
 
 async function abort(c: Handled<`${typeof MEDIA_BASE}/:mediaId/abort`>): Promise<Response> {
-  const admitted = await admit(c, { mediaId: true, writes: false, json: true }); if ("response" in admitted) return admitted.response;
+  const admitted = await admit(c, { id: "mediaId", writes: false, json: true }); if ("response" in admitted) return admitted.response;
   const response = await abortEmbeddedUpload(scopeOf(c, admitted), c.req.param("mediaId"));
   return response.ok ? response : answerOf(c, admitted.session, false)(response);
 }
@@ -190,7 +192,34 @@ async function renditionStatus(c: Handled<`${typeof MEDIA_BASE}/:mediaId/renditi
     : guestNotFound(asApp(c)));
 }
 
+/**
+ * A Guest reviewer's Attachment download (#955), under the link's cookie `Path`: the one stub unless the file is ATTACHED to a note or reply of this link's Project (a staff one, or a
+ * guest's own, #956) that is live, PUBLIC, and on a Version this link reaches. An internal note's file, a pending or removed file (the uploader's own included), another Project's and a
+ * revoked link are all that miss. Guests upload in `./attachments.ts`. The headers are the staff download's (`attachmentDownloadHeaders`): a forced download as octet-stream, never cached, never sniffed.
+ */
+const ATTACHMENT_PATH = "/d/api/links/:linkId/attachments/:attachmentId";
+export async function readableGuestAttachment(db: D1Database, session: Pick<GuestSession, "link">, attachmentId: string): Promise<AttachmentRow | null> {
+  const row = await getAttachment(db, attachmentId);
+  if (!row || row.ownerKind !== "video_note" || row.state !== "attached" || row.projectId !== session.link.projectId) return null;
+  const note = await attachedVideoNote(db, row);
+  return note?.visibility === "public" && await resolveGrantedVersion(db, session.link.id, session.link.projectId, note.assetId) !== null ? row : null;
+}
+
+async function serveAttachment(c: Handled<typeof ATTACHMENT_PATH>): Promise<Response> {
+  const attachmentId = c.req.param("attachmentId");
+  if (!UUID.test(attachmentId)) return guestNotFound(asApp(c));
+  const session = await resolveSession(asApp(c), c.req.param("linkId"), Date.now());
+  if (!session || !session.link.parts.includes("guest")) return guestNotFound(asApp(c));
+  const row = await readableGuestAttachment(c.env.DB, session, attachmentId);
+  if (!row) return guestNotFound(asApp(c));
+  // The last admission, after R2 has answered and before a byte leaves: revoking the link, making the note internal or removing the Version meanwhile is a miss.
+  const still = async () => await sessionStillValid(c.env.DB, session, Date.now()) && await readableGuestAttachment(c.env.DB, session, attachmentId) !== null;
+  const served = await serveR2Object(asApp(c), row.storageKey, attachmentDownloadHeaders(row.fileName), "File not found", still);
+  return served.status === 404 ? guestNotFound(asApp(c)) : served;
+}
+
 export function mountGuestMedia(app: Hono<AppEnv>): void {
+  app.get(ATTACHMENT_PATH, guestRoute(ATTACHMENT_PATH, serveAttachment));
   app.post(MEDIA_BASE, guestRoute(MEDIA_BASE, presign));
   app.put(`${MEDIA_BASE}/:mediaId/direct`, guestRoute(`${MEDIA_BASE}/:mediaId/direct`, direct));
   app.post(`${MEDIA_BASE}/:mediaId/complete`, guestRoute(`${MEDIA_BASE}/:mediaId/complete`, complete));

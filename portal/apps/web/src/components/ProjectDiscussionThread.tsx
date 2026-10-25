@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useQueryClient } from "@tanstack/react-query";
 import { RICH_TEXT_JSON_MAX_BYTES, richTextDocByteLength, richTextPlainText, type RichTextDoc } from "@quincy/shared";
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost } from "../lib/api";
+import { ATTACHMENT_RETRY_OR_REMOVE as RETRY_OR_REMOVE, WAIT_FOR_UPLOADS } from "../lib/attachments";
 import { externalApiGet } from "../lib/external-api-response";
 import { useSession } from "../lib/auth";
 import {
@@ -20,6 +21,9 @@ import { stripEmbeddedDisplay } from "../lib/rich-text-tiptap";
 import { useProjectCommentDraft } from "../lib/project-comment-drafts";
 import { RichTextContent } from "./RichTextContent";
 import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
+import type { RichTextEditorHandle } from "./QuincyRichTextEditorBase";
+import { NOTE_BOX_LINE as BOX_LINE, NoteComposerBox, noteComposerBoxOf as boxOf } from "./quincy/NoteComposerBox";
+import { PHONE_VIEWPORT_QUERY, useMediaQuery } from "../lib/use-media-query";
 import type { MentionableUser } from "./MentionAutocomplete";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 import { cn } from "../lib/utils";
@@ -57,12 +61,16 @@ export type ProjectDiscussionThreadProps = {
 const emptyDoc = (): RichTextDoc => ({ type: "doc", content: [{ type: "paragraph" }] });
 
 const COMMENT_LIMIT = 10_000;
+const COMMENT_TOO_LONG = `Comments can be ${new Intl.NumberFormat("en").format(COMMENT_LIMIT)} characters at most.`;
+/** The paperclip takes any file on a Project comment (#952): photos and videos embed, everything else is attached. */
+const ATTACH_LABEL = "Add files";
+const TOO_LARGE = "This formatting is too large to save; remove list items or formatting.";
 
 /** The server refused a write because the Project is archived (#527): a 409 with this code. Upload refusals are not this: they stay in-editor errors. */
 function isCommentArchivedRefusal(error: unknown) { return error instanceof ApiError && error.status === 409 && typeof error.details === "object" && error.details !== null && (error.details as { code?: unknown }).code === "comment_project_archived"; }
 const COMMENT_DELETE_COPY = {
   title: "Delete comment?", action: "Delete", pending: "Deleting…", fallbackSubject: "This comment",
-  description: (subject: ReactNode) => <>{subject} will be removed from the discussion for everyone, with any images in it. This can't be undone.</>,
+  description: (subject: ReactNode) => <>{subject} will be removed from the discussion for everyone, with any images and files in it. This can't be undone.</>,
 };
 const DISCUSSION_ARCHIVED_COPY = "Read-only while archived. Restore the project before commenting.";
 
@@ -74,6 +82,9 @@ type CommentItemProps = {
   saving: boolean;
   editing: RichTextDoc | undefined;
   editingOverBytes: boolean;
+  /** The refused save of this edit, shown in its box beside Save. */
+  editError: string | undefined;
+  phone: boolean;
   projectId: string;
   loadMentionables: (query: string) => Promise<MentionableUser[]>;
   onEditStart: (comment: Comment) => void;
@@ -91,7 +102,7 @@ type CommentItemProps = {
  * Edit / Delete are author-only exactly as before — `isOwn` is derived from the effective session
  * user by the caller (the impersonated user while an Admin impersonates), and the server enforces it.
  */
-function CommentItem({ comment, isOwn, readOnly, now, saving, editing, editingOverBytes, projectId, loadMentionables, onEditStart, onEditChange, onEditCancel, onEditSave, onDeleteRequest }: CommentItemProps) {
+function CommentItem({ comment, isOwn, readOnly, now, saving, editing, editingOverBytes, editError, phone, projectId, loadMentionables, onEditStart, onEditChange, onEditCancel, onEditSave, onDeleteRequest }: CommentItemProps) {
   const articleRef = useRef<HTMLElement>(null);
   const focusActions = useCallback(() => { articleRef.current?.querySelector<HTMLElement>('[data-testid="comment-actions"]')?.focus(); }, []);
   // Set when Edit is chosen from the "⋯" menu: the menu's close would otherwise return focus to the
@@ -111,8 +122,13 @@ function CommentItem({ comment, isOwn, readOnly, now, saving, editing, editingOv
     return surface;
   }, []);
   const [editUploading, setEditUploading] = useState(false);
+  const [editFailedFiles, setEditFailedFiles] = useState(0);
+  const editEditor = useRef<RichTextEditorHandle>(null);
+  const editField = useRef<HTMLDivElement>(null);
+  const [editStrip, setEditStrip] = useState<HTMLDivElement | null>(null);
+  const [editPreviews, setEditPreviews] = useState<HTMLDivElement | null>(null);
   // Every save path (the Save button, and Ctrl/Cmd+Enter in the editor) goes through this: an image still uploading would be lost.
-  const saveEdit = () => { if (!editUploading) onEditSave(); };
+  const saveEdit = () => { if (!editUploading && editFailedFiles === 0) onEditSave(); };
   const isEditing = editing !== undefined;
   const wasEditing = useRef(false);
   useEffect(() => {
@@ -135,10 +151,25 @@ function CommentItem({ comment, isOwn, readOnly, now, saving, editing, editingOv
       <MenuPrimitive.Item className={cn(MENU_ITEM, "text-destructive")} disabled={saving} onClick={() => { deletePending.current = true; onDeleteRequest(comment); }}>Delete</MenuPrimitive.Item>
     </Menu> : <span aria-hidden="true" />}
     <div className="col-start-2 col-span-2 max-[721px]:col-start-1 max-[721px]:col-span-3 grid gap-[var(--space-2)] min-w-0">
-      {editing ? <>
-        <QuincyRichTextEditor preset="composer" value={editing} onChange={onEditChange} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables} placeholder="Edit comment…" onSubmit={saveEdit} media={{ projectId }} linkPreviews={{ projectId }} onUploadingChange={setEditUploading} />
-        <div className="flex justify-end gap-[var(--space-3)]"><Button variant="secondary" type="button" disabled={saving} onClick={onEditCancel}>Cancel</Button><Button type="button" disabled={saving || editingOverBytes || editUploading} onClick={saveEdit}>Save</Button></div>
-      </> : <RichTextContent className="rich-text--body" content={comment.content} />}
+      {/* The edit (#950): the note composer box's post variant, E1's Cancel and Save in place of Send. */}
+      {editing ? <NoteComposerBox
+        variant="post" label="Edit comment" testId="discussion-comment-edit" phone={phone}
+        field={<div ref={editField} className="min-w-0">
+          <QuincyRichTextEditor
+            preset="note" ref={editEditor} value={editing} onChange={onEditChange} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables} placeholder="Edit comment…" ariaLabel="Edit comment" onSubmit={saveEdit}
+            media={{ projectId }} linkPreviews={{ projectId }} attachments={{ projectId }} onUploadingChange={setEditUploading} onFailedFilesChange={setEditFailedFiles}
+            stripContainer={editStrip} previewContainer={editPreviews} bubbleDocked={phone} bubbleDockTo={() => boxOf(editField.current)}
+          />
+        </div>}
+        previews={<div ref={setEditPreviews} className="empty:hidden" />}
+        strip={<div ref={setEditStrip} className="empty:hidden" />}
+        notice={editError ? <p role="alert" data-testid="discussion-edit-problem" className={BOX_LINE}>{editError}</p> : null}
+        attach={{ onPick: () => { editEditor.current?.pickMedia(); }, disabled: saving, label: ATTACH_LABEL }}
+        save={{
+          onSave: saveEdit, onCancel: onEditCancel, disabled: saving || editingOverBytes || editUploading || editFailedFiles > 0, pending: saving,
+          ...(editUploading ? { reason: WAIT_FOR_UPLOADS } : editFailedFiles > 0 ? { reason: RETRY_OR_REMOVE } : editingOverBytes ? { reason: TOO_LARGE } : {}),
+        }}
+      /> : <RichTextContent className="rich-text--body" content={comment.content} />}
     </div>
   </article>;
 }
@@ -175,8 +206,15 @@ export function ProjectDiscussionThread({
   const [content, setContent, clearDraftIfSubmitted] = useProjectCommentDraft(projectId);
   const [saving, setSaving] = useState(false);
   const [composerUploading, setComposerUploading] = useState(false);
+  const [composerFailedFiles, setComposerFailedFiles] = useState(0);
   const [editing, setEditing] = useState<{ id: string; content: RichTextDoc }>();
-  const [mutationError, setMutationError] = useState<string>();
+  // A refused Post or Save, shown in the box that sent it (#950: beside Send or Save).
+  const [mutationError, setMutationError] = useState<{ text: string; from: "post" | "edit" }>();
+  const phone = useMediaQuery(PHONE_VIEWPORT_QUERY);
+  const composerEditor = useRef<RichTextEditorHandle>(null);
+  const composerField = useRef<HTMLDivElement>(null);
+  const [composerStrip, setComposerStrip] = useState<HTMLDivElement | null>(null);
+  const [composerPreviews, setComposerPreviews] = useState<HTMLDivElement | null>(null);
   const [discussionDeniedFor, setDiscussionDeniedFor] = useState<string>();
   // Delete confirmation (#568). The focus hand-off runs after `deleteTarget` is cleared, so the target and the comment order live in a ref.
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; excerpt: string } | null>(null);
@@ -189,7 +227,7 @@ export function ProjectDiscussionThread({
   const focusAfterFlip = useRef<{ inThread: boolean } | null>(null);
   // Bumped per recorded refusal: a poll can archive the Project while a write is pending, so `readOnly` is already true when the 409 lands.
   const [refusalGeneration, setRefusalGeneration] = useState(0);
-  const composerRef = useRef<HTMLFormElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const noticeRef = useRef<HTMLParagraphElement>(null);
   const consumeOrForward = useCallback((reason: unknown, resource: ProjectDiscussionAccessFailureResource) => {
@@ -275,7 +313,10 @@ export function ProjectDiscussionThread({
   // Post is disabled for an empty or over-limit comment (previously it posted and the server
   // rejected it with a 400); keyboard submit already refused the same cases.
   const postingPlainText = richTextPlainText(content);
-  const canPost = !saving && !composerUploading && !postingOverBytes && postingPlainText.trim() !== "" && postingPlainText.length <= COMMENT_LIMIT;
+  const postingTooLong = postingPlainText.length > COMMENT_LIMIT;
+  const canPost = !saving && !composerUploading && composerFailedFiles === 0 && !postingOverBytes && postingPlainText.trim() !== "" && !postingTooLong;
+  const sendReason = composerUploading ? WAIT_FOR_UPLOADS : composerFailedFiles > 0 ? RETRY_OR_REMOVE : postingTooLong ? COMMENT_TOO_LONG : postingOverBytes ? TOO_LARGE : undefined;
+  const postProblem = postingTooLong ? COMMENT_TOO_LONG : mutationError?.from === "post" ? mutationError.text : undefined;
 
   const focusInThread = () => { const active = document.activeElement; return active !== null && (composerRef.current?.contains(active) === true || listRef.current?.contains(active) === true); };
   /** Handles an archived refusal of a Post, Save or Delete: the thread goes read-only, nothing is optimistic, and the header and Checklist catch up. */
@@ -304,7 +345,7 @@ export function ProjectDiscussionThread({
       if (presentation.isCurrent(mutationProjectId)) {
         if (isCommentArchivedRefusal(reason)) { void enterArchived(inThread); return; }
         consumeOrForward(reason, "comments");
-        setMutationError(errorMessage(reason, "Comment could not be posted."));
+        setMutationError({ text: errorMessage(reason, "Comment could not be posted."), from: "post" });
       }
     } finally {
       if (presentation.isCurrent(mutationProjectId)) setSaving(false);
@@ -326,7 +367,7 @@ export function ProjectDiscussionThread({
       if (presentation.isCurrent(mutationProjectId)) {
         if (isCommentArchivedRefusal(reason)) { void enterArchived(inThread); return; }
         consumeOrForward(reason, "nested-comment");
-        setMutationError(errorMessage(reason, "Comment could not be updated."));
+        setMutationError({ text: errorMessage(reason, "Comment could not be updated."), from: "edit" });
       }
     } finally {
       if (presentation.isCurrent(mutationProjectId)) setSaving(false);
@@ -381,18 +422,31 @@ export function ProjectDiscussionThread({
 
   useEffect(() => { setDeleteTarget(null); setDeleteError(null); setDeleting(false); }, [projectId]);
 
-  const composer = <form ref={composerRef} data-testid="discussion-composer" className="flex items-start gap-[var(--space-3)] mb-[var(--space-5)]" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+  // The composer (#950): the note composer box's post variant, R1's row (the paperclip and a round Send). The hint line is gone (C2): "@" is
+  // in the placeholder. The avatar beside it is the thread's own layout.
+  const composer = <div ref={composerRef} data-testid="discussion-composer" className="flex items-start gap-[var(--space-3)] mb-[var(--space-5)]">
     {typeof viewerName === "string" && viewerName !== "" && <InitialsAvatar name={viewerName} className="mt-[var(--space-1)] max-[721px]:hidden" />}
-    <div className="grid gap-[var(--space-2)] min-w-0 flex-1">
-      <label className="sr-only" htmlFor={`project-comment-${projectId}`}>Write a comment</label>
-      <QuincyRichTextEditor preset="composer" id={`project-comment-${projectId}`} value={content} onChange={setContent} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables} placeholder="Write a project comment…" onSubmit={() => void submit()} media={{ projectId }} linkPreviews={{ projectId }} onUploadingChange={setComposerUploading} />
-      <div className="flex flex-wrap items-center justify-between gap-[var(--space-3)]"><span className={cn(META_TEXT, "!normal-case")}>Use @ to mention project participants</span><Button type="submit" className="ml-auto" disabled={!canPost}>{saving ? "Posting…" : "Post"}</Button></div>
-    </div>
-  </form>;
+    <NoteComposerBox
+      variant="post" label="Write a comment" testId="discussion-composer-form" phone={phone} className="min-w-0 flex-1"
+      field={<div ref={composerField} className="min-w-0">
+        <label className="sr-only" htmlFor={`project-comment-${projectId}`}>Write a comment</label>
+        <QuincyRichTextEditor
+          preset="note" ref={composerEditor} id={`project-comment-${projectId}`} value={content} onChange={setContent} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables}
+          placeholder={phone ? "Write a project comment…" : "Write a project comment… Use @ to mention project participants."} onSubmit={() => void submit()}
+          media={{ projectId }} linkPreviews={{ projectId }} attachments={{ projectId }} onUploadingChange={setComposerUploading} onFailedFilesChange={setComposerFailedFiles}
+          stripContainer={composerStrip} previewContainer={composerPreviews} bubbleDocked={phone} bubbleDockTo={() => boxOf(composerField.current)}
+        />
+      </div>}
+      previews={<div ref={setComposerPreviews} className="empty:hidden" />}
+      strip={<div ref={setComposerStrip} className="empty:hidden" />}
+      notice={postProblem ? <p role="alert" data-testid="discussion-composer-problem" className={BOX_LINE}>{postProblem}</p> : null}
+      attach={{ onPick: () => { composerEditor.current?.pickMedia(); }, disabled: saving, label: ATTACH_LABEL }}
+      send={{ label: saving ? "Posting…" : "Post comment", onSend: () => void submit(), disabled: !canPost, pending: saving, ...(sendReason ? { reason: sendReason } : {}) }}
+    />
+  </div>;
 
   const contentMarkup = <>
     {listError && !discussionDenied && <Notice tone="critical" role="alert">{errorMessage(listError, "Comments could not be loaded.")}</Notice>}
-    {mutationError && !discussionDenied && <Notice tone="critical" role="alert">{mutationError}</Notice>}
     {!discussionDenied && !listLoading && (readOnly ? <div className="mb-[var(--space-5)]"><p ref={noticeRef} tabIndex={-1} className={ARCHIVED_NOTICE_CLASS} data-testid="discussion-archived-notice">{DISCUSSION_ARCHIVED_COPY}</p></div> : composer)}
     <div ref={presentation.anchorRef} data-testid="discussion-read-anchor" className="w-px h-px m-0 overflow-hidden" aria-hidden="true" />
     {discussionDenied ? <EmptyState role="status" size="compact" title="No discussion access." /> : listLoading ? <EmptyState role="status" size="compact" title="Loading comments…" /> : <>
@@ -405,11 +459,13 @@ export function ProjectDiscussionThread({
         saving={saving}
         editing={editing?.id === comment.id ? editing.content : undefined}
         editingOverBytes={editingOverBytes}
+        editError={editing?.id === comment.id && mutationError?.from === "edit" ? mutationError.text : undefined}
+        phone={phone}
         projectId={projectId}
         loadMentionables={loadMentionables}
-        onEditStart={(target) => setEditing({ id: target.id, content: target.content })}
+        onEditStart={(target) => { setEditing({ id: target.id, content: target.content }); setMutationError((error) => error?.from === "edit" ? undefined : error); }}
         onEditChange={(value) => setEditing({ id: comment.id, content: value })}
-        onEditCancel={() => setEditing(undefined)}
+        onEditCancel={() => { setEditing(undefined); setMutationError((error) => error?.from === "edit" ? undefined : error); }}
         onEditSave={() => void saveEdit()}
         onDeleteRequest={requestDelete}
       />) : <EmptyState size="compact" title="No comments yet." />}</div>

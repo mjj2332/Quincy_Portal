@@ -18,6 +18,7 @@ export * from "./dashboard-order";
 export * from "./board-order";
 export * from "./rich-text";
 export * from "./embedded-media";
+export * from "./attachments";
 export * from "./whiteboard-media";
 export * from "./link-preview";
 export * from "./http-range";

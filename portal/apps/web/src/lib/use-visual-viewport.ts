@@ -102,3 +102,117 @@ export function useVisualViewport(enabled: boolean, onKeyboardGone?: () => void,
   useEffect(() => () => { settling.current?.(); }, []);
   return box;
 }
+
+/** The gap kept above and below a fitted box (`--space-2`); the box's class carries it as `scroll-margin-bottom` too. */
+const FIT_MARGIN_PX = 8;
+/** The fitted text never drops below two of its 24px lines (`--space-5`), however little room the keyboard leaves. */
+const FIT_MIN_PX = 48;
+
+/**
+ * Keeps a box that grows with its text (the Notice board's tall note box, owner decision N1) inside the visual viewport (review of #951). `60dvh` alone does not see
+ * the on-screen keyboard (iOS shrinks the visual viewport, never the `dvh` unit), so a tall notice pushed Send under it.
+ *
+ * What Safari does, measured on the iPhone 18 Pro Simulator (iOS 27 runtime, #951 keyboard pass 2), and what each part of this answers:
+ * - It clamps the page scroll to the document's height less `innerHeight`, and `innerHeight` does not shrink with the keyboard. The box sits near the page's
+ *   foot, so the page could not scroll far enough to lift it above the keyboard (asked for 302px, it moved 69), and stayed with a gap or the box's top off screen.
+ *   While the focus is in the box and the keyboard is up, the body gets that much room at its foot (padding under the keyboard, never seen), given back when the
+ *   focus leaves.
+ * - `innerHeight` is no measure of the keyboard (one settle read 519 against a 384px visual viewport), and `visualViewport.offsetTop` did not match where the rects
+ *   were measured from (182 to 388 while they read from the top of the screen). So the keyboard is read as the visual viewport's drop from its height with the focus
+ *   out of the box, and the box is placed with `scrollIntoView`, which WebKit aligns to what is visible, less the box's `scroll-margin-bottom`.
+ *
+ * - The text region's `--note-box-fit` follows the visual viewport: its height, less the box's own rows and padding around the text (measured, so a preview card or the
+ *   media strip counts), less a margin above and below. The region's class caps it at `min(60dvh, var(--note-box-fit))`.
+ * - With the keyboard up, each viewport resize re-caps the text, brings the caret back into sight inside the text's own scroller (shrinking it keeps its scrollTop,
+ *   which hid the caret's line), then sets the box's foot a margin above the keyboard. iOS scrolls again 120-190ms after the tap (see `useVisualViewport`): for
+ *   `FIT_SETTLE_MS` after the last resize a page or viewport scroll does the same again. After that a scroll is the person's own pan, and is left alone.
+ * - The box growing with the text, with the focus in it, only scrolls as far as its foot needs to be seen; this keeps Send above a hardware keyboard's bar too.
+ *
+ * Unlike `useVisualViewport` it writes no root and puts back no page scroll: the box sits in an ordinary scrolling page, not a fixed screen.
+ */
+export function useFitAboveKeyboard(enabled: boolean, box: HTMLElement | null, text: HTMLElement | null) {
+  useLayoutEffect(() => {
+    const viewport = typeof window === "undefined" ? undefined : window.visualViewport;
+    if (!enabled || !viewport || !box || !text) return undefined;
+    const zoomed = () => viewport.scale > 1.01;
+    const focused = () => box.contains(document.activeElement);
+    // The visual viewport's height with the focus out of the box: what the screen shows with no keyboard for this box.
+    let open = viewport.height;
+    const keyboardUp = () => !zoomed() && focused() && open - viewport.height >= KEYBOARD_MIN_PX;
+    const page = document.body;
+    const padding = page.style.paddingBottom;
+    let room = 0;
+    /** Room at the page's foot for as long as the keyboard is up, so the page can scroll the box above it; given back, as the page had it, after. */
+    const makeRoom = () => {
+      const want = keyboardUp() ? Math.round(open - viewport.height) : 0;
+      if (want === room) return;
+      room = want;
+      page.style.paddingBottom = want ? `${want}px` : padding;
+    };
+    const fit = () => {
+      if (zoomed()) return;
+      const rows = box.getBoundingClientRect().height - text.getBoundingClientRect().height;
+      text.style.setProperty("--note-box-fit", `${Math.max(FIT_MIN_PX, Math.round(viewport.height - rows - 2 * FIT_MARGIN_PX))}px`);
+    };
+    const keepCaret = () => {
+      const caret = caretRect(text);
+      if (!caret) return;
+      const region = text.getBoundingClientRect();
+      if (caret.bottom > region.bottom) text.scrollTop += caret.bottom - region.bottom;
+      else if (caret.top < region.top) text.scrollTop -= region.top - caret.top;
+    };
+    const place = (block: "end" | "nearest") => { box.scrollIntoView?.({ block, inline: "nearest" }); };
+    let settling: ReturnType<typeof setTimeout> | undefined;
+    const onResize = () => {
+      if (!zoomed() && !focused()) open = viewport.height;
+      makeRoom();
+      fit();
+      if (!keyboardUp()) return;
+      keepCaret(); place("end");
+      clearTimeout(settling);
+      settling = setTimeout(() => { settling = undefined; }, FIT_SETTLE_MS);
+    };
+    const onScroll = () => { if (settling !== undefined && keyboardUp()) { keepCaret(); place("end"); } };
+    const onGrow = () => { if (!zoomed() && focused()) place("nearest"); };
+    const onFocusIn = () => { if (room === 0 && !zoomed() && viewport.height > open) open = viewport.height; };
+    // Focus moving between the field and Send stays in the box: the room is looked at once the focus has landed.
+    let leaving = 0;
+    const onFocusOut = () => { cancelAnimationFrame(leaving); leaving = requestAnimationFrame(makeRoom); };
+    fit();
+    box.addEventListener("focusin", onFocusIn);
+    box.addEventListener("focusout", onFocusOut);
+    viewport.addEventListener("resize", onResize);
+    viewport.addEventListener("scroll", onScroll);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    const grows = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(onGrow);
+    grows?.observe(box);
+    return () => {
+      box.removeEventListener("focusin", onFocusIn);
+      box.removeEventListener("focusout", onFocusOut);
+      viewport.removeEventListener("resize", onResize);
+      viewport.removeEventListener("scroll", onScroll);
+      window.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(leaving);
+      clearTimeout(settling);
+      grows?.disconnect();
+      if (room) page.style.paddingBottom = padding;
+      text.style.removeProperty("--note-box-fit");
+    };
+  }, [enabled, box, text]);
+}
+
+/** How long after the keyboard's last resize a scroll still counts as iOS's own (it lands 120-190ms after the tap), not the person's pan. */
+const FIT_SETTLE_MS = 400;
+
+/** The caret's rect when the selection is in `region`; a collapsed range on an empty line can measure as nothing, so its line's element stands in. */
+function caretRect(region: HTMLElement): DOMRect | null {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(0);
+  const node = range.endContainer;
+  if (!region.contains(node)) return null;
+  const rect = typeof range.getBoundingClientRect === "function" ? range.getBoundingClientRect() : null;
+  if (rect && (rect.height > 0 || rect.top !== 0)) return rect;
+  const line = node instanceof Element ? node : node.parentElement;
+  return line ? line.getBoundingClientRect() : null;
+}

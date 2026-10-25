@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { z } from "zod";
 import {
-  roleHasCapability, VIDEO_MARKUP_MAX_BYTES, VIDEO_NOTE_BODY_MAX, videoNoteMarkupResponseSchema, videoNotePasteCommitInputSchema, videoNotePasteCommitResponseSchema, videoNotePastePreviewInputSchema, videoNotePastePreviewResponseSchema, videoNoteCreateInputSchema, videoNoteDeleteInputSchema, videoNoteDeleteResponseSchema, videoNoteEditInputSchema, videoNoteListResponseSchema,
+  ATTACHMENT_MAX_PER_POST, roleHasCapability, VIDEO_MARKUP_MAX_BYTES, VIDEO_NOTE_BODY_MAX, videoNoteMarkupResponseSchema, videoNotePasteCommitInputSchema, videoNotePasteCommitResponseSchema, videoNotePastePreviewInputSchema, videoNotePastePreviewResponseSchema, videoNoteCreateInputSchema, videoNoteDeleteInputSchema, videoNoteDeleteResponseSchema, videoNoteEditInputSchema, videoNoteListResponseSchema,
   videoNoteReplyInputSchema, videoNoteResolutionInputSchema, videoNoteThreadDtoSchema,
 } from "@quincy/shared";
 import type { AppEnv } from "../env";
@@ -15,6 +15,7 @@ import {
 } from "../lib/video-notes";
 import { prepareNoteContent, type PreparedNoteContent } from "../lib/video-note-content";
 import { preflightOwnedMedia, purgeDetachedOwnerMedia } from "../lib/embedded-media";
+import { preflightOwnedAttachments } from "../lib/attachments";
 import { commitNotePaste, planNotePaste, type PlanOutcome } from "../lib/video-note-paste";
 import { publishOutboxDetached } from "../lib/server-timing";
 import { jsonInput } from "./helpers";
@@ -64,7 +65,7 @@ const deletedResponse = (c: Ctx) => c.json({ error: "This note was deleted.", co
 const thread = (c: Ctx, value: unknown, status: 200 | 201 = 200) => c.json(videoNoteThreadDtoSchema.parse(value), status);
 const conflict = (c: Ctx, value: unknown) => c.json({ error: "This note changed since you loaded it.", code: "note_conflict", thread: videoNoteThreadDtoSchema.parse(value) }, 409);
 
-const mediaUnavailable = (c: Ctx) => c.json({ error: "An image or video in this note is no longer available. Remove it and try again.", code: "media_unavailable" }, 409);
+const mediaUnavailable = (c: Ctx) => c.json({ error: "An image, video or file in this note is no longer available. Remove it and try again.", code: "media_unavailable" }, 409);
 const CONTENT_ERRORS = {
   invalid_content: "This note's content is not valid.",
   content_too_large: "This note is too large once the mentioned names are filled in. Shorten it.",
@@ -82,7 +83,8 @@ async function richOf(c: Ctx, projectId: string, content: unknown, ownerId: stri
   if ("error" in prepared) return c.json({ error: CONTENT_ERRORS[prepared.error], code: prepared.error }, 400);
   const uploader = { userId: c.get("user").id };
   if (!await preflightOwnedMedia(c.env.DB, { ownerKind: "video_note", ownerId, projectId, uploader, ids: prepared.mediaIds, videoIds: prepared.videoIds })) return mediaUnavailable(c);
-  return { rich: { contentJson: prepared.contentJson, mentionUserIds: prepared.mentionIds, mediaIds: prepared.mediaIds, videoIds: prepared.videoIds, uploader }, body: prepared.body, prepared };
+  if (!await preflightOwnedAttachments(c.env.DB, { ownerKind: "video_note", ownerId, projectId, uploader, ids: prepared.attachmentIds, max: ATTACHMENT_MAX_PER_POST })) return mediaUnavailable(c);
+  return { rich: { contentJson: prepared.contentJson, mentionUserIds: prepared.mentionIds, mediaIds: prepared.mediaIds, videoIds: prepared.videoIds, attachmentIds: prepared.attachmentIds, uploader }, body: prepared.body, prepared };
 }
 
 /** 15a: the staff notification rows the write appended are published once the write has landed (the Cron recovers any the queue refuses). */

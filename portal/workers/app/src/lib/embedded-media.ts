@@ -66,7 +66,7 @@ async function claimUploadingMedia(db: D1Database, mediaId: string): Promise<boo
 }
 
 /** R2 answers an upload it no longer knows (already aborted or completed) in several shapes; for an abort that is as good as done. */
-function isMissingUpload(error: unknown): boolean {
+export function isMissingUpload(error: unknown): boolean {
   const value = error as { status?: unknown; code?: unknown; name?: unknown; message?: unknown } | null;
   if (!value || typeof value !== "object") return false;
   const text = [value.code, value.name, value.message].filter((item): item is string => typeof item === "string").join(" ");

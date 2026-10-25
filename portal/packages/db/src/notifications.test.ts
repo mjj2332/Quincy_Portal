@@ -191,6 +191,22 @@ describe("emitNotifications email gating", () => {
     expect(sent.html).not.toContain("href=");
   });
 
+  it("says how many files a notice-board post carries in its mention email (#954)", async () => {
+    const { db } = mockDb();
+    const email = fakeEmail(async () => ({ messageId: "m1" }));
+    await emitNotifications(db, {
+      type: "mentioned",
+      recipients: [recipient("u1", "u1@example.com")],
+      mentionEmail: { scope: "notice-board", authorName: "Jane Smith", excerpt: "Logos", attachmentCount: 1 },
+      email,
+      fromAddress: "studio@example.test",
+    });
+    expect(email.send).toHaveBeenCalledWith(expect.objectContaining({
+      text: "Jane Smith mentioned you in a notice-board post with 1 attachment:\n\n“Logos”",
+      html: "<p>Jane Smith mentioned you in a notice-board post with 1 attachment:</p><p>“Logos”</p>",
+    }));
+  });
+
   it("records emailError for a failing recipient without blocking the remaining recipients", async () => {
     const { db, insertCalls, updateCalls } = mockDb();
     const email = fakeEmail(async (message) => {

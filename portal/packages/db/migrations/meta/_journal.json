@@ -575,6 +575,13 @@
       "when": 1791500000000,
       "tag": "0081_video_collection_on_every_project",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "6",
+      "when": 1791600000000,
+      "tag": "0082_attachments",
+      "breakpoints": true
     }
   ]
 }

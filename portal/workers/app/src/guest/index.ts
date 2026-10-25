@@ -11,6 +11,7 @@ import { hashToken, randomToken } from "../lib/opaque-token";
 import type { AppEnv } from "../env";
 import { guestNotFound, guestRoute, INVALID, originRejection, readJson, readSessionCookie, SESSION_MAX_MS, sessionCookieHeader, timingSafeEqualStrings, TOO_LARGE, tooMany, UUID, withHygiene } from "./http";
 import { mountGuestApproval } from "./approval";
+import { mountGuestAttachments } from "./attachments";
 import { mountGuestDownloads } from "./download";
 import { mountGuestEmail } from "./email";
 import { mountGuestMedia } from "./media";
@@ -90,6 +91,7 @@ export function mountGuest(app: Hono<AppEnv>): void {
   mountGuestEmail(app);
   mountGuestNotes(app);
   mountGuestMedia(app);
+  mountGuestAttachments(app);
   mountGuestPaste(app);
   mountGuestApproval(app);
   mountGuestDownloads(app);

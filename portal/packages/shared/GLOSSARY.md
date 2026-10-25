@@ -534,9 +534,9 @@ _Avoid_: Summary, newsletter, batch
 
 **Link preview**:
 The card a post shows for a link inside it: the linked page's title, description and image,
-fetched once, when the author adds the link (applies it in the editor), never again on save or
-view. Only the post's author may remove one. At most three per
-post.
+fetched once, when the author adds the link (pastes or types a web address, or applies a link in
+the editor), never again on save or view. It goes when its link goes. Only the post's author may
+remove one; entering the address again brings it back. At most ten per post.
 _Avoid_: Unfurl, embed, OG card
 
 **Embedded media**:
@@ -545,6 +545,14 @@ note on a Video) or on a Project whiteboard. A public note's media is seen by Gu
 the Review link. Belongs to what holds it: deleted with its post, with its Project, or
 a week after it is removed or left unposted. Not an Asset: it is never delivered.
 _Avoid_: Attachment, upload, Asset
+
+**Attachment**:
+A file of any other kind added to a post, a note on a Video or a reply (a document, an archive, a
+raw photo), shown as a chip to download rather than drawn inside it. Anyone who can see the post
+can download it, so a public note's Attachments reach Guest reviewers, and a Guest reviewer may
+add them too. Belongs to what holds it, as Embedded media does. Not an Asset: it is never
+delivered.
+_Avoid_: File, upload, document
 
 **Day bucket**:
 The grouping unit of the notification centre: one calendar day in the studio's timezone,

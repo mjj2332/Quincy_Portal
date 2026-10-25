@@ -4,7 +4,8 @@ import { NoteComposerBox } from "../components/quincy/NoteComposerBox";
 import { useNoteDraft, type GuestDrafts } from "./guest-drafts";
 import { PencilIcon } from "lucide-react";
 import { legacyBodyToRichTextDoc, type GuestNoteDto, type GuestNoteThreadDto, type RichTextDoc } from "@quincy/shared";
-import type { EditorMediaTransport } from "../lib/embedded-media-core";
+import type { GuestMediaTransport, GuestReadMedia } from "./guest-api";
+import { ATTACHMENT_RETRY_OR_REMOVE } from "../lib/attachments-core";
 import { NoteBody } from "../components/quincy/NoteMediaStrip";
 import { noteAnchorLabel } from "../lib/video-note-view";
 import { cn } from "../lib/utils";
@@ -38,8 +39,8 @@ export type Writing = {
   /** The link allows comments and the Project is not archived. */
   canWrite: boolean;
   verified: boolean;
-  /** The link's media routes (#835 C): where a note's pictures are read from, and what a reply's editor uploads through. */
-  media: EditorMediaTransport;
+  /** The link's media routes (#835 C): where a note's pictures are read from, and what a reply's editor uploads through. Its files download from `attachmentUrl` (#955) and upload through `files` (#956). */
+  media: GuestMediaTransport;
   actions: NoteActions;
   /** The reply and reply-edit drafts, which outlive the list (the phone drawer closing, a re-verification). */
   drafts: GuestDrafts;
@@ -64,9 +65,9 @@ function Author({ note }: { note: GuestNoteDto }) {
 }
 
 /** The note as the guest reads it: the rich document when the note has one (pictures from the link's media routes; a mention is already the plain "@Name"), else its text. */
-export function NoteText({ note, media }: { note: GuestNoteDto; media: EditorMediaTransport }) {
+export function NoteText({ note, media }: { note: GuestNoteDto; media: GuestReadMedia }) {
   if (note.deleted) return <p data-testid="guest-note-tombstone" className="m-0 text-foreground-secondary italic [font:var(--type-body-sm)]">Note deleted</p>;
-  if (note.content) return <div data-testid="guest-note-body" className="text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [overflow-wrap:anywhere]"><NoteBody content={note.content} mediaUrl={media.mediaUrl} posterUrl={media.posterUrl} /></div>;
+  if (note.content) return <div data-testid="guest-note-body" className="text-foreground [font:var(--weight-regular)_var(--text-sm)/var(--leading-normal)_var(--font-sans)] [overflow-wrap:anywhere]"><NoteBody content={note.content} mediaUrl={media.mediaUrl} posterUrl={media.posterUrl} attachmentUrl={media.attachmentUrl} /></div>;
   return <p data-testid="guest-note-body" className={BODY}>{note.body}</p>;
 }
 
@@ -94,6 +95,9 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
   // A picture still going up holds Send / Save: the note would go without it.
   const [editUploading, setEditUploading] = useState(false);
   const [replyUploading, setReplyUploading] = useState(false);
+  // A file that failed to upload holds them too (#956), until it is retried or removed.
+  const [editFailed, setEditFailed] = useState(0);
+  const [replyFailed, setReplyFailed] = useState(0);
   const replyEditor = useRef<RichTextEditorHandle | null>(null);
   const [replyStrip, setReplyStrip] = useState<HTMLDivElement | null>(null);
   /** The reply is dismissed (the toggle, Esc); its draft goes with it. A reply being sent stays. */
@@ -107,7 +111,7 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
 
   const saveEdit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!writing.canWrite || editDraft === null || editingNote === null || editStatus.pending || editUploading) return;
+    if (!writing.canWrite || editDraft === null || editingNote === null || editStatus.pending || editUploading || editFailed > 0) return;
     if (noteText(editDraft.doc) === "") { setEditStatus({ pending: false, problem: "A note can't be empty." }); return; }
     if (sameDoc(editDraft.doc, editDraft.baseDoc)) { drafts.clear(editKey); setEditStatus(IDLE); return; }
     setEditStatus({ pending: true, problem: null });
@@ -120,7 +124,7 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
     setEditStatus({ pending: false, problem: outcome.message });
   };
   const sendReply = async () => {
-    if (!writing.canWrite || replyDraft === null || replyStatus.pending || replyUploading) return;
+    if (!writing.canWrite || replyDraft === null || replyStatus.pending || replyUploading || replyFailed > 0) return;
     if (noteText(replyDraft.doc) === "") { setReplyStatus({ pending: false, problem: "Write a reply first." }); return; }
     setReplyStatus({ pending: true, problem: null });
     const sent = replyDraft;
@@ -185,12 +189,12 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
 
   const body = (note: GuestNoteDto) => editDraft !== null && editDraft.noteId === note.id
     ? <form data-testid="guest-note-edit-form" aria-label="Edit your note" onSubmit={(event) => { void saveEdit(event); }} noValidate className="flex flex-col gap-[var(--space-2)]">
-      <GuestNoteField testId="guest-note-edit-body" label="Your note" media={writing.media} value={editDraft.doc} disabled={editStatus.pending || !writing.canWrite} onChange={(doc) => { drafts.set(editKey, { ...editDraft, doc }); }} onUploadingChange={setEditUploading} />
+      <GuestNoteField testId="guest-note-edit-body" label="Your note" media={writing.media} value={editDraft.doc} disabled={editStatus.pending || !writing.canWrite} onChange={(doc) => { drafts.set(editKey, { ...editDraft, doc }); }} onUploadingChange={setEditUploading} onFailedFilesChange={setEditFailed} />
       {editDraft.baseRevision !== note.revision && <p data-testid="guest-note-edit-latest" className="m-0 whitespace-pre-wrap text-foreground-secondary [font:var(--type-body-sm)] [overflow-wrap:anywhere]">{`Latest saved version: ${note.body}`}</p>}
       {editStatus.problem !== null && <p role="alert" data-testid="guest-note-edit-problem" className={PROBLEM}>{editStatus.problem}</p>}
       <div className="flex flex-wrap justify-end gap-[var(--space-2)]">
         <Button type="button" variant="ghost" size="sm" data-testid="guest-note-edit-cancel" className={TOUCH} disabled={editStatus.pending} onClick={() => { drafts.clear(editKey); setEditStatus(IDLE); }}>Cancel</Button>
-        <Button type="submit" size="sm" data-testid="guest-note-edit-save" className={TOUCH} disabled={editStatus.pending || !writing.canWrite || editUploading}>Save</Button>
+        <Button type="submit" size="sm" data-testid="guest-note-edit-save" className={TOUCH} disabled={editStatus.pending || !writing.canWrite || editUploading || editFailed > 0} {...(editFailed > 0 ? { title: ATTACHMENT_RETRY_OR_REMOVE } : {})}>Save</Button>
       </div>
     </form>
     : <NoteText note={note} media={writing.media} />;
@@ -219,11 +223,11 @@ export function GuestThreadItem({ thread, selected, onSelect, timecode, writing 
       </div>}
       {writing.canWrite && !thread.deleted && replyDraft !== null && <NoteComposerBox
         variant="reply" label="Reply" testId="guest-reply-form"
-        field={<GuestNoteField ref={replyEditor} testId="guest-reply-body" label="Your reply" placeholder="Reply…" media={writing.media} value={replyDraft.doc} disabled={replyStatus.pending || !writing.canWrite} onChange={(doc) => { drafts.set(replyKey, { ...replyDraft, doc }); }} onUploadingChange={setReplyUploading} onSubmit={() => { void sendReply(); }} stripContainer={replyStrip} />}
+        field={<GuestNoteField ref={replyEditor} testId="guest-reply-body" label="Your reply" placeholder="Reply…" media={writing.media} value={replyDraft.doc} disabled={replyStatus.pending || !writing.canWrite} onChange={(doc) => { drafts.set(replyKey, { ...replyDraft, doc }); }} onUploadingChange={setReplyUploading} onFailedFilesChange={setReplyFailed} onSubmit={() => { void sendReply(); }} stripContainer={replyStrip} />}
         strip={<div ref={setReplyStrip} className="empty:hidden" />}
         notice={replyStatus.problem !== null ? <p role="alert" data-testid="guest-reply-problem" className={PROBLEM}>{replyStatus.problem}</p> : null}
         attach={{ onPick: () => { replyEditor.current?.pickMedia(); }, disabled: replyStatus.pending || !writing.canWrite }}
-        send={{ label: "Send reply", onSend: () => { void sendReply(); }, disabled: replyStatus.pending || !writing.canWrite || replyUploading || noteText(replyDraft.doc) === "", pending: replyStatus.pending }}
+        send={{ label: "Send reply", onSend: () => { void sendReply(); }, disabled: replyStatus.pending || !writing.canWrite || replyUploading || replyFailed > 0 || noteText(replyDraft.doc) === "", ...(replyFailed > 0 ? { reason: ATTACHMENT_RETRY_OR_REMOVE } : {}), pending: replyStatus.pending }}
         onEscape={dismissReply}
       />}
       {thread.resolved && (!writing.canWrite || thread.deleted || replyDraft !== null) && <div className="flex justify-end"><ResolvedTick data-testid="guest-note-resolved" /></div>}

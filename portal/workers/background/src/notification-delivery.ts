@@ -13,6 +13,7 @@ import {
   projectActivityCoalesce,
   projectActivityCoalescingDeclaration,
   renderProjectActivityNotification,
+  attachmentCountSuffix,
   EXTERNAL_PROJECT_ACTIVITY_POLICY,
   EXTERNAL_LEGACY_NOTIFICATION_POLICY,
   NOTIFICATION_TYPES,
@@ -237,7 +238,7 @@ type ProjectCommentMentionPayload = {
       actorId: string;
       occurredAt: string;
       source: { kind: "project_comment"; id: string; key: string };
-      safePayload: { commentId: string };
+      safePayload: { commentId: string; attachmentCount?: number };
       deepLink: { kind: "project_collaboration"; path: string };
     };
     broadDelivery: {
@@ -625,15 +626,17 @@ async function videoReviewFacts(env: Env, outbox: OutboxRow, payload: VideoRevie
   `).bind(guestId, outbox.actor_id, kind, sourceId, projectId, assetId, videoId).first<VideoReviewFacts>();
 }
 
-function videoReviewCopy(kind: VideoReviewNotificationPayload["video"]["kind"], facts: VideoReviewFacts, guestActor: boolean): { title: string; body: string } {
+/** `files` is the note or reply's Attachment count (#955), read as #957 reads a comment's: " with 2 attachments", or "" for none. */
+function videoReviewCopy(kind: VideoReviewNotificationPayload["video"]["kind"], facts: VideoReviewFacts, guestActor: boolean, files?: number): { title: string; body: string } {
+  const withFiles = attachmentCountSuffix(files);
   const who = facts.actorName ? (guestActor ? `${facts.actorName} (client)` : facts.actorName) : (guestActor ? "A client" : "Someone");
   const video = `“${facts.title}” v${facts.version}`;
   switch (kind) {
     case "video_version_uploaded": return { title: `New Version ${facts.version} of “${facts.title}”`, body: "A new Version is ready to review." };
-    case "video_note": return { title: `${who} left a note on ${video}`, body: "Open the Project's Video tab to read it." };
-    case "video_reply": return { title: `${who} replied on ${video}`, body: "Open the Project's Video tab to read it." };
+    case "video_note": return { title: `${who} left a note${withFiles} on ${video}`, body: "Open the Project's Video tab to read it." };
+    case "video_reply": return { title: `${who} replied${withFiles} on ${video}`, body: "Open the Project's Video tab to read it." };
     case "video_released": return { title: `${who} released ${video}`, body: "Open the Project's Video tab to see it." };
-    case "video_mention": return { title: `${who} mentioned you on ${video}`, body: "Open the Project's Video tab to read it." };
+    case "video_mention": return { title: `${who} mentioned you${withFiles ? ` in a note${withFiles}` : ""} on ${video}`, body: "Open the Project's Video tab to read it." };
     case "video_decision": return { title: `${who} ${facts.decision === "approved" ? "approved" : "requested changes on"} ${video}`, body: "Open the Project's Video tab to see it." };
   }
 }
@@ -676,7 +679,7 @@ async function resolveVideoReviewRecipient(env: Env, outbox: OutboxRow): Promise
   if (facts.sourceOk !== 1) return suppressed("source_removed");
   // #835: an External reads the narrowed copy for the two kinds that name a person (a Release, a mention); no Video, Version or name.
   const narrowed = role === "external_editor" && (payload.video.kind === "video_released" || payload.video.kind === "video_mention") ? externalNotificationCopy({ type: payload.video.kind }) : null;
-  const copy = narrowed ?? videoReviewCopy(payload.video.kind, facts, guestIdOfOutboxActor(outbox.actor_id) !== null);
+  const copy = narrowed ?? videoReviewCopy(payload.video.kind, facts, guestIdOfOutboxActor(outbox.actor_id) !== null, payload.video.attachmentCount);
   // #835: a staff recipient lands on the exact Video, Version and note; an External keeps the tab (ADR 0007/0008).
   const selection = role !== "external_editor" && facts.noteId ? { id: payload.video.videoId, version: facts.version, note: facts.noteId } : null;
   const projectPath = projectNotificationUrl(env, row.projectId, payload.video.kind, selection);
@@ -1394,6 +1397,7 @@ async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRe
     };
   }
   const excerpt = truncateForEmail(first.commentBody ?? "");
+  const withFiles = attachmentCountSuffix(payload.projectCommentActivity.activity.safePayload.attachmentCount);
   return {
     ok: true,
     kind: "legacy",
@@ -1403,10 +1407,10 @@ async function resolveRecipient(env: Env, outbox: OutboxRow): Promise<ResolvedRe
     delivery: {
       notificationType: "mentioned",
       title: "You were mentioned",
-      body: "You were mentioned in a project comment.",
+      body: `You were mentioned in a project comment${withFiles}.`,
       emailSubject: "You were mentioned",
-      emailText: `${first.authorName} commented on ${first.projectStreet ?? ""}:\n\n“${excerpt}”\n\n${commentPath}`,
-      emailHtml: `<p>${htmlEscape(first.authorName ?? "")} commented on ${htmlEscape(first.projectStreet ?? "")}:</p><p>“${htmlEscape(excerpt)}”</p><p><a href="${htmlEscape(commentPath)}">View project</a></p>`,
+      emailText: `${first.authorName} commented${withFiles} on ${first.projectStreet ?? ""}:\n\n“${excerpt}”\n\n${commentPath}`,
+      emailHtml: `<p>${htmlEscape(first.authorName ?? "")} commented${withFiles} on ${htmlEscape(first.projectStreet ?? "")}:</p><p>“${htmlEscape(excerpt)}”</p><p><a href="${htmlEscape(commentPath)}">View project</a></p>`,
     },
   };
 }

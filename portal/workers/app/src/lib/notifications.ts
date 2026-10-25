@@ -9,7 +9,7 @@ import {
 } from "@quincy/db";
 import { createDb } from "@quincy/db";
 import { projects, user } from "@quincy/db/schema";
-import { PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID, projectNotificationRoute, publishNotificationOutbox, staffPathFor, truncateForEmail } from "@quincy/shared";
+import { PROJECT_ACTIVITY_SYSTEM_OUTBOX_ACTOR_ID, attachmentCountSuffix, projectNotificationRoute, publishNotificationOutbox, staffPathFor, truncateForEmail } from "@quincy/shared";
 import { and, eq, inArray } from "drizzle-orm";
 import type { AppEnv } from "../env";
 
@@ -63,10 +63,11 @@ type MentionMap = { id: string; mentionedUserId: string };
 /**
  * Emits direct Notice Board rich-text mention notifications. Project-comment mentions
  * use the transactional notification outbox and must not re-enter this helper.
+ * `attachmentCount` is how many Attachments the post carries (#954): the copy says "with N attachments", as a Project comment's does (#957).
  */
 export async function notifyNoticeBoardMentions(
   env: AppEnv["Bindings"],
-  input: { actorId: string; authorName: string; body: string; mentions: MentionMap[] },
+  input: { actorId: string; authorName: string; body: string; mentions: MentionMap[]; attachmentCount?: number },
 ): Promise<void> {
   try {
     const db = createDb(env.DB);
@@ -78,9 +79,9 @@ export async function notifyNoticeBoardMentions(
     const activeStaff = await db.select({ userId: user.id, email: user.email, name: user.name })
       .from(user).where(and(inArray(user.id, mentionIds), eq(user.active, true))).all();
     recipients = new Map(activeStaff.map((target) => [target.userId, target]));
-    const copy = { title: "You were mentioned", body: "You were mentioned in a notice-board post." };
+    const copy = { title: "You were mentioned", body: `You were mentioned in a notice-board post${attachmentCountSuffix(input.attachmentCount)}.` };
     const excerpt = truncateForEmail(input.body);
-    const mentionEmail = { scope: "notice-board" as const, authorName: input.authorName, excerpt };
+    const mentionEmail = { scope: "notice-board" as const, authorName: input.authorName, excerpt, ...(input.attachmentCount ? { attachmentCount: input.attachmentCount } : {}) };
     const route = projectNotificationRoute(null, "mentioned");
     const link = route?.kind === "project" ? `${env.APP_ORIGIN}${staffPathFor(route)}` : undefined;
     for (const mention of input.mentions) {

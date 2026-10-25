@@ -1,5 +1,6 @@
 import { useContext, useEffect, useId, useRef, useState } from "react";
-import type { EditorMediaTransport } from "../lib/embedded-media-core";
+import { ATTACHMENT_RETRY_OR_REMOVE, WAIT_FOR_UPLOADS } from "../lib/attachments-core";
+import type { GuestEditorTransport } from "./GuestNoteEditor";
 import { useFrameClockSelector, type VideoFrameClock } from "../lib/video-frame-clock";
 import type { RichTextEditorHandle } from "../components/QuincyRichTextEditorBase";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
@@ -28,7 +29,8 @@ export function GuestNoteComposer({ strip, clock, timecode, media, verified, onS
   strip: GuestStrip;
   clock: VideoFrameClock | null;
   timecode: (frame: number) => string;
-  media: EditorMediaTransport;
+  /** The link's media and file routes (#956): what the field uploads through. */
+  media: GuestEditorTransport;
   /** A verified guest gets the field; one who is not gets the shell, which asks for verification. */
   verified: boolean;
   onShellPress: () => void;
@@ -83,8 +85,8 @@ export function GuestNoteComposer({ strip, clock, timecode, media, verified, onS
   const pen = strip.canDraw ? { onPress: strip.pen, disabled: !verified || (strip.penDisabled && !strip.penDown), ...(strip.penDisabled && strip.lockHint ? { reason: strip.lockHint } : {}) } : undefined;
   const attach = { onPick: () => { editor.current?.pickMedia(); }, disabled: strip.pending || !verified };
   // D2: a drawing alone is not a note.
-  const reason = strip.empty && strip.strokes > 0 ? DRAWING_NEEDS_WORDS : strip.uploading ? "Wait for the upload to finish" : undefined;
-  const blocked = busy || strip.uploading || strip.empty;
+  const reason = strip.empty && strip.strokes > 0 ? DRAWING_NEEDS_WORDS : strip.uploading ? WAIT_FOR_UPLOADS : strip.failedFiles > 0 ? ATTACHMENT_RETRY_OR_REMOVE : undefined;
+  const blocked = busy || strip.uploading || strip.failedFiles > 0 || strip.empty;
 
   const placeholder = phone ? "Add a note…" : "Add a note at this frame…";
   const shell = (loading: boolean) => <span data-testid="guest-compose-shell" aria-busy={loading || undefined} className="relative block min-h-[var(--space-5)]">
@@ -101,7 +103,7 @@ export function GuestNoteComposer({ strip, clock, timecode, media, verified, onS
     {verified
       ? <GuestNoteField
         key={strip.editorKey} ref={editor} testId="guest-composer-body" id={fieldId} label={strip.editing ? "Edit your note" : "Your note"} placeholder={placeholder}
-        media={media} value={strip.doc} disabled={strip.pending} onChange={strip.setDoc} onUploadingChange={strip.setUploading} onSubmit={send}
+        media={media} value={strip.doc} disabled={strip.pending} onChange={strip.setDoc} onUploadingChange={strip.setUploading} onFailedFilesChange={strip.setFailedFiles} onSubmit={send}
         stripContainer={stripHost} bubbleDocked={phone} bubbleDockTo={() => boxRef.current?.querySelector('[data-testid="note-composer-box"]') ?? null} fallback={shell(true)}
       />
       : shell(false)}

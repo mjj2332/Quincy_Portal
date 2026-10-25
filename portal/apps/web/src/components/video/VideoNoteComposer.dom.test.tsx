@@ -173,6 +173,17 @@ describe("VideoNoteComposer (#741 5b; the note box, #927)", () => {
     expect(chip().textContent).toBe("Note at TC30");
   });
 
+  it("#955: a file that failed to upload holds Send until it is retried or removed", async () => {
+    await render({ clock: fakeClock({ frame: 30 }).clock });
+    await type("with a file");
+    expect(off(postButton())).toBe(false);
+    await click(byTestId("stub-file-failed")!);
+    expect(off(postButton())).toBe(true);
+    expect(postButton().title).toBe("Retry or remove the file that failed.");
+    await click(byTestId("stub-file-cleared")!);
+    expect(off(postButton())).toBe(false);
+  });
+
   it("focus alone does not freeze the chip on a desktop", async () => {
     const f = fakeClock({ frame: 12 });
     await render({ clock: f.clock });

@@ -263,7 +263,7 @@ describe("an archived Project's discussion (#527)", () => {
   it("still reads the broad outbox ids by position after the audit row moved to the front of the create batch", async () => {
     const f = await seedProject(false);
     const id = crypto.randomUUID(); const at = new Date();
-    const result = await createProjectComment(database.DB, { id, projectId: f.projectId, authorId: ids.member, body: "Direct", contentJson: JSON.stringify(doc("Direct")), mentions: [{ id: crypto.randomUUID(), commentId: id, mentionedUserId: ids.admin, createdAt: at }], wallClockMs: at.getTime(), occurredAt: at });
+    const result = await createProjectComment(database.DB, { id, projectId: f.projectId, authorId: ids.member, principal: { id: ids.member, impersonatedBy: null }, body: "Direct", contentJson: JSON.stringify(doc("Direct")), mentions: [{ id: crypto.randomUUID(), commentId: id, mentionedUserId: ids.admin, createdAt: at }], wallClockMs: at.getTime(), occurredAt: at });
     // The mention envelope plus the broad activity envelopes, all read by position: the returned ids are exactly the outbox rows this create wrote.
     const written = (await database.DB.prepare("SELECT id FROM notification_outbox WHERE project_id = ? AND created_at = ?").bind(f.projectId, at.getTime()).all<{ id: string }>()).results.map((row) => row.id);
     expect(result.notificationOutboxIds.length).toBeGreaterThanOrEqual(2);

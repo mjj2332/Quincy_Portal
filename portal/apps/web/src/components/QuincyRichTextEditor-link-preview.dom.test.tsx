@@ -38,9 +38,9 @@ async function mount(initial: RichTextDoc, preset: "composer" | "document" = "co
 }
 const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 const click = (element: Element) => act(async () => { (element as HTMLElement).click(); });
-async function apply(host: HTMLElement, href: string) {
+async function apply(host: HTMLElement, href: string, paragraph = 0) {
   const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
-  const text = document.createTreeWalker(editor.querySelector("p")!, NodeFilter.SHOW_TEXT).nextNode()!;
+  const text = document.createTreeWalker([...editor.children].filter((child) => child.tagName === "P")[paragraph]!, NodeFilter.SHOW_TEXT).nextNode()!;
   await act(async () => {
     editor.focus();
     const range = document.createRange(); range.setStart(text, 0); range.setEnd(text, text.textContent!.length);
@@ -122,12 +122,24 @@ describe("applying a link offers a card (#497)", () => {
     expect(request).not.toHaveBeenCalled();
   });
 
-  it("asks for nothing past three cards, or for an address that already has one", async () => {
-    const three: RichTextDoc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Link me" }] }, node(P1, "https://example.test/1"), node(P2, "https://example.test/2"), node("44444444-4444-4444-8444-444444444444", "https://example.test/3")] };
-    const full = await mount(three);
-    await apply(full, "https://example.test/4");
-    expect(request).not.toHaveBeenCalled();
-    act(() => root!.unmount()); document.body.replaceChildren();
+  it("gives each of ten links its card in the Collaboration composer and the Notice board composer, and the eleventh stays a link with a notice", async () => {
+    const lines = Array.from({ length: 11 }, (_, index) => `Link ${index}`);
+    const many: RichTextDoc = { type: "doc", content: lines.map((text) => ({ type: "paragraph", content: [{ type: "text", text }] })) };
+    request.mockImplementation(async (_scope: unknown, href: string) => { const n = Number(href.split("/").pop()); return cardFor(`00000000-0000-4000-8000-${String(n).padStart(12, "0")}`, href); });
+    for (const [preset, scope] of [["composer", { projectId: "p1" }], ["document", { noticeBoard: true }]] as const) {
+      request.mockClear();
+      const host = await mount(many, preset, scope);
+      for (let index = 0; index < 11; index++) await apply(host, `https://example.test/${index}`, index);
+      expect(request).toHaveBeenCalledTimes(10);
+      expect(storedPreviews()).toHaveLength(10);
+      expect(cards(host)).toHaveLength(10);
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain("A post can show 10 link previews at most.");
+      expect(JSON.stringify(latest)).toContain("https://example.test/10");
+      act(() => root!.unmount()); document.body.replaceChildren();
+    }
+  });
+
+  it("asks for nothing for an address that already has a card", async () => {
     const one: RichTextDoc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Link me" }] }, node(P1, "https://example.test/1")] };
     const dup = await mount(one);
     await apply(dup, "https://example.test/1");
@@ -372,7 +384,7 @@ async function applyToSelection(host: HTMLElement, href: string) {
 }
 
 describe("a card that lands while the author is composing (#548)", () => {
-  it("keeps the author's selection and the card when the author types on after it arrives", async () => {
+  it("keeps the author's selection when it arrives, so the next keystroke replaces the selected words and not the card", async () => {
     let finish!: (card: LinkPreviewCard) => void;
     request.mockImplementation(() => new Promise<LinkPreviewCard>((resolve) => { finish = resolve; }));
     const host = await mount(plain("QA 548 mid home after text"));
@@ -388,9 +400,11 @@ describe("a card that lands while the author is composing (#548)", () => {
     expect(editor.state.selection).not.toBeInstanceOf(NodeSelection);
     expect({ from: editor.state.selection.from, to: editor.state.selection.to }).toEqual(before);
     act(() => { editor.view.dispatch(editor.view.state.tr.insertText("x")); });
-    expect(cards(host)).toHaveLength(1);
-    expect(storedPreviews()).toHaveLength(1);
+    // The keystroke replaced the linked words, not the card (a selected card would have left the words as they were)...
     expect(richTextPlainText(latest)).toContain("QA 548 mid xafter text");
+    // ...and those words were the address's only link, so its card went with them (#949).
+    expect(host.querySelector('[contenteditable="true"] a')).toBeNull();
+    expect(cards(host)).toHaveLength(0);
   });
 });
 
@@ -476,5 +490,100 @@ describe("the card in the composer is not a live link (#497 re-check)", () => {
     expect(link?.getAttribute("href")).toBe("https://example.test/a");
     expect(link?.getAttribute("target")).toBe("_blank");
     await act(async () => postedRoot.unmount());
+  });
+});
+
+describe("a card follows its link (#949)", () => {
+  const A = "https://example.test/a";
+  const twoLinks = (withCard: boolean): RichTextDoc => ({ type: "doc", content: [
+    { type: "paragraph", content: [{ type: "text", text: "First", marks: [{ type: "link", href: A }] }] },
+    { type: "paragraph", content: [{ type: "text", text: "Second", marks: [{ type: "link", href: A }] }] },
+    ...(withCard ? [node(P1, A)] : []),
+  ] } as RichTextDoc);
+  // The author selects the linked words and deletes them, as Backspace over a selection does.
+  const deleteText = (host: HTMLElement, from: number, to: number) => act(async () => { const live = tiptapOf(host); live.view.dispatch(live.state.tr.delete(from, to)); });
+  const separateUndoStep = (host: HTMLElement) => act(async () => { const live = tiptapOf(host); live.view.dispatch(closeHistory(live.state.tr)); });
+  const links = (host: HTMLElement) => [...host.querySelectorAll('[contenteditable="true"] a')];
+
+  it("deleting the link removes its card, and one undo restores both", async () => {
+    request.mockResolvedValue(cardFor(P1, A));
+    const host = await mount(plain());
+    await apply(host, A);
+    expect(cards(host)).toHaveLength(1);
+    await separateUndoStep(host);
+    await deleteText(host, 1, 8);
+    expect(links(host)).toHaveLength(0);
+    expect(cards(host)).toHaveLength(0);
+    expect(storedPreviews()).toHaveLength(0);
+    await act(async () => { tiptapOf(host).commands.undo(); });
+    expect(links(host)).toHaveLength(1);
+    expect(cards(host)).toHaveLength(1);
+    expect(storedPreviews()).toEqual([{ type: "linkPreview", attrs: { previewId: P1 } }]);
+  });
+
+  it("matches the card to its link when the server normalised the address", async () => {
+    request.mockResolvedValue(cardFor(P1, "https://example.test/"));
+    const host = await mount(plain());
+    await apply(host, "https://example.test");
+    expect(cards(host)).toHaveLength(1);
+    await deleteText(host, 1, 8);
+    expect(cards(host)).toHaveLength(0);
+  });
+
+  it("keeps the card while another link to the same address remains, and removes it with the last", async () => {
+    const host = await mount(twoLinks(true));
+    // "First" spans 1..6; "Second" then sits at 3..9 in its emptied neighbour's wake.
+    await deleteText(host, 1, 6);
+    expect(links(host)).toHaveLength(1);
+    expect(cards(host)).toHaveLength(1);
+    await deleteText(host, 3, 9);
+    expect(links(host)).toHaveLength(0);
+    expect(cards(host)).toHaveLength(0);
+    expect(storedPreviews()).toHaveLength(0);
+  });
+
+  it("keeps a deleted card gone while its link remains and the author edits on", async () => {
+    request.mockResolvedValue(cardFor(P1, A));
+    const host = await mount(plain("Link me and more"));
+    await apply(host, A);
+    await click(host.querySelector('[data-testid="link-preview-remove"]')!);
+    expect(cards(host)).toHaveLength(0);
+    await act(async () => { const live = tiptapOf(host); live.view.dispatch(live.state.tr.insertText(" typed", live.state.doc.child(0).nodeSize - 1)); });
+    await deleteText(host, 9, 12);
+    await settle();
+    expect(links(host)).toHaveLength(1);
+    expect(cards(host)).toHaveLength(0);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("brings the card back when the address is applied again after its link was deleted", async () => {
+    request.mockResolvedValueOnce(cardFor(P1, A)).mockResolvedValueOnce(cardFor(P2, A));
+    const host = await mount(plain());
+    await apply(host, A);
+    await deleteText(host, 1, 8);
+    expect(cards(host)).toHaveLength(0);
+    await act(async () => { const live = tiptapOf(host); live.view.dispatch(live.state.tr.insertText("Link me", 1)); });
+    await apply(host, A);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(cards(host)).toHaveLength(1);
+    expect(storedPreviews()).toEqual([{ type: "linkPreview", attrs: { previewId: P2 } }]);
+  });
+
+  it("drops a card that arrives after its link was deleted", async () => {
+    let resolve!: (card: LinkPreviewCard) => void;
+    request.mockReturnValue(new Promise<LinkPreviewCard>((done) => { resolve = done; }));
+    const host = await mount(plain());
+    await apply(host, A);
+    await deleteText(host, 1, 8);
+    await act(async () => resolve(cardFor(P1, A)));
+    await settle();
+    expect(cards(host)).toHaveLength(0);
+    expect(storedPreviews()).toHaveLength(0);
+  });
+
+  it("leaves a card alone when the host replaces the content", async () => {
+    const host = await mount(twoLinks(false));
+    await act(async () => reset!({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Fresh" }] }, node(P1, A)] } as RichTextDoc));
+    expect(cards(host)).toHaveLength(1);
   });
 });

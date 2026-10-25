@@ -10,6 +10,10 @@ import { QuincyRichTextEditor } from "./QuincyRichTextEditor";
 import { createQuincyQueryClient } from "../lib/query-client";
 import { RenditionFailedError } from "../lib/embedded-media";
 import { chooseNoticeAction, confirmNoticeDelete } from "../testing/notice-menu";
+/** Locked: the box's Send and Save stay focusable when locked (aria-disabled), as in Collaboration (#950). */
+const isLocked = (button: HTMLButtonElement) => button.disabled || button.getAttribute("aria-disabled") === "true";
+/** The new notice's round Post notice (#951: named "Posting…" while it posts). */
+const postButton = (scope: ParentNode) => scope.querySelector<HTMLButtonElement>('[data-slot="notice-board-composer"] button[type="submit"]')!;
 const advanceTimers = (ms: number) => vi.advanceTimersByTimeAsync(ms);
 
 /** Notice board embedded media (#496): the composers, the upload locks, the failure paths and a posted image. */
@@ -18,6 +22,8 @@ const upload = vi.hoisted(() => vi.fn());
 const heicSetting = vi.hoisted(() => vi.fn());
 const retryRendition = vi.hoisted(() => vi.fn());
 vi.mock("../lib/embedded-media", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/embedded-media")>()), uploadEmbeddedImage: upload, fetchEmbeddedHeicSetting: heicSetting, retryEmbeddedRendition: retryRendition }));
+const uploadFile = vi.hoisted(() => vi.fn());
+vi.mock("../lib/attachments", async (importOriginal) => ({ ...(await importOriginal<typeof import("../lib/attachments")>()), uploadNoticeAttachment: uploadFile }));
 const apiGetMock = vi.fn<(path: string) => Promise<unknown>>();
 const apiPostMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
 const apiPatchMock = vi.fn<(path: string, body: unknown) => Promise<unknown>>();
@@ -47,9 +53,9 @@ const buttonNamed = (scope: ParentNode, name: string) => [...scope.querySelector
 const tiptapOf = (scope: ParentNode) => (scope.querySelector('[contenteditable="true"]') as unknown as { editor: Editor }).editor;
 async function choose(scope: ParentNode, files: File[]) {
   const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => undefined);
-  await act(async () => { scope.querySelector<HTMLButtonElement>('button[aria-label="Insert image"]')!.click(); });
+  await act(async () => { scope.querySelector<HTMLButtonElement>('button[aria-label="Add files"]')!.click(); });
   click.mockRestore();
-  const picker = scope.querySelector<HTMLInputElement>('input[data-testid="rich-text-image-picker"]')!;
+  const picker = scope.querySelector<HTMLInputElement>('input[data-testid="rich-text-media-picker"]')!;
   Object.defineProperty(picker, "files", { configurable: true, value: files });
   await act(async () => { picker.dispatchEvent(new Event("change", { bubbles: true })); });
   await flush();
@@ -68,7 +74,7 @@ beforeEach(() => {
   Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, String(value)); }, removeItem: (key: string) => { values.delete(key); }, clear: () => { values.clear(); } } });
   Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
   focusManager.setFocused(true);
-  upload.mockReset(); heicSetting.mockReset(); heicSetting.mockResolvedValue(false); retryRendition.mockReset(); apiGetMock.mockReset(); apiPostMock.mockReset(); apiPatchMock.mockReset();
+  upload.mockReset(); uploadFile.mockReset(); heicSetting.mockReset(); heicSetting.mockResolvedValue(false); retryRendition.mockReset(); apiGetMock.mockReset(); apiPostMock.mockReset(); apiPatchMock.mockReset();
   queryClient = createQuincyQueryClient();
   apiGetMock.mockImplementation((path) => Promise.resolve(path.includes("read-marker") ? readState : { posts: [ownPost] }));
 });
@@ -80,9 +86,9 @@ afterEach(async () => {
 describe("the Notice board composers take images", () => {
   it("shows the media tools in both the new-post and the edit composer", async () => {
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
-    expect(composer(host).querySelector('[data-testid="rich-text-media-tools"]')).not.toBeNull();
+    expect(composer(host).querySelector('button[aria-label="Add files"]')).not.toBeNull();
     await chooseNoticeAction(host, "A", "Edit", advanceTimers);
-    expect(editComposer(host).querySelector('[data-testid="rich-text-media-tools"]')).not.toBeNull();
+    expect(editComposer(host).querySelector('button[aria-label="Add files"]')).not.toBeNull();
     expect(editComposer(host).querySelector('img[data-media-id]')?.getAttribute("src")).toBe(`/media/embedded/${A}`);
   });
 
@@ -100,12 +106,12 @@ describe("the Notice board composers take images", () => {
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     await typeInto(composer(host), "Look");
     await choose(composer(host), [png()]);
-    expect(buttonNamed(composer(host), "Post notice").disabled).toBe(true);
+    expect(isLocked(postButton(host))).toBe(true);
     await ctrlEnter(composer(host)); await flush();
     expect(apiPostMock).not.toHaveBeenCalled();
     await act(async () => { finish(B); }); await flush();
-    expect(buttonNamed(composer(host), "Post notice").disabled).toBe(false);
-    await click(buttonNamed(composer(host), "Post notice")); await flush();
+    expect(isLocked(postButton(host))).toBe(false);
+    await click(postButton(host)); await flush();
     expect(apiPostMock).toHaveBeenCalledTimes(1);
     const sent = (apiPostMock.mock.calls[0]![1] as { content: RichTextDoc }).content;
     expect(apiPostMock.mock.calls[0]![0]).toBe("/api/notice-board/posts");
@@ -117,10 +123,10 @@ describe("the Notice board composers take images", () => {
     apiPostMock.mockRejectedValue(new Error("An image in this notice is no longer available. Remove it and try again."));
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     await typeInto(composer(host), "Look"); await choose(composer(host), [png()]);
-    await click(buttonNamed(composer(host), "Post notice")); await flush();
+    await click(postButton(host)); await flush();
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("no longer available");
     expect(composer(host).querySelector('img[data-media-id]')?.getAttribute("data-media-id")).toBe(B);
-    expect(buttonNamed(composer(host), "Post notice").disabled).toBe(false);
+    expect(isLocked(postButton(host))).toBe(false);
   });
 
   it("keeps the image when the post is edited, and sends it in the save", async () => {
@@ -141,16 +147,16 @@ describe("the Notice board composers take images", () => {
     await choose(composer(host), [png("create.png")]);
     // The new-post upload does not hold the edit composer.
     await chooseNoticeAction(host, "A", "Edit", advanceTimers);
-    expect(buttonNamed(editComposer(host), "Save").disabled).toBe(false);
+    expect(isLocked(buttonNamed(editComposer(host), "Save"))).toBe(false);
     await choose(editComposer(host), [png("edit.png")]);
-    expect(buttonNamed(editComposer(host), "Save").disabled).toBe(true);
+    expect(isLocked(buttonNamed(editComposer(host), "Save"))).toBe(true);
     await ctrlEnter(editComposer(host)); await flush();
     expect(apiPatchMock).not.toHaveBeenCalled();
     // Finishing the new-post upload does not release the edit composer's own lock.
     await act(async () => { finishCreate(B); }); await flush();
-    expect(buttonNamed(editComposer(host), "Save").disabled).toBe(true);
+    expect(isLocked(buttonNamed(editComposer(host), "Save"))).toBe(true);
     await act(async () => { finishEdit("33333333-3333-4333-8333-333333333333"); }); await flush();
-    expect(buttonNamed(editComposer(host), "Save").disabled).toBe(false);
+    expect(isLocked(buttonNamed(editComposer(host), "Save"))).toBe(false);
     await ctrlEnter(editComposer(host)); await flush();
     expect(apiPatchMock).toHaveBeenCalledTimes(1);
   });
@@ -160,10 +166,10 @@ describe("the Notice board composers take images", () => {
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     await chooseNoticeAction(host, "A", "Edit", advanceTimers);
     await choose(editComposer(host), [png()]);
-    expect(buttonNamed(editComposer(host), "Save").disabled).toBe(true);
+    expect(isLocked(buttonNamed(editComposer(host), "Save"))).toBe(true);
     await click(buttonNamed(editComposer(host), "Cancel"));
     await chooseNoticeAction(host, "A", "Edit", advanceTimers);
-    expect(buttonNamed(editComposer(host), "Save").disabled).toBe(false);
+    expect(isLocked(buttonNamed(editComposer(host), "Save"))).toBe(false);
   });
 });
 
@@ -220,11 +226,11 @@ describe("HEIC images on the Notice board (#495)", () => {
     expect(trayOf(composer(host))?.textContent).toContain("Uploading IMG_1.HEIC");
     await act(async () => { drives[0]!.phase("preparing", B); }); await flush();
     expect(trayOf(composer(host))?.textContent).toContain("Preparing IMG_1.HEIC…");
-    expect(buttonNamed(composer(host), "Post notice").disabled).toBe(true);
+    expect(isLocked(postButton(host))).toBe(true);
     expect(imagesIn(composer(host), B)).toBe(0);
     await act(async () => { drives[0]!.finish(B); }); await flush();
     expect(imagesIn(composer(host), B)).toBe(1);
-    expect(trayOf(composer(host))).toBeNull(); expect(buttonNamed(composer(host), "Post notice").disabled).toBe(false);
+    expect(trayOf(composer(host))).toBeNull(); expect(isLocked(postButton(host))).toBe(false);
   });
 
   it("shows Retry and Remove when preparing fails; Retry that ends ready inserts the image", async () => {
@@ -250,10 +256,12 @@ describe("HEIC images on the Notice board (#495)", () => {
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     await choose(composer(host), [heic()]);
     await act(async () => { drives[0]!.phase("preparing", B); });
+    expect(postButton(host).title).toBe("Wait for the uploads to finish.");
     await click(buttonNamed(composer(host), "Remove")); await flush();
     expect(drives[0]!.signal.aborted).toBe(true);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(trayOf(composer(host))).toBeNull(); expect(buttonNamed(composer(host), "Post notice").disabled).toBe(false);
+    // The upload hold lifts: Post notice no longer waits for uploads (it stays locked on this empty draft, the blank rule).
+    expect(trayOf(composer(host))).toBeNull(); expect(postButton(host).title).not.toBe("Wait for the uploads to finish.");
   });
 
   it("stops polling when the board unmounts", async () => {
@@ -286,10 +294,13 @@ describe("HEIC images on the Notice board (#495)", () => {
     expect(trayOf(composer(host))?.textContent).toContain("Still preparing IMG_1.HEIC… this can take a few minutes");
   });
 
-  it("refuses a HEIC with the unsupported-type message while the setting is off", async () => {
+  // Owner decision A3 (#954): a photo this person may not embed is attached instead of refused.
+  it("attaches a HEIC as a file while the setting is off, never as an image", async () => {
+    uploadFile.mockImplementation(() => new Promise<string>(() => undefined));
     const host = mount(); await render(<NoticeBoard currentUserId="user-a" />);
     await choose(composer(host), [heic()]);
     expect(upload).not.toHaveBeenCalled();
-    expect(composer(host).querySelector('[role="alert"]')?.textContent).toContain("is not a JPEG, PNG or WebP image");
+    expect(uploadFile).toHaveBeenCalledTimes(1);
+    expect(composer(host).querySelector('[data-testid="note-draft-chip"][data-kind="attachment"]')).not.toBeNull();
   });
 });

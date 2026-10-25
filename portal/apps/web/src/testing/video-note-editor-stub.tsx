@@ -10,9 +10,10 @@ import { legacyBodyToRichTextDoc, videoNoteBody, type RichTextDoc } from "@quinc
  * portalled into `toolbarContainer` when that is an element. The inline toolbar of the desktop field is not stood in for.
  *
  * The note preset's handle (#927) is stood in for too: `pickMedia()` (the box's paperclip) starts one upload at once, as a picked file does (`onUploadingChange(true)`),
- * and the `stub-upload-done` button ends it. Nothing is added to the draft: the strip has its own tests.
+ * and the `stub-upload-done` button ends it. Nothing is added to the draft: the strip has its own tests. `stub-file-failed` / `stub-file-cleared` report one failed Attachment and then none
+ * (#955), as the real field does through `onFailedFilesChange`.
  */
-export function VideoNoteEditor({ id, value, onChange, disabled, placeholder, onSubmit, onUploadingChange, ref, toolbarContainer, inlineStart, inlineEnd, contentClassName, contentAttributes, pill, pillWrap }: { id?: string; value: RichTextDoc; onChange: (value: RichTextDoc) => void; disabled?: boolean; placeholder?: string; onSubmit?: () => void; onUploadingChange?: (uploading: boolean) => void; ref?: Ref<{ pickMedia: () => void; focus: () => void }>; toolbarContainer?: HTMLElement | null; inlineStart?: ReactNode; inlineEnd?: ReactNode; contentClassName?: string; contentAttributes?: Readonly<Record<`data-${string}`, string>>; pill?: boolean; pillWrap?: boolean }) {
+export function VideoNoteEditor({ id, value, onChange, disabled, placeholder, onSubmit, onUploadingChange, onFailedFilesChange, ref, toolbarContainer, inlineStart, inlineEnd, contentClassName, contentAttributes, pill, pillWrap }: { id?: string; value: RichTextDoc; onChange: (value: RichTextDoc) => void; disabled?: boolean; placeholder?: string; onSubmit?: () => void; onUploadingChange?: (uploading: boolean) => void; onFailedFilesChange?: (count: number) => void; ref?: Ref<{ pickMedia: () => void; focus: () => void }>; toolbarContainer?: HTMLElement | null; inlineStart?: ReactNode; inlineEnd?: ReactNode; contentClassName?: string; contentAttributes?: Readonly<Record<`data-${string}`, string>>; pill?: boolean; pillWrap?: boolean }) {
   useImperativeHandle(ref, () => ({
     pickMedia: () => { onUploadingChange?.(true); },
     focus: () => { document.getElementById(id ?? "")?.focus(); },
@@ -30,5 +31,6 @@ export function VideoNoteEditor({ id, value, onChange, disabled, placeholder, on
     {inlineEnd !== undefined ? <div data-testid="stub-inline-end">{inlineEnd}</div> : null}
     {toolbarContainer ? createPortal(toolbar, toolbarContainer) : null}
     {onUploadingChange ? <button type="button" hidden data-testid="stub-upload-done" onClick={() => { onUploadingChange(false); }} /> : null}
+    {onFailedFilesChange ? <><button type="button" hidden data-testid="stub-file-failed" onClick={() => { onFailedFilesChange(1); }} /><button type="button" hidden data-testid="stub-file-cleared" onClick={() => { onFailedFilesChange(0); }} /></> : null}
   </div>;
 }

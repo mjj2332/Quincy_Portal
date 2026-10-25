@@ -70,7 +70,7 @@ function mutationInput(fixture: Awaited<ReturnType<typeof seedDiscussionFixture>
   return {
     id: commentId,
     projectId: fixture.projectId,
-    authorId: fixture.actorId,
+    authorId: fixture.actorId, principal: { id: fixture.actorId, impersonatedBy: null },
     body: "TB4 comment",
     contentJson: JSON.stringify(doc(mentionIds.map((item) => mention(item.userId)))),
     mentions: mentionIds.map((item) => ({ id: item.id, commentId, mentionedUserId: item.userId, createdAt: occurredAt })),
@@ -123,7 +123,7 @@ describe("TB4 project-comment outbox integration", () => {
     const retained = await editProjectComment(database.DB, {
       projectId: fixture.projectId,
       commentId,
-      actorId: fixture.actorId,
+      actorId: fixture.actorId, principal: { id: fixture.actorId, impersonatedBy: null },
       body: "TB4 retained edit",
       contentJson: JSON.stringify(doc([mention(fixture.recipientId)])),
       removeMentionIds: [],
@@ -142,7 +142,7 @@ describe("TB4 project-comment outbox integration", () => {
     const edited = await editProjectComment(database.DB, {
       projectId: fixture.projectId,
       commentId,
-      actorId: fixture.actorId,
+      actorId: fixture.actorId, principal: { id: fixture.actorId, impersonatedBy: null },
       body: "TB4 re-added edit",
       contentJson: JSON.stringify(doc([mention(fixture.recipientId)])),
       removeMentionIds: [recipientMentionId],
@@ -156,7 +156,7 @@ describe("TB4 project-comment outbox integration", () => {
     expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ? AND event_type = 'project.activity.broad'").bind(fixture.projectId).first()).toEqual({ count: 2 * fixture.eligibleEditorIds.length });
     expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(fixture.projectId).first()).toEqual({ count: 3 });
 
-    await deleteProjectComment(database.DB, { projectId: fixture.projectId, commentId, actorId: fixture.actorId, occurredAt: new Date(fixture.now + 3) });
+    await deleteProjectComment(database.DB, { projectId: fixture.projectId, commentId, actorId: fixture.actorId, principal: { id: fixture.actorId, impersonatedBy: null }, occurredAt: new Date(fixture.now + 3) });
     expect(await database.DB.prepare("SELECT id FROM project_comments WHERE id = ?").bind(commentId).first()).toBeNull();
     expect(await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE project_id = ?").bind(fixture.projectId).first()).toEqual({ count: 2 + 3 * fixture.eligibleEditorIds.length });
     expect(await database.DB.prepare("SELECT count(*) AS count FROM project_activity_events WHERE project_id = ?").bind(fixture.projectId).first()).toEqual({ count: 4 });

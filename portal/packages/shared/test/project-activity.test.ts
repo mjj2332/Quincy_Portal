@@ -258,6 +258,10 @@ describe("TB4C project activity registry", () => {
 
   it("renders only safe copy and never uses a system sentinel as a display identity", () => {
     expect(renderProjectActivityNotification("project.comment.created", { commentId: "comment" }, "Maple House", null)).toEqual({ title: "Project comment added", body: "A project comment was added." });
+    expect(renderProjectActivityNotification("project.comment.created", { commentId: "comment", attachmentCount: 2 }, "Maple House", null).body).toBe("A project comment was added with 2 attachments.");
+    expect(renderProjectActivityNotification("project.comment.edited", { commentId: "comment", attachmentCount: 1 }, "Maple House", "Ting").body).toBe("Ting — A project comment was edited with 1 attachment.");
+    expect(renderProjectActivityNotification("project.comment.created", { commentId: "comment", attachmentCount: 0 }, "Maple House", null).body).toBe("A project comment was added.");
+    expect(parseProjectActivityIntent({ ...intentFor("project.comment.created"), activity: { ...intentFor("project.comment.created").activity, safePayload: { commentId: "comment", attachmentCount: 11 } } })).toBeNull();
     expect(renderProjectActivityNotification("project.checklist.item_deleted", { itemId: "item", checklistTitle: "Review images" }, "Maple House")).toEqual({ title: "Checklist item removed", body: "Checklist “Review images” was removed." });
     const systemActivity = parseProjectActivityIntent(intentFor("project.workflow.manual_edited_ready", { actorKind: "system", actorId: null }));
     expect(systemActivity).not.toBeNull();

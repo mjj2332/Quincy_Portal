@@ -421,6 +421,8 @@
 .rich-text ul { list-style: disc; }
 .rich-text ol { list-style: decimal; }
 .rich-text ul.rich-text__task-list, .rich-text__editor-content ul[data-type="taskList"] { margin: 8px 0 0; padding-left: 0; list-style: none; }
+/* #945 — a posted comment's Attachment chips (`quincy/AttachmentChip`): `.rich-text ul` above outranks the list's `list-none p-0`. */
+.rich-text ul.rich-text__attachment-list { padding-left: 0; list-style: none; }
 .rich-text__task-list .rich-text__task-list, .rich-text__editor-content ul[data-type="taskList"] ul[data-type="taskList"] { margin-left: 24px; }
 .rich-text__task-item { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: baseline; gap: 8px; margin: 4px 0 0; }
 .rich-text__task-indicator { width: 14px; height: 14px; box-sizing: border-box; display: inline-grid; place-items: center; border: 1px solid var(--border); background: var(--field-bg); color: var(--signal-positive); font-size: var(--text-2xs); line-height: 1; }

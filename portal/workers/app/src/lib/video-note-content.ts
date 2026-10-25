@@ -1,5 +1,5 @@
 import {
-  EMBEDDED_MEDIA_MAX_PER_POST, VIDEO_NOTE_BODY_MAX, RICH_TEXT_JSON_MAX_BYTES, VIDEO_NOTE_RICH_TEXT_PROFILE, normalizeRichTextMentionLabels, parseRichTextDoc, richTextMediaRefs, richTextMentionIds, videoNoteBody,
+  EMBEDDED_MEDIA_MAX_PER_POST, GUEST_NOTE_RICH_TEXT_PROFILE, VIDEO_NOTE_BODY_MAX, RICH_TEXT_JSON_MAX_BYTES, VIDEO_NOTE_RICH_TEXT_PROFILE, normalizeRichTextMentionLabels, parseRichTextDoc, richTextAttachmentIds, richTextMediaRefs, richTextMentionIds, videoNoteBody,
   type RichTextDoc,
 } from "@quincy/shared";
 import { videoAudience } from "./video-review-notifications";
@@ -17,7 +17,8 @@ export async function videoMentionableUsers(db: D1Database, projectId: string): 
   return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
 
-export type PreparedNoteContent = { content: RichTextDoc; contentJson: string; body: string; mentionIds: string[]; mediaIds: string[]; videoIds: string[] };
+/** `attachmentIds` (#955, #956): the files a note names, which its batch attaches: ten at most on a staff note, five on a guest's (the guest profile). */
+export type PreparedNoteContent = { content: RichTextDoc; contentJson: string; body: string; mentionIds: string[]; mediaIds: string[]; videoIds: string[]; attachmentIds: string[] };
 export type PrepareFailure = { error: "invalid_content" | "content_too_large" | "mentions_not_allowed" | "too_many_media" | "body_too_long" };
 
 /**
@@ -49,12 +50,12 @@ export async function prepareNoteContent(db: D1Database, projectId: string, raw:
 }
 
 /**
- * A GUEST's note `content` (#835 C): the same document as a staff note's, minus the people. Parsed against the video-note profile; a mention node of any kind is `mentions_not_allowed` (a guest
- * has no audience to mention). Media is counted, the body derived and bounded like the staff path.
+ * A GUEST's note `content` (#835 C): the same document as a staff note's, minus the people, with five Attachments at most (the guest profile, #956). A mention node of any kind
+ * is `mentions_not_allowed` (a guest has no audience to mention). Media is counted, the body derived and bounded like the staff path.
  */
 export function prepareGuestNoteContent(raw: unknown): PreparedNoteContent | PrepareFailure {
   let content: RichTextDoc;
-  try { content = parseRichTextDoc(raw, VIDEO_NOTE_RICH_TEXT_PROFILE); } catch { return { error: "invalid_content" }; }
+  try { content = parseRichTextDoc(raw, GUEST_NOTE_RICH_TEXT_PROFILE); } catch { return { error: "invalid_content" }; }
   if (richTextMentionIds(content).length) return { error: "mentions_not_allowed" };
   return finishNoteContent(content, JSON.stringify(content), []);
 }
@@ -65,5 +66,5 @@ function finishNoteContent(content: RichTextDoc, contentJson: string, mentionIds
   if (refs.length > EMBEDDED_MEDIA_MAX_PER_POST) return { error: "too_many_media" };
   const body = videoNoteBody(content);
   if (body.length > VIDEO_NOTE_BODY_MAX) return { error: "body_too_long" };
-  return { content, contentJson, body, mentionIds, mediaIds: refs.map((ref) => ref.id), videoIds: refs.filter((ref) => ref.kind === "video").map((ref) => ref.id) };
+  return { content, contentJson, body, mentionIds, mediaIds: refs.map((ref) => ref.id), videoIds: refs.filter((ref) => ref.kind === "video").map((ref) => ref.id), attachmentIds: richTextAttachmentIds(content) };
 }

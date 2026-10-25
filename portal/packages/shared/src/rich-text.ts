@@ -1,4 +1,5 @@
 import { EMBEDDED_IMAGE_MAX_DIMENSION } from "./embedded-media";
+import { ATTACHMENT_GUEST_MAX_PER_NOTE, ATTACHMENT_MAX_PER_POST } from "./attachments";
 
 /**
  * The small, portable rich-text document accepted by collaboration surfaces.
@@ -37,7 +38,13 @@ export type RichTextMediaNode = RichTextImage | RichTextVideo;
  * display fields arrive on a write are dropped.
  */
 export type RichTextLinkPreview = { type: "linkPreview"; attrs: { previewId: string; url?: string; title?: string | null; description?: string | null; siteName?: string | null; imageMediaId?: string | null } };
-export type RichTextBlock = RichTextParagraph | RichTextHeading | RichTextBulletList | RichTextOrderedList | RichTextTaskList | RichTextTable | RichTextImage | RichTextVideo | RichTextLinkPreview;
+/**
+ * A file shared on a post (#952, an Attachment). Like a link preview it names a stored row by id alone; the server fills `name` and
+ * `bytes` in when it serves the post, so a browser can never put its own name on a download. Whatever display fields arrive on a
+ * write are dropped. A served node with neither is a row that is gone: the reader shows "File unavailable".
+ */
+export type RichTextAttachment = { type: "attachment"; attrs: { attachmentId: string; name?: string; bytes?: number } };
+export type RichTextBlock = RichTextParagraph | RichTextHeading | RichTextBulletList | RichTextOrderedList | RichTextTaskList | RichTextTable | RichTextImage | RichTextVideo | RichTextLinkPreview | RichTextAttachment;
 /** Every node a tree walk can meet. */
 export type RichTextTreeNode = RichTextBlock | RichTextListItem | RichTextTaskItem | RichTextTableRow | RichTextTableCell | RichTextInline;
 export type RichTextDoc = { type: "doc"; content: RichTextBlock[] };
@@ -48,7 +55,7 @@ export const NOTICE_RICH_TEXT_JSON_MAX_BYTES = 64 * 1024;
 export const NOTICE_BODY_MAX_LENGTH = 10_000;
 export const RICH_TEXT_MAX_NESTING = 8;
 /** At most this many link preview cards in one document (#497). */
-export const RICH_TEXT_MAX_LINK_PREVIEWS = 3;
+export const RICH_TEXT_MAX_LINK_PREVIEWS = 10;
 const LINK_PREVIEW_DISPLAY_KEYS = ["url", "title", "description", "siteName", "imageMediaId"] as const;
 export const RICH_TEXT_TABLE_MAX_ROWS = 50;
 export const RICH_TEXT_TABLE_MAX_COLUMNS = 12;
@@ -69,14 +76,24 @@ export function imageAltFromFileName(name: string): string {
  * What a surface may store. The default is the comment profile (Project discussion, #491); the
  * Notice board's document profile is a strict superset (#492), so an old row always still parses.
  */
-export type RichTextProfile = { readonly maxBytes: number; readonly allowTables: boolean; readonly allowAlign: boolean; readonly allowHighlight: boolean; readonly allowMedia: boolean; readonly allowVideo: boolean; readonly allowLinkPreviews: boolean };
-export const COMMENT_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: RICH_TEXT_JSON_MAX_BYTES, allowTables: false, allowAlign: false, allowHighlight: false, allowMedia: false, allowVideo: false, allowLinkPreviews: false };
-export const NOTICE_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: NOTICE_RICH_TEXT_JSON_MAX_BYTES, allowTables: true, allowAlign: true, allowHighlight: true, allowMedia: true, allowVideo: false, allowLinkPreviews: true };
-/** Project discussion (#493, #494): the comment profile plus embedded images and videos. The Notice board's profile takes images too (#496), never video. */
-export const COMMENT_MEDIA_RICH_TEXT_PROFILE: RichTextProfile = { ...COMMENT_RICH_TEXT_PROFILE, allowMedia: true, allowVideo: true, allowLinkPreviews: true };
+export type RichTextProfile = { readonly maxBytes: number; readonly allowTables: boolean; readonly allowAlign: boolean; readonly allowHighlight: boolean; readonly allowMedia: boolean; readonly allowVideo: boolean; readonly allowLinkPreviews: boolean; readonly allowAttachments: boolean; readonly maxAttachments: number };
+export const COMMENT_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: RICH_TEXT_JSON_MAX_BYTES, allowTables: false, allowAlign: false, allowHighlight: false, allowMedia: false, allowVideo: false, allowLinkPreviews: false, allowAttachments: false, maxAttachments: 0 };
+/** Attachments on the Notice board (#954): on here, for the write and the read path at once (lessons, #496), 10 a notice. */
+export const NOTICE_RICH_TEXT_PROFILE: RichTextProfile = { maxBytes: NOTICE_RICH_TEXT_JSON_MAX_BYTES, allowTables: true, allowAlign: true, allowHighlight: true, allowMedia: true, allowVideo: false, allowLinkPreviews: true, allowAttachments: true, maxAttachments: ATTACHMENT_MAX_PER_POST };
+/** Project discussion (#493, #494, #952): the comment profile plus embedded images and videos and Attachments. The Notice board's profile takes images too (#496), never video. */
+export const COMMENT_MEDIA_RICH_TEXT_PROFILE: RichTextProfile = { ...COMMENT_RICH_TEXT_PROFILE, allowMedia: true, allowVideo: true, allowLinkPreviews: true, allowAttachments: true, maxAttachments: ATTACHMENT_MAX_PER_POST };
 
-/** Video notes (#835): the discussion's profile without link previews (`link_previews.owner_kind` has no video-note value, and a note is a reference, not a post). */
-export const VIDEO_NOTE_RICH_TEXT_PROFILE: RichTextProfile = { ...COMMENT_MEDIA_RICH_TEXT_PROFILE, allowLinkPreviews: false };
+/**
+ * Video notes (#835): the discussion's profile without link previews (`link_previews.owner_kind` has no video-note value, and a note is a reference, not a post).
+ * Attachments (#955) are on, ten per note: a staff note and reply reconcile them in their own batch. The guest read path parses with this profile too, so a Guest reviewer
+ * sees a public staff note's files.
+ */
+export const VIDEO_NOTE_RICH_TEXT_PROFILE: RichTextProfile = { ...COMMENT_MEDIA_RICH_TEXT_PROFILE, allowLinkPreviews: false, allowAttachments: true, maxAttachments: ATTACHMENT_MAX_PER_POST };
+/**
+ * What a Guest reviewer's own note may store: the video-note profile with the guest's own Attachment limit (#956), five a note. Set explicitly so a flag added to the video-note
+ * profile later is a decision here too (lessons, "A profile built by spreading another inherits every flag added to it later").
+ */
+export const GUEST_NOTE_RICH_TEXT_PROFILE: RichTextProfile = { ...VIDEO_NOTE_RICH_TEXT_PROFILE, allowAttachments: true, maxAttachments: ATTACHMENT_GUEST_MAX_PER_NOTE };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const encoder = new TextEncoder();
@@ -286,6 +303,17 @@ function parseBlock(value: unknown, depth: number, profile: RichTextProfile, ite
     // A served document carries the card's fields. They are never stored: the server fills them in from its own row.
     return { type: "linkPreview", attrs: { previewId: attrs.previewId } };
   }
+  if (node.type === "attachment") {
+    if (!profile.allowAttachments || depth > 0 || itemKind || insideListItem) throw new RichTextValidationError("Unsupported rich-text node");
+    onlyKeys(node, ["type", "attrs"], "Attachment");
+    const attrs = record(node.attrs, "Attachment attributes");
+    onlyKeys(attrs, ["attachmentId", "name", "bytes"], "Attachment attributes");
+    if (typeof attrs.attachmentId !== "string" || !UUID.test(attrs.attachmentId)) throw new RichTextValidationError("Attachment id must be a UUID");
+    // A served document carries the file's name and size. They are never stored: the server fills them in from its own row.
+    if (attrs.name !== undefined && typeof attrs.name !== "string") throw new RichTextValidationError("Attachment name must be a string");
+    if (attrs.bytes !== undefined && (typeof attrs.bytes !== "number" || !Number.isInteger(attrs.bytes) || attrs.bytes < 0)) throw new RichTextValidationError("Attachment size must be a whole number of bytes");
+    return { type: "attachment", attrs: { attachmentId: attrs.attachmentId } };
+  }
   if (node.type === "table") {
     if (!profile.allowTables || depth > 0) throw new RichTextValidationError("Unsupported rich-text node");
     return parseTable(node, profile);
@@ -345,8 +373,11 @@ export function parseRichTextDoc(value: unknown, profile: RichTextProfile = COMM
   const mediaIds = richTextMediaIds(parsed);
   if (new Set(mediaIds).size !== mediaIds.length) throw new RichTextValidationError("A media item may be placed only once in a document");
   const previewIds = richTextLinkPreviewIds(parsed);
-  if (previewIds.length > RICH_TEXT_MAX_LINK_PREVIEWS) throw new RichTextValidationError("A post may have at most 3 link previews");
+  if (previewIds.length > RICH_TEXT_MAX_LINK_PREVIEWS) throw new RichTextValidationError(`A post may have at most ${RICH_TEXT_MAX_LINK_PREVIEWS} link previews`);
   if (new Set(previewIds).size !== previewIds.length) throw new RichTextValidationError("A link preview may be placed only once in a document");
+  const attachmentIds = richTextAttachmentIds(parsed);
+  if (attachmentIds.length > profile.maxAttachments) throw new RichTextValidationError(`A post may have at most ${profile.maxAttachments} attachments`);
+  if (new Set(attachmentIds).size !== attachmentIds.length) throw new RichTextValidationError("An attachment may be placed only once in a document");
   if (!richTextPlainText(parsed).trim()) throw new RichTextValidationError("Rich-text document must not be empty");
   return parsed;
 }
@@ -359,12 +390,14 @@ export function richTextDocByteLength(doc: RichTextDoc): number {
 /** What an image reads as wherever the document is shown as text (a notification body, a search). */
 export const RICH_TEXT_IMAGE_PLACEHOLDER = "[image]";
 export const RICH_TEXT_VIDEO_PLACEHOLDER = "[video]";
+export const RICH_TEXT_ATTACHMENT_PLACEHOLDER = "[attachment]";
 
 function textFromBlock(block: RichTextBlock | RichTextListItem | RichTextTaskItem | RichTextTableRow | RichTextTableCell): string {
   // Cells are tab-separated and rows newline-separated, so a table reads as plain text in a
   // notification and counts toward the character limit the way it reads.
   if (block.type === "image") return RICH_TEXT_IMAGE_PLACEHOLDER;
   if (block.type === "video") return RICH_TEXT_VIDEO_PLACEHOLDER;
+  if (block.type === "attachment") return RICH_TEXT_ATTACHMENT_PLACEHOLDER;
   if (block.type === "linkPreview") return "";
   if (block.type === "table") return block.content.map((row) => row.content.map((cell) => cell.content.map(textFromBlock).filter(Boolean).join("\n")).join("\t")).join("\n");
   if (block.type === "paragraph" || block.type === "heading") return (block.content ?? []).map((node) => node.type === "text" ? node.text : node.type === "hardBreak" ? "\n" : node.attrs.label).join("");
@@ -382,7 +415,7 @@ export function richTextMentionIds(doc: RichTextDoc): string[] {
   const ids: string[] = [];
   const visit = (node: RichTextTreeNode) => {
     if (node.type === "mention") { if (!ids.includes(node.attrs.id)) ids.push(node.attrs.id); return; }
-    if (node.type === "text" || node.type === "hardBreak" || node.type === "image" || node.type === "video" || node.type === "linkPreview") return;
+    if (node.type === "text" || node.type === "hardBreak" || node.type === "image" || node.type === "video" || node.type === "linkPreview" || node.type === "attachment") return;
     if (node.type === "paragraph" || node.type === "heading") { for (const child of node.content ?? []) visit(child); return; }
     for (const child of node.content ?? []) visit(child);
   };
@@ -409,6 +442,13 @@ export function richTextLinkPreviewIds(doc: RichTextDoc): string[] {
   return ids;
 }
 
+/** Returns the Attachment ids a document names, in document order. */
+export function richTextAttachmentIds(doc: RichTextDoc): string[] {
+  const ids: string[] = [];
+  for (const block of doc.content) if (block.type === "attachment") ids.push(block.attrs.attachmentId);
+  return ids;
+}
+
 /** Replaces untrusted display labels after the server has resolved eligible users. */
 export function normalizeRichTextMentionLabels(doc: RichTextDoc, namesById: ReadonlyMap<string, string>): RichTextDoc {
   const normalize = (node: RichTextTreeNode): RichTextTreeNode => {
@@ -422,6 +462,7 @@ export function normalizeRichTextMentionLabels(doc: RichTextDoc, namesById: Read
     if (node.type === "image") return { type: "image", attrs: { mediaId: node.attrs.mediaId, ...(node.attrs.alt ? { alt: node.attrs.alt } : {}) } };
     if (node.type === "video") return { type: "video", attrs: { mediaId: node.attrs.mediaId } };
     if (node.type === "linkPreview") return { type: "linkPreview", attrs: { previewId: node.attrs.previewId } };
+    if (node.type === "attachment") return { type: "attachment", attrs: { attachmentId: node.attrs.attachmentId } };
     if (node.type === "paragraph") return { type: "paragraph", ...(node.attrs ? { attrs: { ...node.attrs } } : {}), ...(node.content ? { content: node.content.map(normalize) as RichTextInline[] } : {}) };
     if (node.type === "heading") return { type: "heading", attrs: { ...node.attrs }, ...(node.content ? { content: node.content.map(normalize) as RichTextInline[] } : {}) };
     if (node.type === "taskItem") return { type: "taskItem", attrs: { ...node.attrs }, content: node.content.map(normalize) as RichTextTaskItem["content"] };
@@ -437,7 +478,7 @@ export function normalizeRichTextMentionLabels(doc: RichTextDoc, namesById: Read
 export function richTextMentionsToText(doc: RichTextDoc): RichTextDoc {
   const flatten = (node: RichTextTreeNode): RichTextTreeNode => {
     if (node.type === "mention") return { type: "text", text: `@${node.attrs.label}` };
-    if (node.type === "text" || node.type === "hardBreak" || node.type === "image" || node.type === "video" || node.type === "linkPreview") return node;
+    if (node.type === "text" || node.type === "hardBreak" || node.type === "image" || node.type === "video" || node.type === "linkPreview" || node.type === "attachment") return node;
     return Object.fromEntries(Object.entries(node).map(([key, value]) => [key, key === "content" && Array.isArray(value) ? value.map(flatten) : value])) as RichTextTreeNode;
   };
   return { type: "doc", content: doc.content.map(flatten) as RichTextBlock[] };

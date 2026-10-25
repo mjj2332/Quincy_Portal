@@ -149,7 +149,7 @@ describe("notice board API", () => {
     const ownId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
     const otherId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa0";
     const create = (id: string, authorId: string, body: string, clock: number) => createNoticeBoardPost(database.DB, {
-      id, authorId, body, contentJson: JSON.stringify(textDoc(body)), mentions: [], wallClockMs: clock,
+      id, authorId, principal: { id: authorId, impersonatedBy: null }, body, contentJson: JSON.stringify(textDoc(body)), mentions: [], wallClockMs: clock,
     });
     try {
       await create(ownId, editorId, "Own atomic marker", wallClockMs);
@@ -172,7 +172,7 @@ describe("notice board API", () => {
     const firstSuccessorId = "00000000-0000-4000-8000-0000000000f1";
     const secondSuccessorId = "00000000-0000-4000-8000-0000000000f2";
     const create = (id: string, authorId: string, body: string) => createNoticeBoardPost(database.DB, {
-      id, authorId, body, contentJson: JSON.stringify(textDoc(body)), mentions: [], wallClockMs: frozenClock,
+      id, authorId, principal: { id: authorId, impersonatedBy: null }, body, contentJson: JSON.stringify(textDoc(body)), mentions: [], wallClockMs: frozenClock,
     });
     try {
       await create(deletedId, editorId, "Deleted high-water");
@@ -200,7 +200,7 @@ describe("notice board API", () => {
     const middleId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2";
     const newestId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3";
     const create = (id: string, authorId: string, body: string) => createNoticeBoardPost(database.DB, {
-      id, authorId, body, contentJson: JSON.stringify(textDoc(body)), mentions: [], wallClockMs: frozenClock,
+      id, authorId, principal: { id: authorId, impersonatedBy: null }, body, contentJson: JSON.stringify(textDoc(body)), mentions: [], wallClockMs: frozenClock,
     });
     try {
       await create(oldId, photographerId, "Delete test old");

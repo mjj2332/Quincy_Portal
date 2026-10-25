@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GuestNoteDto, GuestNoteThreadDto } from "@quincy/shared";
-import type { EditorMediaTransport } from "../lib/embedded-media-core";
+import type { GuestMediaTransport } from "./guest-api";
 import { createGuestDrafts } from "./guest-drafts";
 import { GuestThreadItem, type NoteActions, type Writing } from "./GuestNoteItem";
 
@@ -26,7 +26,7 @@ const base = (n: number, over: Partial<GuestNoteDto> = {}): GuestNoteDto => ({
 }) as GuestNoteDto;
 const thread = (over: Partial<GuestNoteThreadDto> = {}, replies: GuestNoteDto[] = []): GuestNoteThreadDto => ({ ...base(1), replies, ...over }) as GuestNoteThreadDto;
 const reply = (n: number, over: Partial<GuestNoteDto> = {}) => base(n, { parentId: id(1), startFrame: null, body: "My reply", ...over });
-const media = { heicEnabled: false, video: true, mediaUrl: (m: string) => `/m/${m}`, posterUrl: (m: string) => `/p/${m}` } as unknown as EditorMediaTransport;
+const media = { heicEnabled: false, video: true, mediaUrl: (m: string) => `/m/${m}`, posterUrl: (m: string) => `/p/${m}` } as unknown as GuestMediaTransport;
 
 let root: Root | null = null;
 let host: HTMLElement;
