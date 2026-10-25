@@ -385,23 +385,43 @@ describe("NoteComposerBox, post (#950: R1's row, E1's Cancel and Save)", () => {
     // A stand-in visual viewport: the layout viewport is 874px; the keyboard leaves 420px above it.
     const viewport = Object.assign(new EventTarget(), { height: 874, offsetTop: 0, scale: 1 });
     const rect = (top: number, height: number) => ({ top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
-    afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+    afterEach(() => {
+      vi.unstubAllGlobals(); vi.restoreAllMocks();
+      delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+      delete (Range.prototype as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+      document.body.style.paddingBottom = "";
+    });
 
     /**
-     * A page model, as the iPhone 18 Pro measured it (#951 keyboard pass): the box sits at 1000px in the document; its text holds 600px (25 lines,
-     * the caret on the last), capped at 60dvh (524px); the rows and padding around the text are 60px. `scrollBy` moves the page; the text scroller
-     * keeps its own scrollTop, clamped as a browser clamps it.
+     * A page model, as Safari on the iPhone 18 Pro Simulator measured it (iOS 27 runtime, #951 keyboard pass 2). The box sits at 1000px in the document and
+     * the page ends `below` px under its foot. Its text holds 600px (25 lines, the caret on the last), capped at 60dvh (524px); the rows and padding around
+     * the text are 60px. Rects are measured from the top of what is on screen. What iOS does that the first fix did not model:
+     * - the page scroll is clamped to the document's height less `innerHeight`, and `innerHeight` does not shrink with the keyboard, so the last
+     *   `innerHeight - visualViewport.height` px of a page can never be scrolled above the keyboard (asked for 302px, the page moved 69);
+     * - `innerHeight` is no measure of the keyboard either: one settle read 519 against a 384px visual viewport, which "no keyboard" by 150px.
+     * `scrollIntoView` aligns to the visual viewport, less the box's 8px `scroll-margin-bottom` (`--space-2`), as WebKit placed it; the text scroller keeps
+     * its own scrollTop, clamped as a browser clamps it.
      */
-    function pageModel() {
+    function pageModel({ below = 145 }: { below?: number } = {}) {
       const page = { scrollY: 0, scrollTop: 0 };
       vi.stubGlobal("visualViewport", viewport); vi.stubGlobal("innerHeight", 874);
-      const scrollBy = vi.fn((_x: number, y: number) => { page.scrollY += y; });
-      vi.stubGlobal("scrollBy", scrollBy);
       const textHeight = () => {
         const fit = Number.parseFloat(q("note-composer-text")!.style.getPropertyValue("--note-box-fit"));
         return Math.min(600, 524, Number.isFinite(fit) ? fit : Infinity);
       };
+      const room = () => Number.parseFloat(document.body.style.paddingBottom) || 0;
+      const scrollTo = (y: number) => { page.scrollY = Math.max(0, Math.min(1000 + textHeight() + 60 + below + room() - window.innerHeight, y)); };
+      const scrollBy = vi.fn((_x: number, y: number) => scrollTo(page.scrollY + y));
+      vi.stubGlobal("scrollBy", scrollBy);
       const boxTop = () => 1000 - page.scrollY;
+      const boxBottom = () => boxTop() + textHeight() + 60;
+      const scrollIntoView = vi.fn(function (this: HTMLElement, options?: boolean | ScrollIntoViewOptions) {
+        if (this.getAttribute("data-testid") !== "note-composer-box") return;
+        const block = typeof options === "object" ? options.block : "start";
+        const over = boxBottom() + 8 - viewport.height;
+        if (block === "end" || (block === "nearest" && over > 0)) scrollTo(page.scrollY + over);
+      });
+      Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
       vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
         const id = this.getAttribute("data-testid");
         return id === "note-composer-box" ? rect(boxTop(), textHeight() + 60) : id === "note-composer-text" ? rect(boxTop() + 8, textHeight()) : rect(0, 0);
@@ -411,7 +431,7 @@ describe("NoteComposerBox, post (#950: R1's row, E1's Cancel and Save)", () => {
       const attach = (text: HTMLElement) => Object.defineProperty(text, "scrollTop", {
         configurable: true, get: () => page.scrollTop, set: (value: number) => { page.scrollTop = Math.max(0, Math.min(600 - textHeight(), value)); },
       });
-      return { page, scrollBy, attach, boxTop, boxBottom: () => boxTop() + textHeight() + 60, caret, textHeight };
+      return { page, scrollBy, scrollIntoView, attach, boxTop, boxBottom, caret, textHeight, room };
     }
     async function focusAtEnd() {
       const field = q("field-fixture")!;
@@ -422,7 +442,17 @@ describe("NoteComposerBox, post (#950: R1's row, E1's Cancel and Save)", () => {
         window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
       });
     }
-    afterEach(() => { delete (Range.prototype as { getBoundingClientRect?: unknown }).getBoundingClientRect; });
+    /** The keyboard rises: iOS first scrolls the page for the caret against the box's old, taller height, then shrinks the visual viewport. */
+    async function raiseKeyboard(model: ReturnType<typeof pageModel>) {
+      model.page.scrollY = Math.max(0, 1000 + model.textHeight() + 60 - 420);
+      viewport.height = 420;
+      await act(async () => { viewport.dispatchEvent(new Event("resize")); });
+    }
+
+    it("keeps an 8px scroll margin under the tall box, so the page sets its foot that far above the keyboard", async () => {
+      await mount(post({ tall: true, phone: true }));
+      expect(q("note-composer-box")!.className.split(/\s+/)).toContain("scroll-mb-[var(--space-2)]");
+    });
 
     it("caps the text so the whole box fits above the keyboard, keeps the caret in sight in it, and sets the box's foot just above the keyboard", async () => {
       viewport.height = 874;
@@ -433,31 +463,51 @@ describe("NoteComposerBox, post (#950: R1's row, E1's Cancel and Save)", () => {
       model.attach(text);
       await focusAtEnd();
       text.scrollTop = 76; // the caret's line at the foot of the 524px text
-      // iOS scrolls the page for the caret first, against the box's old 584px height: its foot lands on the keyboard's top edge (420px).
-      model.page.scrollY = 1000 + 584 - 420;
-      viewport.height = 420;
-      await act(async () => { viewport.dispatchEvent(new Event("resize")); });
-      // 420 visible, less the box's 60px of rows and padding, less an 8px margin (`--space-2`).
-      expect(text.style.getPropertyValue("--note-box-fit")).toBe("352px");
+      await raiseKeyboard(model);
+      // 420 visible, less the box's 60px of rows and padding, less an 8px margin above it and another below (`--space-2`).
+      expect(text.style.getPropertyValue("--note-box-fit")).toBe("344px");
       // The text scroller follows the caret down after it shrank: its last line is in sight.
       expect(model.caret().bottom).toBeLessThanOrEqual(model.boxTop() + 8 + model.textHeight());
       expect(model.caret().top).toBeGreaterThanOrEqual(model.boxTop() + 8);
-      // The box's foot sits 8px above the keyboard, not where the taller box's foot was; its top is on screen.
+      // The page ends only 145px under the box, yet its foot sits 8px above the keyboard and its top 8px under the screen's top:
+      // the page is given room under the keyboard to scroll that far.
       expect(model.boxBottom()).toBe(412);
-      expect(model.boxTop()).toBeGreaterThanOrEqual(0);
+      expect(model.boxTop()).toBe(8);
+    });
+
+    it("reads the keyboard from the visual viewport alone, not from innerHeight (iOS reported 519 against a 384px viewport)", async () => {
+      viewport.height = 874;
+      const model = pageModel({ below: 2000 });
+      await mount(post({ tall: true, phone: true }));
+      model.attach(q("note-composer-text")!);
+      await focusAtEnd();
+      vi.stubGlobal("innerHeight", 555); // 135px over the visual viewport: under the 150px a keyboard takes
+      await raiseKeyboard(model);
+      expect(model.boxBottom()).toBe(412);
+      expect(model.boxTop()).toBe(8);
+    });
+
+    it("gives the room back when the focus leaves the box", async () => {
+      viewport.height = 874;
+      const model = pageModel();
+      await mount(post({ tall: true, phone: true }));
+      model.attach(q("note-composer-text")!);
+      await focusAtEnd();
+      await raiseKeyboard(model);
+      expect(model.room()).toBeGreaterThanOrEqual(874 - 420);
+      await act(async () => { (document.activeElement as HTMLElement).blur(); await new Promise((done) => requestAnimationFrame(() => done(null))); });
+      expect(document.body.style.paddingBottom).toBe("");
     });
 
     it("puts the box back above the keyboard after iOS's own late scroll, then leaves the page to the person", async () => {
       vi.useFakeTimers();
       try {
         viewport.height = 874;
-        const model = pageModel();
+        const model = pageModel({ below: 2000 });
         await mount(post({ tall: true, phone: true }));
         model.attach(q("note-composer-text")!);
         await focusAtEnd();
-        model.page.scrollY = 600;
-        viewport.height = 420;
-        await act(async () => { viewport.dispatchEvent(new Event("resize")); });
+        await raiseKeyboard(model);
         expect(model.boxBottom()).toBe(412);
         // iOS scrolls again a moment later (120-190ms after the tap): the box is set back.
         model.page.scrollY += 150;
@@ -466,23 +516,22 @@ describe("NoteComposerBox, post (#950: R1's row, E1's Cancel and Save)", () => {
         // Once the keyboard has settled, a pan is the person's own: the page is left where they put it.
         await act(async () => { vi.advanceTimersByTime(1000); });
         model.page.scrollY -= 200;
-        model.scrollBy.mockClear();
+        model.scrollBy.mockClear(); model.scrollIntoView.mockClear();
         await act(async () => { window.dispatchEvent(new Event("scroll")); viewport.dispatchEvent(new Event("scroll")); });
         expect(model.scrollBy).not.toHaveBeenCalled();
+        expect(model.scrollIntoView).not.toHaveBeenCalled();
       } finally { vi.useRealTimers(); }
     });
 
-    it("never scrolls the page for a box the focus is not in", async () => {
+    it("never scrolls the page or adds room for a box the focus is not in", async () => {
       viewport.height = 874;
-      vi.stubGlobal("visualViewport", viewport); vi.stubGlobal("innerHeight", 874);
-      const scrollBy = vi.fn(); vi.stubGlobal("scrollBy", scrollBy);
-      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-        return this.getAttribute("data-testid") === "note-composer-box" ? rect(340, 360) : rect(348, 300);
-      });
+      const model = pageModel();
       await mount(post({ tall: true, phone: true }));
       viewport.height = 420;
       await act(async () => { viewport.dispatchEvent(new Event("resize")); });
-      expect(scrollBy).not.toHaveBeenCalled();
+      expect(model.scrollBy).not.toHaveBeenCalled();
+      expect(model.scrollIntoView).not.toHaveBeenCalled();
+      expect(document.body.style.paddingBottom).toBe("");
     });
   });
 
