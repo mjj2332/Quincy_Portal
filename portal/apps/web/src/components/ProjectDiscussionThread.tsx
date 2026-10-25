@@ -60,7 +60,7 @@ export type ProjectDiscussionThreadProps = {
 const emptyDoc = (): RichTextDoc => ({ type: "doc", content: [{ type: "paragraph" }] });
 
 const COMMENT_LIMIT = 10_000;
-const COMMENT_TOO_LONG = `Comments can be ${COMMENT_LIMIT.toLocaleString("en")} characters at most.`;
+const COMMENT_TOO_LONG = `Comments can be ${new Intl.NumberFormat("en").format(COMMENT_LIMIT)} characters at most.`;
 const WAIT_FOR_UPLOADS = "Wait for the uploads to finish.";
 const TOO_LARGE = "This formatting is too large to save; remove list items or formatting.";
 /** A line in the note box above its row, beside Send or Save (the Video composer's problem line): label type. */
