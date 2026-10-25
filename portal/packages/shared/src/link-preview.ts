@@ -6,7 +6,7 @@ import { z } from "zod";
  * `global_fetch_strictly_public` flag stops a deployed Worker reaching a private network, but local development has no such
  * protection, so a blocked address is refused before any fetch.
  */
-export const LINK_PREVIEW_MAX_PER_POST = 3;
+export const LINK_PREVIEW_MAX_PER_POST = 10;
 export const LINK_PREVIEW_TIMEOUT_MS = 5_000;
 export const LINK_PREVIEW_MAX_REDIRECTS = 3;
 /** Only the start of a page is read: the tags a preview needs sit in `<head>`. */

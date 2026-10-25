@@ -6,7 +6,7 @@ import {
 
 describe("link preview limits (#497)", () => {
   it("states the agreed numbers", () => {
-    expect(LINK_PREVIEW_MAX_PER_POST).toBe(3);
+    expect(LINK_PREVIEW_MAX_PER_POST).toBe(10);
     expect(LINK_PREVIEW_TIMEOUT_MS).toBe(5_000);
     expect(LINK_PREVIEW_MAX_REDIRECTS).toBe(3);
     expect(LINK_PREVIEW_MAX_HTML_BYTES).toBe(1024 * 1024);

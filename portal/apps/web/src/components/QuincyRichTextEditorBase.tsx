@@ -558,7 +558,9 @@ export function QuincyRichTextEditorBase({
     const request = linkPreviewsRef.current; const current = editorRef.current;
     if (!request || !current || disabledRef.current) return;
     const cards = () => { const found: string[] = []; current.state.doc.forEach((child) => { if (child.type.name === "linkPreview") found.push(String(child.attrs.url ?? "")); }); return found; };
-    if (cards().length >= RICH_TEXT_MAX_LINK_PREVIEWS || cards().includes(href) || pendingPreviews.current.has(href)) return;
+    if (cards().includes(href) || pendingPreviews.current.has(href)) return;
+    // The media-cap notice's channel: the link stays a link, the author is told why no card came.
+    if (cards().length >= RICH_TEXT_MAX_LINK_PREVIEWS) { setUploadErrors([`A post can show ${RICH_TEXT_MAX_LINK_PREVIEWS} link previews at most.`]); return; }
     const pending = pendingPreviews.current; pending.add(href);
     const key = ++uploadSeq.current; const epoch = contentEpoch.current;
     const { $to } = current.state.selection;

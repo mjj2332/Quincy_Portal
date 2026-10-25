@@ -549,9 +549,10 @@ describe("link preview node (#497)", () => {
     }
   });
 
-  it("allows three cards and refuses a fourth or a repeated id", () => {
-    expect(richTextLinkPreviewIds(parseRichTextDoc(withNodes(card(idA), card(idB), card(idC)), COMMENT_MEDIA_RICH_TEXT_PROFILE))).toEqual([idA, idB, idC]);
-    expect(() => parseRichTextDoc(withNodes(card(idA), card(idB), card(idC), card(idD)), COMMENT_MEDIA_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
+  it("allows ten cards and refuses an eleventh or a repeated id", () => {
+    const ids = Array.from({ length: 11 }, (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`);
+    expect(richTextLinkPreviewIds(parseRichTextDoc(withNodes(...ids.slice(0, 10).map((id) => card(id))), COMMENT_MEDIA_RICH_TEXT_PROFILE))).toEqual(ids.slice(0, 10));
+    expect(() => parseRichTextDoc(withNodes(...ids.map((id) => card(id))), COMMENT_MEDIA_RICH_TEXT_PROFILE)).toThrow("A post may have at most 10 link previews");
     expect(() => parseRichTextDoc(withNodes(card(idA), card(idA)), NOTICE_RICH_TEXT_PROFILE)).toThrow(RichTextValidationError);
   });
 
