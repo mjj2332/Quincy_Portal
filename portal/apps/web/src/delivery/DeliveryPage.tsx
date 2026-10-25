@@ -12,6 +12,7 @@ import { DeliveryShareButton } from "./DeliveryShareButton";
 import { DocRows } from "./DocRows";
 import { FilmList } from "./FilmList";
 import { returnTargetOf } from "./film-return";
+import { useOwnWidth } from "../lib/use-own-width";
 import { PhotoGrid, ProcessingTile, type OpenViewer } from "./PhotoGrid";
 import { STUDIO_EMAIL, STUDIO_NAME, STUDIO_WEBSITE, studioEmailHref } from "./studio";
 import { TOUCH } from "./UnlockControl";
@@ -82,14 +83,15 @@ function Hero({ dto, hero, action }: { dto: DeliveryPageDto; hero: DeliveryItemD
 }
 
 /** The pieces of one kind, in published order. The Premium tab uses the same pieces, grouped by kind. */
-function Groups({ items, props, onOpen, headings }: { items: DeliveryItemDto[]; props: DeliveryPageProps; onOpen: OpenViewer; headings: boolean }) {
+function Groups({ items, props, onOpen, headings, compact }: { items: DeliveryItemDto[]; props: DeliveryPageProps; onOpen: OpenViewer; headings: boolean; compact: boolean }) {
   const { hrefs, onRequestUnlock, unlockState } = props;
   const of = (kind: DeliveryItemDto["kind"]) => items.filter((item) => item.kind === kind);
   const photos = of("photo"); const films = of("video"); const plans = of("floorplan"); const copy = of("copy");
-  const heading = (text: string, n: number) => headings ? <h3 className="m-0 mb-[var(--space-3)] flex items-baseline gap-[var(--space-2)] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary">{text}<span className="tabular-nums">{n}</span></h3> : null;
+  // `inRow`: the label shares a row with a control (the Film group's Layout switch, #933 F12), whose list keeps the gap below, so it brings no margin of its own.
+  const heading = (text: string, n: number, inRow = false) => headings ? <h3 className={`m-0 ${inRow ? "" : "mb-[var(--space-3)] "}flex items-baseline gap-[var(--space-2)] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary`}>{text}<span className="tabular-nums">{n}</span></h3> : null;
   return <div className="grid gap-[var(--space-6)]">
     {photos.length > 0 && <section aria-label="Photos">{heading("Photos", photos.length)}<PhotoGrid items={photos} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} onOpen={onOpen} /></section>}
-    {films.length > 0 && <section aria-label="Film">{heading("Film", films.length)}<FilmList items={films} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} pageSlug={props.pageSlug ?? null} /></section>}
+    {films.length > 0 && <section aria-label="Film"><FilmList items={films} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} pageSlug={props.pageSlug ?? null} compact={compact} label={heading("Film", films.length, true)} /></section>}
     {plans.length > 0 && <section aria-label="Floorplan">{heading("Floorplan", plans.length)}<DocRows items={plans} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} label="Floorplan" /></section>}
     {copy.length > 0 && <section aria-label="Copywriting">{heading("Copywriting", copy.length)}<DocRows items={copy} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} label="Copywriting" /></section>}
   </div>;
@@ -111,10 +113,10 @@ function PremiumIntro({ items }: { items: DeliveryItemDto[] }) {
   </FramePanel></Frame>;
 }
 
-function Panel({ tab, props, onOpen }: { tab: DeliveryTab; props: DeliveryPageProps; onOpen: OpenViewer }) {
+function Panel({ tab, props, onOpen, compact }: { tab: DeliveryTab; props: DeliveryPageProps; onOpen: OpenViewer; compact: boolean }) {
   return <TabsContent value={tab.id} data-testid={`delivery-panel-${tab.id}`}>
     {tab.id === "premium" && <PremiumIntro items={tab.items} />}
-    <Groups items={tab.items} props={props} onOpen={onOpen} headings={tab.id === "premium"} />
+    <Groups items={tab.items} props={props} onOpen={onOpen} headings={tab.id === "premium"} compact={compact} />
   </TabsContent>;
 }
 
@@ -149,15 +151,31 @@ export function DeliveryPage(props: DeliveryPageProps) {
   const [returning] = useState(() => returnTargetOf(tabs, props.returnToVideo ?? null));
   const [chosen, setChosen] = useState<DeliveryTabId | null>(returning?.tab ?? null);
   const page = useRef<HTMLElement | null>(null);
+  // The page's own width, for what a CSS container query cannot reach (#941: the Video rows' two-line form). Under 721 px, as `@max-[721px]`; unmeasured (0) is not narrow.
+  const width = useOwnWidth(page);
+  const compact = width > 0 && width < 721;
   // Back from a review lands on the tile it opened: a jump, not an animated scroll (the page sets no smooth scroll-behavior, so there is no motion for reduced motion to stop), the TILE centred (not its title link, which sits at the tile's foot) so the sticky tab bar never covers its poster, then focus on its open link without a second
   // scroll (the browser's own `:focus-visible` draws the ring).
+  // The Film tab's list layout is a lazy chunk (#941): on a first visit its rows mount after this effect, so it waits for the first films to appear, lands once if its film is among them, and stops.
+  // It also stops if the chunk fails (the load error shows instead, #933 fix round 1): no film will come, so nothing is left to wait for.
   useEffect(() => {
-    if (returning === null) return;
-    const item = [...(page.current?.querySelectorAll<HTMLElement>('[data-testid="delivery-film-item"]') ?? [])].find((element) => element.dataset.handle === returning.handle);
-    const open = item?.querySelector<HTMLElement>('[data-testid="delivery-film-open"]');
-    if (!item || !open) return;
-    item.scrollIntoView({ block: "center" });
-    open.focus({ preventScroll: true });
+    const root = page.current;
+    if (returning === null || !root) return;
+    const films = () => [...root.querySelectorAll<HTMLElement>('[data-testid="delivery-film-item"]')];
+    const failed = () => root.querySelector('[data-testid="view-load-error"]') !== null;
+    const land = () => {
+      const item = films().find((element) => element.dataset.handle === returning.handle);
+      const open = item?.querySelector<HTMLElement>('[data-testid="delivery-film-open"]');
+      if (!item || !open) return;
+      item.scrollIntoView({ block: "center" });
+      open.focus({ preventScroll: true });
+    };
+    if (films().length > 0 || typeof MutationObserver === "undefined") { land(); return; }
+    const observer = new MutationObserver(() => {
+      if (films().length > 0) { observer.disconnect(); land(); } else if (failed()) observer.disconnect();
+    });
+    observer.observe(root, { childList: true, subtree: true });
+    return () => { observer.disconnect(); };
   }, [returning]);
   const active = tabs.some((tab) => tab.id === chosen) ? chosen : (tabs[0]?.id ?? null);
   const [viewer, setViewer] = useState<Viewer | null>(null);
@@ -205,7 +223,7 @@ export function DeliveryPage(props: DeliveryPageProps) {
           </div>
         </div>
         <div className="mx-auto w-full max-w-[var(--container-page)] p-[var(--space-7)] @max-[721px]:p-[var(--space-4)]">
-          {tabs.map((tab) => <Panel key={tab.id} tab={tab} props={props} onOpen={open} />)}
+          {tabs.map((tab) => <Panel key={tab.id} tab={tab} props={props} onOpen={open} compact={compact} />)}
         </div>
       </Tabs>}
     <Footer street={street} />

@@ -26,7 +26,8 @@ import { CopyTextButton } from "./CopyTextButton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../reui/select";
 import { hasOpenFloatingPopup, hasOpenModalAbove } from "../quincy/project-sheet-layers";
 import { ReviewPaneHideContext, ReviewSplit, useReviewPane, useReviewPaneControls } from "../quincy/ReviewPane";
-import { blurComposerField, isComposerField, useReviewSheet, useSheetMode } from "../quincy/ReviewSheet";
+import { VideoStepControl, type StepDelta, type StepVia, type VideoStepControlProps } from "../quincy/VideoStepControl";
+import { blurComposerField, isComposerField, useReviewSheet, useSheetMode, type ReviewSheetState } from "../quincy/ReviewSheet";
 import { useVisualViewport } from "../../lib/use-visual-viewport";
 import { useInkCanvas } from "../../lib/use-ink-canvas";
 import type { SheetStop } from "../../lib/review-pane-geometry";
@@ -92,11 +93,36 @@ const NO_ESCAPE: EscapeSnapshot = { layer: false, form: false, compare: false, s
 /** The note editor's typing surface under `#video-note-body`: the rich editor's contenteditable (or a plain field). */
 const NOTE_FIELD = '[contenteditable]:not([contenteditable="false"]), textarea';
 
-export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download, reviewLinks, deepLink, reviewStatus, social }: {
+/** How a viewer was reached by a step (#936): which way, and by a button or a key. Absent for an ordinary open. */
+export type ViewerStepEntry = { via: StepVia; delta: StepDelta };
+type ViewerBodyProps = Parameters<typeof ViewerBody>[0];
+
+/**
+ * One visit to the viewer, open to close, through any number of steps (#936). A step to another film remounts the body (keyed by the film: paused at frame 0, Compare and
+ * Social off, the Version from the URL), while the side pane's state lives here, above that key, so a pane revealed for this visit or shown in a narrow window stays as it is
+ * (#933 S5). The visit lives in this chunk, so the collection panel never loads the pane's code.
+ */
+export function VideoReviewViewer(props: Omit<ViewerBodyProps, "pane" | "sheetStop">) {
+  const pane = useReviewPane(useMediaQuery(PHONE_QUERY));
+  // The phone notes sheet's stop (collapsed, half, full) belongs to the visit too (story 19, S5): a step leaves the sheet where the person put it. A new visit opens at half.
+  const [stop, onStop] = useState<SheetStop>("half");
+  const sheetStop = useMemo(() => ({ stop, onStop }), [stop]);
+  return <ViewerBody key={props.video.id} {...props} pane={pane} sheetStop={sheetStop} />;
+}
+
+function ViewerBody({ video, onClose, returnFocusTo, notes, compare, delivery, trash, download, reviewLinks, deepLink, reviewStatus, social, step, entry, pane, sheetStop }: {
   video: VideoDto;
   onClose: () => void;
-  /** The control that opened the viewer; focus goes back to it on close. */
-  returnFocusTo?: () => HTMLElement | null;
+  /** The control that opened the viewer; focus goes back to it on close. `false`: move focus nowhere (a step to another film is replacing this viewer, #936). */
+  returnFocusTo?: () => HTMLElement | null | false;
+  /** Previous / next through the films the grid shows (#936); absent when there is nothing to step through. */
+  step?: Pick<VideoStepControlProps, "position" | "total" | "canPrev" | "canNext" | "onStep">;
+  /** This viewer was reached by a step (#936): it appears without the dialog's entry animation, and a step by button puts focus on the step button. Read once, at mount. */
+  entry?: ViewerStepEntry;
+  /** The side pane's state, held by the visit (`VideoReviewViewer`) so it outlives a step. */
+  pane: ReturnType<typeof useReviewPane>;
+  /** The phone notes sheet's stop, held by the visit (`VideoReviewViewer`) so it outlives a step. */
+  sheetStop: Pick<ReviewSheetState, "stop" | "onStop">;
   /** Present only when the notes part is on. */
   notes?: { projectId: string; role: Role; userId: string | null; archived: boolean; forms: NoteFormStore; /** The Project's `markup` part is on (#741 6b-ui). */ markup?: boolean; /** The Project's `export` part is on (#741 9). */ exportEnabled?: boolean; /** #835: the note the link names (`&note=`): its thread is selected and the film sought to its frame. */ openNoteId?: string };
   /** Present only when the Project's `compare` part is on (#741 7c). */
@@ -165,8 +191,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     }
     setImmersive((current) => rotate(current, { landscape, phoneDevice }));
   });
-  // The side pane (#859): open / width are a per-browser preference shared with the guest page. `sideTab` picks Notes (or Details) or Delivery inside it.
-  const pane = useReviewPane(phone);
+  // The side pane (#859): open / width are a per-browser preference shared with the guest page; the visit holds it (`pane`). `sideTab` picks Notes (or Details) or Delivery inside it.
   const paneId = useId();
   const deliveryHeadingId = useId();
   const [sideTab, setSideTab] = useState<"main" | "delivery">("main");
@@ -177,7 +202,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   // The sheet's one mode (#927; lesson "A layout switched by two flags will disagree…"): the pen is down from its press, its frame confirmation included, so the sheet never
   // flashes back to its stop meanwhile. Everything below reads `sheetControl.mode` and nothing overrides it.
   const penDown = useSyncExternalStore(forms ? forms.subscribe : noSubscribe, () => (forms ? forms.slot(assetId).draw !== null : false));
-  const sheetControl = useSheetMode(useReviewSheet({ filmAspect: shown.height > 0 ? shown.width / shown.height : 16 / 9 }), penDown);
+  const sheetControl = useSheetMode({ ...useReviewSheet({ filmAspect: shown.height > 0 ? shown.width / shown.height : 16 / 9 }), ...sheetStop }, penDown);
   const sheetStopRef = useRef(sheetControl.stop);
   sheetStopRef.current = sheetControl.stop;
   const setSheetStop = sheetControl.onStop;
@@ -233,9 +258,16 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   const closeCompose = useCallback(() => { focusInImmersive(document, "video-immersive-add-note"); setComposeOpen(false); }, []);
   useLayoutEffect(() => { if (upright && composeOpen) { blurComposerField(); closeCompose(); askUpright(); } }, [upright, composeOpen, closeCompose, askUpright]);
   useEffect(() => { if (!upright) setPrompt(null); }, [upright]);
+  // A step (#936) remounts this body: how it was reached is read once. A step by button lands on the same button (the other when this end disabled it), so Enter keeps stepping.
+  const [entryAt] = useState(entry);
+  const stepFocus = useCallback((popup: HTMLElement | null): HTMLElement | null => {
+    if (!popup || entryAt?.via !== "button") return null;
+    const order = entryAt.delta === 1 ? ["video-step-next", "video-step-previous"] : ["video-step-previous", "video-step-next"];
+    return order.map((id) => popup.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`)).find((button) => button != null && !button.disabled) ?? null;
+  }, [entryAt]);
   // Base UI moves focus a frame after mount; a key typed in that gap (Enter, then Space) would still hit the opener. Take focus in the commit itself.
   const [popupElement, setPopupElement] = useState<HTMLDivElement | null>(null);
-  const takePopup = useCallback((element: HTMLDivElement | null) => { popupRef.current = element; setPopupElement(element); element?.focus({ preventScroll: true }); }, []);
+  const takePopup = useCallback((element: HTMLDivElement | null) => { popupRef.current = element; setPopupElement(element); (stepFocus(element) ?? element)?.focus({ preventScroll: true }); }, [stepFocus]);
   // The Project sheet's overlay slot sits under this dialog: popups opened in here (Version, tooltips) portal into a slot of the dialog's own.
   const [slot, setSlot] = useState<HTMLElement | null>(null);
   // The toast viewport renders in here while the viewer is open, so an Undo toast sits inside the focus trap.
@@ -498,9 +530,13 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
   useInkCanvas(handheld);
   const chipRef = useRef<HTMLButtonElement | null>(null);
   const summaries = useVideoVersionSummariesQuery(notes?.projectId ?? reviewStatus?.projectId ?? trash?.projectId ?? download?.projectId ?? "", video.id, phone && versionsOpen && (notes ?? reviewStatus ?? trash ?? download) !== undefined, notes?.role ?? reviewStatus?.role);
+  const backdropProps = { ...(phone ? PHONE_BACKDROP : DESKTOP_BACKDROP), ...(entryAt ? { "data-entry": "step" } : {}) };
+  // `[` / `]` step (#936) except in Full screen (its header is hidden) or with the pen down; Compare allows them (a step leaves it).
+  const stepKeys = !imm && !penDown;
   const desktopHeader = <header className="@container flex min-h-12 flex-nowrap items-center gap-x-[var(--space-3)] border-b border-border bg-card px-[var(--space-4)] py-[var(--space-1)] text-card-foreground max-[721px]:gap-x-[var(--space-2)] max-[721px]:px-[var(--space-3)]">
       <DialogClose render={<Button type="button" variant="ghost" className="shrink-0 pointer-coarse:min-h-11 max-[721px]:min-h-11 max-[721px]:min-w-11" />}><ChevronLeft aria-hidden="true" /><span>Video</span></DialogClose>
       <DialogTitle title={video.title} className={`m-0 ${TITLE_FLOOR} flex-1 truncate [font:var(--type-body)]`}>{video.title}</DialogTitle>
+      {step && <VideoStepControl {...step} noun="video" keys={stepKeys} />}
       {/* The pill may not grow the bar: its older-publication hint stays on the line and its error copy floats under the bar instead of wrapping it. */}
       {reviewStatus && <div data-testid="video-review-status-slot" className="relative min-w-0 shrink-0 [&>div]:flex-nowrap [&_[role=alert]]:absolute [&_[role=alert]]:top-full [&_[role=alert]]:left-0 [&_[role=alert]]:z-10 [&_[role=alert]]:mt-[var(--space-1)] [&_[role=alert]]:w-max [&_[role=alert]]:max-w-[min(24rem,90vw)] [&_[role=alert]]:border [&_[role=alert]]:border-border [&_[role=alert]]:bg-card [&_[role=alert]]:p-[var(--space-2)]">
         <VideoReviewStatusPill video={video} version={version} comparing={comparing} compact={phone} {...reviewStatus} />
@@ -557,6 +593,7 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
     <ReviewPhoneBar
       back={<DialogClose render={<Button type="button" variant="ghost" className="min-h-11 min-w-11 shrink-0" />}><ChevronLeft aria-hidden="true" /><span className="sr-only">Video</span></DialogClose>}
       title={<DialogTitle title={video.title} className={`m-0 ${TITLE_FLOOR} w-full truncate [font:var(--type-body)]`}>{video.title}</DialogTitle>}
+      {...(step ? { step: <VideoStepControl {...step} noun="video" compact keys={stepKeys} />, ...(step.position !== null ? { position: `${step.position + 1} of ${step.total}` } : {}) } : {})}
       chip={<VersionChip buttonRef={chipRef} label={`v${version.version}${version.version === newest ? " · latest" : ""}`} tone={status} statusLabel={reviewStatus ? REVIEW_STATUS_LABEL[video.reviewStatus] : undefined} onClick={() => { setVersionsOpen(true); }} />}
       approve={reviewStatus && !comparing ? <VideoPhoneApprove video={video} version={version} comparing={comparing} {...reviewStatus} /> : undefined}
       actions={<VideoReviewHeaderMenu
@@ -682,12 +719,16 @@ export function VideoReviewViewer({ video, onClose, returnFocusTo, notes, compar
       data-surface="inverse"
       data-testid="video-review-viewer"
       ref={takePopup}
-      initialFocus={popupRef}
+      initialFocus={() => stepFocus(popupRef.current) ?? popupRef.current ?? false}
       showCloseButton={false}
       // On a phone the backdrop is solid ink (#879 fix r7): while iOS raises the keyboard the dialog is shortened to what is left above it, and the band below
       // shows the backdrop, never the light Project page through the scrim. Desktop keeps the scrim.
-      overlayProps={phone ? PHONE_BACKDROP : DESKTOP_BACKDROP}
-      finalFocus={() => { const opener = returnFocusTo?.(); return opener && opener.isConnected ? opener : true; }}
+      overlayProps={backdropProps}
+      // A step (#936) swaps one viewer for the next in one commit: the next appears at once (reui dialog's scoped `entry="none"`) instead of fading in over the Project page.
+      entry={entryAt ? "none" : "animate"}
+      data-entry={entryAt ? "step" : undefined}
+      // `false` (a step is replacing this viewer): no focus return, or Base UI would focus the old film's tile behind the next viewer a microtask later.
+      finalFocus={() => { const opener = returnFocusTo?.(); if (opener === false) return false; return opener && opener.isConnected ? opener : true; }}
       onKeyDown={(event) => {
         // A dialog portalled out of the viewer (a confirm, a note-delete) still bubbles its keys here through React: leave them to that dialog.
         const host = (event.target as Element).closest?.('[role=dialog],[role=alertdialog]');

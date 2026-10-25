@@ -7,6 +7,11 @@ import { Notice } from "./quincy/Notice";
 type ViewLoadBoundaryProps = {
   /** Names the view in the fallback copy ("… open the Gantt."). */
   viewLabel: string;
+  /**
+   * Neutral words for a screen outside the staff Portal (a guest's Review link, a client's Delivery page, #933): shown for a stale chunk and any other failure alike, in
+   * place of "The Portal may have been updated…", which speaks to staff. Reload stays.
+   */
+  message?: string;
   /** Seam for tests: happy-dom cannot observe a real `location.reload()`. */
   reload?: () => void;
   children: ReactNode;
@@ -35,9 +40,10 @@ export class ViewLoadBoundary extends Component<ViewLoadBoundaryProps, ViewLoadB
 
   render() {
     if (!this.state.failed) return this.props.children;
-    const { viewLabel, reload = defaultReload } = this.props;
+    const { viewLabel, message, reload = defaultReload } = this.props;
+    const chunk = isChunkLoadError(this.state.error);
 
-    if (isChunkLoadError(this.state.error)) {
+    if (chunk && message === undefined) {
       return (
         <Notice tone="caution" role="alert" data-testid="view-load-error" data-kind="chunk" className="flex items-baseline gap-[var(--space-3)] mb-[var(--space-4)] px-[var(--space-4)] py-[var(--space-3)] before:content-['Update'] before:shrink-0 before:[font:var(--type-eyebrow)] before:uppercase before:tracking-[var(--tracking-widest)] before:text-signal-caution-text text-foreground">
           <span className="flex-1">{`The Portal may have been updated. Reload to open the ${viewLabel}.`}</span>
@@ -47,7 +53,7 @@ export class ViewLoadBoundary extends Component<ViewLoadBoundaryProps, ViewLoadB
     }
 
     return (
-      <EmptyState tone="error" role="alert" data-testid="view-load-error" data-kind="error" title={`The ${viewLabel} could not load.`} className="border-solid border-[length:var(--border-width-hair)] border-border bg-card [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-destructive">
+      <EmptyState tone="error" role="alert" data-testid="view-load-error" data-kind={chunk ? "chunk" : "error"} title={message ?? `The ${viewLabel} could not load.`} className="border-solid border-[length:var(--border-width-hair)] border-border bg-card [border-left-style:solid] border-l-[length:var(--border-width-rule)] border-l-destructive">
         Reload the page to try again.
         <div><Button type="button" variant="secondary" className="mt-[var(--space-4)]" onClick={() => reload()}>Reload</Button></div>
       </EmptyState>

@@ -74,4 +74,17 @@ describe("ViewLoadBoundary (#292)", () => {
     await act(async () => { reloadButton()!.click(); });
     expect(reload).toHaveBeenCalledTimes(1);
   });
+  // #933 fix round 1: a screen outside the staff Portal (a guest's Review link, a client's Delivery page) never sees "The Portal may have been updated".
+  it.each([["a stale chunk", new TypeError(CHUNK_MESSAGE), "chunk"], ["any other error", new Error("boom"), "error"]] as const)("with a neutral message, shows only that message and Reload for %s", async (_, error, kind) => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const reload = vi.fn();
+    await render(<ViewLoadBoundary viewLabel="list" message="The list could not be loaded." reload={reload}><Thrower error={error} /></ViewLoadBoundary>);
+    const notice = host.querySelector<HTMLElement>('[data-testid="view-load-error"]');
+    expect(notice?.getAttribute("data-kind")).toBe(kind);
+    expect(notice?.getAttribute("role")).toBe("alert");
+    expect(notice?.textContent).toContain("The list could not be loaded.");
+    expect(notice?.textContent).not.toMatch(/Portal|updated|Update/);
+    await act(async () => { reloadButton()!.click(); });
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
 });

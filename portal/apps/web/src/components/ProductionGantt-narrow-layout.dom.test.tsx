@@ -82,6 +82,10 @@ async function mountAt(width: number, coarse = false) {
 }
 
 beforeEach(() => {
+  // The Timeline opens on the current Sunday-to-Saturday week and the fixtures sit 0-3 days from "today", so an unpinned
+  // clock puts the task bar in NEXT week on a Friday or Saturday and it is not drawn (#933). Pin to a mid-week day
+  // (Wed 2026-10-07, 13:00 in the Gantt's zone, after Sydney's DST start); only Date is faked, so timers/act still run.
+  vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-07T03:00:00Z") });
   apiGetMock.mockReset().mockImplementation(() => Promise.resolve(adminProductionGanttResponseSchema.parse({
     scope: "active", zone: PRODUCTION_GANTT_ZONE,
     appliedFilters: { q: "", editorIds: [], stageKeys: [], priorities: [], archived: "hide", includeDelivered: false, includeCompletedChecklist: false },
@@ -100,6 +104,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   await act(async () => { root.unmount(); await Promise.resolve(); });
   client.clear();
   host.remove();

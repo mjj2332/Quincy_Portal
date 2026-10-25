@@ -61,29 +61,49 @@ export function useFilePick({ accept, onFile }: { accept: string; onFile: (file:
   return { open, input };
 }
 
+/** The props a drop target spreads on its element: the four drag handlers and `data-dragging` while a file is over it. */
+export type FileDropTargetProps = Pick<React.HTMLAttributes<HTMLElement>, "onDragEnter" | "onDragOver" | "onDragLeave" | "onDrop"> & { "data-dragging": "true" | undefined };
+
+/**
+ * FileDropzone's drop logic as a hook (#938), for elements FileDropzone cannot be: a table row the data grid renders (`quincy/VideoRows`). One hook serves any number of
+ * targets, each named by a `key` (a row's id); `targetProps(key, …)` is spread on that element and `dragging` is the key a file is over now. Drag events stop at the target,
+ * so a target inside another (a row in the collection's body) takes its own drop alone; drops are ignored while `disabled`. `onFiles` gets every dropped file, never an empty list.
+ */
+export function useFileDropTarget() {
+  const [dragging, setDragging] = React.useState<string | null>(null);
+  const depths = React.useRef(new Map<string, number>());
+  const targetProps = React.useCallback((key: string, { disabled = false, onFiles }: { disabled?: boolean; onFiles: (files: File[]) => void }): FileDropTargetProps => {
+    const depth = () => depths.current.get(key) ?? 0;
+    const release = () => setDragging((current) => (current === key ? null : current));
+    return {
+      "data-dragging": dragging === key ? "true" : undefined,
+      onDragEnter: (event) => {
+        event.stopPropagation();
+        if (disabled || !Array.from(event.dataTransfer?.types ?? []).includes("Files")) return;
+        event.preventDefault(); depths.current.set(key, depth() + 1); setDragging(key);
+      },
+      onDragOver: (event) => { event.stopPropagation(); if (!disabled) event.preventDefault(); },
+      onDragLeave: (event) => { event.stopPropagation(); const next = Math.max(0, depth() - 1); depths.current.set(key, next); if (next === 0) release(); },
+      onDrop: (event) => {
+        event.preventDefault(); event.stopPropagation(); depths.current.set(key, 0); release();
+        if (disabled) return;
+        const dropped = Array.from(event.dataTransfer?.files ?? []);
+        if (dropped.length > 0) onFiles(dropped);
+      },
+    };
+  }, [dragging]);
+  return { dragging, targetProps };
+}
+
 /** A drop target for one file. Sets `data-dragging` while a file is over it. Drops are ignored while `disabled`. Drag events stop here, so a zone inside another zone (a tile in the collection, #884) takes its own drop alone. */
 export function FileDropzone({ disabled, className, children, ...props }: {
   disabled?: boolean;
 } & PickHandler & Omit<React.ComponentProps<"div">, "onDrop" | "onDragOver" | "onDragEnter" | "onDragLeave">) {
   const { multiple, onFile, onFiles, rest } = splitPickHandler(props);
-  const [dragging, setDragging] = React.useState(false);
-  const depth = React.useRef(0);
+  const { targetProps } = useFileDropTarget();
   return <div
     {...rest}
-    data-dragging={dragging ? "true" : undefined}
+    {...targetProps("zone", { disabled: disabled === true, onFiles: (dropped) => { if (multiple) onFiles(dropped); else onFile(dropped[0]!); } })}
     className={cn(className)}
-    onDragEnter={(event) => {
-      event.stopPropagation();
-      if (disabled || !Array.from(event.dataTransfer?.types ?? []).includes("Files")) return;
-      event.preventDefault(); depth.current += 1; setDragging(true);
-    }}
-    onDragOver={(event) => { event.stopPropagation(); if (!disabled) event.preventDefault(); }}
-    onDragLeave={(event) => { event.stopPropagation(); depth.current = Math.max(0, depth.current - 1); if (depth.current === 0) setDragging(false); }}
-    onDrop={(event) => {
-      event.preventDefault(); event.stopPropagation(); depth.current = 0; setDragging(false);
-      if (disabled) return;
-      const dropped = Array.from(event.dataTransfer?.files ?? []);
-      if (multiple) { if (dropped.length > 0) onFiles(dropped); } else if (dropped[0]) onFile(dropped[0]);
-    }}
   >{children}</div>;
 }

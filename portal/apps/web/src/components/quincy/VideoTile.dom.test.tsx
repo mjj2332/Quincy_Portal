@@ -1,6 +1,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mockViewport, type MockViewport } from "../../testing/viewport";
+import { TooltipProvider } from "../reui/tooltip";
 import { VideoTile } from "./VideoTile";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -178,5 +180,117 @@ describe("VideoTile", () => {
     expect(el.querySelector('[data-testid="badge"]')).not.toBeNull();
     const open = el.querySelector('[data-testid="video-tile-open"]')!;
     expect(el.ownerDocument.getElementById(open.getAttribute("aria-describedby")!)!.textContent).toBe("Film, locked: Premium");
+  });
+});
+
+/**
+ * #934: a cut-off title shows the full title in a tooltip on hover and on keyboard focus of the open control, on every screen (they all render this tile). The DOM has no layout, so each case
+ * stubs the title node's widths; the provider's zero delay only spares the test Base UI's 600ms hover intent.
+ */
+describe("VideoTile — full-title tooltip (#934)", () => {
+  const LONG = "Kitchen walkthrough with the long garden approach and the pool at dusk";
+  let viewport: MockViewport | null = null;
+  afterEach(() => { viewport?.restore(); viewport = null; });
+  const tip = () => document.querySelector<HTMLElement>('[data-testid="truncated-title-tip"]');
+  const tipped = (node: React.ReactNode) => mount(<TooltipProvider delay={0}>{node}</TooltipProvider>);
+  function measure(element: Element, scrollWidth: number, clientWidth: number) {
+    Object.defineProperty(element, "scrollWidth", { configurable: true, get: () => scrollWidth });
+    Object.defineProperty(element, "clientWidth", { configurable: true, get: () => clientWidth });
+  }
+  async function hover(element: Element) {
+    await act(async () => {
+      element.dispatchEvent(new PointerEvent("pointerenter", { bubbles: true, pointerType: "mouse" }));
+      element.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+      element.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerType: "mouse" }));
+      await Promise.resolve();
+    });
+  }
+  async function waitFor(assertion: () => void, timeoutMs = 1000) {
+    const start = Date.now();
+    for (;;) {
+      try { assertion(); return; } catch (error) {
+        if (Date.now() - start > timeoutMs) throw error;
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+      }
+    }
+  }
+  async function settle() { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); }); }
+
+  it("the button tile's own text is the measured node, and a cut-off title shows in full on hover", async () => {
+    viewport = mockViewport({ width: 1440 });
+    const el = await tipped(<VideoTile {...base} title={LONG} />);
+    const open = el.querySelector<HTMLElement>('[data-testid="video-tile-open"]')!;
+    expect(open.hasAttribute("data-title-text")).toBe(true);
+    measure(open, 420, 180);
+    await hover(open);
+    await waitFor(() => expect(tip()?.textContent).toBe(LONG));
+  });
+
+  it("a cut-off title shows in full on keyboard focus of the open control", async () => {
+    viewport = mockViewport({ width: 1440 });
+    const el = await tipped(<VideoTile {...base} title={LONG} />);
+    const open = el.querySelector<HTMLElement>('[data-testid="video-tile-open"]')!;
+    measure(open, 420, 180);
+    await act(async () => { open.focus(); await Promise.resolve(); });
+    await waitFor(() => expect(tip()?.textContent).toBe(LONG));
+  });
+
+  it("a title that fits shows no tooltip on hover or focus", async () => {
+    viewport = mockViewport({ width: 1440 });
+    const el = await tipped(<VideoTile {...base} />);
+    const open = el.querySelector<HTMLElement>('[data-testid="video-tile-open"]')!;
+    measure(open, 120, 180);
+    await hover(open); await settle();
+    expect(tip()).toBeNull();
+    await act(async () => { open.focus(); await Promise.resolve(); }); await settle();
+    expect(tip()).toBeNull();
+  });
+
+  it("keeps the open control's accessible name the full title and its description the summary", async () => {
+    viewport = mockViewport({ width: 1440 });
+    const el = await tipped(<VideoTile {...base} title={LONG} />);
+    const open = el.querySelector<HTMLElement>('[data-testid="video-tile-open"]')!;
+    measure(open, 420, 180);
+    await hover(open);
+    await waitFor(() => expect(tip()).not.toBeNull());
+    expect(open.hasAttribute("aria-label")).toBe(false);
+    expect(open.textContent).toBe(LONG);
+    expect(el.ownerDocument.getElementById(open.getAttribute("aria-describedby")!)!.textContent).toBe("v3, 1:32, 2 open notes on v3");
+  });
+
+  it("the link tile (Delivery) measures the link's inner title span", async () => {
+    viewport = mockViewport({ width: 1440 });
+    const { onOpen: _unused, ...linkBase } = base;
+    const el = await tipped(<VideoTile {...linkBase} title={LONG} href="/d/review?link=x#t=y" />);
+    const open = el.querySelector<HTMLElement>('[data-testid="video-tile-open"]')!;
+    const span = open.querySelector<HTMLElement>("[data-title-text]")!;
+    expect(span.textContent).toBe(LONG);
+    measure(open, 240, 240); measure(span, 420, 180);
+    await hover(open);
+    await waitFor(() => expect(tip()?.textContent).toBe(LONG));
+    expect(open.getAttribute("href")).toBe("/d/review?link=x#t=y");
+  });
+
+  it("a locked tile shows the title in the tooltip while its accessible name stays the openLabel", async () => {
+    viewport = mockViewport({ width: 1440 });
+    const el = await tipped(<VideoTile {...base} title={LONG} tone="paper" locked version={null} durationMs={null} openNotes={null} openLabel={`Request unlock: ${LONG}`} />);
+    const open = el.querySelector<HTMLElement>('[data-testid="video-tile-open"]')!;
+    measure(open, 420, 180);
+    await hover(open);
+    await waitFor(() => expect(tip()?.textContent).toBe(LONG));
+    expect(open.getAttribute("aria-label")).toBe(`Request unlock: ${LONG}`);
+  });
+
+  it("on a coarse pointer there is no tooltip, and a tap still just opens the film", async () => {
+    viewport = mockViewport({ width: 390, coarse: true });
+    const onOpen = vi.fn();
+    const el = await tipped(<VideoTile {...base} title={LONG} onOpen={onOpen} />);
+    const open = el.querySelector<HTMLElement>('[data-testid="video-tile-open"]')!;
+    measure(open, 420, 180);
+    await hover(open);
+    await act(async () => { open.focus(); await Promise.resolve(); }); await settle();
+    expect(tip()).toBeNull();
+    await act(async () => { open.click(); });
+    expect(onOpen).toHaveBeenCalledWith(open);
   });
 });
