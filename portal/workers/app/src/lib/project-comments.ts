@@ -5,7 +5,7 @@ import type { ProjectActivityIntent } from "@quincy/shared";
 import { newId } from "./ids";
 import { isMediaGuardFailure, ownedMediaStatements, preflightOwnedMedia } from "./embedded-media";
 import { fillLinkPreviews, linkPreviewStatements, preflightLinkPreviews } from "./link-previews";
-import { deletedOwnerAttachmentStatements, isAttachmentGuardFailure, ownedAttachmentStatements, preflightOwnedAttachments } from "./attachments";
+import { deleteWonByAudit, deletedOwnerAttachmentStatements, isAttachmentGuardFailure, ownedAttachmentStatements, preflightOwnedAttachments } from "./attachments";
 import { ATTACHMENT_MAX_PER_POST } from "@quincy/shared";
 import { auditMeta, type AuditPrincipal } from "./audit";
 import { ARCHIVED_SNAPSHOT_SQL, archivedInSnapshot } from "./project-archive";
@@ -486,7 +486,7 @@ export async function deleteProjectComment(db: D1Database, input: DeleteProjectC
   const media = db.prepare("UPDATE embedded_media SET state = 'detached', detached_at = 0, updated_at = ? WHERE owner_kind = 'project_comment' AND owner_id = ? AND state IN ('attached', 'detached') AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)").bind(input.occurredAt.getTime(), input.commentId, auditId);
   const previews = db.prepare("DELETE FROM link_previews WHERE owner_kind = 'project_comment' AND owner_id = ? AND EXISTS (SELECT 1 FROM audit_log WHERE id = ?)").bind(input.commentId, auditId);
   // Its Attachments too (#952), each with a detach audit row, so a download stops the moment the comment is gone. The sweep (#953) reclaims the objects.
-  const attachments = deletedOwnerAttachmentStatements(db, { ownerKind: "project_comment", ownerId: input.commentId, now: input.occurredAt.getTime(), principal: input.auditPrincipal ?? { id: input.actorId, impersonatedBy: null }, deleteAuditId: auditId });
+  const attachments = deletedOwnerAttachmentStatements(db, { ownerKind: "project_comment", ownerId: input.commentId, now: input.occurredAt.getTime(), principal: input.auditPrincipal ?? { id: input.actorId, impersonatedBy: null }, won: deleteWonByAudit(auditId) });
   const results = await db.batch([deletion, audit, ...activityStatements.statements, media, previews, ...attachments, db.prepare(ARCHIVED_SNAPSHOT_SQL).bind(input.projectId)]);
   // The JS-level .meta.changes on the DELETE includes cascade-deleted
   // project_comment_mentions rows (ON DELETE CASCADE), so the outer check must accept any

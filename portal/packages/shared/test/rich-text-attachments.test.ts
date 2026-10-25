@@ -28,11 +28,20 @@ describe("attachment node (#952)", () => {
     expect(richTextAttachmentIds(doc)).toEqual([id(1)]);
   });
 
-  it("is refused on the comment, Notice board and Video note profiles until their tickets turn it on", () => {
-    for (const profile of [COMMENT_RICH_TEXT_PROFILE, NOTICE_RICH_TEXT_PROFILE, VIDEO_NOTE_RICH_TEXT_PROFILE]) {
+  it("is refused on the comment and Video note profiles until their tickets turn it on", () => {
+    for (const profile of [COMMENT_RICH_TEXT_PROFILE, VIDEO_NOTE_RICH_TEXT_PROFILE]) {
       expect(() => parse([para("x"), attachment(1)], profile)).toThrow(RichTextValidationError);
     }
     expect(VIDEO_NOTE_RICH_TEXT_PROFILE.allowAttachments).toBe(false);
+  });
+
+  it("is accepted on the Notice board's profile (#954), 10 a notice, beside its images and a table", () => {
+    const table = { type: "table", content: [{ type: "tableRow", content: [{ type: "tableHeader", content: [para("Day")] }] }] };
+    const files = Array.from({ length: 10 }, (_, n) => attachment(n + 1, { name: "rota.pdf", bytes: 9 }));
+    const doc = parse([para("Rota"), table, { type: "image", attrs: { mediaId: id(100) } }, ...files], NOTICE_RICH_TEXT_PROFILE);
+    expect(richTextAttachmentIds(doc)).toHaveLength(10);
+    expect(doc.content.at(-1)).toEqual({ type: "attachment", attrs: { attachmentId: id(10) } });
+    expect(() => parse([para("Rota"), ...files, attachment(11)], NOTICE_RICH_TEXT_PROFILE)).toThrow("A post may have at most 10 attachments");
   });
 
   it("lives at the top level only", () => {

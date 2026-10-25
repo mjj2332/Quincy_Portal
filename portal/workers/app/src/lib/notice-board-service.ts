@@ -1,6 +1,8 @@
 import { NOTICE_BOARD_READ_MARKER_UPSERT_SQL } from "./notice-board-read-state";
 import { isMediaGuardFailure, ownedMediaStatements } from "./embedded-media";
 import { linkPreviewStatements } from "./link-previews";
+import { deletedOwnerAttachmentStatements, isAttachmentGuardFailure, ownedAttachmentStatements } from "./attachments";
+import type { AuditPrincipal } from "./audit";
 
 export type NoticeBoardMentionInsert = {
   id: string;
@@ -11,7 +13,8 @@ export type NoticeBoardMentionInsert = {
 
 /** The images a post's save wants (#496): the batch itself validates and reconciles them, `preflightOwnedMedia` only pre-checks. */
 /** `previewIds` are the link preview cards (#497): the batch takes the author's pending ones and drops the rest. */
-export type NoticeBoardMediaChanges = { authorId: string; ids: string[]; previewIds?: string[] };
+/** `attachmentIds` are its Attachments (#954): the batch attaches the author's pending ones and detaches the rest, an audit row for each, naming `principal` (an impersonating Admin is stamped). */
+export type NoticeBoardMediaChanges = { authorId: string; ids: string[]; previewIds?: string[]; attachmentIds?: string[]; principal?: AuditPrincipal };
 
 export class NoticeBoardMediaConflictError extends Error { constructor() { super("An image in this notice is no longer available"); this.name = "NoticeBoardMediaConflictError"; } }
 
@@ -35,12 +38,13 @@ function mediaStatements(db: D1Database, postId: string, authorId: string, media
     ...ownedMediaStatements(db, { ownerKind: "notice_post", ownerId: postId, projectId: null, uploader: { userId: authorId }, ids: media?.ids ?? [], now, fence: postFence(postId, authorId), guardId }),
     // A new post holds no previews yet, so only an edit has anything to drop.
     ...(includePreviews || previews.length ? linkPreviewStatements(db, { ownerKind: "notice_post", ownerId: postId, projectId: null, requesterId: authorId, ids: previews, now, fence: postFence(postId, authorId), guardId }) : []),
+    ...ownedAttachmentStatements(db, { ownerKind: "notice_post", ownerId: postId, projectId: null, uploader: { userId: authorId }, ids: media?.attachmentIds ?? [], now, fence: postFence(postId, authorId), guardId, principal: media?.principal ?? { id: authorId, impersonatedBy: null } }),
   ];
 }
 
 /** A batch that tripped the media guard failed on its CHECK: report it as a conflict, and rethrow anything else. */
 function rethrowMediaConflict(error: unknown, media: NoticeBoardMediaChanges | undefined): never {
-  if (isMediaGuardFailure(error, [...(media?.ids ?? []), ...(media?.previewIds ?? [])])) throw new NoticeBoardMediaConflictError();
+  if (isMediaGuardFailure(error, [...(media?.ids ?? []), ...(media?.previewIds ?? [])]) || isAttachmentGuardFailure(error, media?.attachmentIds)) throw new NoticeBoardMediaConflictError();
   throw error;
 }
 
@@ -99,8 +103,10 @@ export async function editNoticeBoardPost(db: D1Database, input: EditNoticeBoard
 /**
  * Deletes an author's own post and, in the same batch, leaves its images detached and due now (`detached_at = 0`), which is
  * the state the sweep reclaims first. The caller deletes the objects and rows best effort afterwards. Returns whether a post was deleted.
+ * Its Attachments (#954) are detached and due now in the same batch, each with an audit row naming `principal`, so a download stops at once.
  */
-export async function deleteNoticeBoardPost(db: D1Database, input: { id: string; authorId: string }): Promise<boolean> {
+export async function deleteNoticeBoardPost(db: D1Database, input: { id: string; authorId: string; principal?: AuditPrincipal }): Promise<boolean> {
+  const gone = { sql: "NOT EXISTS (SELECT 1 FROM notice_board_posts WHERE id = ?)", binds: [input.id] };
   const results = await db.batch([
     db.prepare("DELETE FROM notice_board_posts WHERE id = ? AND author_id = ?").bind(input.id, input.authorId),
     db.prepare(`
@@ -109,6 +115,7 @@ export async function deleteNoticeBoardPost(db: D1Database, input: { id: string;
         AND NOT EXISTS (SELECT 1 FROM notice_board_posts WHERE id = ?)
     `).bind(Date.now(), input.id, input.id),
     db.prepare("DELETE FROM link_previews WHERE owner_kind = 'notice_post' AND owner_id = ? AND NOT EXISTS (SELECT 1 FROM notice_board_posts WHERE id = ?)").bind(input.id, input.id),
+    ...deletedOwnerAttachmentStatements(db, { ownerKind: "notice_post", ownerId: input.id, now: Date.now(), principal: input.principal ?? { id: input.authorId, impersonatedBy: null }, won: gone }),
   ]);
   return (results[0]?.meta.changes ?? 0) === 1;
 }

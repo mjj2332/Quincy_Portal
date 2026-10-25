@@ -201,9 +201,10 @@ async function readableAttachment(c: Context<AppEnv>, attachmentId: string): Pro
   const notFound = () => c.json({ error: "File not found" }, 404);
   const row = await c.env.DB.prepare(`
     SELECT a.owner_kind AS ownerKind, a.project_id AS projectId, a.storage_key AS storageKey, a.file_name AS fileName,
-      EXISTS (SELECT 1 FROM project_comments pc WHERE pc.id = a.owner_id AND pc.project_id = a.project_id) AS commentLive
+      EXISTS (SELECT 1 FROM project_comments pc WHERE pc.id = a.owner_id AND pc.project_id = a.project_id) AS commentLive,
+      EXISTS (SELECT 1 FROM notice_board_posts np WHERE np.id = a.owner_id AND a.project_id IS NULL) AS noticeLive
     FROM attachments a WHERE a.id = ? AND a.state = 'attached'
-  `).bind(attachmentId).first<{ ownerKind: "project_comment" | "notice_post" | "video_note"; projectId: string | null; storageKey: string; fileName: string; commentLive: number }>();
+  `).bind(attachmentId).first<{ ownerKind: "project_comment" | "notice_post" | "video_note"; projectId: string | null; storageKey: string; fileName: string; commentLive: number; noticeLive: number }>();
   if (!row) return notFound();
   switch (row.ownerKind) {
     case "project_comment": {
@@ -212,8 +213,12 @@ async function readableAttachment(c: Context<AppEnv>, attachmentId: string): Pro
       if (!await hasProjectCollaborationAccess(c, row.projectId)) return c.get("user").role === "external_editor" ? notFound() : c.json({ error: "Forbidden: you are not assigned to this project" }, 403);
       return row;
     }
-    // The Notice board (#954) and Video notes (#955) add their own rules; until then nothing of theirs downloads.
-    case "notice_post": return notFound();
+    // A notice's audience (#954): everyone with the Notice board capability, staff only. An External editor, or an Admin impersonating one, is told nothing exists.
+    case "notice_post": {
+      if (!row.noticeLive || !roleHasCapability(c.get("user").role, "viewNoticeBoard")) return notFound();
+      return row;
+    }
+    // Video notes (#955) add their own rules; until then nothing of theirs downloads.
     case "video_note": return notFound();
     default: { const unknown: never = row.ownerKind; void unknown; return notFound(); }
   }
