@@ -51,7 +51,8 @@ interface BaseProps {
   strip?: ReactNode;
   /** A problem or lock line above the tools (too long, a failed post, "Finish or cancel the open edit first"). */
   notice?: ReactNode;
-  attach: { onPick: () => void } & NoteControl;
+  /** The paperclip. `label` names it where it takes more than photos and videos (a Project discussion comment takes any file, #952). */
+  attach: { onPick: () => void; label?: string } & NoteControl;
   phone?: boolean;
   floating?: boolean;
   /** Draw the composer's own foot around the box (the hairline above, the card ground, the gutter). Off: the host draws it. */
@@ -161,7 +162,7 @@ export function NoteComposerBox(props: NoteComposerBoxProps) {
       title={anchored.range.disabled && anchored.range.reason ? anchored.range.reason : RANGE_TITLE[step]}
       className={tool} {...lockProps(anchored.range)} {...KEEP_FOCUS_MARKER} onClick={() => { anchored.range.onPress(step); }}
     ><ArrowRightFromLineIcon aria-hidden="true" /></Button>}
-    <Button type="button" variant="ghost" size="icon" aria-label="Add photos or videos" title={attach.disabled && attach.reason ? attach.reason : "Add photos or videos"} className={tool} {...lockProps(attach)} {...(variant === "post" ? KEEP_FOCUS_MARKER : {})} onClick={attach.onPick}>
+    <Button type="button" variant="ghost" size="icon" aria-label={attach.label ?? "Add photos or videos"} title={attach.disabled && attach.reason ? attach.reason : attach.label ?? "Add photos or videos"} className={tool} {...lockProps(attach)} {...(variant === "post" ? KEEP_FOCUS_MARKER : {})} onClick={attach.onPick}>
       <PaperclipIcon aria-hidden="true" />
     </Button>
     {anchored?.pen && <Button type="button" variant="ghost" size="icon" aria-label="Draw on the frame" title={anchored.pen.disabled && anchored.pen.reason ? anchored.pen.reason : "Draw on the frame"} className={tool} {...lockProps(anchored.pen)} onClick={anchored.pen.onPress}>

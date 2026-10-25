@@ -62,6 +62,10 @@ const emptyDoc = (): RichTextDoc => ({ type: "doc", content: [{ type: "paragraph
 const COMMENT_LIMIT = 10_000;
 const COMMENT_TOO_LONG = `Comments can be ${new Intl.NumberFormat("en").format(COMMENT_LIMIT)} characters at most.`;
 const WAIT_FOR_UPLOADS = "Wait for the uploads to finish.";
+/** An Attachment failed to upload (#952): Post and Save wait until it is retried or removed, so a post never goes out missing a file. */
+const RETRY_OR_REMOVE = "Retry or remove the file that failed.";
+/** The paperclip takes any file on a Project comment (#952): photos and videos embed, everything else is attached. */
+const ATTACH_LABEL = "Add files";
 const TOO_LARGE = "This formatting is too large to save; remove list items or formatting.";
 /** A line in the note box above its row, beside Send or Save (the Video composer's problem line): label type. */
 const BOX_LINE = "m-0 [font:var(--type-label)] text-destructive";
@@ -72,7 +76,7 @@ const boxOf = (field: HTMLElement | null) => field?.closest('[data-testid="note-
 function isCommentArchivedRefusal(error: unknown) { return error instanceof ApiError && error.status === 409 && typeof error.details === "object" && error.details !== null && (error.details as { code?: unknown }).code === "comment_project_archived"; }
 const COMMENT_DELETE_COPY = {
   title: "Delete comment?", action: "Delete", pending: "Deleting…", fallbackSubject: "This comment",
-  description: (subject: ReactNode) => <>{subject} will be removed from the discussion for everyone, with any images in it. This can't be undone.</>,
+  description: (subject: ReactNode) => <>{subject} will be removed from the discussion for everyone, with any images and files in it. This can't be undone.</>,
 };
 const DISCUSSION_ARCHIVED_COPY = "Read-only while archived. Restore the project before commenting.";
 
@@ -124,11 +128,12 @@ function CommentItem({ comment, isOwn, readOnly, now, saving, editing, editingOv
     return surface;
   }, []);
   const [editUploading, setEditUploading] = useState(false);
+  const [editFailedFiles, setEditFailedFiles] = useState(0);
   const editEditor = useRef<RichTextEditorHandle>(null);
   const editField = useRef<HTMLDivElement>(null);
   const [editStrip, setEditStrip] = useState<HTMLDivElement | null>(null);
   // Every save path (the Save button, and Ctrl/Cmd+Enter in the editor) goes through this: an image still uploading would be lost.
-  const saveEdit = () => { if (!editUploading) onEditSave(); };
+  const saveEdit = () => { if (!editUploading && editFailedFiles === 0) onEditSave(); };
   const isEditing = editing !== undefined;
   const wasEditing = useRef(false);
   useEffect(() => {
@@ -157,16 +162,16 @@ function CommentItem({ comment, isOwn, readOnly, now, saving, editing, editingOv
         field={<div ref={editField} className="min-w-0">
           <QuincyRichTextEditor
             preset="note" ref={editEditor} value={editing} onChange={onEditChange} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables} placeholder="Edit comment…" ariaLabel="Edit comment" onSubmit={saveEdit}
-            media={{ projectId }} linkPreviews={{ projectId }} onUploadingChange={setEditUploading}
+            media={{ projectId }} linkPreviews={{ projectId }} attachments={{ projectId }} onUploadingChange={setEditUploading} onFailedFilesChange={setEditFailedFiles}
             stripContainer={editStrip} bubbleDocked={phone} bubbleDockTo={() => boxOf(editField.current)}
           />
         </div>}
         strip={<div ref={setEditStrip} className="empty:hidden" />}
         notice={editError ? <p role="alert" data-testid="discussion-edit-problem" className={BOX_LINE}>{editError}</p> : null}
-        attach={{ onPick: () => { editEditor.current?.pickMedia(); }, disabled: saving }}
+        attach={{ onPick: () => { editEditor.current?.pickMedia(); }, disabled: saving, label: ATTACH_LABEL }}
         save={{
-          onSave: saveEdit, onCancel: onEditCancel, disabled: saving || editingOverBytes || editUploading, pending: saving,
-          ...(editUploading ? { reason: WAIT_FOR_UPLOADS } : editingOverBytes ? { reason: TOO_LARGE } : {}),
+          onSave: saveEdit, onCancel: onEditCancel, disabled: saving || editingOverBytes || editUploading || editFailedFiles > 0, pending: saving,
+          ...(editUploading ? { reason: WAIT_FOR_UPLOADS } : editFailedFiles > 0 ? { reason: RETRY_OR_REMOVE } : editingOverBytes ? { reason: TOO_LARGE } : {}),
         }}
       /> : <RichTextContent className="rich-text--body" content={comment.content} />}
     </div>
@@ -205,6 +210,7 @@ export function ProjectDiscussionThread({
   const [content, setContent, clearDraftIfSubmitted] = useProjectCommentDraft(projectId);
   const [saving, setSaving] = useState(false);
   const [composerUploading, setComposerUploading] = useState(false);
+  const [composerFailedFiles, setComposerFailedFiles] = useState(0);
   const [editing, setEditing] = useState<{ id: string; content: RichTextDoc }>();
   // A refused Post or Save, shown in the box that sent it (#950: beside Send or Save).
   const [mutationError, setMutationError] = useState<{ text: string; from: "post" | "edit" }>();
@@ -311,8 +317,8 @@ export function ProjectDiscussionThread({
   // rejected it with a 400); keyboard submit already refused the same cases.
   const postingPlainText = richTextPlainText(content);
   const postingTooLong = postingPlainText.length > COMMENT_LIMIT;
-  const canPost = !saving && !composerUploading && !postingOverBytes && postingPlainText.trim() !== "" && !postingTooLong;
-  const sendReason = composerUploading ? WAIT_FOR_UPLOADS : postingTooLong ? COMMENT_TOO_LONG : postingOverBytes ? TOO_LARGE : undefined;
+  const canPost = !saving && !composerUploading && composerFailedFiles === 0 && !postingOverBytes && postingPlainText.trim() !== "" && !postingTooLong;
+  const sendReason = composerUploading ? WAIT_FOR_UPLOADS : composerFailedFiles > 0 ? RETRY_OR_REMOVE : postingTooLong ? COMMENT_TOO_LONG : postingOverBytes ? TOO_LARGE : undefined;
   const postProblem = postingTooLong ? COMMENT_TOO_LONG : mutationError?.from === "post" ? mutationError.text : undefined;
 
   const focusInThread = () => { const active = document.activeElement; return active !== null && (composerRef.current?.contains(active) === true || listRef.current?.contains(active) === true); };
@@ -430,13 +436,13 @@ export function ProjectDiscussionThread({
         <QuincyRichTextEditor
           preset="note" ref={composerEditor} id={`project-comment-${projectId}`} value={content} onChange={setContent} limit={COMMENT_LIMIT} disabled={saving} loadMentionables={loadMentionables}
           placeholder={phone ? "Write a project comment…" : "Write a project comment… Use @ to mention project participants."} onSubmit={() => void submit()}
-          media={{ projectId }} linkPreviews={{ projectId }} onUploadingChange={setComposerUploading}
+          media={{ projectId }} linkPreviews={{ projectId }} attachments={{ projectId }} onUploadingChange={setComposerUploading} onFailedFilesChange={setComposerFailedFiles}
           stripContainer={composerStrip} bubbleDocked={phone} bubbleDockTo={() => boxOf(composerField.current)}
         />
       </div>}
       strip={<div ref={setComposerStrip} className="empty:hidden" />}
       notice={postProblem ? <p role="alert" data-testid="discussion-composer-problem" className={BOX_LINE}>{postProblem}</p> : null}
-      attach={{ onPick: () => { composerEditor.current?.pickMedia(); }, disabled: saving }}
+      attach={{ onPick: () => { composerEditor.current?.pickMedia(); }, disabled: saving, label: ATTACH_LABEL }}
       send={{ label: saving ? "Posting…" : "Post comment", onSend: () => void submit(), disabled: !canPost, pending: saving, ...(sendReason ? { reason: sendReason } : {}) }}
     />
   </div>;

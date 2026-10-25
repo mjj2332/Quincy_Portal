@@ -261,15 +261,16 @@ describe("ProjectDiscussionThread", () => {
     const composer = () => state.editors.find((editor) => editor.id === `project-comment-${projectId}`)!;
     const editor = () => state.editors.find((candidate) => candidate.id === undefined)!;
 
-    it("writes a comment in the box's post variant: the note preset, link previews, the paperclip and a round Send, and no hint line", async () => {
+    it("writes a comment in the box's post variant: the note preset, link previews, the paperclip for any file and a round Send, and no hint line", async () => {
       render(); await flush();
       const box = composerBox();
       expect(box.tagName).toBe("FORM");
       expect(box.getAttribute("data-variant")).toBe("post");
-      expect([...box.querySelectorAll<HTMLElement>("[data-testid=note-composer-tools] button")].map((b) => b.getAttribute("aria-label"))).toEqual(["Add photos or videos", "Post comment"]);
+      expect([...box.querySelectorAll<HTMLElement>("[data-testid=note-composer-tools] button")].map((b) => b.getAttribute("aria-label"))).toEqual(["Add files", "Post comment"]);
       expect(composer().preset).toBe("note");
       expect(composer().linkPreviews).toEqual({ projectId });
       expect(composer().media).toEqual({ projectId });
+      expect(composer().attachments).toEqual({ projectId });
       expect(composer().placeholder).toBe("Write a project comment… Use @ to mention project participants.");
       expect(box.textContent).not.toContain("Use @ to mention project participants");
       expect(box.querySelector("[data-testid=note-composer-text]")!.contains(host.querySelector(`[data-testid="editor-project-comment-${projectId}"]`))).toBe(true);
@@ -285,6 +286,11 @@ describe("ProjectDiscussionThread", () => {
       expect(held(send())).toBe(true);
       expect(send()!.getAttribute("title")).toBe("Wait for the uploads to finish.");
       await act(async () => { composer().onUploadingChange(false); await Promise.resolve(); });
+      // An Attachment that failed holds the post until it is retried or removed (#952): a post never goes out missing a file.
+      await act(async () => { composer().onFailedFilesChange(1); await Promise.resolve(); });
+      expect(held(send())).toBe(true);
+      expect(send()!.getAttribute("title")).toBe("Retry or remove the file that failed.");
+      await act(async () => { composer().onFailedFilesChange(0); await Promise.resolve(); });
       await click(send()!); await flush();
       expect(apiPostMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments`, { content: doc("Ready to post") });
     });
@@ -304,14 +310,15 @@ describe("ProjectDiscussionThread", () => {
       expect(problem.nextElementSibling?.getAttribute("data-testid")).toBe("note-composer-tools");
     });
 
-    it("opens the photo and video picker from the paperclip, with no fixed toolbar in the field", async () => {
+    it("opens a picker for any file from the paperclip (#952), with no fixed toolbar in the field", async () => {
       state.realEditor = true;
       render(); await flush();
       expect(composerBox().querySelector('[role="toolbar"][aria-label="Formatting"]')).toBeNull();
-      await click(button(composerBox(), "Add photos or videos")!); await flush();
+      await click(button(composerBox(), "Add files")!); await flush();
       const picker = composerBox().querySelector<HTMLInputElement>('[data-testid="rich-text-media-picker"]');
       expect(picker).not.toBeNull();
-      expect(picker!.accept).toContain("video/");
+      expect(picker!.hasAttribute("accept")).toBe(false);
+      expect(picker!.getAttribute("aria-label")).toBe("Choose files");
     });
 
     it("edits in the same box with Cancel and Save; Save is held while uploading and a refused save shows beside it", async () => {
@@ -321,10 +328,14 @@ describe("ProjectDiscussionThread", () => {
       expect(box.getAttribute("data-variant")).toBe("post");
       expect(editor().preset).toBe("note");
       expect(editor().linkPreviews).toEqual({ projectId });
-      expect([...box.querySelectorAll<HTMLElement>("[data-testid=note-composer-tools] button")].map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Add photos or videos", "Cancel", "Save"]);
+      expect(editor().attachments).toEqual({ projectId });
+      expect([...box.querySelectorAll<HTMLElement>("[data-testid=note-composer-tools] button")].map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Add files", "Cancel", "Save"]);
       await act(async () => { editor().onChange(doc("Edited text")); editor().onUploadingChange(true); await Promise.resolve(); });
       expect(held(button(editBox(), "Save"))).toBe(true);
-      await act(async () => { editor().onUploadingChange(false); await Promise.resolve(); });
+      await act(async () => { editor().onUploadingChange(false); editor().onFailedFilesChange(1); await Promise.resolve(); });
+      expect(held(button(editBox(), "Save"))).toBe(true);
+      expect(button(editBox(), "Save")!.getAttribute("title")).toBe("Retry or remove the file that failed.");
+      await act(async () => { editor().onFailedFilesChange(0); await Promise.resolve(); });
       apiPatchMock.mockRejectedValueOnce(new ApiError("The server refused this edit.", 400));
       await click(button(editBox(), "Save")!); await flush();
       expect(apiPatchMock).toHaveBeenCalledWith(`/api/projects/${projectId}/comments/${ownComment.id}`, { content: doc("Edited text") });

@@ -2,12 +2,12 @@ import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useSt
 import { createPortal } from "react-dom";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import { exitSuggestion } from "@tiptap/suggestion";
-import { ChevronDownIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon, VideoIcon, XIcon } from "lucide-react";
-import { RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_LINK_PREVIEWS, imageAltFromFileName, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextDoc, type RichTextMediaNode } from "@quincy/shared";
+import { ChevronDownIcon, CircleAlertIcon, ImageIcon, ListChecksIcon, ListIcon, ListOrderedIcon, Redo2Icon, TableIcon, Undo2Icon, VideoIcon, XIcon } from "lucide-react";
+import { RICH_TEXT_JSON_MAX_BYTES, RICH_TEXT_MAX_LINK_PREVIEWS, imageAltFromFileName, normalizeAttachmentName, richTextAttachmentIds, richTextDocByteLength, richTextMediaIds, richTextPlainText, type RichTextAttachment, type RichTextDoc, type RichTextMediaNode } from "@quincy/shared";
 import { cn } from "../lib/utils";
 import { useMediaQuery } from "../lib/use-media-query";
 import { EMBEDDED_MEDIA_MAX_PER_POST, EMBEDDED_VIDEO_ACCEPT, RenditionFailedError, embeddedImageAccept, embeddedImageProblem, embeddedVideoProblem, type EditorMediaTransport, type LinkPreviewRequest } from "../lib/embedded-media-core";
-import { splitNoteMedia } from "../lib/note-media-strip";
+import { attachmentCountMessage, attachmentProblem, isAttachmentRefusal, isEmbeddedMediaFile, type EditorAttachmentTransport } from "../lib/attachments-core";
 import { linkPreviewSlot } from "../lib/link-preview-slot";
 import { PastedWebAddressLinks, TypedWebAddressLinks, linkedAddresses } from "../lib/rich-text-address-links";
 import {
@@ -34,6 +34,7 @@ import { EmbeddedVideoNoteNode, EmbeddedVideoWithView } from "./quincy/EmbeddedV
 import { EmbeddedImage as EmbeddedImageThumb } from "./quincy/EmbeddedImage";
 import { EmbeddedVideo as EmbeddedVideoThumb } from "./quincy/EmbeddedVideo";
 import { Spinner } from "./reui/spinner";
+import { AttachmentThumb, FILE_CHIP, FILE_CHIP_META, FILE_CHIP_NAME, FILE_CHIP_THUMB, fileSize } from "./quincy/AttachmentChip";
 import { RichTextFormatBubble, showRichTextFormatBubble } from "./reui/rich-text-editor/rich-text-format-bubble";
 import {
   DropdownMenu,
@@ -176,6 +177,13 @@ export type QuincyRichTextEditorBaseProps = {
   /** Reports whether an image is still uploading, so the host can hold Post / Save until it lands. */
   onUploadingChange?: (uploading: boolean) => void;
   /**
+   * Turns on Attachments (#952), in the note preset: the picker, paste and drop take any file, and a file that is not a photo or video
+   * this person may embed is uploaded through this transport and drawn as a chip in the strip. Absent, the picker is exactly as before.
+   */
+  attachments?: EditorAttachmentTransport;
+  /** Reports how many Attachments failed to upload and wait on Retry or Remove, so the host can hold Post / Save: a post never goes out missing a file. */
+  onFailedFilesChange?: (failed: number) => void;
+  /**
    * Where the formatting toolbar renders (#879, the phone note composer's + tray). Absent: inside the field, as ever. An element: the same toolbar is portalled
    * into it and the field has no toolbar row. `null`: that element is not mounted yet, so there is no toolbar for now.
    */
@@ -211,6 +219,8 @@ export type QuincyRichTextEditorBaseProps = {
 export type RichTextEditorHandle = { pickMedia: () => void; focus: () => void };
 
 type UploadingMedia = EmbeddedUpload;
+/** An Attachment from its pick until it lands (#952): it keeps its `File`, so a failed one can be sent again. */
+type FileEntry = { key: number; file: File; name: string; bytes: number; percent: number; phase: "uploading" | "failed" };
 
 /** A file this editor would send down the video path: a Project's discussion only, and by what the file says it is. */
 const isVideoFile = (file: Pick<File, "type" | "name">) => file.type.startsWith("video/") || /\.(?:mp4|mov)$/i.test(file.name);
@@ -234,6 +244,8 @@ export function QuincyRichTextEditorBase({
   media,
   linkPreviews,
   onUploadingChange,
+  attachments,
+  onFailedFilesChange,
   toolbarContainer,
   inlineStart,
   inlineEnd,
@@ -307,6 +319,15 @@ export function QuincyRichTextEditorBase({
   const landedSeq = useRef(new Map<string, number>());
   const fileNames = useRef(new Map<string, string>());
   const uploadSizes = useRef(new Map<number, number>());
+  // Attachments (#952), in the note preset only: its strip is what draws them. Each file's chip lives from the pick until its node lands.
+  const attachmentsOn = isNote && attachments !== undefined;
+  const attachmentsRef = useRef(attachmentsOn ? attachments : undefined); attachmentsRef.current = attachmentsOn ? attachments : undefined;
+  const [fileEntries, setFileEntries] = useState<FileEntry[]>([]);
+  const fileEntriesRef = useRef(fileEntries); fileEntriesRef.current = fileEntries;
+  const fileRuns = useRef(new Map<number, { controller: AbortController; settle: () => void }>());
+  const onFailedFilesChangeRef = useRef(onFailedFilesChange); onFailedFilesChangeRef.current = onFailedFilesChange;
+  const failedFiles = fileEntries.filter((entry) => entry.phase === "failed").length;
+  const failedFilesRef = useRef(failedFiles); failedFilesRef.current = failedFiles;
   const pickerRef = useRef<HTMLInputElement>(null);
   // The nodes show a medium from where the host says it is read (the staff route by default, a Review link's own for a guest, #835).
   const mediaUrl = media?.mediaUrl; const posterUrl = media?.posterUrl;
@@ -336,7 +357,7 @@ export function QuincyRichTextEditorBase({
       // A file dropped or pasted into the editor is ours to handle: letting the browser have it would
       // navigate away from the page (and the unsaved comment) or paste a foreign <img>.
       handlePaste: (_view, event) => {
-        if (!mediaRef.current || disabledRef.current) return false;
+        if ((!mediaRef.current && !attachmentsRef.current) || disabledRef.current) return false;
         const files = Array.from(event.clipboardData?.files ?? []);
         if (!files.length) return false;
         event.preventDefault(); addImagesRef.current(files); return true;
@@ -346,7 +367,7 @@ export function QuincyRichTextEditorBase({
         if (!files.length) return false;
         event.preventDefault();
         // The drop lands where it was released, not wherever the selection is by the time the upload finishes. A note's lands at its end (#927).
-        if (mediaRef.current && !disabledRef.current) addImagesRef.current(files, preset === "note" ? undefined : view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos);
+        if ((mediaRef.current || attachmentsRef.current) && !disabledRef.current) addImagesRef.current(files, preset === "note" ? undefined : view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos);
         return true;
       },
       // In the pill (#879 fix r3) the caret is kept in view inside the field's own clamped box only: a scroll of any outer box, or of the page, is
@@ -379,10 +400,10 @@ export function QuincyRichTextEditorBase({
         if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
           const doc = tiptapToRichTextDoc(view.state.doc.toJSON());
           const plainText = richTextPlainText(doc);
-          // Never submit while an image is still uploading: the post would go without it.
-          if (inFlight.current > 0) { event.preventDefault(); return true; }
-          // A note posts with text or media (#927 D2); the other presets need text.
-          const hasContent = plainText.trim().length > 0 || (preset === "note" && richTextMediaIds(doc).length > 0);
+          // Never submit while a file is still uploading, or while an Attachment that failed waits on Retry or Remove: the post would go without it.
+          if (inFlight.current > 0 || failedFilesRef.current > 0) { event.preventDefault(); return true; }
+          // A note posts with text, media or files (#927 D2, #952); the other presets need text.
+          const hasContent = plainText.trim().length > 0 || (preset === "note" && (richTextMediaIds(doc).length > 0 || richTextAttachmentIds(doc).length > 0));
           if (hasContent && plainText.length <= limitRef.current && richTextDocByteLength(stripEmbeddedDisplay(doc)) <= maxBytesRef.current && !disabledRef.current) {
             event.preventDefault();
             onSubmitRef.current?.();
@@ -473,7 +494,7 @@ export function QuincyRichTextEditorBase({
     const tail = noteMediaTailStart(doc);
     let at = doc.content.size;
     doc.forEach((child, offset) => {
-      if (at === doc.content.size && offset >= tail && (landedSeq.current.get(String(child.attrs.mediaId ?? "")) ?? 0) > key) at = offset;
+      if (at === doc.content.size && offset >= tail && (landedSeq.current.get(String(child.attrs.mediaId ?? child.attrs.attachmentId ?? "")) ?? 0) > key) at = offset;
     });
     return at;
   };
@@ -482,12 +503,27 @@ export function QuincyRichTextEditorBase({
   // upload still running when the editor unmounts is cancelled (the server is told, so no reservation is left).
   addImagesRef.current = (files: File[], at?: number, as?: "image" | "video") => {
     const transport = mediaRef.current;
+    const filesTransport = attachmentsRef.current;
     const current = editorRef.current;
-    if (!transport || !current) return;
-    const videos = transport.video;
+    if (!current || (!transport && !filesTransport)) return;
+    const videos = transport?.video ?? false;
     const problems: string[] = [];
-    let slots = EMBEDDED_MEDIA_MAX_PER_POST - richTextMediaIds(tiptapToRichTextDoc(current.getJSON())).length - inFlight.current;
+    const held = tiptapToRichTextDoc(current.getJSON());
+    let slots = EMBEDDED_MEDIA_MAX_PER_POST - richTextMediaIds(held).length - (inFlight.current - fileRuns.current.size);
+    let fileSlots = filesTransport ? filesTransport.maxPerPost - richTextAttachmentIds(held).length - fileEntriesRef.current.length : 0;
     for (const file of files) {
+      // The split (#952 D8), by type and never by size: a photo or video this person may embed stays Embedded media; anything else is an Attachment.
+      if (filesTransport && as === undefined && !(transport && isEmbeddedMediaFile(file, { heic: heicRef.current, video: videos }))) {
+        const problem = attachmentProblem(file, filesTransport.maxBytes) ?? (fileSlots <= 0 ? attachmentCountMessage(filesTransport.maxPerPost) : null);
+        if (problem) { problems.push(problem); continue; }
+        fileSlots -= 1;
+        const entry: FileEntry = { key: ++uploadSeq.current, file, name: file.name || "File", bytes: file.size, percent: 0, phase: "uploading" };
+        fileEntriesRef.current = [...fileEntriesRef.current, entry];
+        setFileEntries((entries) => [...entries, entry]);
+        startFile(entry.key, file);
+        continue;
+      }
+      if (!transport) continue;
       const kind = as ?? (videos && isVideoFile(file) ? "video" : "image");
       const problem = (kind === "video" ? embeddedVideoProblem(file) : embeddedImageProblem(file, heicRef.current)) ?? (slots <= 0 ? `A post can hold ${EMBEDDED_MEDIA_MAX_PER_POST} ${videos ? "images and videos" : "images"} at most.` : null);
       if (problem) { problems.push(problem); continue; }
@@ -547,6 +583,58 @@ export function QuincyRichTextEditorBase({
     }
     setUploadErrors(problems);
   };
+  // One Attachment's upload (#952): presign, bytes and complete through the host's transport, then its node lands at the end of the note in
+  // the order the files were chosen. A refusal (a 4xx: the file itself is the problem) drops the chip and shows the server's words; any
+  // other failure keeps the chip as failed, with Retry (a fresh upload of the same file) and Remove. Cancelling or unmounting aborts it,
+  // and the transport then tells the server, so no reservation is left behind.
+  function startFile(key: number, file: File) {
+    const filesTransport = attachmentsRef.current;
+    if (!filesTransport) return;
+    const controller = new AbortController();
+    let settled = false;
+    const settle = () => {
+      if (settled) return; settled = true;
+      fileRuns.current.delete(key); inFlight.current -= 1;
+      if (mountedRef.current && inFlight.current === 0) onUploadingChangeRef.current?.(false);
+    };
+    fileRuns.current.set(key, { controller, settle });
+    inFlight.current += 1; onUploadingChangeRef.current?.(true);
+    const live = () => mountedRef.current && !controller.signal.aborted;
+    const update = (patch: Partial<FileEntry>) => { if (live()) setFileEntries((entries) => entries.map((entry) => entry.key === key ? { ...entry, ...patch } : entry)); };
+    const drop = () => setFileEntries((entries) => entries.filter((entry) => entry.key !== key));
+    void filesTransport.upload(file, { signal: controller.signal, onProgress: (percent) => update({ percent }) })
+      .then((attachmentId) => {
+        const editorNow = editorRef.current;
+        if (!live() || !editorNow || editorNow.isDestroyed) return;
+        landedSeq.current.set(attachmentId, key);
+        // The name the server stores (it trims what a download could not keep); the size only the local File knows until the server serves it.
+        const attrs = { attachmentId, name: normalizeAttachmentName(file.name) ?? file.name, bytes: file.size };
+        // insertContentAt selects inserted content by default; an async insert must leave the caret where the author is typing.
+        editorNow.chain().command(({ tr }) => { tr.setMeta(UPLOAD_INSERT_META, true); return true; }).insertContentAt(noteInsertPosition(editorNow.state.doc, key), { type: "attachment", attrs }, { updateSelection: false }).run();
+        drop();
+      })
+      .catch((reason: unknown) => {
+        if (!live() || (reason instanceof Error && reason.name === "AbortError")) return;
+        if (isAttachmentRefusal(reason)) {
+          drop();
+          setUploadErrors((entries) => [...entries, reason instanceof Error && reason.message ? reason.message : `${file.name || "This file"} can't be attached.`]);
+          return;
+        }
+        update({ phase: "failed" });
+      })
+      .finally(settle);
+  }
+  const retryFile = (key: number) => {
+    const entry = fileEntriesRef.current.find((candidate) => candidate.key === key);
+    if (!entry || entry.phase !== "failed" || disabledRef.current) return;
+    setFileEntries((entries) => entries.map((candidate) => candidate.key === key ? { ...candidate, phase: "uploading", percent: 0 } : candidate));
+    startFile(key, entry.file);
+  };
+  const removeFile = (key: number) => {
+    const run = fileRuns.current.get(key);
+    run?.controller.abort(); run?.settle();
+    setFileEntries((entries) => entries.filter((entry) => entry.key !== key));
+  };
   // A link was just applied: ask for its card and put it after the link's top-level block. The place is carried through later
   // edits like an upload's, and a late answer (the content was replaced, the editor unmounted, three cards already, the same address
   // already carded) is dropped. No card, a refusal or a failure all leave the link a link.
@@ -594,8 +682,11 @@ export function QuincyRichTextEditorBase({
   useEffect(() => () => { for (const controller of previewControllers.current) controller.abort(); }, []);
   useEffect(() => () => {
     for (const entry of [...running.current.values()]) { entry.controller.abort(); entry.discard(); }
+    for (const run of [...fileRuns.current.values()]) run.controller.abort();
     if (inFlight.current > 0) onUploadingChangeRef.current?.(false);
+    if (failedFilesRef.current > 0) onFailedFilesChangeRef.current?.(0);
   }, []);
+  useEffect(() => { onFailedFilesChangeRef.current?.(failedFiles); }, [failedFiles]);
   // A video can take minutes: leaving the page would lose it, so the browser is asked to confirm. Images are over too fast to warn about.
   const uploadingVideo = uploads.some((entry) => entry.kind === "video");
   useEffect(() => {
@@ -681,7 +772,7 @@ export function QuincyRichTextEditorBase({
     else dom.removeAttribute("aria-activedescendant");
   }, [editor, mentionA11y]);
   useImperativeHandle(ref, () => ({
-    pickMedia: () => { if (mediaRef.current && !disabledRef.current) setPicking((previous) => ({ n: (previous?.n ?? 0) + 1, kind: "media" })); },
+    pickMedia: () => { if ((mediaRef.current || attachmentsRef.current) && !disabledRef.current) setPicking((previous) => ({ n: (previous?.n ?? 0) + 1, kind: "media" })); },
     focus: () => { if (editorRef.current && !editorRef.current.isDestroyed) editorRef.current.commands.focus(); },
   }), []);
   // ⌘K opens the link field, which lives in a note's bubble: raise the bubble to show it (#927).
@@ -705,24 +796,31 @@ export function QuincyRichTextEditorBase({
   // every Project surface that renders the composer. It is the installed ReUI `Input`, clicked as soon as it mounts.
   const choose = (kind: "image" | "video") => setPicking((previous) => ({ n: (previous?.n ?? 0) + 1, kind }));
   // The note preset's one picker takes photos and videos together, each file sorted by what it is (#927).
-  const pickerAccept = picking?.kind === "video" ? EMBEDDED_VIDEO_ACCEPT : picking?.kind === "media" && media?.video ? `${embeddedImageAccept(heicEnabled)},${EMBEDDED_VIDEO_ACCEPT}` : embeddedImageAccept(heicEnabled);
-  const pickerName = picking?.kind === "video" ? "Choose videos" : picking?.kind === "media" ? (media?.video ? "Choose photos or videos" : "Choose photos") : "Choose images";
+  // With Attachments on (#952), the paperclip's picker takes any file (iOS then offers Photo Library, Take Photo and Choose File); each is sorted on arrival.
+  const anyFile = attachmentsOn && picking?.kind === "media";
+  const pickerAccept = anyFile ? undefined : picking?.kind === "video" ? EMBEDDED_VIDEO_ACCEPT : picking?.kind === "media" && media?.video ? `${embeddedImageAccept(heicEnabled)},${EMBEDDED_VIDEO_ACCEPT}` : embeddedImageAccept(heicEnabled);
+  const pickerName = anyFile ? "Choose files" : picking?.kind === "video" ? "Choose videos" : picking?.kind === "media" ? (media?.video ? "Choose photos or videos" : "Choose photos") : "Choose images";
 
   // The note preset's draft strip (#927, C4): every photo and video the note holds, landed or still uploading, in the order chosen.
   const findMedia = (mediaId: string) => {
     let found: { pos: number; size: number; attrs: Record<string, unknown> } | null = null;
-    editor.state.doc.forEach((child, offset) => { if (!found && (child.type.name === "image" || child.type.name === "video") && child.attrs.mediaId === mediaId) found = { pos: offset, size: child.nodeSize, attrs: child.attrs }; });
+    editor.state.doc.forEach((child, offset) => { if (!found && (((child.type.name === "image" || child.type.name === "video") && child.attrs.mediaId === mediaId) || (child.type.name === "attachment" && child.attrs.attachmentId === mediaId))) found = { pos: offset, size: child.nodeSize, attrs: child.attrs }; });
     return found as { pos: number; size: number; attrs: Record<string, unknown> } | null;
   };
+  // Photos, videos and Attachments (#952) together, in document order for what the note already holds and in the order chosen for what lands.
   const stripItems: NoteStripItem[] = isNote ? [
-    ...splitNoteMedia(value).media.map((node): NoteStripItem => ({ state: "ready", seq: landedSeq.current.get(node.attrs.mediaId) ?? 0, node })),
+    ...value.content.flatMap((block): NoteStripItem[] => block.type === "image" || block.type === "video" ? [{ state: "ready", seq: landedSeq.current.get(block.attrs.mediaId) ?? 0, node: block }]
+      : block.type === "attachment" ? [{ state: "file", seq: landedSeq.current.get(block.attrs.attachmentId) ?? 0, node: block }] : []),
     ...uploads.filter((entry) => (entry.phase ?? "uploading") === "uploading").map((entry): NoteStripItem => ({ state: "uploading", seq: entry.key, entry, size: uploadSizes.current.get(entry.key) })),
+    ...fileEntries.map((entry): NoteStripItem => ({ state: "file-entry", seq: entry.key, entry })),
   ].sort((a, b) => a.seq - b.seq) : [];
   const strip = stripItems.length > 0 ? <NoteDraftStrip
     items={stripItems} disabled={disabled} phone={phone} inline={stripContainer === undefined} mediaUrl={mediaUrl} posterUrl={posterUrl}
     nameOf={(node) => node.type === "image" ? node.attrs.alt?.trim() || fileNames.current.get(node.attrs.mediaId) || "Image" : fileNames.current.get(node.attrs.mediaId) ?? "Video"}
     onRemove={(mediaId) => { const at = findMedia(mediaId); if (at) editor.view.dispatch(editor.state.tr.delete(at.pos, at.pos + at.size)); }}
     onCancel={(key) => { running.current.get(key)?.release(); announceCancelled(); }}
+    onCancelFile={(key) => { const wasUploading = fileRuns.current.has(key); removeFile(key); if (wasUploading) announceCancelled(); }}
+    onRetryFile={retryFile}
     onAlt={(mediaId, alt) => { const at = findMedia(mediaId); if (at) editor.view.dispatch(editor.state.tr.setNodeMarkup(at.pos, undefined, { ...at.attrs, alt })); }}
     onFocusText={() => editor.commands.focus()}
   /> : null;
@@ -825,14 +923,13 @@ export function QuincyRichTextEditorBase({
 
 type NoteStripItem =
   | { state: "ready"; seq: number; node: RichTextMediaNode }
-  | { state: "uploading"; seq: number; entry: UploadingMedia; size: number | undefined };
+  | { state: "uploading"; seq: number; entry: UploadingMedia; size: number | undefined }
+  | { state: "file"; seq: number; node: RichTextAttachment }
+  | { state: "file-entry"; seq: number; entry: FileEntry };
 
-/** A file's size as the frame writes it (C4): one decimal in MB, whole KB below that. */
-const fileSize = (bytes: number) => bytes >= 1_000_000 ? `${(bytes / 1_000_000).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1000))} KB`;
-
-/** The chip's frame (C4 `.cmp-file`): 40px (--space-6 + --space-2) on the raised chrome, a softened hairline, 4px in from its ends. */
-const NOTE_CHIP = "inline-flex h-[calc(var(--space-6)+var(--space-2))] max-w-full items-center gap-[var(--space-2)] rounded-[var(--radius-md)] border border-[color-mix(in_srgb,var(--border)_55%,transparent)] bg-card px-[var(--space-1)] text-foreground";
-const NOTE_CHIP_NAME = "min-w-0 max-w-[15ch] truncate [font:var(--type-label)]";
+/** The chip's frame (C4 `.cmp-file`), shared with the posted Attachment chip (`quincy/AttachmentChip`). */
+const NOTE_CHIP = FILE_CHIP;
+const NOTE_CHIP_NAME = FILE_CHIP_NAME;
 
 /**
  * The note preset's draft strip (#927, frame C4): one chip per photo or video, with its thumb (the posted tile's dialog, at 32px), its
@@ -842,7 +939,7 @@ const NOTE_CHIP_NAME = "min-w-0 max-w-[15ch] truncate [font:var(--type-label)]";
  *
  * × keeps the focus where it was on a press (a phone keeps its keyboard), and gives a keyboard user's focus back to the text.
  */
-function NoteDraftStrip({ items, disabled, phone, inline, mediaUrl, posterUrl, nameOf, onRemove, onCancel, onAlt, onFocusText }: {
+function NoteDraftStrip({ items, disabled, phone, inline, mediaUrl, posterUrl, nameOf, onRemove, onCancel, onCancelFile, onRetryFile, onAlt, onFocusText }: {
   items: readonly NoteStripItem[];
   disabled: boolean;
   phone: boolean;
@@ -853,14 +950,43 @@ function NoteDraftStrip({ items, disabled, phone, inline, mediaUrl, posterUrl, n
   nameOf: (node: RichTextMediaNode) => string;
   onRemove: (mediaId: string) => void;
   onCancel: (key: number) => void;
+  /** An Attachment's chip before it lands (#952): x cancels or drops it, Retry sends a failed one again. */
+  onCancelFile: (key: number) => void;
+  onRetryFile: (key: number) => void;
   onAlt: (mediaId: string, alt: string | null) => void;
   onFocusText: () => void;
 }) {
   // A phone's × reaches 44px around its 24px glyph button, as the box's own small controls do.
   const remove = cn("text-foreground-secondary hover:text-foreground", phone && "relative after:absolute after:-inset-[calc(var(--space-2)+var(--space-1)/2)] after:content-['']");
   const press = (event: ReactMouseEvent<HTMLButtonElement>, run: () => void) => { const hadFocus = document.activeElement === event.currentTarget; run(); if (hadFocus) onFocusText(); };
-  return <ul data-testid="note-draft-strip" role="list" aria-label="Attached media" className={cn("m-0 flex list-none flex-wrap gap-[calc(var(--space-1)*1.5)] p-0", inline && "mt-[var(--space-2)]")}>
+  const label = items.some((item) => item.state === "file" || item.state === "file-entry") ? "Attached files" : "Attached media";
+  return <ul data-testid="note-draft-strip" role="list" aria-label={label} className={cn("m-0 flex list-none flex-wrap gap-[calc(var(--space-1)*1.5)] p-0", inline && "mt-[var(--space-2)]")}>
     {items.map((item) => {
+      if (item.state === "file") {
+        const { attachmentId, name: served, bytes } = item.node.attrs;
+        const name = served || "File";
+        return <li key={`attachment-${attachmentId}`} data-testid="note-draft-chip" data-state="ready" data-kind="attachment" title={name} className={NOTE_CHIP}>
+          <AttachmentThumb name={name} />
+          <span className={NOTE_CHIP_NAME}>{name}</span>
+          {typeof bytes === "number" && <span className={FILE_CHIP_META}>{fileSize(bytes)}</span>}
+          <Button type="button" variant="ghost" size="icon-xs" aria-label={`Remove ${name}`} title="Remove" disabled={disabled} className={remove} onMouseDown={keepEditorFocus} onClick={(event) => press(event, () => onRemove(attachmentId))}><XIcon aria-hidden="true" /></Button>
+        </li>;
+      }
+      if (item.state === "file-entry") {
+        const { entry } = item;
+        const failed = entry.phase === "failed";
+        return <li key={`file-${entry.key}`} data-testid="note-draft-chip" data-state={entry.phase} data-kind="attachment" title={entry.name} className={NOTE_CHIP}>
+          {failed
+            ? <span aria-hidden="true" className={cn(FILE_CHIP_THUMB, "text-destructive")}><CircleAlertIcon className="size-4" /></span>
+            : <span className={FILE_CHIP_THUMB}><Spinner aria-hidden="true" role="presentation" className="size-3.5" /></span>}
+          <span className={NOTE_CHIP_NAME}>{entry.name}</span>
+          {failed
+            ? <span className={cn(FILE_CHIP_META, "text-destructive")}>Upload failed</span>
+            : <><span className={FILE_CHIP_META}>{fileSize(entry.bytes)}</span><span className="sr-only">Uploading, {Math.round(entry.percent)}%</span></>}
+          {failed && <Button type="button" variant="ghost" size="xs" aria-label={`Retry ${entry.name}`} disabled={disabled} onMouseDown={keepEditorFocus} onClick={(event) => press(event, () => onRetryFile(entry.key))}>Retry</Button>}
+          <Button type="button" variant="ghost" size="icon-xs" aria-label={`Remove ${entry.name}`} title="Remove" className={remove} onMouseDown={keepEditorFocus} onClick={(event) => press(event, () => onCancelFile(entry.key))}><XIcon aria-hidden="true" /></Button>
+        </li>;
+      }
       if (item.state === "uploading") {
         const { entry } = item;
         return <li key={`uploading-${entry.key}`} data-testid="note-draft-chip" data-state="uploading" title={entry.name} className={NOTE_CHIP}>

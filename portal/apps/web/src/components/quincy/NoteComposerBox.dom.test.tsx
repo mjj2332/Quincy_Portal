@@ -318,6 +318,12 @@ describe("NoteComposerBox, post (#950: R1's row, E1's Cancel and Save)", () => {
     expect(host.querySelector("form")!.textContent).not.toMatch(/Internal|Client-visible|Cancel/);
   });
 
+  it("names the paperclip by its `attach.label` where it takes any file (#952), and keeps its title in step", async () => {
+    await mount(post({ attach: { onPick: vi.fn(), label: "Add files" } }));
+    expect(rowNames()).toEqual(["Add files", "Post comment"]);
+    expect(byLabel("Add files")!.getAttribute("title")).toBe("Add files");
+  });
+
   it("the paperclip opens the picker; it and Send keep the field's focus, so a phone keeps its keyboard", async () => {
     const p = post();
     await mount(p);

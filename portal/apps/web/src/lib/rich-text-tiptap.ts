@@ -53,6 +53,10 @@ export function toTiptap(doc: RichTextDoc): Record<string, unknown> {
       return { type: "video", attrs: { mediaId: attrs?.mediaId, ...(typeof attrs?.hasPoster === "boolean" ? { hasPoster: attrs.hasPoster } : {}) } };
     }
     if (valueNode.type === "linkPreview") return { type: "linkPreview", attrs: { ...(valueNode.attrs as Record<string, unknown>) } };
+    if (valueNode.type === "attachment") {
+      const attrs = valueNode.attrs as Record<string, unknown> | undefined;
+      return { type: "attachment", attrs: { attachmentId: attrs?.attachmentId, ...(typeof attrs?.name === "string" ? { name: attrs.name } : {}), ...(typeof attrs?.bytes === "number" ? { bytes: attrs.bytes } : {}) } };
+    }
     if (valueNode.type === "heading" || valueNode.type === "taskItem") return { type: valueNode.type, attrs: { ...(valueNode.attrs as Record<string, unknown>) }, ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
     if (valueNode.type === "paragraph" && valueNode.attrs) return { type: "paragraph", attrs: tiptapTextAlign(valueNode.attrs as Record<string, unknown>), ...(Array.isArray(valueNode.content) ? { content: valueNode.content.map(copy) } : {}) };
     if (valueNode.type === "tableCell" || valueNode.type === "tableHeader") {
@@ -227,6 +231,31 @@ export const LinkPreview = TiptapNode.create({
   renderHTML({ node }) { return ["div", { "data-link-preview": String(node.attrs.previewId ?? ""), class: "rich-text__link-preview" }, String(node.attrs.title ?? node.attrs.url ?? "")]; },
 });
 
+/**
+ * An Attachment (#952): an atom that names a stored file by id, at the top level only. `name` and `bytes` are what the server serves for the
+ * chip and live on the editor node only so it can draw; `tiptapToRichTextDoc` strips them back to the id. No `parseHTML` rule, so pasted
+ * HTML never becomes one: the only way in is the editor's own upload. In the note preset only (a Project discussion comment), where the
+ * strip draws it; it renders nothing in the text.
+ */
+export const Attachment = TiptapNode.create({
+  name: "attachment",
+  group: "block",
+  atom: true,
+  draggable: false,
+  // Like a note's photo or video: an invisible atom the caret steps over, removed by its chip's x, a selection deleted over it, Backspace or Delete.
+  selectable: false,
+  addAttributes() { return { attachmentId: { default: null }, name: { default: null, rendered: false }, bytes: { default: null, rendered: false } }; },
+  parseHTML() { return []; },
+  renderHTML({ node }) { return ["div", { "data-attachment-id": String(node.attrs.attachmentId ?? ""), class: "rich-text__attachment", hidden: "" }]; },
+  addNodeView() {
+    return () => {
+      const dom = document.createElement("div");
+      dom.hidden = true; dom.contentEditable = "false"; dom.dataset.noteMedia = "attachment";
+      return { dom, ignoreMutation: () => true };
+    };
+  },
+});
+
 /** The address a link or card names, as the server normalises it (a card's `url` is the normalised form of the link it was fetched for). */
 function previewAddress(href: unknown): string {
   const raw = String(href ?? "");
@@ -334,8 +363,9 @@ const NoteTaskList = TaskList.extend({
 });
 const noteTaskItem = (content: string) => TaskItem.extend({ content, parseHTML() { return []; }, addInputRules() { return []; } }).configure({ nested: true });
 
-const isMediaNode = (node: ProseMirrorNode) => node.type.name === "image" || node.type.name === "video";
-const mediaIdOf = (node: ProseMirrorNode) => String(node.attrs.mediaId ?? "");
+// An Attachment (#952) is drawn by the same strip, so it is part of the same tail.
+const isMediaNode = (node: ProseMirrorNode) => node.type.name === "image" || node.type.name === "video" || node.type.name === "attachment";
+const mediaIdOf = (node: ProseMirrorNode) => String(node.attrs.mediaId ?? node.attrs.attachmentId ?? "");
 /** Where the run of media that ends the note starts (the document's size when it does not end with media). */
 export function noteMediaTailStart(doc: ProseMirrorNode): number {
   let start = doc.content.size;
@@ -412,7 +442,7 @@ export function createRichTextEditorExtensions(preset: RichTextEditorPreset = "c
     LinkPreview,
     LinkPreviewFollowsLink,
     ...(preset === "composer" || note ? [EmbeddedVideo] : []),
-    ...(note ? [NoteMediaTail] : []),
+    ...(note ? [Attachment, NoteMediaTail] : []),
     ...(preset === "document" ? documentExtensions() : []),
   ];
 }
@@ -453,6 +483,11 @@ export function tiptapToRichTextDoc(value: unknown, options: { keepPreviewDispla
       if (options.keepPreviewDisplay) return { type: "linkPreview", attrs: { previewId: attrs?.previewId, url: attrs?.url, title: attrs?.title ?? null, description: attrs?.description ?? null, siteName: attrs?.siteName ?? null, imageMediaId: attrs?.imageMediaId ?? null } };
       return { type: "linkPreview", attrs: { previewId: attrs?.previewId } };
     }
+    if (valueNode.type === "attachment") {
+      const attrs = valueNode.attrs as Record<string, unknown> | undefined;
+      // The stored form is the id alone. A local draft (`keepPreviewDisplay`) also keeps the name and size the chip shows.
+      return { type: "attachment", attrs: { attachmentId: attrs?.attachmentId, ...(options.keepPreviewDisplay && typeof attrs?.name === "string" ? { name: attrs.name } : {}), ...(options.keepPreviewDisplay && typeof attrs?.bytes === "number" ? { bytes: attrs.bytes } : {}) } };
+    }
     if (valueNode.type === "heading") {
       const attrs = valueNode.attrs as Record<string, unknown> | undefined;
       return { type: "heading", attrs: { level: attrs?.level, ...alignAttrs(attrs) }, ...children };
@@ -477,11 +512,18 @@ export function tiptapToRichTextDoc(value: unknown, options: { keepPreviewDispla
   return copy(value) as RichTextDoc;
 }
 
-/** The form a post is sent in: every link card is its preview id alone and every video its media id alone, whatever a local draft or the server's served form kept for drawing them (a link card's text and image, a video's `hasPoster`), and an image its id and alt without the served `width` and `height` (#611). */
+/** The form a post is sent in: every link card is its preview id alone, every video its media id alone and every Attachment its id alone, whatever a local draft or the server's served form kept for drawing them (a link card's text and image, a video's `hasPoster`, a file's name and size), and an image its id and alt without the served `width` and `height` (#611). */
 export function stripEmbeddedDisplay(doc: RichTextDoc): RichTextDoc {
-  const needsStrip = (block: RichTextDoc["content"][number]) => (block.type === "linkPreview" && Object.keys(block.attrs).length > 1) || (block.type === "video" && "hasPoster" in block.attrs) || (block.type === "image" && ("width" in block.attrs || "height" in block.attrs));
+  const needsStrip = (block: RichTextDoc["content"][number]) => (block.type === "linkPreview" && Object.keys(block.attrs).length > 1) || (block.type === "video" && "hasPoster" in block.attrs) || (block.type === "image" && ("width" in block.attrs || "height" in block.attrs)) || (block.type === "attachment" && ("name" in block.attrs || "bytes" in block.attrs));
   if (!doc.content.some(needsStrip)) return doc;
-  return { ...doc, content: doc.content.map((block) => !needsStrip(block) ? block : block.type === "linkPreview" ? { type: "linkPreview" as const, attrs: { previewId: block.attrs.previewId } } : block.type === "image" ? { type: "image" as const, attrs: { mediaId: block.attrs.mediaId, ...(block.attrs.alt ? { alt: block.attrs.alt } : {}) } } : { type: "video" as const, attrs: { mediaId: (block as Extract<typeof block, { type: "video" }>).attrs.mediaId } }) };
+  const strip = (block: RichTextDoc["content"][number]): RichTextDoc["content"][number] => {
+    if (!needsStrip(block)) return block;
+    if (block.type === "linkPreview") return { type: "linkPreview", attrs: { previewId: block.attrs.previewId } };
+    if (block.type === "image") return { type: "image", attrs: { mediaId: block.attrs.mediaId, ...(block.attrs.alt ? { alt: block.attrs.alt } : {}) } };
+    if (block.type === "attachment") return { type: "attachment", attrs: { attachmentId: block.attrs.attachmentId } };
+    return { type: "video", attrs: { mediaId: (block as Extract<typeof block, { type: "video" }>).attrs.mediaId } };
+  };
+  return { ...doc, content: doc.content.map(strip) };
 }
 
 export function mentionQuery(editor: NonNullable<ReturnType<typeof useEditor>>): string | null {
