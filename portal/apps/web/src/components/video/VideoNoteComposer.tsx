@@ -11,6 +11,7 @@ import { Button } from "../quincy/Button";
 import { DRAWING_NEEDS_WORDS, NoteComposerBox, rangeChip, type NoteAnchorChip } from "../quincy/NoteComposerBox";
 import { SHEET_TEXT, SheetModeContext, usePostHold } from "../quincy/ReviewSheet";
 import { MARKUP_FULL_TEXT, type NoteDrawControls } from "./VideoMarkupOverlay";
+import { ATTACHMENT_RETRY_OR_REMOVE as RETRY_OR_REMOVE } from "../../lib/attachments";
 import { VideoNoteEditor } from "./VideoNoteEditor";
 
 /** A line in the box above its tools (a lock, a problem). Label type: the box is quiet, so these are text, not cards. */
@@ -50,6 +51,8 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
   const sheet = useContext(SheetModeContext);
   const [focused, setFocused] = useState(false);
   const [uploading, setUploading] = useState(false);
+  // How many files failed to upload (#955): Send waits until each is retried or removed, as a comment's does (#952).
+  const [failedFiles, setFailedFiles] = useState(0);
   const [strip, setStrip] = useState<HTMLDivElement | null>(null);
   const editor = useRef<RichTextEditorHandle>(null);
   const fieldRef = useRef<HTMLDivElement>(null);
@@ -67,7 +70,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
   const drawingNow = markup && slot.draw !== null;
   const tooLong = composer.body.length > VIDEO_NOTE_BODY_MAX;
   const hasText = composer.body.trim() !== "";
-  const canPost = clock !== null && op === null && otherForm === null && hasText && !tooLong && !uploading;
+  const canPost = clock !== null && op === null && otherForm === null && hasText && !tooLong && !uploading && failedFiles === 0;
   const frozen = phase !== "idle";
   const submit = () => { if (canPost && clock) void store.post(assetId, { clock, frameCount, send: post, markup }); };
   const mark = (kind: "in" | "out") => { if (clock) store.mark(assetId, kind, frameOnScreen(clock.getState()), clock); };
@@ -79,7 +82,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
       : { kind: "point", at: timecode(drawn?.drawingFrame ?? composer.anchorFrame ?? liveFrame), following: composer.anchorFrame === null && drawn === null });
   const label = phase === "confirming" ? "Confirming…" : phase === "posting" ? "Posting…" : problem?.retry ? "Retry" : "Post note";
   const lock = clock === null ? "Loading the film…" : otherForm !== null ? `Finish or cancel the open ${otherForm} first.` : null;
-  const sendReason = lock ?? (uploading ? "Wait for the uploads to finish." : tooLong ? `Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.` : !hasText && drawn ? DRAWING_NEEDS_WORDS : undefined);
+  const sendReason = lock ?? (uploading ? "Wait for the uploads to finish." : failedFiles > 0 ? RETRY_OR_REMOVE : tooLong ? `Notes can be ${VIDEO_NOTE_BODY_MAX.toLocaleString("en")} characters at most.` : !hasText && drawn ? DRAWING_NEEDS_WORDS : undefined);
 
   // The phone layout follows the sheet's mode and nothing else (#879 fix). Outside a phone sheet (a composer rendered on its own) the field's focus stands in for it.
   const composing = phone && (sheet ? sheet.mode === "compose" : focused);
@@ -125,7 +128,7 @@ export function VideoNoteComposer({ store, assetId, clock, frameCount, timecode,
     <VideoNoteEditor
       ref={editor} id="video-note-body" projectId={rich.projectId} role={rich.role} value={draftDoc(composer.content, composer.body)} disabled={frozen}
       placeholder={phone ? (drawn ? "Add a note with this drawing…" : "Add a note…") : PLACEHOLDER}
-      onChange={(doc) => { if (!frozen) store.setContent(assetId, doc, clock ? frameOnScreen(clock.getState()) : 0); }} onSubmit={send} onUploadingChange={onUploadingChange}
+      onChange={(doc) => { if (!frozen) store.setContent(assetId, doc, clock ? frameOnScreen(clock.getState()) : 0); }} onSubmit={send} onUploadingChange={onUploadingChange} onFailedFilesChange={setFailedFiles}
       stripContainer={strip} bubbleDocked={phone} bubbleDockTo={() => fieldRef.current?.closest('[data-testid="note-composer-box"]') ?? null}
     />
   </div>;

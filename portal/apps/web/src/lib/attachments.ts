@@ -1,6 +1,9 @@
 import { apiPost } from "./api";
 import { uploadAttachmentVia, type AttachmentIo, type AttachmentUploadOptions } from "./attachments-core";
 
+/** An Attachment failed to upload (#952, #955): Post, Send and Save wait until it is retried or removed, so a post or note never goes out missing a file. */
+export const ATTACHMENT_RETRY_OR_REMOVE = "Retry or remove the file that failed.";
+
 // The path split, the checks and the upload flow live in `attachments-core.ts`, which the Review-link page can reach (it imports no `lib/api`).
 // This module is the staff app's side: the flow runs over `lib/api`.
 export * from "./attachments-core";

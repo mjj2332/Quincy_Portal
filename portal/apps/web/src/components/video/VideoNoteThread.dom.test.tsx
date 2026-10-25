@@ -226,6 +226,25 @@ describe("VideoNoteThread (#741 5b)", () => {
     expect(isOff(sendReply())).toBe(false);
   });
 
+  it("#955: a reply's failed file holds Send reply, and an edit's holds Save, until it is retried or removed", async () => {
+    await render(thread());
+    await click(tid("video-note-reply-button")!);
+    await type(formOf("reply")!.querySelector("textarea")!, "With a file");
+    await click(tid("stub-file-failed", formOf("reply")!)!);
+    expect(isOff(sendReply())).toBe(true);
+    expect(sendReply()!.title).toBe("Retry or remove the file that failed.");
+    await click(tid("stub-file-cleared", formOf("reply")!)!);
+    expect(isOff(sendReply())).toBe(false);
+    await click(buttonNamed(host, "Close reply")!);
+    await chooseAction("Terry", "Edit");
+    await type(formOf("edit")!.querySelector("textarea")!, "A changed note");
+    await click(tid("stub-file-failed", formOf("edit")!)!);
+    expect(isOff(saveEdit())).toBe(true);
+    expect(saveEdit()!.title).toBe("Retry or remove the file that failed.");
+    await click(tid("stub-file-cleared", formOf("edit")!)!);
+    expect(isOff(saveEdit())).toBe(false);
+  });
+
   it("14: a reply that fails keeps the form and text and shows the server's message", async () => {
     const t = thread();
     const actions = actionsMock();
