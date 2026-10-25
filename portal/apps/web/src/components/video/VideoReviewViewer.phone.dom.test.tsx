@@ -123,9 +123,9 @@ describe("the phone header", () => {
   it("Approve (internal) shows at in_review for an Editor and is absent without a Review status", async () => {
     await mount({ status: true });
     const approve = tid("video-phone-approve")!;
-    // P1: the staff label is drawn in full (owner decision, PR 3a); its words are its name.
-    expect(approve.textContent).toBe("Approve (internal)");
-    expect(approve.getAttribute("aria-label")).toBeNull();
+    // #933 (owner decision): the bar draws "Approve" so the title keeps its 10ch floor beside previous / next; the name still says which status it sets.
+    expect(approve.textContent).toBe("Approve");
+    expect(approve.getAttribute("aria-label")).toBe("Approve (internal)");
     const chip = tid("video-version-chip")!;
     expect(chip.className).toContain("flex-none");
     expect(chip.textContent).toContain("latest");
