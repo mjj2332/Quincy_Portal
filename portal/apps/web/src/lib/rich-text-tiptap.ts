@@ -227,6 +227,44 @@ export const LinkPreview = TiptapNode.create({
   renderHTML({ node }) { return ["div", { "data-link-preview": String(node.attrs.previewId ?? ""), class: "rich-text__link-preview" }, String(node.attrs.title ?? node.attrs.url ?? "")]; },
 });
 
+/** The address a link or card names, as the server normalises it (a card's `url` is the normalised form of the link it was fetched for). */
+function previewAddress(href: unknown): string {
+  const raw = String(href ?? "");
+  try { return new URL(raw).href; } catch { return raw; }
+}
+function linkAddresses(doc: ProseMirrorNode): Set<string> {
+  const found = new Set<string>();
+  doc.descendants((child) => { for (const mark of child.marks) if (mark.type.name === "link") found.add(previewAddress(mark.attrs.href)); });
+  return found;
+}
+
+/**
+ * A link preview goes with its link (#949): a change that removes the last link to an address removes that address's card in an
+ * appended transaction, which the undo history folds into the same step, so one undo brings back both. A card stays while any link to
+ * its address remains, and a card whose link was never in the editor (an older post) is left alone. Nothing here touches the host
+ * replacing the content (`preventUpdate`) or an undo / redo, so history stays an exact inverse.
+ */
+export const LinkPreviewFollowsLink = Extension.create({
+  name: "linkPreviewFollowsLink",
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      appendTransaction(transactions, oldState, newState) {
+        if (!transactions.some((tr) => tr.docChanged)) return null;
+        if (transactions.some((tr) => tr.getMeta("preventUpdate") || tr.getMeta("history$"))) return null;
+        const carded: { node: ProseMirrorNode; pos: number; address: string }[] = [];
+        newState.doc.forEach((child, offset) => { if (child.type.name === "linkPreview") carded.push({ node: child, pos: offset, address: previewAddress(child.attrs.url) }); });
+        if (carded.length === 0) return null;
+        const before = linkAddresses(oldState.doc); const after = linkAddresses(newState.doc);
+        const orphaned = carded.filter(({ address }) => before.has(address) && !after.has(address));
+        if (orphaned.length === 0) return null;
+        const tr = newState.tr;
+        for (const { node, pos } of orphaned.reverse()) tr.delete(pos, pos + node.nodeSize);
+        return tr;
+      },
+    })];
+  },
+});
+
 /** Rows x columns of a table node, spans included (what the server's limits count). */
 export function tableDimensions(table: ProseMirrorNode): { rows: number; columns: number } {
   const map = TableMap.get(table);
@@ -368,6 +406,7 @@ export function createRichTextEditorExtensions(preset: RichTextEditorPreset = "c
     ListNestingBoundary,
     EmbeddedImage,
     LinkPreview,
+    LinkPreviewFollowsLink,
     ...(preset === "composer" || note ? [EmbeddedVideo] : []),
     ...(note ? [NoteMediaTail] : []),
     ...(preset === "document" ? documentExtensions() : []),
