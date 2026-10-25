@@ -396,7 +396,9 @@ function CompactRow({ item, columns, attributes }: { item: VideoRowItem; columns
       <TitleBlock item={item} withVersion={false} meta={meta.length > 0 || status !== null || notes
         // One line, so the row stays two (S9): the Version and duration give way to an ellipsis before the status or the note count does.
         ? <span data-testid="video-row-meta" className={cn(META, "flex min-w-0 items-center whitespace-pre")}>
-          <span className="min-w-0 truncate">{meta.join(" · ")}{meta.length > 0 && (status !== null || notes) && " · "}</span>
+          {meta.length > 0 && <span className="min-w-0 truncate">{meta.join(" · ")}</span>}
+          {/* The separators sit outside the truncating text, whose `nowrap` would collapse their spaces at its edge. */}
+          {meta.length > 0 && (status !== null || notes) && <span className="shrink-0">{" · "}</span>}
           {status !== null && <span data-testid="video-row-meta-status" className="shrink-0">{status}</span>}
           {status !== null && notes && <span className="shrink-0">{" · "}</span>}
           {notes && <OpenNotes item={item} className="shrink-0" />}
