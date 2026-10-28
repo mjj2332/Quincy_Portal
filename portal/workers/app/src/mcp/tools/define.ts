@@ -8,7 +8,8 @@ import type { McpPrincipal } from "../../lib/mcp-dispatch-context";
 import type { McpScope } from "../authority";
 
 export type McpToolContext = { env: Env; executionCtx: ExecutionContext; fetchApp: McpFetchApp; principal: McpPrincipal; role: string };
-export type McpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+/** HEAD (#972): a signed-download tool proves access to a route whose GET is itself the audited download. */
+export type McpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD";
 export type McpToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
 export type McpTool = {
@@ -28,10 +29,13 @@ export type McpTool = {
 
 /** The route's JSON as text; a non-2xx becomes `isError` carrying the status and the route's error body. A 2xx with no body (a 204) reads as "OK". */
 export async function jsonResult(response: Response): Promise<McpToolResult> {
-  const text = await response.text();
-  if (response.ok) return { content: [{ type: "text", text: text === "" ? `OK (HTTP ${response.status})` : text }] };
-  return { content: [{ type: "text", text: `HTTP ${response.status}: ${text}` }], isError: true };
+  const body = await response.text();
+  if (response.ok) return { content: [{ type: "text", text: body === "" ? `OK (HTTP ${response.status})` : body }] };
+  return { content: [{ type: "text", text: `HTTP ${response.status}: ${body}` }], isError: true };
 }
+
+/** A tool's own message as its result; `isError` when the tool refuses. */
+export const text = (message: string, isError = false): McpToolResult => ({ content: [{ type: "text", text: message }], ...(isError ? { isError: true as const } : {}) });
 
 const PARAM = /:([A-Za-z]+)/g;
 
@@ -81,7 +85,7 @@ export type WriteSend = (body?: unknown) => Promise<Response>;
 export function writeTool(def: {
   name: string;
   description: string;
-  method: Exclude<McpMethod, "GET">;
+  method: Exclude<McpMethod, "GET" | "HEAD">;
   template: string;
   inputSchema: ZodRawShape;
   capability?: Capability;

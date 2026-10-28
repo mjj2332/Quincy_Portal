@@ -9,6 +9,7 @@ import { getAuthorizationServer, mcpResource } from "./oauth-server";
 import { toolsFor, strictInput } from "./tools/registry";
 import { checkMcpRateLimit, rateLimitedResult, readBoundedBody } from "./rate-limit";
 import { CONSENT_PATH_PREFIX, storeConsentDescription } from "./consent";
+import { MCP_INSTRUCTIONS } from "./instructions";
 import type { McpFetchApp } from "./dispatch";
 import type { McpTool } from "./tools/registry";
 
@@ -116,7 +117,7 @@ export function mountMcp(app: Hono<AppEnv>, fetchApp: McpFetchApp) {
     const admitted = await admitBody(c, props.connectionId, tools);
     if ("response" in admitted) return withCors(admitted.response);
 
-    const server = new McpServer({ name: "quincy-portal", version: "1.0.0" });
+    const server = new McpServer({ name: "quincy-portal", version: "1.0.0" }, { instructions: MCP_INSTRUCTIONS });
     for (const tool of tools) {
       server.registerTool(tool.name, { description: tool.description, inputSchema: strictInput(tool), annotations: tool.annotations }, async (input: Record<string, unknown>) =>
         tool.call({ env: c.env, executionCtx: c.executionCtx as ExecutionContext, fetchApp, principal, role: authority.user.role }, input));

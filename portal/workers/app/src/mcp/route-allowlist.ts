@@ -6,7 +6,7 @@
  */
 const ID = "[A-Za-z0-9_-]+";
 
-function patternFor(template: string): RegExp {
+export function patternFor(template: string): RegExp {
   const body = template.split("/").map((segment) => segment.startsWith(":") ? ID : segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("/");
   return new RegExp(`^${body}$`);
 }
@@ -53,11 +53,40 @@ const GET_TEMPLATES = [
   "/api/integrations/dropbox/monitors/:scope",
   // Signed downloads (#707): the asset tool's visibility check, and the redemption of an asset URL.
   "/media/asset/:assetId/:variant",
+  // Video review reads (#963)
+  "/api/projects/:projectId/videos",
+  "/api/projects/:projectId/videos/:videoId/version-summaries",
+  "/api/projects/:projectId/video-versions/:assetId/notes",
+  "/api/projects/:projectId/video-notes/:noteId/markup",
+  // Planning reads and own notification preferences (#971)
+  "/api/production-calendar",
+  "/api/production-gantt",
+  "/api/notification-preferences",
+  // Remaining admin reads (#973)
+  "/api/integrations",
+  "/api/projects/:projectId/autohdr-status",
+  // Video Trash reads and removal impact (#965)
+  "/api/projects/:projectId/video-trash",
+  "/api/projects/:projectId/video-versions/:assetId/removal-impact",
+  "/api/projects/:projectId/videos/:videoId/removal-impact",
+  // Review links (#966)
+  "/api/projects/:projectId/review-links",
+  // Client Delivery reads (#968)
+  "/api/projects/:projectId/delivery",
+  "/api/projects/:projectId/delivery/candidates",
+  // Social overlays (#970): the Admin library and a Project's selection
+  "/api/admin/social-overlays",
+  "/api/projects/:projectId/social-overlays",
+  // A Video's Client approval decisions (#967)
+  "/api/projects/:projectId/videos/:videoId/decisions",
 ] as const;
 
 /** Reached only by redeeming a signed download URL (#707): no tool owns it, `mcp/downloads.ts` dispatches to it. */
 export const REDEMPTION_ONLY_ROUTES = [
   ["GET", "/api/projects/:projectId/download-selection/:ticket/archive.zip"],
+  // Staff video downloads (#972): a GET here is the audited download or export itself, so only a redemption makes one.
+  ["GET", "/api/projects/:projectId/video-versions/:assetId/download"],
+  ["GET", "/api/projects/:projectId/video-versions/:assetId/marker-export"],
 ] as const;
 
 /** Writes (#705 core, #706 collaboration). Each is one tool's one route; `mcp-writes.test.ts` checks the pairing both ways. */
@@ -100,12 +129,52 @@ const WRITE_ROUTES = [
   ["POST", "/api/projects/:projectId/whiteboard/server-edits"],
   // Signed downloads (#707): get_selection_download_url creates the zip ticket. It is a read-scope tool; the ticket is the only thing written.
   ["POST", "/api/projects/:projectId/download-selection"],
+  // Own notification preferences (#971)
+  ["PATCH", "/api/notification-preferences"],
+  // Video and Version management (#965). No poster route: it is a raw JPEG upload.
+  ["PUT", "/api/projects/:projectId/video-versions/:assetId/review-status"],
+  ["PUT", "/api/projects/:projectId/video-versions/:assetId/file-name"],
+  ["POST", "/api/projects/:projectId/video-versions/:assetId/remove"],
+  ["POST", "/api/projects/:projectId/videos/:videoId/remove"],
+  ["POST", "/api/projects/:projectId/video-versions/:assetId/restore"],
+  ["POST", "/api/projects/:projectId/videos/:videoId/restore"],
+  // Video note writes (#964)
+  ["POST", "/api/projects/:projectId/video-versions/:assetId/notes"],
+  ["POST", "/api/projects/:projectId/video-notes/:noteId/replies"],
+  ["PATCH", "/api/projects/:projectId/video-notes/:noteId"],
+  ["DELETE", "/api/projects/:projectId/video-notes/:noteId"],
+  ["PUT", "/api/projects/:projectId/video-notes/:noteId/resolution"],
+  // Review links (#966): create, edit, Videos and grants, and the four confirm-first actions
+  ["POST", "/api/projects/:projectId/review-links"],
+  ["PATCH", "/api/projects/:projectId/review-links/:linkId"],
+  ["POST", "/api/projects/:projectId/review-links/:linkId/videos"],
+  ["DELETE", "/api/projects/:projectId/review-links/:linkId/videos/:videoId"],
+  ["PUT", "/api/projects/:projectId/review-links/:linkId/videos/:videoId/grants"],
+  ["POST", "/api/projects/:projectId/review-links/:linkId/revoke"],
+  ["POST", "/api/projects/:projectId/review-links/:linkId/replace"],
+  ["DELETE", "/api/projects/:projectId/review-links/:linkId"],
+  ["POST", "/api/projects/:projectId/review-links/:linkId/end-sessions"],
+  // Client Delivery (#968): Preview is a read-scope tool on a POST that writes nothing; Publish only through the confirm round trip in `tools/delivery.ts`.
+  ["POST", "/api/projects/:projectId/delivery/preview"],
+  ["POST", "/api/projects/:projectId/delivery/publish"],
+  // A Project's Social overlay selection (#970)
+  ["PUT", "/api/projects/:projectId/social-overlays"],
+  // Premium and Unlock (#969): Video review, Delivery tab, photos and documents
+  ["PUT", "/api/projects/:projectId/videos/:videoId/premium"],
+  ["PUT", "/api/projects/:projectId/videos/:videoId/premium-unlock"],
+  ["PUT", "/api/projects/:projectId/delivery/videos/:videoId/premium"],
+  ["PUT", "/api/projects/:projectId/delivery/videos/:videoId/premium-unlock"],
+  ["PUT", "/api/projects/:projectId/assets/:assetId/delivery-premium"],
+  ["PUT", "/api/projects/:projectId/assets/:assetId/delivery-premium-unlock"],
+  // Release and withdraw a Version's Release (#967), both confirm-first
+  ["POST", "/api/projects/:projectId/video-versions/:assetId/release"],
+  ["DELETE", "/api/projects/:projectId/video-versions/:assetId/release"],
 ] as const;
 
 /**
  * Admin-scope writes (#709). Each is one `admin` tool's one route; none is reachable with a `write` grant. The never-list
  * (users, flags and *-settings, Connected apps, impersonation, uploads, OAuth and /api/auth) can appear nowhere in this file:
- * `mcp-admin.test.ts` walks every entry against a denylist.
+ * `mcp-never-list.test.ts` walks every entry against the never-list.
  */
 const ADMIN_ROUTES = [
   ["POST", "/api/integrations/dropbox/monitors/:scope/reset"],
@@ -137,6 +206,27 @@ const ADMIN_ROUTES = [
   ["POST", "/api/integrations/dropbox/editor-folders/inspect"],
   // Project delete: only through the confirm round trip in `tools/admin-writes.ts`.
   ["DELETE", "/api/projects/:projectId"],
+  // Delivery page on/off (#968): `switchDeliveryPage`, Admin only.
+  ["PUT", "/api/projects/:projectId/delivery/page"],
+  // Remaining admin writes (#973)
+  ["POST", "/api/admin/delivery-review-links/sync"],
+  ["POST", "/api/admin/video-versions/reprobe"],
+  ["POST", "/api/projects/:projectId/cover"],
+  ["PUT", "/api/projects/:projectId/photographers/:userId"],
+  ["DELETE", "/api/projects/:projectId/photographers/:userId"],
+  // Social overlays (#970): rename, archive, unarchive. Create and image replace are uploads and stay out.
+  ["PATCH", "/api/admin/social-overlays/:id"],
+  ["POST", "/api/admin/social-overlays/:id/archive"],
+  ["POST", "/api/admin/social-overlays/:id/unarchive"],
+] as const;
+
+/**
+ * HEAD probes (#972): the video download tools prove access with a HEAD, which runs the route's whole admission and writes no audit row.
+ * Each is one `*_download_url` tool's route.
+ */
+const PROBE_ROUTES = [
+  ["HEAD", "/api/projects/:projectId/video-versions/:assetId/download"],
+  ["HEAD", "/api/projects/:projectId/video-versions/:assetId/marker-export"],
 ] as const;
 
 export const MCP_ALLOWED_ROUTES: readonly { method: string; template: string; pattern: RegExp }[] = [
@@ -144,6 +234,7 @@ export const MCP_ALLOWED_ROUTES: readonly { method: string; template: string; pa
   ...WRITE_ROUTES.map(([method, template]) => ({ method, template, pattern: patternFor(template) })),
   ...ADMIN_ROUTES.map(([method, template]) => ({ method, template, pattern: patternFor(template) })),
   ...REDEMPTION_ONLY_ROUTES.map(([method, template]) => ({ method, template, pattern: patternFor(template) })),
+  ...PROBE_ROUTES.map(([method, template]) => ({ method, template, pattern: patternFor(template) })), // #972
 ];
 
 export function isAllowedMcpRoute(method: string, path: string): boolean {

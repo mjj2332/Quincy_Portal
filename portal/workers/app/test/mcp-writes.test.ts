@@ -5,6 +5,13 @@ import { MCP_ALLOWED_ROUTES, REDEMPTION_ONLY_ROUTES, isAllowedMcpRoute } from ".
 import { MCP_TOOLS, strictInput, toolsFor } from "../src/mcp/tools/registry";
 import { COLLAB_WRITE_TOOLS } from "../src/mcp/tools/collab-writes";
 import { WHITEBOARD_TOOLS } from "../src/mcp/tools/whiteboard";
+import { VIDEO_WRITE_TOOLS } from "../src/mcp/tools/video-writes";
+import { VIDEO_NOTE_TOOLS } from "../src/mcp/tools/video-notes"; // #964
+import { REVIEW_LINK_TOOLS } from "../src/mcp/tools/review-links";
+import { DELIVERY_TOOLS } from "../src/mcp/tools/delivery";
+import { SOCIAL_OVERLAY_TOOLS } from "../src/mcp/tools/social-overlays";
+import { PREMIUM_TOOLS } from "../src/mcp/tools/premium"; // #969
+import { RELEASE_TOOLS } from "../src/mcp/tools/release"; // #967
 import { mcpHarness } from "./mcp-oauth-support";
 
 declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL__: string;
@@ -27,6 +34,21 @@ const WRITE_NAMES = [
   "add_project_comment", "edit_project_comment", "delete_project_comment",
   "add_video_link", "update_video_link", "reorder_video_link", "remove_video_link",
   "mark_notification_read", "mark_all_notifications_read",
+  "update_notification_preferences", // #971
+];
+/** Every `write`-scope tool an admin lists, one module per line: a new write module appends its own line (commented with its ticket). */
+const writeScopeNames = (tools: readonly { name: string; scope: string }[]) => tools.filter((tool) => tool.scope === "write").map((tool) => tool.name);
+const WRITE_SCOPE_NAMES = [
+  ...WRITE_NAMES,
+  ...writeScopeNames(COLLAB_WRITE_TOOLS),
+  ...writeScopeNames(WHITEBOARD_TOOLS),
+  ...writeScopeNames(VIDEO_WRITE_TOOLS), // #965
+  ...writeScopeNames(VIDEO_NOTE_TOOLS), // #964
+  ...writeScopeNames(REVIEW_LINK_TOOLS), // #966
+  ...writeScopeNames(DELIVERY_TOOLS), // #968
+  ...writeScopeNames(SOCIAL_OVERLAY_TOOLS), // #970
+  ...writeScopeNames(PREMIUM_TOOLS), // #969
+  ...writeScopeNames(RELEASE_TOOLS), // #967
 ];
 const DESTRUCTIVE = ["remove_project_editor", "delete_subtask", "delete_project_comment", "remove_video_link"];
 const ADMIN_ONLY = ["create_project", "update_project_details", "set_project_priority", "set_project_deadline", "add_project_editor", "remove_project_editor", "archive_project", "restore_project"];
@@ -110,7 +132,7 @@ describe("tools/list follows the grant and the role", () => {
     const list = await h.toolsList(tokens.adminReadOnly!.accessToken);
     expect(list.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
     expect(toolsFor("admin", ["read"]).some((tool) => WRITE_NAMES.includes(tool.name))).toBe(false);
-    expect(toolsFor("admin", ["write"]).map((tool) => tool.name).sort()).toEqual([...WRITE_NAMES, ...COLLAB_WRITE_TOOLS.map((tool) => tool.name), ...WHITEBOARD_TOOLS.filter((tool) => tool.scope === "write").map((tool) => tool.name)].sort());
+    expect(toolsFor("admin", ["write"]).map((tool) => tool.name).sort()).toEqual([...WRITE_SCOPE_NAMES].sort());
   });
   it("admin sees every write tool", async () => { expect(await names("admin")).toEqual([...WRITE_NAMES].sort()); });
   it("editor: no create, details, priority, Deadline, team or archive tools", async () => {

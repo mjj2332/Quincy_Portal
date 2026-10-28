@@ -46,10 +46,13 @@ as `superseded`).
 |---|---|---|---|
 | `read` | every read tool, including the signed download links | 1 hour | rotating; lapses after 30 days unused |
 | `write` | non-admin writes | 1 hour | rotating; lapses after 30 days unused |
-| `admin` | `delete_project` and the other admin-scope tools | 15 minutes | none |
+| `admin` | `delete_project` and the other admin-scope tools | 15 minutes | rotating; refused 8 hours after consent |
 
-A grant that includes `admin` gets the 15-minute token and **no refresh**: the client has to send you
-through consent again. Scopes are explicit; `admin` does not imply `write`.
+A grant that includes `admin` gets the 15-minute token and a rotating refresh token, but only until
+**8 hours after you consented** (ADR 0026): past that, refresh is refused and the client has to send you
+through consent again. Refreshing never extends the 8 hours, and near the end the access token is cut
+short to the time left. Revoking the app, a role change or deactivation, and the `mcp_access` flag
+still cut it off at once, refresh included. Scopes are explicit; `admin` does not imply `write`.
 
 ## What a client can see: tool visibility
 
@@ -61,18 +64,18 @@ With every scope granted, the tool count by role is:
 
 | Role | Tools visible |
 |---|---|
-| Admin | 95 |
-| Photographer | 37 |
-| Editor | 46 |
-| External editor | 38 |
+| Admin | 156 |
+| Photographer | 39 |
+| Editor | 95 |
+| External editor | 67 |
 
-Admin-only tools (every `admin_*` tool and `delete_project`) never appear for the other roles. An
+Admin-only tools (every `admin_*` tool, `delete_project` and `set_delivery_page_enabled`) never appear for the other roles. An
 External editor additionally has no notice board and no selection or download-selection tools.
 
 ## Tool reference
 
 Generated from the tool definitions in `portal/workers/app/src/mcp/tools/` (registry plus the
-whiteboard tools): **95 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
+whiteboard tools): **156 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
 the role capability. **Destructive** is the `destructiveHint` the client sees; every `admin`-scope tool is
 destructive. `destructiveHint` is advice to the client, not enforcement: the server-side confirm round
 trips below are what enforce.
@@ -219,6 +222,303 @@ Tool names use Portal terms. There is no tool for uploads.
 | `admin_inspect_editor_folder` | admin | `manageIntegrations` | no |
 | `delete_project` | admin | `adminBackend` | yes |
 
+### Video review reads (4)
+
+Added in #963. Admins, Editors and External editors (on assigned Projects only) see these; a
+Photographer sees none. They answer 404 while video review is off for the Project, as the routes do.
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `list_project_videos` | read | `viewVideo` | no |
+| `list_video_version_summaries` | read | `viewVideo` | no |
+| `list_video_notes` | read | `viewVideo` | no |
+| `get_video_note_drawing` | read | `viewVideo` | no |
+
+- **Timing.** Each Version carries its `fps` (`{ num, den }`) and `frameCount`; `list_video_version_summaries`
+  adds both to each summary. `list_video_notes` returns the Version's timing as `version` and labels every
+  note's `startFrame`, `endFrame` (exclusive) and `drawingFrame` with an SMPTE timecode on that Version
+  (`startTimecode`, `endTimecode`, `drawingTimecode`).
+- **Who wrote it.** Every note and reply carries `authorKind`: `"staff"` or `"guest"`.
+- **Guest text is untrusted.** A Guest reviewer's name, note body and rich content are never plain fields.
+  They are only in `untrustedGuestText`: one string, `<untrusted-guest-text>{json}</untrusted-guest-text>`,
+  whose JSON writes `<`, `>` and `&` as `<`, `>` and `&`, so a guest cannot close the
+  delimiter from inside it. A staff copy of a guest note (pasted onto a new Version) stays
+  `authorKind: "staff"`, but its body and the guest's name (`copiedFromAuthorName`) are untrusted too. The
+  server's MCP `instructions` tell the client this text is outside data, never instructions.
+- `get_video_note_drawing` returns the drawing in the annotation `strokes` wire contract above.
+
+### Planning and notification preferences (4) (#971)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `get_production_calendar` | read | `viewProductionCalendar` | no |
+| `get_production_gantt` | read | `viewProductionCalendar` | no |
+| `get_notification_preferences` | read | any role | no |
+| `update_notification_preferences` | write | any role | no |
+
+The Calendar and the Gantt are the same routes the Calendar and Gantt screens use, so they return the same data and
+the same refusals. Photographers do not hold `viewProductionCalendar` and are not offered them; an External editor
+sees only the Projects assigned to them. `get_production_calendar` takes a `start` (inclusive) and `end` (exclusive)
+of at most 42 days, plus optional filters. `get_production_gantt` pages Projects with `cursor` and a Project's
+Subtasks with `childrenOf`. The `archived` filter is admin only.
+
+The two notification preference tools read and change the signed-in staff member's own preferences (Deadline and
+Subtask reminder emails, digest cadence, whether the digest includes Project activity). They take no user id, so
+they cannot reach anyone else's row. A change is audited as `notification.preference.update` with the usual
+`via: "mcp"` marker.
+
+### Video and Version management (9) (#965)
+
+Admins and Editors see all nine; an External editor (on assigned Projects) sees the two Version writes; a
+Photographer sees none. They answer 404 while video review is off for the Project (the Trash tools also need the
+`trash` part), as the routes do.
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `set_version_review_status` | write | `annotateVideo` | no |
+| `rename_video_version` | write | `uploadVideo` | no |
+| `list_video_trash` | read | `manageVideoTrash` | no |
+| `get_version_removal_impact` | read | `manageVideoTrash` | no |
+| `get_video_removal_impact` | read | `manageVideoTrash` | no |
+| `remove_video_version` | write | `manageVideoTrash` | yes |
+| `delete_video` | write | `manageVideoTrash` | yes |
+| `restore_video_version` | write | `manageVideoTrash` | no |
+| `restore_video` | write | `manageVideoTrash` | no |
+
+- **Review status** is `in_review` or `approved_internal`. Setting `approved_internal` is the internal approval
+  decision and needs `approveVideoInternal` (Admin and Editor); an External editor can set `in_review` only, and the
+  route answers 403 otherwise. `expectedStatus` is the status the client read: a changed one is 409
+  `review_status_conflict`, and a Version that is no longer the latest is 409 `not_latest_version`. The Client
+  approval decisions and Release belong to the release tools, not here.
+- **Rename** changes a Version's file name (`.mp4` or `.mov`; `.mov` is stored as `.mp4`).
+- **Delete and remove do not confirm.** They move the Video or Version to the Video Trash, and Restore brings it back
+  (for the retention period shown by `list_video_trash`), so they carry `destructiveHint` instead. Read the impact
+  first (`get_version_removal_impact`, `get_video_removal_impact`) and pass it as `expected`; if the Video or Version
+  changed since, the route answers 409 `impact_changed` with the fresh impact and nothing is removed. Removing the last
+  Version needs `removeVideo: true` (409 `last_version` otherwise); a Video published in Client Delivery or with an
+  upload in progress is refused. Restoring a Version whose Video is in Trash is 409 `video_in_trash`: restore the Video
+  first.
+- Every write is audited as through MCP (`via: "mcp"`).
+
+### Video note writes (5) (#964)
+
+Admins, Editors and External editors (on assigned Projects only) see these with the `write` scope; a
+Photographer sees none. They answer 404 while video notes are off for the Project (and while markup is off,
+for a call that carries a drawing), as the routes do.
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `create_video_note` | write | `annotateVideo` | no |
+| `reply_to_video_note` | write | `annotateVideo` | no |
+| `edit_video_note` | write | `annotateVideo` | no |
+| `delete_video_note` | write | `annotateVideo` | yes |
+| `set_video_note_resolution` | write | `annotateVideo` | no |
+
+- **Frames or a timecode.** Each moment (`start`, `end`, `drawing`) is given as a frame (`startFrame`,
+  `endFrame` exclusive, `drawingFrame`) or as a timecode (`startTimecode`, `endTimecode`, `drawingTimecode`),
+  never both. A timecode is SMPTE on that Version (`HH:MM:SS:FF`, `;` for drop-frame, start timecode
+  included, as `list_video_notes` labels notes) or elapsed time from the start (`0:42`, `1:02:03.5`). The tool
+  reads the Version's timing, resolves the timecode to the nearest frame and sends frames; frames are sent
+  unchanged. The result is the thread plus `resolved`: per moment given, the `frame` used, its SMPTE
+  `timecode`, and `fromTimecode` when it came from one. `edit_video_note` needs `assetId` (the note's Version)
+  with a timecode.
+- **Visibility is required** on create, with no default, and cannot change afterwards: `public` is seen by
+  Guest reviewers on a Review link, `internal` by staff only. A reply takes its note's visibility.
+- **Drawings** use the annotation `strokes` wire contract above with the video limits (hex colour, width 1 to
+  24), and `drawingFrame` must be the note's frame or inside its range. `markup: null` on edit removes one; a
+  note with a drawing cannot be moved.
+- **Route errors pass through unchanged**: `frame_out_of_range` (with the Version's `frameCount`),
+  `drawing_frame_outside`, `note_conflict` (a stale `expectedRevision`; its thread is shaped like every other,
+  guest text untrusted), `markup_locks_frames`, `project_archived`.
+- **Author-only.** Editing or deleting someone else's note or reply is refused (HTTP 403), for Admins too.
+  Resolving and reopening are not author-only. Every write is audited (`video_note.*`) with the `via: "mcp"`
+  marker and notifies staff exactly as the browser does.
+
+
+### Client Delivery page and Publish (5) (#968)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `get_delivery_page` | read | `viewClientPreview` | no |
+| `list_delivery_candidates` | read | `viewClientPreview` | no |
+| `preview_delivery` | read | `viewClientPreview` | no |
+| `publish_delivery` | write | `publish` | no |
+| `set_delivery_page_enabled` | admin | `switchDeliveryPage` | yes |
+
+Admins and Editors (on Projects assigned to them) see the reads and Publish; Photographers and External
+editors see none. All of them answer 404 while Client Delivery is off for the Project, as the routes do.
+`get_delivery_page` returns the page (address, on or off, latest set number), the latest Published set
+with the Asset behind each item, and the page as the client sees it. `list_delivery_candidates` lists
+what Publish would accept now, in page order. `preview_delivery` builds the page a selection would make
+and publishes nothing (it is a POST route that writes nothing); its item handles are throwaway and differ
+on every call. `publish_delivery` is a confirm round trip (below). Switching the page on or off is
+Admin-only and needs the `admin` scope; it is audited as `delivery.page_on` / `delivery.page_off`.
+### Social overlays (6) (#970)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `admin_list_social_overlays` | read | `adminBackend` | no |
+| `admin_update_social_overlay` | admin | `adminBackend` | yes |
+| `admin_archive_social_overlay` | admin | `adminBackend` | yes |
+| `admin_unarchive_social_overlay` | admin | `adminBackend` | yes |
+| `get_project_social_overlays` | read | `viewVideo` | no |
+| `set_project_social_overlays` | write | `chooseSocialOverlays` | no |
+
+The Admin tools manage the agency's overlay library: list it, rename an overlay or change its platform label,
+archive it and bring it back. They need the `admin` scope and are hidden from every other role. Each change names
+the overlay `revision` from the list; a stale one answers `overlay_conflict`. Archiving the Default overlay is
+refused by the route (`default_overlay`). The Project tools are the Project's overlay picker: `get_project_social_overlays`
+returns what the Project can offer, what it does offer and a `revision`; `set_project_social_overlays` replaces the
+selection and needs that revision (`social_overlays_conflict` returns the current state). They answer 404 while Video
+review is off for the Project, and an archived Project is read-only. Changes are audited as `social_overlay.*` and
+`project.social_overlays.*` with the usual `via: "mcp"` marker. Creating an overlay and replacing its image are
+uploads, so there is no tool for them.
+
+### Video downloads (2) (#972)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `get_video_version_download_url` | read | `downloadVideo` | no |
+| `get_marker_export_download_url` | read | `viewVideo` | no |
+
+Admins, Editors and External editors (on assigned Projects only) see these; a Photographer sees neither. Both return
+`{ url, expiresAt }`, a signed link under the rules in "Signed downloads" below.
+
+- `get_video_version_download_url` takes a `projectId` and a Version's `assetId` (from `list_project_videos`). The link
+  serves the Version's original file with the same name and headers as the browser's Download. Any live Version
+  downloads, superseded or unreleased included. It answers 404 while the video review `download` part is off.
+- `get_marker_export_download_url` takes the same ids, a `format` (`edl` for a DaVinci Resolve marker EDL, `fcpxml`),
+  and optionally `includeInternal` (default false) and `status` (`all`, `open` or `resolved`; default `all`). The
+  link serves the same file the browser's Marker export does. A note outside the Version's frames, or an EDL over 999
+  markers, is refused when the link is requested (`HTTP 422`). It answers 404 while the `notes` or `export` part is off.
+- Requesting a link downloads nothing: the tool checks access with a `HEAD` of the route, which writes no audit row.
+  Each **redemption** is the download: audited as `video_version.download` (or `video_note.export`) with
+  `via: "mcp"`, plus `mcp_download.redeem`.
+- The link always serves the whole file: a `Range` header is not passed on, so a resumed fetch starts again and is
+  audited again.
+
+### Review links (10) (#966)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `list_review_links` | read | `shareVideo` | no |
+| `create_review_link` | write | `shareVideo` | no |
+| `update_review_link` | write | `shareVideo` | no |
+| `add_review_link_video` | write | `shareVideo` | no |
+| `remove_review_link_video` | write | `shareVideo` | yes |
+| `set_review_link_grants` | write | `shareVideo` | no |
+| `revoke_review_link` | write | `shareVideo` | yes (confirm first) |
+| `replace_review_link` | write | `shareVideo` | yes (confirm first) |
+| `delete_review_link` | write | `shareVideo` | yes (confirm first) |
+| `end_review_link_guest_sessions` | write | `shareVideo` | yes (confirm first) |
+
+The same routes as the Review links panel, so the same refusals: 404 while Review links are off for the Project,
+409 `project_archived` on an archived Project (Revoke, Delete and End guest sessions are still allowed there, as in
+the browser). Admins, Editors and External editors see them; an External editor reaches links only on the Projects
+they are assigned to (#834), and anything else is the route's 404. A Photographer sees none.
+
+- `list_review_links` returns every link, the Delivery review link (`delivery: true`) first, with its Videos and the
+  Versions each grants, expiry, status (`active`, `expired`, `revoked`), what guests may do (`allow`), guest activity
+  and `url`, the address (null once revoked). **Passcodes are never returned**: a link only says `hasPasscode`.
+  In guest activity, each verified guest's display name is only inside `untrustedGuestText` (it is guest-written);
+  every Review link tool that returns a link shapes it the same way.
+- `create_review_link` takes the Videos, an optional label, expiry (one hour to 365 days; 30 days by default),
+  passcode, `allow`, and per-Video `grants` (each Video otherwise grants its current Version). It returns
+  `{ link, url }`; `url` is what the client sends to the customer.
+- `update_review_link`, `add_review_link_video`, `remove_review_link_video` and `set_review_link_grants` change a live
+  link. A revoked link and the Delivery review link refuse them (`link_revoked`, `delivery_review_managed`).
+- **Revoke, Replace, Delete and End guest sessions** ask first: see [Confirm round trips](#confirm-round-trips).
+  Revoke stops the address for good and ends the link's guest sessions; Replace issues a new `url` and ends the old
+  one's sessions (refused on an expired link); Delete removes a revoked link from the list (an unrevoked one is
+  refused with `link_not_revoked`).
+- **The Delivery review link** is managed by the Delivery page. Revoke and Delete on it are refused with
+  `delivery_review_managed`, as in the browser. End guest sessions is the one change allowed there, and the only
+  link it works on: on an ordinary link it answers 404 (use Replace or Revoke to sign its guests out).
+- Every change is audited (`review_link.*`) with the usual `via: "mcp"` marker. No audit row carries the passcode or
+  the address.
+
+### Premium and Unlock (6) (#969)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `set_video_premium` | write | `manageVideoPremium` | no |
+| `set_video_premium_unlock` | write | `manageVideoPremium` | no |
+| `set_delivery_video_premium` | write | `manageVideoPremium` | no |
+| `set_delivery_video_premium_unlock` | write | `manageVideoPremium` | no |
+| `set_asset_premium` | write | `manageExtras` | no |
+| `set_asset_premium_unlock` | write | `manageExtras` | no |
+
+Admins and Editors see these; Photographers and External editors do not. A Video has the same pair of tools
+twice because it has two routes: `set_video_premium*` are the Video review routes (open while the Video review
+`delivery` part is on), `set_delivery_video_premium*` the Delivery tab's (open while Client Delivery is on). Both
+run the same handlers. `set_asset_premium*` cover a photo, a Floorplan PDF or a Copy document.
+
+- **Unmark** (`premium: false`) is refused with `premium_published` once the item has been on a published Client
+  Delivery page, as in the browser.
+- **Late Premium.** Marking an item that is already on a published page (it then stays premium for good) returns
+  `Confirmation required` and changes nothing; it acts only when called again with `confirm: true`.
+- **Unlock** (`unlocked: true`) is a confirm-token round trip, see below. **Re-lock** (`unlocked: false`) is one step.
+
+Each change is audited (`video.premium_set`, `video.premium_unlock`, `video.premium_relock`, `asset.delivery_premium_set`,
+`asset.premium_unlock`, `asset.premium_relock`) with the usual `via: "mcp"` marker.
+
+### Remaining admin tools (7) (#973)
+
+The admin routes the #973 audit (`docs/plans/959-admin-mcp-audit.md`) found with no tool. Admin only. The writes
+need the `admin` scope and are destructive; the reads are `read` scope like the other admin reads.
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `admin_sync_delivery_review_links` | admin | `adminBackend` | yes |
+| `admin_reprobe_video_versions` | admin | `adminBackend` | yes |
+| `admin_set_project_cover` | admin | `editProject` | yes |
+| `admin_add_project_photographer` | admin | `editProject` | yes |
+| `admin_remove_project_photographer` | admin | `editProject` | yes |
+| `admin_list_integrations` | read | `manageIntegrations` | no |
+| `admin_get_autohdr_status` | read | `adminBackend` | no |
+
+- **Delivery review-link sync** and **video reprobe** are the operator backfills, one page per call with a
+  `nextCursor`. Run `dryRun: true` first: the sync's dry run counts what it would create, and the reprobe's
+  `dryRun` defaults to `true` (as on the route) and writes nothing, audit included. Each real run writes one summary
+  audit row (`admin.delivery_review_backfill`, `admin.video_probe_backfill`) marked via MCP.
+- **Photographer assignment** mirrors `add_project_editor` / `remove_project_editor` on the Photographer route:
+  removing someone who holds Subtasks returns `Confirmation required` first (the route's own check); call again
+  with `confirm: true` and `confirmedAssignmentCount`.
+- **`admin_set_project_cover` and the Photographer tools** are `admin` scope, as ADR 0026 decision 2 asks of an
+  Admin-only capability (`editProject`). The older tools on Admin-only capabilities (`create_project`, `update_project_details`, `set_project_priority`,
+  `set_project_deadline`, the Editor tools, `archive_project`, `restore_project`) stay `write` by owner decision;
+  that divergence is recorded in the audit.
+- `admin_list_integrations` never returns credentials. Connecting Dropbox stays in the browser.
+
+### Release (3) (#967)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `list_video_decisions` | read | `shareVideo` | no |
+| `release_video_version` | write | `releaseVideo` | no (confirm first) |
+| `withdraw_video_release` | write | `releaseVideo` | yes (confirm first) |
+
+A **Release** is staff's explicit act of making one approved Version downloadable on the Review links that grant it;
+a client's approval alone never releases anything. These are the routes behind the Video review approval panel, so
+they answer 404 while approvals (the `delivery` part of Video review) are off for the Project, and an archived Project
+refuses Release and withdraw (`project_archived`). Admins and Editors see all three; an External editor sees only the
+decisions read, on assigned Projects. A Photographer sees none.
+
+- `list_video_decisions` returns every Version of a Video, newest first, with its Client approval decisions (oldest
+  first: `approved` or `changes_requested`, a `revision`, the Review link a guest decided on) and its live `release`
+  (null when not released or withdrawn). Each decision says who made it with `actorKind` (`guest` or `staff`). **A
+  guest's name and note are only inside `untrustedGuestText`**, never plain fields; everything else is the route's
+  JSON.
+- `release_video_version` takes the `approvalRevision`: the `revision` of the approval the user saw. The route refuses
+  when a newer decision landed (`release_stale`, with the current revision), when that revision is not an approval
+  (`not_approved`), and when the Version is already released (`already_released`). On success the Version's original
+  file is downloadable to guests on every live Review link that grants it with downloads allowed, and those links'
+  subscribers are told.
+- `withdraw_video_release` ends the Release: guests can no longer download that Version on Review links (a published
+  Delivery page still delivers what it published). `no_live_release` when there is none.
+- **Release and withdraw ask first**: see [Confirm round trips](#confirm-round-trips).
+- Both are audited (`video_version.release`, `video_version.release_withdraw`) with the usual `via: "mcp"` marker.
+
 ## Confirm round trips
 
 Some actions need the person's say-so first. The tool refuses to act on the first call and the client
@@ -232,16 +532,52 @@ must ask the user, then call again.
 - **`delete_project`** (admin scope, and the Project must be archived first). The first call deletes
   nothing: it returns a summary of what would be destroyed (photos by Collection and state, comments,
   Subtasks) and a `confirmToken`. The client shows the user that summary, and only on agreement calls
-  again with `confirm: true` and the token. The token is good for 5 minutes, for that Project and that
-  Connected app only. The server recomputes the summary on the second call and **refuses if the Project
+  again with `confirm: true` and the token. The token is good for 5 minutes, for that action, that
+  Project and that Connected app only: a token issued for one action (delete, Publish, Unlock) is refused
+  by every other. The server recomputes the summary on the second call and **refuses if the Project
   changed in between**; the client has to ask again.
+- **Review links (#966).** `revoke_review_link`, `replace_review_link`, `delete_review_link` and
+  `end_review_link_guest_sessions` act at once in the routes, so the tool itself asks first: without
+  `confirm: true` it returns `Confirmation required` with what the action does (guests lose the address or
+  are signed out) and sends nothing to the Portal. The client relays that to the user and, on agreement,
+  calls again with `confirm: true`. There is no token: each call names the link, and the route refuses
+  what it would refuse in the browser (the Delivery review link, an unrevoked link to delete).
+- **Release (#967).** `release_video_version` and `withdraw_video_release` act at once in the routes, so the
+  tool asks first: without `confirm: true` it returns `Confirmation required` naming the live Review links (label,
+  Version and Video title) on which the Version becomes, or stops being, downloadable, and writes nothing. The client
+  relays that to the user and, on agreement, calls again with `confirm: true`. There is no token; the
+  `approvalRevision` is the fence, so a decision that lands in between makes the Release refuse (`release_stale`).
+
+- **Unlock** (`set_video_premium_unlock`, `set_delivery_video_premium_unlock`, `set_asset_premium_unlock` with
+  `unlocked: true`). The first call unlocks nothing: it returns a summary of what becomes viewable and downloadable
+  in full by the client (the item, its Premium, Unlock and published state, and the payment reference) and a
+  `confirmToken` for the action `unlock`. Only the second call, with the same arguments plus `confirm: true` and the
+  token, unlocks. As for delete, the token is good for 5 minutes, that Project and that Connected app; a changed
+  item or payment reference is refused with "re-confirm".
+- **Late Premium** (`set_video_premium`, `set_delivery_video_premium`, `set_asset_premium` with `premium: true`
+  on an item already on a published page) returns `Confirmation required` and acts only on `confirm: true`.
+
+- **`publish_delivery`** (#968, write scope, `publish`). The first call publishes nothing: it returns a
+  summary of exactly what the next Published set will contain (each item by Asset id with its kind,
+  label, film title, locked and premium state, in page order; the cover; the set number; whether this is
+  the first Publish, which creates the page and moves the Project to Delivered) and a `confirmToken`
+  (action `publish`, 5 minutes, that Project and that Connected app). The client shows the user the
+  summary and, on agreement, calls again with the same arguments plus `confirm: true` and the token. The
+  server rebuilds the summary and refuses if the page (a new set, the page switched on or off) or the
+  selection changed. The summary never includes Preview's random item handles or URLs, so an unchanged
+  page always confirms. The confirmed call then runs the Publish route with the page's set as
+  `expectedLatestSet`, so a Publish that lands in between is still refused by the route as `stale_set`;
+  an archived Project is refused as `project_archived` (the route's 409) on the first call already, before
+  any token is issued. Its operation id comes from the token, so a
+  retried confirmed call cannot publish a second set.
 
 ## Signed downloads
 
 `get_asset_download_url` and `get_selection_download_url` return `{ url, expiresAt }`. The link is a
 bearer: whoever holds it can fetch the file until it expires, so do not paste it elsewhere.
 
-- Valid for **15 minutes**, scoped to one asset or one zip ticket, and audited as a download via MCP.
+- Valid for **15 minutes**, scoped to one asset, one zip ticket, one Video Version, or one Marker export
+  of a Version (its format and options are part of the link; #972), and audited as a download via MCP.
 - Redeeming it re-checks the live grant (flag on, Connected app not revoked, user active, epoch
   unchanged, `read` scope still held), so revoking an app kills links already handed out.
 - **Stored renditions only.** If the requested rendition has not been generated yet, the link answers
@@ -297,14 +633,18 @@ These are never exposed, so an AI client cannot loosen the controls that bound i
 comment a client reads could try to talk it into it):
 
 - Change any user's role or active status.
-- Change feature flags, including `mcp_access` and impersonation.
+- Read or change feature flags, including `mcp_access` and impersonation.
 - Revoke Connected apps.
 - Start impersonation.
 - **Upload.** Multi-GB multipart transfers do not fit a tool call. `place_media` and the link-preview
   tools only reference things already in the Portal or a public URL.
 - Restore a whiteboard version.
+- Connect Dropbox: its OAuth handshake runs in the browser (#973 audit).
+- Set a Version's poster (#965). The poster route takes a raw JPEG body, which is an upload.
+- Create a Social overlay or replace its image (a multipart PNG upload, #970).
 
 Only routes in the allowlist (`portal/workers/app/src/mcp/route-allowlist.ts`) can be dispatched.
+`test/mcp-never-list.test.ts` fails the build if a route from this list is ever added to it.
 
 ## Controls
 
@@ -348,7 +688,7 @@ redemption re-checks the grant.
 ## If something looks wrong
 
 - **Client says "unauthorized" / reconnect loop.** The flag is off, the app was revoked, the user's role
-  changed (epoch bump), or an admin-scope token (15 minutes) expired. Reconnect through consent.
+  changed (epoch bump), or an admin-scope grant passed its 8 hours from consent. Reconnect through consent.
 - **A tool the client expects is missing.** Scope not granted, or the role lacks the capability. Compare
   with the table above.
 - **`rate limit` errors.** Back off for about a minute.

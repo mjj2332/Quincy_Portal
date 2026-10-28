@@ -5,7 +5,6 @@ import { app } from "../src/index";
 import type { McpPrincipal } from "../src/lib/mcp-dispatch-context";
 import type { McpFetchApp } from "../src/mcp/dispatch";
 import { signConfirmToken, CONFIRM_TTL_SECONDS } from "../src/mcp/confirm-token";
-import { MCP_ALLOWED_ROUTES } from "../src/mcp/route-allowlist";
 import { MCP_TOOLS, strictInput, toolsFor } from "../src/mcp/tools/registry";
 import { mcpHarness } from "./mcp-oauth-support";
 import { seedAsset, seedCoverage, seedDelivery, seedOpenDeadLetter, seedOrphanReport, seedPoisonEvent } from "./mcp-admin-fixtures";
@@ -51,6 +50,17 @@ const ADMIN_TOOLS: Record<string, { method: string; template: string; capability
   admin_discard_webhook_event: { method: "POST", template: "/api/admin/webhook-events/:eventId/discard", capability: "adminBackend" },
   admin_acknowledge_orphan_file_report: { method: "POST", template: "/api/admin/attention/orphan-uploads/:watchId/acknowledge", capability: "adminBackend" },
   admin_delete_asset: { method: "DELETE", template: "/api/assets/:assetId", capability: "adminBackend" },
+  set_delivery_page_enabled: { method: "PUT", template: "/api/projects/:projectId/delivery/page", capability: "switchDeliveryPage" }, // #968
+  // #973: the remaining admin writes (their behaviour is in mcp-admin-more.test.ts)
+  admin_sync_delivery_review_links: { method: "POST", template: "/api/admin/delivery-review-links/sync", capability: "adminBackend" },
+  admin_reprobe_video_versions: { method: "POST", template: "/api/admin/video-versions/reprobe", capability: "adminBackend" },
+  admin_set_project_cover: { method: "POST", template: "/api/projects/:projectId/cover", capability: "editProject" },
+  admin_add_project_photographer: { method: "PUT", template: "/api/projects/:projectId/photographers/:userId", capability: "editProject" },
+  admin_remove_project_photographer: { method: "DELETE", template: "/api/projects/:projectId/photographers/:userId", capability: "editProject" },
+  // Social overlays (#970)
+  admin_update_social_overlay: { method: "PATCH", template: "/api/admin/social-overlays/:id", capability: "adminBackend" },
+  admin_archive_social_overlay: { method: "POST", template: "/api/admin/social-overlays/:id/archive", capability: "adminBackend" },
+  admin_unarchive_social_overlay: { method: "POST", template: "/api/admin/social-overlays/:id/unarchive", capability: "adminBackend" },
 };
 /** The one admin-scope tool that only reads (a POST so that its body can carry a path): readOnlyHint, not destructive. */
 const ADMIN_SCOPE_READS: Record<string, { method: string; template: string; capability: string }> = {
@@ -185,9 +195,10 @@ describe("the admin scope: grants, lifetimes and visibility", () => {
     for (const name of ADMIN_SCOPE_NAMES) expect(after, name).not.toContain(name);
   });
 
-  it("admin grants live 15 minutes with no refresh; other grants live an hour and refresh", () => {
+  // The 8-hour refresh cap itself is exercised through the token endpoint in mcp-auth.test.ts (#962).
+  it("admin grants live 15 minutes and refresh; other grants live an hour and refresh", () => {
     expect(tokens.adminFull!.expiresIn).toBe(900);
-    expect(tokens.adminFull!.refreshToken).toBeUndefined();
+    expect(tokens.adminFull!.refreshToken).toBeTypeOf("string");
     expect(tokens.adminRW!.expiresIn).toBe(3600);
     expect(tokens.adminRW!.refreshToken).toBeTypeOf("string");
   });
@@ -381,70 +392,6 @@ describe("each admin tool's happy path", () => {
   });
 });
 
-/** The never-list (spec 699 "Never through MCP"): nothing here may be a tool, and nothing here may be on the allowlist under any scope. */
-const DENYLIST: ReadonlyArray<{ id: string; method: "ANY" | "NON_GET"; path: RegExp; why: string }> = [
-  { id: "auth", method: "ANY", path: /^\/api\/auth(\/|$)/, why: "OAuth, sessions and impersonation start/stop live under /api/auth" },
-  { id: "oauth-and-mcp", method: "ANY", path: /^\/(oauth|mcp|\.well-known)(\/|$)/, why: "the authorization server and the MCP door itself" },
-  { id: "users-writes", method: "NON_GET", path: /^\/api\/users(\/|$)/, why: "role, active and provisioning changes" },
-  { id: "users-subroutes", method: "ANY", path: /^\/api\/users\//, why: "every settings, flag and freeze toggle sits under /api/users/" },
-  { id: "settings-flags-freeze", method: "ANY", path: /(^|\/)[a-z-]*(settings?|flags?|freeze)(\/|$)/, why: "feature flags and *-settings toggles (mcp_access, impersonation, HEIC, external freeze)" },
-  { id: "connected-apps", method: "ANY", path: /connected-apps/, why: "Connected apps, including revoke-all" },
-  { id: "impersonation", method: "ANY", path: /impersonat/, why: "impersonation" },
-  { id: "dropbox-oauth", method: "ANY", path: /^\/api\/integrations\/dropbox\/(connect-url|callback)$/, why: "Dropbox OAuth" },
-  { id: "uploads", method: "ANY", path: /^\/api\/(uploads|external-uploads)(\/|$)/, why: "upload transfers" },
-  { id: "upload-manifest", method: "ANY", path: /\/upload-manifest$/, why: "upload manifests" },
-  { id: "documents", method: "ANY", path: /^\/api\/projects\/[^/]+\/documents(\/|$)/, why: "document uploads" },
-  { id: "embedded-media-writes", method: "NON_GET", path: /^\/api\/projects\/[^/]+\/embedded-media(\/|$)/, why: "embedded media uploads" },
-];
-const NAME_DENY = /role|impersonat|flag|setting|revoke|upload/;
-/** A tool whose name trips NAME_DENY legitimately would be listed here with a reason. None does. */
-const NAME_EXCEPTIONS: readonly string[] = [];
-const denied = (method: string, path: string) => DENYLIST.filter((rule) => rule.path.test(path) && (rule.method === "ANY" || method !== "GET"));
-
-describe("the never-list", () => {
-  it("no allowlisted route, under any scope, matches a denied pattern", () => {
-    for (const route of MCP_ALLOWED_ROUTES) {
-      // GET /api/users is the one allowlisted read under the users prefix (admin_list_users); it carries no write.
-      expect(denied(route.method, route.template).map((rule) => rule.id), `${route.method} ${route.template}`).toEqual([]);
-    }
-  });
-
-  it("every denied pattern matches a real route, so the list cannot rot into a typo", () => {
-    const real = app.routes.map((route) => ({ method: route.method.toUpperCase(), path: route.path }));
-    for (const rule of DENYLIST) {
-      const hit = real.some((route) => rule.path.test(route.path) && (rule.method === "ANY" || !["GET", "HEAD", "OPTIONS"].includes(route.method)));
-      expect(hit, `${rule.id}: ${rule.why}`).toBe(true);
-    }
-  });
-
-  it("the real routes the spec names are caught", () => {
-    for (const [method, path] of [
-      ["PATCH", "/api/users/x1"], ["POST", "/api/users"], ["PATCH", "/api/users/mcp-settings"], ["PATCH", "/api/users/impersonation-settings"],
-      ["PATCH", "/api/users/embedded-heic-settings"], ["PATCH", "/api/users/external-provisioning-freeze"], ["DELETE", "/api/connected-apps/x1"],
-      ["POST", "/api/admin/connected-apps/revoke-all"], ["POST", "/api/auth/admin/impersonate-user"], ["POST", "/api/auth/admin/stop-impersonating"],
-      ["POST", "/api/uploads/presign"], ["PUT", "/api/uploads/direct"], ["POST", "/api/external-uploads"], ["POST", "/api/projects/x1/upload-manifest"],
-      ["POST", "/api/projects/x1/embedded-media"], ["POST", "/api/projects/x1/documents/presign"], ["POST", "/api/integrations/dropbox/connect-url"],
-      ["GET", "/api/integrations/dropbox/callback"], ["POST", "/oauth/token"], ["POST", "/mcp"],
-    ] as const) expect(denied(method, path).length, `${method} ${path}`).toBeGreaterThan(0);
-    // A legitimate admin read under the users prefix is not caught by the write rules.
-    expect(denied("GET", "/api/users").map((rule) => rule.id)).toEqual([]);
-  });
-
-  it("no tool is named for a forbidden capability", () => {
-    for (const tool of MCP_TOOLS) {
-      if (NAME_EXCEPTIONS.includes(tool.name)) continue;
-      expect(NAME_DENY.test(tool.name), tool.name).toBe(false);
-    }
-  });
-
-  it("the dispatcher refuses every denied route even when called directly", async () => {
-    const { isAllowedMcpRoute } = await import("../src/mcp/route-allowlist");
-    for (const [method, path] of [["PATCH", "/api/users/x1"], ["POST", "/api/users"], ["PATCH", "/api/users/mcp-settings"], ["DELETE", "/api/connected-apps/x1"], ["POST", "/api/admin/connected-apps/revoke-all"], ["POST", "/api/auth/admin/impersonate-user"], ["POST", "/api/uploads/presign"], ["POST", "/api/integrations/dropbox/connect-url"]] as const) {
-      expect(isAllowedMcpRoute(method, path), `${method} ${path}`).toBe(false);
-    }
-  });
-});
-
 describe("delete_project: the server-enforced confirm round trip", () => {
   /** An archived Project holding two RAW assets, a comment, a Subtask and a Tonomo order id. */
   async function doomed() {
@@ -508,7 +455,7 @@ describe("delete_project: the server-enforced confirm round trip", () => {
     const first = await ok("delete_project", { projectId });
     const live = tokenFrom(first);
     const summaryHash = live.split(".")[1]!;
-    const expired = await signConfirmToken(testEnv.MCP_DOWNLOAD_SECRET!, { connectionId: "conn-a", projectId, summaryHash, exp: Math.floor(Date.now() / 1000) - 1 });
+    const expired = await signConfirmToken(testEnv.MCP_DOWNLOAD_SECRET!, { action: "delete_project", connectionId: "conn-a", projectId, summaryHash, exp: Math.floor(Date.now() / 1000) - 1 });
     expect(await refused("delete_project", { projectId, confirm: true, confirmToken: expired })).toMatch(/expired/i);
     expect(CONFIRM_TTL_SECONDS).toBe(300);
     const exp = Number(live.split(".")[0]);

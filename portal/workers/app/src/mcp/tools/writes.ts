@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { COLLECTION_KINDS, STAGE_TRANSPORT_KEYS } from "@quincy/shared";
 import { confirmationRequired, jsonResult, writeTool, type McpTool } from "./define";
+import { removeProjectMember } from "./confirm";
 
 /**
  * Core write tools (#705, plan #699 ticket 5). Each tool dispatches to exactly one allowlisted route and the route does everything
@@ -130,21 +131,7 @@ const projectTools: McpTool[] = [
       confirm,
       confirmedAssignmentCount: z.number().int().nonnegative().optional().describe("With confirm: true, the number of Subtask assignments the confirmation message said will be cleared."),
     },
-    run: async (send, input) => {
-      const count = typeof input.confirmedAssignmentCount === "number" ? input.confirmedAssignmentCount : 0;
-      const confirmed = input.confirm === true;
-      const response = await send(confirmed
-        ? { membershipCycle: input.membershipCycle, clearSubtaskAssignments: count > 0, confirmedAssignmentCount: count, confirmAccessLoss: true }
-        : { membershipCycle: input.membershipCycle, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 });
-      if (response.status === 422) {
-        const text = await response.clone().text(); const body = parseJson(text);
-        if (body?.code === "subtask_assignment_confirmation_required") {
-          const assignments = typeof body.assignmentCount === "number" && body.assignmentCount > 0 ? ` Pass confirmedAssignmentCount: ${body.assignmentCount} with it.` : "";
-          return { content: [{ type: "text", text: `${confirmationRequired(String(body.message ?? body.error ?? "the route needs confirmation")).content[0]!.text}${assignments}` }] };
-        }
-      }
-      return jsonResult(response);
-    },
+    run: removeProjectMember,
   }),
   writeTool({
     name: "move_project_stage",

@@ -160,7 +160,7 @@ describe("dispatchToApi", () => {
       { method: "POST", path: "/api/integrations/dropbox/connect-url" },
       { method: "PATCH", path: "/api/users/x" },
       { method: "GET", path: "/api/auth/session" },
-      { method: "GET", path: "/api/integrations" },
+      { method: "GET", path: "/api/projects/x/autohdr-history" }, // no browser caller; left off by the #973 audit
       { method: "GET", path: "/api/projects/a/b" },
       { method: "GET", path: "/api/projects/../auth/session" },
       { method: "GET", path: "/api/me?x=1" },

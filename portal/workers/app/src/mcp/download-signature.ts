@@ -5,18 +5,31 @@
 export const DOWNLOAD_MAX_TTL_SECONDS = 15 * 60;
 export const DOWNLOAD_QUERY_NAMES = ["c", "e", "exp", "sig", "u"] as const;
 
+export type MarkerExportFormat = "edl" | "fcpxml";
+export type MarkerExportStatus = "all" | "open" | "resolved";
 export type DownloadTarget =
   | { kind: "asset"; assetId: string; variant: string }
-  | { kind: "zip"; projectId: string; ticket: string };
+  | { kind: "zip"; projectId: string; ticket: string }
+  // Staff video downloads (#972): one Version's original, and one Marker export of its notes. The export's options live in the path and the signed subject,
+  // never the query, which stays exactly `u,c,e,exp,sig`.
+  | { kind: "video-version"; projectId: string; assetId: string }
+  | { kind: "marker-export"; projectId: string; assetId: string; format: MarkerExportFormat; includeInternal: boolean; status: MarkerExportStatus };
 export type DownloadClaims = { target: DownloadTarget; exp: number; userId: string; authorizationEpoch: number; connectionId: string };
 
 const encoder = new TextEncoder();
 
 /** JSON of a fixed-order array: no delimiter an id could smuggle, so two distinct claim sets never share a canonical string. */
 function canonical(claims: DownloadClaims): string {
-  const { target } = claims;
-  const subject = target.kind === "asset" ? ["asset", target.assetId, target.variant] : ["zip", target.projectId, target.ticket];
-  return JSON.stringify(["mcp-download-v1", ...subject, claims.exp, claims.userId, claims.authorizationEpoch, claims.connectionId]);
+  return JSON.stringify(["mcp-download-v1", ...subjectOf(claims.target), claims.exp, claims.userId, claims.authorizationEpoch, claims.connectionId]);
+}
+
+function subjectOf(target: DownloadTarget): string[] {
+  switch (target.kind) {
+    case "asset": return ["asset", target.assetId, target.variant];
+    case "zip": return ["zip", target.projectId, target.ticket];
+    case "video-version": return ["video-version", target.projectId, target.assetId];
+    case "marker-export": return ["marker-export", target.projectId, target.assetId, target.format, target.includeInternal ? "true" : "false", target.status];
+  }
 }
 
 const hexOf = (bytes: ArrayBuffer) => [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -40,9 +53,13 @@ export async function verifyDownload(secret: string, claims: DownloadClaims, sig
 }
 
 export function downloadPath(target: DownloadTarget): string {
-  return target.kind === "asset"
-    ? `/dl/asset/${encodeURIComponent(target.assetId)}/${encodeURIComponent(target.variant)}`
-    : `/dl/zip/${encodeURIComponent(target.projectId)}/${encodeURIComponent(target.ticket)}`;
+  const e = encodeURIComponent;
+  switch (target.kind) {
+    case "asset": return `/dl/asset/${e(target.assetId)}/${e(target.variant)}`;
+    case "zip": return `/dl/zip/${e(target.projectId)}/${e(target.ticket)}`;
+    case "video-version": return `/dl/video-version/${e(target.projectId)}/${e(target.assetId)}`;
+    case "marker-export": return `/dl/marker-export/${e(target.projectId)}/${e(target.assetId)}/${target.format}/${target.includeInternal ? "true" : "false"}/${target.status}`;
+  }
 }
 
 export function buildDownloadUrl(origin: string, claims: DownloadClaims, signature: string): string {
