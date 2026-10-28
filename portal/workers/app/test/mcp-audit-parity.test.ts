@@ -5,6 +5,7 @@ import { app } from "../src/index";
 import type { McpPrincipal } from "../src/lib/mcp-dispatch-context";
 import type { McpFetchApp } from "../src/mcp/dispatch";
 import { MCP_TOOLS } from "../src/mcp/tools/registry";
+import { seedVideoVersion, setVideoFlags } from "./video-review-support";
 import { seedAsset, seedCoverage, seedDelivery, seedOpenDeadLetter, seedOrphanReport, seedPoisonEvent } from "./mcp-admin-fixtures";
 
 /**
@@ -119,6 +120,18 @@ const editorCandidate = {
   inputRoots: [{ path: "/Editors/Parity/Input", section: null, folderId: "id:in" }], outputRoots: [{ path: "/Editors/Parity/Output", section: null, folderId: "id:out" }],
 };
 
+/** Video and Version management (#965): a Video of `versions` Versions on the call's Project, the older ones superseded as upload completion leaves them. */
+const videoSetup = (versions: number, trashed: "none" | "version" | "video" = "none") => async (projectId: string) => {
+  const first = await seedVideoVersion({ projectId, uploader: adminId, version: 1 });
+  const all = [first];
+  for (let version = 2; version <= versions; version += 1) all.push(await seedVideoVersion({ projectId, videoId: first.videoId, uploader: adminId, version }));
+  for (let i = 0; i < all.length - 1; i += 1) await database.DB.prepare("UPDATE assets SET superseded_at = ?, replaced_by_asset_id = ? WHERE id = ?").bind(Date.now(), all[i + 1]!.assetId, all[i]!.assetId).run();
+  const zero = { notes: 0, decisions: 0, release: false, links: 0 };
+  if (trashed === "version") await callTool("remove_video_version", { projectId, assetId: first.assetId, expected: zero, removeVideo: false });
+  if (trashed === "video") await callTool("delete_video", { projectId, videoId: first.videoId, expected: { assetIds: all.map((version) => version.assetId), notes: 0, decisions: 0, releases: 0, links: 0 } });
+  return { videoId: first.videoId, firstAssetId: first.assetId, latestAssetId: all[all.length - 1]!.assetId, allAssetIds: all.map((version) => version.assetId).join(",") };
+};
+
 const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "admin_reset_dropbox_monitor", args: () => ({ scope: "raw" }) },
   { tool: "admin_link_editor_folder", args: () => ({ reviewed: true, candidate: editorCandidate }) },
@@ -176,6 +189,13 @@ const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "request_project_link_preview", stage: "edited_review", args: ({ projectId }) => ({ projectId, url: "https://example.com/parity-preview" }) },
   { tool: "request_notice_link_preview", args: () => ({ url: "https://example.com/parity-notice-preview" }) },
   { tool: "edit_project_whiteboard", stage: "edited_review", args: ({ projectId }) => ({ projectId, expectedGeneration: 1, edits: [{ op: "add_text", x: 0, y: 0, text: "Parity whiteboard" }] }) },  { tool: "update_notification_preferences", args: () => ({ emailDigestCadence: "daily" }) }, // #971
+  // Video and Version management (#965)
+  { tool: "set_version_review_status", setup: videoSetup(1), args: ({ projectId, latestAssetId }) => ({ projectId, assetId: latestAssetId!, reviewStatus: "approved_internal", expectedStatus: "in_review" }) },
+  { tool: "rename_video_version", setup: videoSetup(1), args: ({ projectId, latestAssetId }) => ({ projectId, assetId: latestAssetId!, filename: "renamed-cut.mp4" }) },
+  { tool: "remove_video_version", setup: videoSetup(2), args: ({ projectId, firstAssetId }) => ({ projectId, assetId: firstAssetId!, expected: { notes: 0, decisions: 0, release: false, links: 0 }, removeVideo: false }) },
+  { tool: "delete_video", setup: videoSetup(2), args: ({ projectId, videoId, allAssetIds }) => ({ projectId, videoId: videoId!, expected: { assetIds: allAssetIds!.split(","), notes: 0, decisions: 0, releases: 0, links: 0 } }) },
+  { tool: "restore_video_version", setup: videoSetup(2, "version"), args: ({ projectId, firstAssetId }) => ({ projectId, assetId: firstAssetId! }) },
+  { tool: "restore_video", setup: videoSetup(2, "video"), args: ({ projectId, videoId }) => ({ projectId, videoId: videoId! }) },
 ];
 
 /** Write tools whose route writes no audit_log or activity row at all (so there is nothing to stamp), each with the reason. */
@@ -228,6 +248,7 @@ beforeAll(async () => {
   await executeSql(__PORTAL_SEED_SQL__);
   const now = Date.now();
   await database.DB.prepare("INSERT OR IGNORE INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Parity Editor', 'parity-editor@example.test', 1, 'editor', 1, ?, ?)").bind(editorId, now, now).run();
+  await setVideoFlags("video_review", "video_review_all_projects", "video_review_trash", "video_review_notes"); // #965
   await database.DB.batch([
     database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'"),
     database.DB.prepare("INSERT INTO mcp_connections (id, user_id, client_id, client_name, redirect_host, scopes, authorization_epoch, created_at) VALUES ('conn-parity', ?, 'client-1', 'Parity Client', 'client.example.test', '[\"write\"]', 0, ?)").bind(adminId, now),

@@ -62,6 +62,10 @@ const GET_TEMPLATES = [
   "/api/production-calendar",
   "/api/production-gantt",
   "/api/notification-preferences",
+  // Video Trash reads and removal impact (#965)
+  "/api/projects/:projectId/video-trash",
+  "/api/projects/:projectId/video-versions/:assetId/removal-impact",
+  "/api/projects/:projectId/videos/:videoId/removal-impact",
 ] as const;
 
 /** Reached only by redeeming a signed download URL (#707): no tool owns it, `mcp/downloads.ts` dispatches to it. */
@@ -111,6 +115,13 @@ const WRITE_ROUTES = [
   ["POST", "/api/projects/:projectId/download-selection"],
   // Own notification preferences (#971)
   ["PATCH", "/api/notification-preferences"],
+  // Video and Version management (#965). No poster route: it is a raw JPEG upload.
+  ["PUT", "/api/projects/:projectId/video-versions/:assetId/review-status"],
+  ["PUT", "/api/projects/:projectId/video-versions/:assetId/file-name"],
+  ["POST", "/api/projects/:projectId/video-versions/:assetId/remove"],
+  ["POST", "/api/projects/:projectId/videos/:videoId/remove"],
+  ["POST", "/api/projects/:projectId/video-versions/:assetId/restore"],
+  ["POST", "/api/projects/:projectId/videos/:videoId/restore"],
 ] as const;
 
 /**

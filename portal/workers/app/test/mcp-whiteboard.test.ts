@@ -67,7 +67,8 @@ describe("tools/list", () => {
   it("has no restore tool for the whiteboard, over MCP or on the allowlist", async () => {
     const listed = (await h.toolsList(mcp.member!.accessToken)).map((tool) => tool.name);
     expect(listed.filter((name) => /whiteboard/i.test(name)).sort()).toEqual([...WB_TOOLS].sort());
-    expect(listed.filter((name) => /restore/i.test(name) && /whiteboard|version/i.test(name))).toEqual([]);
+    // Video Version restore (#965) is the Video Trash, not a whiteboard version.
+    expect(listed.filter((name) => /restore/i.test(name) && /whiteboard|version/i.test(name) && !/video/i.test(name))).toEqual([]);
     expect(isAllowedMcpRoute("POST", "/api/projects/p1/whiteboard/versions/v1/restore")).toBe(false);
     expect(isAllowedMcpRoute("GET", "/api/projects/p1/whiteboard/socket")).toBe(false);
   });
