@@ -7,6 +7,7 @@ import { COLLAB_WRITE_TOOLS } from "../src/mcp/tools/collab-writes";
 import { WHITEBOARD_TOOLS } from "../src/mcp/tools/whiteboard";
 import { WRITE_TOOLS as CORE_WRITE_TOOLS } from "../src/mcp/tools/writes";
 import { PLANNING_TOOLS } from "../src/mcp/tools/planning";
+import { REVIEW_LINK_TOOLS } from "../src/mcp/tools/review-links";
 import { mcpHarness } from "./mcp-oauth-support";
 
 /** Every `write`-scope tool, one module per line: a new write module appends its own line (commented with its ticket). */
@@ -15,6 +16,7 @@ const WRITE_TOOLS = [
   ...COLLAB_WRITE_TOOLS,
   ...WHITEBOARD_TOOLS,
   ...PLANNING_TOOLS, // #971
+  ...REVIEW_LINK_TOOLS, // #966
 ].filter((tool) => tool.scope === "write");
 
 declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL__: string;
@@ -43,6 +45,7 @@ const READ_NAMES = [
   "get_asset_download_url", "get_selection_download_url", "get_project_whiteboard", "list_whiteboard_versions",
   ...VIDEO_READ_NAMES, // #963
   "get_production_calendar", "get_production_gantt", "get_notification_preferences", // #971
+  "list_review_links", // #966
 ];
 /** The read tools each non-admin role does not see (its routes refuse it), one group per line, appended the same way. */
 const HIDDEN_FROM: Record<"editor" | "photographer" | "external", readonly string[]> = {
@@ -53,6 +56,7 @@ const HIDDEN_FROM: Record<"editor" | "photographer" | "external", readonly strin
     "list_project_assignment_candidates", "get_project_links", "get_selection_download_url",
     ...VIDEO_READ_NAMES, // #963
     "get_production_calendar", "get_production_gantt", // #971
+    "list_review_links", // #966
   ],
   external: [
     "list_project_assignment_candidates", "list_notice_board", "get_selection_download_url",

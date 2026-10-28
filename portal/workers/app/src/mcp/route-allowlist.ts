@@ -62,6 +62,8 @@ const GET_TEMPLATES = [
   "/api/production-calendar",
   "/api/production-gantt",
   "/api/notification-preferences",
+  // Review links (#966)
+  "/api/projects/:projectId/review-links",
 ] as const;
 
 /** Reached only by redeeming a signed download URL (#707): no tool owns it, `mcp/downloads.ts` dispatches to it. */
@@ -111,6 +113,16 @@ const WRITE_ROUTES = [
   ["POST", "/api/projects/:projectId/download-selection"],
   // Own notification preferences (#971)
   ["PATCH", "/api/notification-preferences"],
+  // Review links (#966): create, edit, Videos and grants, and the four confirm-first actions
+  ["POST", "/api/projects/:projectId/review-links"],
+  ["PATCH", "/api/projects/:projectId/review-links/:linkId"],
+  ["POST", "/api/projects/:projectId/review-links/:linkId/videos"],
+  ["DELETE", "/api/projects/:projectId/review-links/:linkId/videos/:videoId"],
+  ["PUT", "/api/projects/:projectId/review-links/:linkId/videos/:videoId/grants"],
+  ["POST", "/api/projects/:projectId/review-links/:linkId/revoke"],
+  ["POST", "/api/projects/:projectId/review-links/:linkId/replace"],
+  ["DELETE", "/api/projects/:projectId/review-links/:linkId"],
+  ["POST", "/api/projects/:projectId/review-links/:linkId/end-sessions"],
 ] as const;
 
 /**
