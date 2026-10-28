@@ -13,6 +13,7 @@ import { VIDEO_READ_TOOLS } from "./video-reads"; // #963
 import { PLANNING_TOOLS } from "./planning"; // #971
 import { VIDEO_WRITE_TOOLS } from "./video-writes"; // #965
 import { SOCIAL_OVERLAY_TOOLS } from "./social-overlays"; // #970
+import { VIDEO_DOWNLOAD_TOOLS } from "./video-downloads"; // #972
 
 export type { McpTool, McpToolContext, McpToolResult } from "./define";
 
@@ -32,6 +33,7 @@ export const MCP_TOOLS: readonly McpTool[] = [
   ...PLANNING_TOOLS, // #971
   ...VIDEO_WRITE_TOOLS, // #965
   ...SOCIAL_OVERLAY_TOOLS, // #970
+  ...VIDEO_DOWNLOAD_TOOLS, // #972
 ];
 
 /** A tool's input as the strict object its callers are held to: unknown arguments are an error. */

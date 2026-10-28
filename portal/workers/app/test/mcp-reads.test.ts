@@ -41,6 +41,8 @@ const tokens: Record<string, { accessToken: string; connectionId: string }> = {}
 const VIDEO_READ_NAMES = ["list_project_videos", "list_video_version_summaries", "list_video_notes", "get_video_note_drawing"];
 /** Video Trash reads (#965): `manageVideoTrash`, Admin and Editor only. */
 const VIDEO_TRASH_READ_NAMES = ["list_video_trash", "get_version_removal_impact", "get_video_removal_impact"];
+/** Staff video downloads (#972): `downloadVideo` / `viewVideo`, so never a Photographer's. */
+const VIDEO_DOWNLOAD_NAMES = ["get_video_version_download_url", "get_marker_export_download_url"];
 /** Every non-admin `read`-scope tool, one group per line: a new read module appends its own line (commented with its ticket). */
 const READ_NAMES = [
   "get_me", "list_projects", "my_tasks", "get_project", "list_stages", "list_project_assignment_candidates", "list_subtask_assignee_options",
@@ -51,6 +53,7 @@ const READ_NAMES = [
   "get_production_calendar", "get_production_gantt", "get_notification_preferences", // #971
   ...VIDEO_TRASH_READ_NAMES, // #965
   "get_project_social_overlays", // #970
+  ...VIDEO_DOWNLOAD_NAMES, // #972
 ];
 /** The read tools each non-admin role does not see (its routes refuse it), one group per line, appended the same way. */
 const HIDDEN_FROM: Record<"editor" | "photographer" | "external", readonly string[]> = {
@@ -63,6 +66,7 @@ const HIDDEN_FROM: Record<"editor" | "photographer" | "external", readonly strin
     "get_production_calendar", "get_production_gantt", // #971
     ...VIDEO_TRASH_READ_NAMES, // #965
     "get_project_social_overlays", // #970
+    ...VIDEO_DOWNLOAD_NAMES, // #972
   ],
   external: [
     "list_project_assignment_candidates", "list_notice_board", "get_selection_download_url",
@@ -301,7 +305,9 @@ describe("route allowlist and the tool registry agree", () => {
     expect(MCP_ALLOWED_ROUTES.every((route) => !route.template.includes("*") && (route.method === "GET" || writeRoutes.has(`${route.method} ${route.template}`)))).toBe(true);
     expect(isAllowedMcpRoute("GET", "/api/auth/get-session")).toBe(false);
     expect(isAllowedMcpRoute("GET", "/api/projects/x/jobs/extra")).toBe(false);
-    expect(isAllowedMcpRoute("GET", "/api/projects/x/video-versions/y/download")).toBe(false);
+    // #972: the video download and export GETs are reachable only as redemptions; the tools probe them with HEAD.
+    expect(REDEMPTION_ONLY_ROUTES.map(([method, template]) => `${method} ${template}`)).toContain("GET /api/projects/:projectId/video-versions/:assetId/download");
+    expect(MCP_TOOLS.some((tool) => tool.route.method === "GET" && tool.route.template.endsWith("/download"))).toBe(false);
     expect(isAllowedMcpRoute("POST", "/api/admin/notification-deliveries/x1/unknown")).toBe(false);
   });
 });

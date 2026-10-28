@@ -320,6 +320,29 @@ review is off for the Project, and an archived Project is read-only. Changes are
 `project.social_overlays.*` with the usual `via: "mcp"` marker. Creating an overlay and replacing its image are
 uploads, so there is no tool for them.
 
+### Video downloads (2) (#972)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `get_video_version_download_url` | read | `downloadVideo` | no |
+| `get_marker_export_download_url` | read | `viewVideo` | no |
+
+Admins, Editors and External editors (on assigned Projects only) see these; a Photographer sees neither. Both return
+`{ url, expiresAt }`, a signed link under the rules in "Signed downloads" below.
+
+- `get_video_version_download_url` takes a `projectId` and a Version's `assetId` (from `list_project_videos`). The link
+  serves the Version's original file with the same name and headers as the browser's Download. Any live Version
+  downloads, superseded or unreleased included. It answers 404 while the video review `download` part is off.
+- `get_marker_export_download_url` takes the same ids, a `format` (`edl` for a DaVinci Resolve marker EDL, `fcpxml`),
+  and optionally `includeInternal` (default false) and `status` (`all`, `open` or `resolved`; default `all`). The
+  link serves the same file the browser's Marker export does. A note outside the Version's frames, or an EDL over 999
+  markers, is refused when the link is requested (`HTTP 422`). It answers 404 while the `notes` or `export` part is off.
+- Requesting a link downloads nothing: the tool checks access with a `HEAD` of the route, which writes no audit row.
+  Each **redemption** is the download: audited as `video_version.download` (or `video_note.export`) with
+  `via: "mcp"`, plus `mcp_download.redeem`.
+- The link always serves the whole file: a `Range` header is not passed on, so a resumed fetch starts again and is
+  audited again.
+
 ## Confirm round trips
 
 Some actions need the person's say-so first. The tool refuses to act on the first call and the client
@@ -343,7 +366,8 @@ must ask the user, then call again.
 `get_asset_download_url` and `get_selection_download_url` return `{ url, expiresAt }`. The link is a
 bearer: whoever holds it can fetch the file until it expires, so do not paste it elsewhere.
 
-- Valid for **15 minutes**, scoped to one asset or one zip ticket, and audited as a download via MCP.
+- Valid for **15 minutes**, scoped to one asset, one zip ticket, one Video Version, or one Marker export
+  of a Version (its format and options are part of the link; #972), and audited as a download via MCP.
 - Redeeming it re-checks the live grant (flag on, Connected app not revoked, user active, epoch
   unchanged, `read` scope still held), so revoking an app kills links already handed out.
 - **Stored renditions only.** If the requested rendition has not been generated yet, the link answers

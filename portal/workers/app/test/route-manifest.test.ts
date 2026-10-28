@@ -158,6 +158,7 @@ describe("terminal route manifest", () => {
       ["ALL", "/mcp", "bearer-protocol"], ["ALL", "/mcp/", "bearer-protocol"],
       ["GET", "/dl/asset/:assetId/:variant", "bearer-protocol"], ["GET", "/dl/zip/:projectId/:ticket", "bearer-protocol"],
       ["ALL", "/dl", "terminal-fallback"], ["ALL", "/dl/*", "terminal-fallback"],
+      ["GET", "/dl/video-version/:projectId/:assetId", "bearer-protocol"], ["GET", "/dl/marker-export/:projectId/:assetId/:format/:includeInternal/:status", "bearer-protocol"], // #972
     ];
     for (const [method, path, routeClass] of expected) {
       const row = PROJECT_SECURITY_ROUTE_CLASSIFICATION.find((entry) => entry.method === method && entry.path === path);
