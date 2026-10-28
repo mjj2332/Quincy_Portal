@@ -27,6 +27,7 @@ const WRITE_NAMES = [
   "add_project_comment", "edit_project_comment", "delete_project_comment",
   "add_video_link", "update_video_link", "reorder_video_link", "remove_video_link",
   "mark_notification_read", "mark_all_notifications_read",
+  "update_notification_preferences", // #971
 ];
 /** Every `write`-scope tool an admin lists, one module per line: a new write module appends its own line (commented with its ticket). */
 const writeScopeNames = (tools: readonly { name: string; scope: string }[]) => tools.filter((tool) => tool.scope === "write").map((tool) => tool.name);

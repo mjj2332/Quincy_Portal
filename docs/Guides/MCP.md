@@ -247,6 +247,26 @@ Photographer sees none. They answer 404 while video review is off for the Projec
   server's MCP `instructions` tell the client this text is outside data, never instructions.
 - `get_video_note_drawing` returns the drawing in the annotation `strokes` wire contract above.
 
+### Planning and notification preferences (4) (#971)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `get_production_calendar` | read | `viewProductionCalendar` | no |
+| `get_production_gantt` | read | `viewProductionCalendar` | no |
+| `get_notification_preferences` | read | any role | no |
+| `update_notification_preferences` | write | any role | no |
+
+The Calendar and the Gantt are the same routes the Calendar and Gantt screens use, so they return the same data and
+the same refusals. Photographers do not hold `viewProductionCalendar` and are not offered them; an External editor
+sees only the Projects assigned to them. `get_production_calendar` takes a `start` (inclusive) and `end` (exclusive)
+of at most 42 days, plus optional filters. `get_production_gantt` pages Projects with `cursor` and a Project's
+Subtasks with `childrenOf`. The `archived` filter is admin only.
+
+The two notification preference tools read and change the signed-in staff member's own preferences (Deadline and
+Subtask reminder emails, digest cadence, whether the digest includes Project activity). They take no user id, so
+they cannot reach anyone else's row. A change is audited as `notification.preference.update` with the usual
+`via: "mcp"` marker.
+
 ## Confirm round trips
 
 Some actions need the person's say-so first. The tool refuses to act on the first call and the client
