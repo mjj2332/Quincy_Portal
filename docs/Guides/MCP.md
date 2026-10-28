@@ -64,10 +64,10 @@ With every scope granted, the tool count by role is:
 
 | Role | Tools visible |
 |---|---|
-| Admin | 103 |
+| Admin | 105 |
 | Photographer | 39 |
-| Editor | 54 |
-| External editor | 46 |
+| Editor | 56 |
+| External editor | 48 |
 
 Admin-only tools (every `admin_*` tool and `delete_project`) never appear for the other roles. An
 External editor additionally has no notice board and no selection or download-selection tools.
@@ -75,7 +75,7 @@ External editor additionally has no notice board and no selection or download-se
 ## Tool reference
 
 Generated from the tool definitions in `portal/workers/app/src/mcp/tools/` (registry plus the
-whiteboard tools): **103 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
+whiteboard tools): **105 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
 the role capability. **Destructive** is the `destructiveHint` the client sees; every `admin`-scope tool is
 destructive. `destructiveHint` is advice to the client, not enforcement: the server-side confirm round
 trips below are what enforce.
@@ -267,6 +267,29 @@ Subtask reminder emails, digest cadence, whether the digest includes Project act
 they cannot reach anyone else's row. A change is audited as `notification.preference.update` with the usual
 `via: "mcp"` marker.
 
+### Video downloads (2) (#972)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `get_video_version_download_url` | read | `downloadVideo` | no |
+| `get_marker_export_download_url` | read | `viewVideo` | no |
+
+Admins, Editors and External editors (on assigned Projects only) see these; a Photographer sees neither. Both return
+`{ url, expiresAt }`, a signed link under the rules in "Signed downloads" below.
+
+- `get_video_version_download_url` takes a `projectId` and a Version's `assetId` (from `list_project_videos`). The link
+  serves the Version's original file with the same name and headers as the browser's Download. Any live Version
+  downloads, superseded or unreleased included. It answers 404 while the video review `download` part is off.
+- `get_marker_export_download_url` takes the same ids, a `format` (`edl` for a DaVinci Resolve marker EDL, `fcpxml`),
+  and optionally `includeInternal` (default false) and `status` (`all`, `open` or `resolved`; default `all`). The
+  link serves the same file the browser's Marker export does. A note outside the Version's frames, or an EDL over 999
+  markers, is refused when the link is requested (`HTTP 422`). It answers 404 while the `notes` or `export` part is off.
+- Requesting a link downloads nothing: the tool checks access with a `HEAD` of the route, which writes no audit row.
+  Each **redemption** is the download: audited as `video_version.download` (or `video_note.export`) with
+  `via: "mcp"`, plus `mcp_download.redeem`.
+- The link always serves the whole file: a `Range` header is not passed on, so a resumed fetch starts again and is
+  audited again.
+
 ## Confirm round trips
 
 Some actions need the person's say-so first. The tool refuses to act on the first call and the client
@@ -290,7 +313,8 @@ must ask the user, then call again.
 `get_asset_download_url` and `get_selection_download_url` return `{ url, expiresAt }`. The link is a
 bearer: whoever holds it can fetch the file until it expires, so do not paste it elsewhere.
 
-- Valid for **15 minutes**, scoped to one asset or one zip ticket, and audited as a download via MCP.
+- Valid for **15 minutes**, scoped to one asset, one zip ticket, one Video Version, or one Marker export
+  of a Version (its format and options are part of the link; #972), and audited as a download via MCP.
 - Redeeming it re-checks the live grant (flag on, Connected app not revoked, user active, epoch
   unchanged, `read` scope still held), so revoking an app kills links already handed out.
 - **Stored renditions only.** If the requested rendition has not been generated yet, the link answers

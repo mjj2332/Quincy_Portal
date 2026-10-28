@@ -8,7 +8,8 @@ import type { McpPrincipal } from "../../lib/mcp-dispatch-context";
 import type { McpScope } from "../authority";
 
 export type McpToolContext = { env: Env; executionCtx: ExecutionContext; fetchApp: McpFetchApp; principal: McpPrincipal; role: string };
-export type McpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+/** HEAD (#972): a signed-download tool proves access to a route whose GET is itself the audited download. */
+export type McpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD";
 export type McpToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
 export type McpTool = {
@@ -81,7 +82,7 @@ export type WriteSend = (body?: unknown) => Promise<Response>;
 export function writeTool(def: {
   name: string;
   description: string;
-  method: Exclude<McpMethod, "GET">;
+  method: Exclude<McpMethod, "GET" | "HEAD">;
   template: string;
   inputSchema: ZodRawShape;
   capability?: Capability;

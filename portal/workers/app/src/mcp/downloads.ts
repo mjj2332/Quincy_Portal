@@ -19,6 +19,29 @@ import { auditPrincipalOf } from "./tools/downloads";
 const forbidden = () => new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: { "content-type": "application/json", "cache-control": "private, no-store" } });
 const gone = () => new Response(JSON.stringify({ error: "Gone" }), { status: 410, headers: { "content-type": "application/json", "cache-control": "private, no-store" } });
 
+/** The existing route a target is served by. Video targets (#972) reach the staff routes, which write their own `video_version.download` / `video_note.export` rows. */
+function redemptionRequest(target: DownloadTarget): { path: string; query?: Record<string, string> } {
+  const e = encodeURIComponent;
+  switch (target.kind) {
+    case "asset": return { path: `/media/asset/${e(target.assetId)}/${e(target.variant)}` };
+    case "zip": return { path: `/api/projects/${e(target.projectId)}/download-selection/${e(target.ticket)}/archive.zip` };
+    case "video-version": return { path: `/api/projects/${e(target.projectId)}/video-versions/${e(target.assetId)}/download` };
+    case "marker-export": return {
+      path: `/api/projects/${e(target.projectId)}/video-versions/${e(target.assetId)}/marker-export`,
+      query: { format: target.format, includeInternal: target.includeInternal ? "true" : "false", status: target.status },
+    };
+  }
+}
+
+function redemptionAuditOf(target: DownloadTarget): [string, string, Record<string, unknown>] {
+  switch (target.kind) {
+    case "asset": return ["asset", target.assetId, { variant: target.variant }];
+    case "zip": return ["project", target.projectId, { ticket: target.ticket }];
+    case "video-version": return ["asset", target.assetId, { projectId: target.projectId, video: "version" }];
+    case "marker-export": return ["asset", target.assetId, { projectId: target.projectId, video: "marker-export", format: target.format, includeInternal: target.includeInternal, status: target.status }];
+  }
+}
+
 async function redeem(c: Context<AppEnv>, fetchApp: McpFetchApp, target: DownloadTarget): Promise<Response> {
   try {
     const secret = c.env.MCP_DOWNLOAD_SECRET;
@@ -37,10 +60,7 @@ async function redeem(c: Context<AppEnv>, fetchApp: McpFetchApp, target: Downloa
     const authority = await loadMcpAuthority(c.env, principal);
     if (!authority || !authority.connectionScopes.includes("read")) return forbidden();
 
-    const path = target.kind === "asset"
-      ? `/media/asset/${encodeURIComponent(target.assetId)}/${encodeURIComponent(target.variant)}`
-      : `/api/projects/${encodeURIComponent(target.projectId)}/download-selection/${encodeURIComponent(target.ticket)}/archive.zip`;
-    const response = await dispatchToApi(fetchApp, c.env, c.executionCtx as ExecutionContext, principal, { method: "GET", path });
+    const response = await dispatchToApi(fetchApp, c.env, c.executionCtx as ExecutionContext, principal, { method: "GET", ...redemptionRequest(target) });
     // Stored renditions only: a 3xx is the hand-off to the image transformer, whose bearer outlives revocation. Never forward it.
     if (response.status >= 300 && response.status < 400) {
       await response.body?.cancel();
@@ -48,7 +68,8 @@ async function redeem(c: Context<AppEnv>, fetchApp: McpFetchApp, target: Downloa
     }
     if (response.status >= 400) { await response.body?.cancel(); return forbidden(); }
     // Written before the bytes flow, like the zip route's own audit: a stream cannot show that every byte arrived.
-    await audit(c.env, auditPrincipalOf(principal), "mcp_download.redeem", target.kind === "asset" ? "asset" : "project", target.kind === "asset" ? target.assetId : target.projectId, target.kind === "asset" ? { variant: target.variant } : { ticket: target.ticket });
+    const [targetType, targetId, meta] = redemptionAuditOf(target);
+    await audit(c.env, auditPrincipalOf(principal), "mcp_download.redeem", targetType, targetId, meta);
     return response;
   } catch {
     return forbidden();
@@ -60,6 +81,14 @@ export function mountMcpDownloads(app: Hono<AppEnv>, fetchApp: McpFetchApp) {
     redeem(c, fetchApp, { kind: "asset", assetId: c.req.param("assetId"), variant: c.req.param("variant") })));
   app.get("/dl/zip/:projectId/:ticket", terminalRoute("/dl/zip/:projectId/:ticket", (c) =>
     redeem(c, fetchApp, { kind: "zip", projectId: c.req.param("projectId"), ticket: c.req.param("ticket") })));
+  // Staff video downloads (#972). The export's options are path segments; an unknown value is refused before the signature is even checked.
+  app.get("/dl/video-version/:projectId/:assetId", terminalRoute("/dl/video-version/:projectId/:assetId", (c) =>
+    redeem(c, fetchApp, { kind: "video-version", projectId: c.req.param("projectId"), assetId: c.req.param("assetId") })));
+  app.get("/dl/marker-export/:projectId/:assetId/:format/:includeInternal/:status", terminalRoute("/dl/marker-export/:projectId/:assetId/:format/:includeInternal/:status", (c) => {
+    const format = c.req.param("format"), includeInternal = c.req.param("includeInternal"), status = c.req.param("status");
+    if ((format !== "edl" && format !== "fcpxml") || (includeInternal !== "true" && includeInternal !== "false") || (status !== "all" && status !== "open" && status !== "resolved")) return forbidden();
+    return redeem(c, fetchApp, { kind: "marker-export", projectId: c.req.param("projectId"), assetId: c.req.param("assetId"), format, includeInternal: includeInternal === "true", status });
+  }));
   app.all("/dl", terminalRoute("/dl", (c) => c.json({ error: "Not found" }, 404)));
   app.all("/dl/*", terminalRoute("/dl/*", (c) => c.json({ error: "Not found" }, 404)));
 }

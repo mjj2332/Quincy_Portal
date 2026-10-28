@@ -67,6 +67,9 @@ const GET_TEMPLATES = [
 /** Reached only by redeeming a signed download URL (#707): no tool owns it, `mcp/downloads.ts` dispatches to it. */
 export const REDEMPTION_ONLY_ROUTES = [
   ["GET", "/api/projects/:projectId/download-selection/:ticket/archive.zip"],
+  // Staff video downloads (#972): a GET here is the audited download or export itself, so only a redemption makes one.
+  ["GET", "/api/projects/:projectId/video-versions/:assetId/download"],
+  ["GET", "/api/projects/:projectId/video-versions/:assetId/marker-export"],
 ] as const;
 
 /** Writes (#705 core, #706 collaboration). Each is one tool's one route; `mcp-writes.test.ts` checks the pairing both ways. */
@@ -150,11 +153,21 @@ const ADMIN_ROUTES = [
   ["DELETE", "/api/projects/:projectId"],
 ] as const;
 
+/**
+ * HEAD probes (#972): the video download tools prove access with a HEAD, which runs the route's whole admission and writes no audit row.
+ * Each is one `*_download_url` tool's route.
+ */
+const PROBE_ROUTES = [
+  ["HEAD", "/api/projects/:projectId/video-versions/:assetId/download"],
+  ["HEAD", "/api/projects/:projectId/video-versions/:assetId/marker-export"],
+] as const;
+
 export const MCP_ALLOWED_ROUTES: readonly { method: string; template: string; pattern: RegExp }[] = [
   ...GET_TEMPLATES.map((template) => ({ method: "GET", template, pattern: patternFor(template) })),
   ...WRITE_ROUTES.map(([method, template]) => ({ method, template, pattern: patternFor(template) })),
   ...ADMIN_ROUTES.map(([method, template]) => ({ method, template, pattern: patternFor(template) })),
   ...REDEMPTION_ONLY_ROUTES.map(([method, template]) => ({ method, template, pattern: patternFor(template) })),
+  ...PROBE_ROUTES.map(([method, template]) => ({ method, template, pattern: patternFor(template) })), // #972
 ];
 
 export function isAllowedMcpRoute(method: string, path: string): boolean {

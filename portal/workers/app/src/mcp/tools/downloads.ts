@@ -13,7 +13,7 @@ import type { McpPrincipal } from "../../lib/mcp-dispatch-context";
 
 export const auditPrincipalOf = (principal: McpPrincipal): AuditPrincipal => ({ id: principal.userId, impersonatedBy: null, via: { kind: "mcp", clientName: principal.clientName, connectionId: principal.connectionId } });
 
-async function signedUrl(ctx: McpToolContext, target: DownloadTarget, ttlSeconds: number): Promise<{ url: string; expiresAt: string } | null> {
+export async function signedUrl(ctx: McpToolContext, target: DownloadTarget, ttlSeconds: number): Promise<{ url: string; expiresAt: string } | null> {
   const secret = ctx.env.MCP_DOWNLOAD_SECRET;
   if (!secret) return null;
   const exp = Math.floor(Date.now() / 1000) + Math.min(ttlSeconds, DOWNLOAD_MAX_TTL_SECONDS);
@@ -21,8 +21,8 @@ async function signedUrl(ctx: McpToolContext, target: DownloadTarget, ttlSeconds
   return { url: buildDownloadUrl(ctx.env.APP_ORIGIN, claims, await signDownload(secret, claims)), expiresAt: new Date(exp * 1000).toISOString() };
 }
 
-const notConfigured = (): McpToolResult => ({ content: [{ type: "text", text: "Downloads are not configured on this server." }], isError: true });
-const issued = (value: { url: string; expiresAt: string }): McpToolResult => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
+export const notConfigured = (): McpToolResult => ({ content: [{ type: "text", text: "Downloads are not configured on this server." }], isError: true });
+export const issued = (value: { url: string; expiresAt: string }): McpToolResult => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
 
 const getAssetDownloadUrl: McpTool = {
   name: "get_asset_download_url",
