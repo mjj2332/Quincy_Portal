@@ -150,6 +150,13 @@ const videoSetup = (versions: number, trashed: "none" | "version" | "video" = "n
   if (trashed === "video") await callTool("delete_video", { projectId, videoId: first.videoId, expected: { assetIds: all.map((version) => version.assetId), notes: 0, decisions: 0, releases: 0, links: 0 } });
   return { videoId: first.videoId, firstAssetId: first.assetId, latestAssetId: all[all.length - 1]!.assetId, allAssetIds: all.map((version) => version.assetId).join(",") };
 };
+/** Video note writes (#964): a live Version on the call's Project, and a note on it written through the tool. */
+const videoVersionSetup = async (projectId: string) => ({ assetId: (await seedVideoVersion({ projectId, uploader: adminId })).assetId });
+const videoNoteSetup = async (projectId: string) => {
+  const { assetId } = await videoVersionSetup(projectId);
+  const created = JSON.parse(await callTool("create_video_note", { projectId, assetId, visibility: "internal", body: "Seed", startFrame: 1 })) as { thread: { id: string } };
+  return { assetId, noteId: created.thread.id };
+};
 
 const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "admin_reset_dropbox_monitor", args: () => ({ scope: "raw" }) },
@@ -215,6 +222,12 @@ const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "delete_video", setup: videoSetup(2), args: ({ projectId, videoId, allAssetIds }) => ({ projectId, videoId: videoId!, expected: { assetIds: allAssetIds!.split(","), notes: 0, decisions: 0, releases: 0, links: 0 } }) },
   { tool: "restore_video_version", setup: videoSetup(2, "version"), args: ({ projectId, firstAssetId }) => ({ projectId, assetId: firstAssetId! }) },
   { tool: "restore_video", setup: videoSetup(2, "video"), args: ({ projectId, videoId }) => ({ projectId, videoId: videoId! }) },
+  // Video note writes (#964)
+  { tool: "create_video_note", setup: videoVersionSetup, args: ({ projectId, assetId }) => ({ projectId, assetId: assetId!, visibility: "public", body: "Parity note", startTimecode: "0:01" }) },
+  { tool: "reply_to_video_note", setup: videoNoteSetup, args: ({ projectId, noteId }) => ({ projectId, noteId: noteId!, body: "Parity reply" }) },
+  { tool: "edit_video_note", setup: videoNoteSetup, args: ({ projectId, noteId }) => ({ projectId, noteId: noteId!, expectedRevision: 1, body: "Parity edit" }) },
+  { tool: "delete_video_note", setup: videoNoteSetup, args: ({ projectId, noteId }) => ({ projectId, noteId: noteId!, expectedRevision: 1 }) },
+  { tool: "set_video_note_resolution", setup: videoNoteSetup, args: ({ projectId, noteId }) => ({ projectId, noteId: noteId!, resolved: true }) },
   { tool: "admin_update_social_overlay", setup: overlaySetup, args: ({ overlayId }) => ({ id: overlayId!, name: "Parity renamed", expectedRevision: 1 }) }, // #970
   { tool: "admin_archive_social_overlay", setup: overlaySetup, args: ({ overlayId }) => ({ id: overlayId!, expectedRevision: 1 }) }, // #970
   { tool: "admin_unarchive_social_overlay", setup: archivedOverlaySetup, args: ({ overlayId }) => ({ id: overlayId!, expectedRevision: 1 }) }, // #970
@@ -277,6 +290,7 @@ beforeAll(async () => {
     database.DB.prepare("INSERT INTO mcp_connections (id, user_id, client_id, client_name, redirect_host, scopes, authorization_epoch, created_at) VALUES ('conn-parity', ?, 'client-1', 'Parity Client', 'client.example.test', '[\"write\"]', 0, ?)").bind(adminId, now),
     database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_by, updated_at) VALUES ('mcp_access', 1, NULL, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1").bind(now),
   ]);
+  await setVideoFlags("video_review", "video_review_all_projects", "video_review_notes", "video_review_markup"); // #964
 });
 
 describe("every row an MCP write creates carries provenance", () => {

@@ -128,6 +128,12 @@ const WRITE_ROUTES = [
   ["POST", "/api/projects/:projectId/videos/:videoId/remove"],
   ["POST", "/api/projects/:projectId/video-versions/:assetId/restore"],
   ["POST", "/api/projects/:projectId/videos/:videoId/restore"],
+  // Video note writes (#964)
+  ["POST", "/api/projects/:projectId/video-versions/:assetId/notes"],
+  ["POST", "/api/projects/:projectId/video-notes/:noteId/replies"],
+  ["PATCH", "/api/projects/:projectId/video-notes/:noteId"],
+  ["DELETE", "/api/projects/:projectId/video-notes/:noteId"],
+  ["PUT", "/api/projects/:projectId/video-notes/:noteId/resolution"],
   // A Project's Social overlay selection (#970)
   ["PUT", "/api/projects/:projectId/social-overlays"],
 ] as const;

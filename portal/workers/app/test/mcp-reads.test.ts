@@ -8,6 +8,7 @@ import { WHITEBOARD_TOOLS } from "../src/mcp/tools/whiteboard";
 import { WRITE_TOOLS as CORE_WRITE_TOOLS } from "../src/mcp/tools/writes";
 import { PLANNING_TOOLS } from "../src/mcp/tools/planning";
 import { VIDEO_WRITE_TOOLS } from "../src/mcp/tools/video-writes";
+import { VIDEO_NOTE_TOOLS } from "../src/mcp/tools/video-notes"; // #964
 import { SOCIAL_OVERLAY_TOOLS } from "../src/mcp/tools/social-overlays";
 import { mcpHarness } from "./mcp-oauth-support";
 
@@ -18,6 +19,7 @@ const WRITE_TOOLS = [
   ...WHITEBOARD_TOOLS,
   ...PLANNING_TOOLS, // #971
   ...VIDEO_WRITE_TOOLS, // #965
+  ...VIDEO_NOTE_TOOLS, // #964
   ...SOCIAL_OVERLAY_TOOLS, // #970
 ].filter((tool) => tool.scope === "write");
 
