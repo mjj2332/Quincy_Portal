@@ -64,9 +64,9 @@ With every scope granted, the tool count by role is:
 
 | Role | Tools visible |
 |---|---|
-| Admin | 103 |
+| Admin | 109 |
 | Photographer | 39 |
-| Editor | 54 |
+| Editor | 60 |
 | External editor | 46 |
 
 Admin-only tools (every `admin_*` tool and `delete_project`) never appear for the other roles. An
@@ -75,7 +75,7 @@ External editor additionally has no notice board and no selection or download-se
 ## Tool reference
 
 Generated from the tool definitions in `portal/workers/app/src/mcp/tools/` (registry plus the
-whiteboard tools): **103 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
+whiteboard tools): **109 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
 the role capability. **Destructive** is the `destructiveHint` the client sees; every `admin`-scope tool is
 destructive. `destructiveHint` is advice to the client, not enforcement: the server-side confirm round
 trips below are what enforce.
@@ -267,6 +267,31 @@ Subtask reminder emails, digest cadence, whether the digest includes Project act
 they cannot reach anyone else's row. A change is audited as `notification.preference.update` with the usual
 `via: "mcp"` marker.
 
+### Premium and Unlock (6) (#969)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `set_video_premium` | write | `manageVideoPremium` | no |
+| `set_video_premium_unlock` | write | `manageVideoPremium` | no |
+| `set_delivery_video_premium` | write | `manageVideoPremium` | no |
+| `set_delivery_video_premium_unlock` | write | `manageVideoPremium` | no |
+| `set_asset_premium` | write | `manageExtras` | no |
+| `set_asset_premium_unlock` | write | `manageExtras` | no |
+
+Admins and Editors see these; Photographers and External editors do not. A Video has the same pair of tools
+twice because it has two routes: `set_video_premium*` are the Video review routes (open while the Video review
+`delivery` part is on), `set_delivery_video_premium*` the Delivery tab's (open while Client Delivery is on). Both
+run the same handlers. `set_asset_premium*` cover a photo, a Floorplan PDF or a Copy document.
+
+- **Unmark** (`premium: false`) is refused with `premium_published` once the item has been on a published Client
+  Delivery page, as in the browser.
+- **Late Premium.** Marking an item that is already on a published page (it then stays premium for good) returns
+  `Confirmation required` and changes nothing; it acts only when called again with `confirm: true`.
+- **Unlock** (`unlocked: true`) is a confirm-token round trip, see below. **Re-lock** (`unlocked: false`) is one step.
+
+Each change is audited (`video.premium_set`, `video.premium_unlock`, `video.premium_relock`, `asset.delivery_premium_set`,
+`asset.premium_unlock`, `asset.premium_relock`) with the usual `via: "mcp"` marker.
+
 ## Confirm round trips
 
 Some actions need the person's say-so first. The tool refuses to act on the first call and the client
@@ -284,6 +309,14 @@ must ask the user, then call again.
   Project and that Connected app only: a token issued for one action (delete, Publish, Unlock) is refused
   by every other. The server recomputes the summary on the second call and **refuses if the Project
   changed in between**; the client has to ask again.
+- **Unlock** (`set_video_premium_unlock`, `set_delivery_video_premium_unlock`, `set_asset_premium_unlock` with
+  `unlocked: true`). The first call unlocks nothing: it returns a summary of what becomes viewable and downloadable
+  in full by the client (the item, its Premium, Unlock and published state, and the payment reference) and a
+  `confirmToken` for the action `unlock`. Only the second call, with the same arguments plus `confirm: true` and the
+  token, unlocks. As for delete, the token is good for 5 minutes, that Project and that Connected app; a changed
+  item or payment reference is refused with "re-confirm".
+- **Late Premium** (`set_video_premium`, `set_delivery_video_premium`, `set_asset_premium` with `premium: true`
+  on an item already on a published page) returns `Confirmation required` and acts only on `confirm: true`.
 
 ## Signed downloads
 
