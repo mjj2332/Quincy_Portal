@@ -11,8 +11,13 @@ import { WHITEBOARD_TOOLS } from "./whiteboard";
 import { ADMIN_WRITE_TOOLS } from "./admin-writes";
 import { VIDEO_READ_TOOLS } from "./video-reads"; // #963
 import { PLANNING_TOOLS } from "./planning"; // #971
+import { VIDEO_WRITE_TOOLS } from "./video-writes"; // #965
+import { VIDEO_NOTE_TOOLS } from "./video-notes"; // #964
 import { REVIEW_LINK_TOOLS } from "./review-links"; // #966
+import { DELIVERY_TOOLS } from "./delivery"; // #968
 import { SOCIAL_OVERLAY_TOOLS } from "./social-overlays"; // #970
+import { VIDEO_DOWNLOAD_TOOLS } from "./video-downloads"; // #972
+import { PREMIUM_TOOLS } from "./premium"; // #969
 import { RELEASE_TOOLS } from "./release"; // #967
 
 export type { McpTool, McpToolContext, McpToolResult } from "./define";
@@ -31,8 +36,13 @@ export const MCP_TOOLS: readonly McpTool[] = [
   ...ADMIN_WRITE_TOOLS,
   ...VIDEO_READ_TOOLS, // #963
   ...PLANNING_TOOLS, // #971
+  ...VIDEO_WRITE_TOOLS, // #965
+  ...VIDEO_NOTE_TOOLS, // #964
   ...REVIEW_LINK_TOOLS, // #966
+  ...DELIVERY_TOOLS, // #968
   ...SOCIAL_OVERLAY_TOOLS, // #970
+  ...VIDEO_DOWNLOAD_TOOLS, // #972
+  ...PREMIUM_TOOLS, // #969
   ...RELEASE_TOOLS, // #967
 ];
 

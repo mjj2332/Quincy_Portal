@@ -64,18 +64,18 @@ With every scope granted, the tool count by role is:
 
 | Role | Tools visible |
 |---|---|
-| Admin | 122 |
+| Admin | 149 |
 | Photographer | 39 |
-| Editor | 69 |
-| External editor | 58 |
+| Editor | 95 |
+| External editor | 67 |
 
-Admin-only tools (every `admin_*` tool and `delete_project`) never appear for the other roles. An
+Admin-only tools (every `admin_*` tool, `delete_project` and `set_delivery_page_enabled`) never appear for the other roles. An
 External editor additionally has no notice board and no selection or download-selection tools.
 
 ## Tool reference
 
 Generated from the tool definitions in `portal/workers/app/src/mcp/tools/` (registry plus the
-whiteboard tools): **122 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
+whiteboard tools): **149 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
 the role capability. **Destructive** is the `destructiveHint` the client sees; every `admin`-scope tool is
 destructive. `destructiveHint` is advice to the client, not enforcement: the server-side confirm round
 trips below are what enforce.
@@ -267,6 +267,92 @@ Subtask reminder emails, digest cadence, whether the digest includes Project act
 they cannot reach anyone else's row. A change is audited as `notification.preference.update` with the usual
 `via: "mcp"` marker.
 
+### Video and Version management (9) (#965)
+
+Admins and Editors see all nine; an External editor (on assigned Projects) sees the two Version writes; a
+Photographer sees none. They answer 404 while video review is off for the Project (the Trash tools also need the
+`trash` part), as the routes do.
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `set_version_review_status` | write | `annotateVideo` | no |
+| `rename_video_version` | write | `uploadVideo` | no |
+| `list_video_trash` | read | `manageVideoTrash` | no |
+| `get_version_removal_impact` | read | `manageVideoTrash` | no |
+| `get_video_removal_impact` | read | `manageVideoTrash` | no |
+| `remove_video_version` | write | `manageVideoTrash` | yes |
+| `delete_video` | write | `manageVideoTrash` | yes |
+| `restore_video_version` | write | `manageVideoTrash` | no |
+| `restore_video` | write | `manageVideoTrash` | no |
+
+- **Review status** is `in_review` or `approved_internal`. Setting `approved_internal` is the internal approval
+  decision and needs `approveVideoInternal` (Admin and Editor); an External editor can set `in_review` only, and the
+  route answers 403 otherwise. `expectedStatus` is the status the client read: a changed one is 409
+  `review_status_conflict`, and a Version that is no longer the latest is 409 `not_latest_version`. The Client
+  approval decisions and Release belong to the release tools, not here.
+- **Rename** changes a Version's file name (`.mp4` or `.mov`; `.mov` is stored as `.mp4`).
+- **Delete and remove do not confirm.** They move the Video or Version to the Video Trash, and Restore brings it back
+  (for the retention period shown by `list_video_trash`), so they carry `destructiveHint` instead. Read the impact
+  first (`get_version_removal_impact`, `get_video_removal_impact`) and pass it as `expected`; if the Video or Version
+  changed since, the route answers 409 `impact_changed` with the fresh impact and nothing is removed. Removing the last
+  Version needs `removeVideo: true` (409 `last_version` otherwise); a Video published in Client Delivery or with an
+  upload in progress is refused. Restoring a Version whose Video is in Trash is 409 `video_in_trash`: restore the Video
+  first.
+- Every write is audited as through MCP (`via: "mcp"`).
+
+### Video note writes (5) (#964)
+
+Admins, Editors and External editors (on assigned Projects only) see these with the `write` scope; a
+Photographer sees none. They answer 404 while video notes are off for the Project (and while markup is off,
+for a call that carries a drawing), as the routes do.
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `create_video_note` | write | `annotateVideo` | no |
+| `reply_to_video_note` | write | `annotateVideo` | no |
+| `edit_video_note` | write | `annotateVideo` | no |
+| `delete_video_note` | write | `annotateVideo` | yes |
+| `set_video_note_resolution` | write | `annotateVideo` | no |
+
+- **Frames or a timecode.** Each moment (`start`, `end`, `drawing`) is given as a frame (`startFrame`,
+  `endFrame` exclusive, `drawingFrame`) or as a timecode (`startTimecode`, `endTimecode`, `drawingTimecode`),
+  never both. A timecode is SMPTE on that Version (`HH:MM:SS:FF`, `;` for drop-frame, start timecode
+  included, as `list_video_notes` labels notes) or elapsed time from the start (`0:42`, `1:02:03.5`). The tool
+  reads the Version's timing, resolves the timecode to the nearest frame and sends frames; frames are sent
+  unchanged. The result is the thread plus `resolved`: per moment given, the `frame` used, its SMPTE
+  `timecode`, and `fromTimecode` when it came from one. `edit_video_note` needs `assetId` (the note's Version)
+  with a timecode.
+- **Visibility is required** on create, with no default, and cannot change afterwards: `public` is seen by
+  Guest reviewers on a Review link, `internal` by staff only. A reply takes its note's visibility.
+- **Drawings** use the annotation `strokes` wire contract above with the video limits (hex colour, width 1 to
+  24), and `drawingFrame` must be the note's frame or inside its range. `markup: null` on edit removes one; a
+  note with a drawing cannot be moved.
+- **Route errors pass through unchanged**: `frame_out_of_range` (with the Version's `frameCount`),
+  `drawing_frame_outside`, `note_conflict` (a stale `expectedRevision`; its thread is shaped like every other,
+  guest text untrusted), `markup_locks_frames`, `project_archived`.
+- **Author-only.** Editing or deleting someone else's note or reply is refused (HTTP 403), for Admins too.
+  Resolving and reopening are not author-only. Every write is audited (`video_note.*`) with the `via: "mcp"`
+  marker and notifies staff exactly as the browser does.
+
+
+### Client Delivery page and Publish (5) (#968)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `get_delivery_page` | read | `viewClientPreview` | no |
+| `list_delivery_candidates` | read | `viewClientPreview` | no |
+| `preview_delivery` | read | `viewClientPreview` | no |
+| `publish_delivery` | write | `publish` | no |
+| `set_delivery_page_enabled` | admin | `switchDeliveryPage` | yes |
+
+Admins and Editors (on Projects assigned to them) see the reads and Publish; Photographers and External
+editors see none. All of them answer 404 while Client Delivery is off for the Project, as the routes do.
+`get_delivery_page` returns the page (address, on or off, latest set number), the latest Published set
+with the Asset behind each item, and the page as the client sees it. `list_delivery_candidates` lists
+what Publish would accept now, in page order. `preview_delivery` builds the page a selection would make
+and publishes nothing (it is a POST route that writes nothing); its item handles are throwaway and differ
+on every call. `publish_delivery` is a confirm round trip (below). Switching the page on or off is
+Admin-only and needs the `admin` scope; it is audited as `delivery.page_on` / `delivery.page_off`.
 ### Social overlays (6) (#970)
 
 | Tool | Scope | Needs | Destructive |
@@ -287,6 +373,29 @@ selection and needs that revision (`social_overlays_conflict` returns the curren
 review is off for the Project, and an archived Project is read-only. Changes are audited as `social_overlay.*` and
 `project.social_overlays.*` with the usual `via: "mcp"` marker. Creating an overlay and replacing its image are
 uploads, so there is no tool for them.
+
+### Video downloads (2) (#972)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `get_video_version_download_url` | read | `downloadVideo` | no |
+| `get_marker_export_download_url` | read | `viewVideo` | no |
+
+Admins, Editors and External editors (on assigned Projects only) see these; a Photographer sees neither. Both return
+`{ url, expiresAt }`, a signed link under the rules in "Signed downloads" below.
+
+- `get_video_version_download_url` takes a `projectId` and a Version's `assetId` (from `list_project_videos`). The link
+  serves the Version's original file with the same name and headers as the browser's Download. Any live Version
+  downloads, superseded or unreleased included. It answers 404 while the video review `download` part is off.
+- `get_marker_export_download_url` takes the same ids, a `format` (`edl` for a DaVinci Resolve marker EDL, `fcpxml`),
+  and optionally `includeInternal` (default false) and `status` (`all`, `open` or `resolved`; default `all`). The
+  link serves the same file the browser's Marker export does. A note outside the Version's frames, or an EDL over 999
+  markers, is refused when the link is requested (`HTTP 422`). It answers 404 while the `notes` or `export` part is off.
+- Requesting a link downloads nothing: the tool checks access with a `HEAD` of the route, which writes no audit row.
+  Each **redemption** is the download: audited as `video_version.download` (or `video_note.export`) with
+  `via: "mcp"`, plus `mcp_download.redeem`.
+- The link always serves the whole file: a `Range` header is not passed on, so a resumed fetch starts again and is
+  audited again.
 
 ### Review links (10) (#966)
 
@@ -325,6 +434,31 @@ they are assigned to (#834), and anything else is the route's 404. A Photographe
   link it works on: on an ordinary link it answers 404 (use Replace or Revoke to sign its guests out).
 - Every change is audited (`review_link.*`) with the usual `via: "mcp"` marker. No audit row carries the passcode or
   the address.
+
+### Premium and Unlock (6) (#969)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `set_video_premium` | write | `manageVideoPremium` | no |
+| `set_video_premium_unlock` | write | `manageVideoPremium` | no |
+| `set_delivery_video_premium` | write | `manageVideoPremium` | no |
+| `set_delivery_video_premium_unlock` | write | `manageVideoPremium` | no |
+| `set_asset_premium` | write | `manageExtras` | no |
+| `set_asset_premium_unlock` | write | `manageExtras` | no |
+
+Admins and Editors see these; Photographers and External editors do not. A Video has the same pair of tools
+twice because it has two routes: `set_video_premium*` are the Video review routes (open while the Video review
+`delivery` part is on), `set_delivery_video_premium*` the Delivery tab's (open while Client Delivery is on). Both
+run the same handlers. `set_asset_premium*` cover a photo, a Floorplan PDF or a Copy document.
+
+- **Unmark** (`premium: false`) is refused with `premium_published` once the item has been on a published Client
+  Delivery page, as in the browser.
+- **Late Premium.** Marking an item that is already on a published page (it then stays premium for good) returns
+  `Confirmation required` and changes nothing; it acts only when called again with `confirm: true`.
+- **Unlock** (`unlocked: true`) is a confirm-token round trip, see below. **Re-lock** (`unlocked: false`) is one step.
+
+Each change is audited (`video.premium_set`, `video.premium_unlock`, `video.premium_relock`, `asset.delivery_premium_set`,
+`asset.premium_unlock`, `asset.premium_relock`) with the usual `via: "mcp"` marker.
 
 ### Release (3) (#967)
 
@@ -384,12 +518,35 @@ must ask the user, then call again.
   relays that to the user and, on agreement, calls again with `confirm: true`. There is no token; the
   `approvalRevision` is the fence, so a decision that lands in between makes the Release refuse (`release_stale`).
 
+- **Unlock** (`set_video_premium_unlock`, `set_delivery_video_premium_unlock`, `set_asset_premium_unlock` with
+  `unlocked: true`). The first call unlocks nothing: it returns a summary of what becomes viewable and downloadable
+  in full by the client (the item, its Premium, Unlock and published state, and the payment reference) and a
+  `confirmToken` for the action `unlock`. Only the second call, with the same arguments plus `confirm: true` and the
+  token, unlocks. As for delete, the token is good for 5 minutes, that Project and that Connected app; a changed
+  item or payment reference is refused with "re-confirm".
+- **Late Premium** (`set_video_premium`, `set_delivery_video_premium`, `set_asset_premium` with `premium: true`
+  on an item already on a published page) returns `Confirmation required` and acts only on `confirm: true`.
+
+- **`publish_delivery`** (#968, write scope, `publish`). The first call publishes nothing: it returns a
+  summary of exactly what the next Published set will contain (each item by Asset id with its kind,
+  label, film title, locked and premium state, in page order; the cover; the set number; whether this is
+  the first Publish, which creates the page and moves the Project to Delivered) and a `confirmToken`
+  (action `publish`, 5 minutes, that Project and that Connected app). The client shows the user the
+  summary and, on agreement, calls again with the same arguments plus `confirm: true` and the token. The
+  server rebuilds the summary and refuses if the page (a new set, the page switched on or off) or the
+  selection changed. The summary never includes Preview's random item handles or URLs, so an unchanged
+  page always confirms. The confirmed call then runs the Publish route with the page's set as
+  `expectedLatestSet`, so a Publish that lands in between is still refused by the route as `stale_set`;
+  an archived Project is refused as `project_archived`. Its operation id comes from the token, so a
+  retried confirmed call cannot publish a second set.
+
 ## Signed downloads
 
 `get_asset_download_url` and `get_selection_download_url` return `{ url, expiresAt }`. The link is a
 bearer: whoever holds it can fetch the file until it expires, so do not paste it elsewhere.
 
-- Valid for **15 minutes**, scoped to one asset or one zip ticket, and audited as a download via MCP.
+- Valid for **15 minutes**, scoped to one asset, one zip ticket, one Video Version, or one Marker export
+  of a Version (its format and options are part of the link; #972), and audited as a download via MCP.
 - Redeeming it re-checks the live grant (flag on, Connected app not revoked, user active, epoch
   unchanged, `read` scope still held), so revoking an app kills links already handed out.
 - **Stored renditions only.** If the requested rendition has not been generated yet, the link answers
@@ -451,6 +608,7 @@ comment a client reads could try to talk it into it):
 - **Upload.** Multi-GB multipart transfers do not fit a tool call. `place_media` and the link-preview
   tools only reference things already in the Portal or a public URL.
 - Restore a whiteboard version.
+- Set a Version's poster (#965). The poster route takes a raw JPEG body, which is an upload.
 - Create a Social overlay or replace its image (a multipart PNG upload, #970).
 
 Only routes in the allowlist (`portal/workers/app/src/mcp/route-allowlist.ts`) can be dispatched.

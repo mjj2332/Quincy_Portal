@@ -5,8 +5,8 @@ import { app } from "../src/index";
 import type { McpPrincipal } from "../src/lib/mcp-dispatch-context";
 import type { McpFetchApp } from "../src/mcp/dispatch";
 import { MCP_TOOLS } from "../src/mcp/tools/registry";
+import { seedVideoVersion, setVideoFlags } from "./video-review-support";
 import { seedAsset, seedCoverage, seedDelivery, seedOpenDeadLetter, seedOrphanReport, seedPoisonEvent } from "./mcp-admin-fixtures";
-import { seedVideoVersion, setVideoFlags } from "./video-review-support"; // #966
 import { seedGuestLink } from "./guest-support"; // #966
 import { ids as fixtureIds } from "./embedded-media-support"; // #966
 
@@ -135,10 +135,66 @@ const deleteSetup = async (projectId: string) => {
   const first = await callTool("delete_project", { projectId });
   return { confirmToken: /"confirmToken":\s*"([^"]+)"/.exec(first)![1]! };
 };
+/** Premium and Unlock (#969): a Video (no Version needed) and a photo, both unpublished and Premium; the Unlock setup takes the first call's token. */
+const premiumVideoSetup = async (projectId: string) => {
+  const collectionId = crypto.randomUUID(); const videoId = crypto.randomUUID(); const now = Date.now();
+  await insert("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'video', 'empty', 0, ?, ?)", collectionId, projectId, now, now);
+  await insert("INSERT INTO videos (id, project_id, collection_id, title, premium, position, created_by, created_at, updated_at) VALUES (?, ?, ?, 'Parity film', 1, 0, ?, ?, ?)", videoId, projectId, collectionId, adminId, now, now);
+  return { videoId };
+};
+const premiumPhotoSetup = async (projectId: string) => {
+  const collectionId = crypto.randomUUID(); const assetId = crypto.randomUUID(); const now = Date.now();
+  await insert("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'edited', 'empty', 0, ?, ?)", collectionId, projectId, now, now);
+  await insert("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, version, delivery_premium, publish_status, created_at, updated_at) VALUES (?, ?, 'photo', ?, 'p.jpg', 10, 'upload', 1, 1, 'ready', ?, ?)", assetId, collectionId, `parity/${assetId}.jpg`, now, now);
+  return { assetId };
+};
+const unlockSetup = (tool: string, seed: (projectId: string) => Promise<Record<string, string>>) => async (projectId: string) => {
+  const ids = await seed(projectId);
+  const first = await callTool(tool, { projectId, ...ids, unlocked: true });
+  return { ...ids, confirmToken: /"confirmToken":\s*"([^"]+)"/.exec(first)![1]! };
+};
 const editorCandidate = {
   projectId: "00000000-0000-4000-8000-000000000001", connectionId: "dbx-1", expectedShootDate: "2037-01-02", expectedRawFolderPath: null, expectedRawFolderLink: null,
   rootPath: "/Editors/Parity", rootFolderId: "id:root",
   inputRoots: [{ path: "/Editors/Parity/Input", section: null, folderId: "id:in" }], outputRoots: [{ path: "/Editors/Parity/Output", section: null, folderId: "id:out" }],
+};
+
+/** Video and Version management (#965): a Video of `versions` Versions on the call's Project, the older ones superseded as upload completion leaves them. */
+const videoSetup = (versions: number, trashed: "none" | "version" | "video" = "none") => async (projectId: string) => {
+  const first = await seedVideoVersion({ projectId, uploader: adminId, version: 1 });
+  const all = [first];
+  for (let version = 2; version <= versions; version += 1) all.push(await seedVideoVersion({ projectId, videoId: first.videoId, uploader: adminId, version }));
+  for (let i = 0; i < all.length - 1; i += 1) await database.DB.prepare("UPDATE assets SET superseded_at = ?, replaced_by_asset_id = ? WHERE id = ?").bind(Date.now(), all[i + 1]!.assetId, all[i]!.assetId).run();
+  const zero = { notes: 0, decisions: 0, release: false, links: 0 };
+  if (trashed === "version") await callTool("remove_video_version", { projectId, assetId: first.assetId, expected: zero, removeVideo: false });
+  if (trashed === "video") await callTool("delete_video", { projectId, videoId: first.videoId, expected: { assetIds: all.map((version) => version.assetId), notes: 0, decisions: 0, releases: 0, links: 0 } });
+  return { videoId: first.videoId, firstAssetId: first.assetId, latestAssetId: all[all.length - 1]!.assetId, allAssetIds: all.map((version) => version.assetId).join(",") };
+};
+/** Video note writes (#964): a live Version on the call's Project, and a note on it written through the tool. */
+const videoVersionSetup = async (projectId: string) => ({ assetId: (await seedVideoVersion({ projectId, uploader: adminId })).assetId });
+const videoNoteSetup = async (projectId: string) => {
+  const { assetId } = await videoVersionSetup(projectId);
+  const created = JSON.parse(await callTool("create_video_note", { projectId, assetId, visibility: "internal", body: "Seed", startFrame: 1 })) as { thread: { id: string } };
+  return { assetId, noteId: created.thread.id };
+};
+/** Client Delivery (#968): the Project's gate opened and one current edited photo; Publish's first call returns the token the second needs. */
+const openDeliveryPhoto = async (projectId: string) => {
+  const now = Date.now(); const collectionId = crypto.randomUUID(); const assetId = crypto.randomUUID();
+  await insert("INSERT INTO feature_flags (key, enabled, updated_at) VALUES ('client_delivery', 1, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1", now);
+  await insert("INSERT INTO feature_flags (key, enabled, updated_at) VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1", `client_delivery_pilot:${projectId}`, now);
+  await insert("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'edited', 'empty', 0, ?, ?)", collectionId, projectId, now, now);
+  await insert("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, version, publish_status, created_at, updated_at) VALUES (?, ?, 'photo', ?, 'parity.jpg', 10, 'upload', 1, 'ready', ?, ?)", assetId, collectionId, `parity/${assetId}`, now, now);
+  return assetId;
+};
+const publishSetup = async (projectId: string) => {
+  const assetId = await openDeliveryPhoto(projectId);
+  const first = await callTool("publish_delivery", { projectId, assetIds: [assetId] });
+  return { assetId, confirmToken: /"confirmToken":\s*"([^"]+)"/.exec(first)![1]! };
+};
+const deliveryPageSetup = async (projectId: string) => {
+  await openDeliveryPhoto(projectId);
+  await insert("INSERT INTO delivery_pages (project_id, slug, enabled, latest_set_number, created_at, updated_at) VALUES (?, ?, 1, 1, ?, ?)", projectId, `parity-${projectId.slice(0, 8)}`, Date.now(), Date.now());
+  return {};
 };
 
 const WRITE_CALLS: readonly WriteCall[] = [
@@ -198,6 +254,19 @@ const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "request_project_link_preview", stage: "edited_review", args: ({ projectId }) => ({ projectId, url: "https://example.com/parity-preview" }) },
   { tool: "request_notice_link_preview", args: () => ({ url: "https://example.com/parity-notice-preview" }) },
   { tool: "edit_project_whiteboard", stage: "edited_review", args: ({ projectId }) => ({ projectId, expectedGeneration: 1, edits: [{ op: "add_text", x: 0, y: 0, text: "Parity whiteboard" }] }) },  { tool: "update_notification_preferences", args: () => ({ emailDigestCadence: "daily" }) }, // #971
+  // Video and Version management (#965)
+  { tool: "set_version_review_status", setup: videoSetup(1), args: ({ projectId, latestAssetId }) => ({ projectId, assetId: latestAssetId!, reviewStatus: "approved_internal", expectedStatus: "in_review" }) },
+  { tool: "rename_video_version", setup: videoSetup(1), args: ({ projectId, latestAssetId }) => ({ projectId, assetId: latestAssetId!, filename: "renamed-cut.mp4" }) },
+  { tool: "remove_video_version", setup: videoSetup(2), args: ({ projectId, firstAssetId }) => ({ projectId, assetId: firstAssetId!, expected: { notes: 0, decisions: 0, release: false, links: 0 }, removeVideo: false }) },
+  { tool: "delete_video", setup: videoSetup(2), args: ({ projectId, videoId, allAssetIds }) => ({ projectId, videoId: videoId!, expected: { assetIds: allAssetIds!.split(","), notes: 0, decisions: 0, releases: 0, links: 0 } }) },
+  { tool: "restore_video_version", setup: videoSetup(2, "version"), args: ({ projectId, firstAssetId }) => ({ projectId, assetId: firstAssetId! }) },
+  { tool: "restore_video", setup: videoSetup(2, "video"), args: ({ projectId, videoId }) => ({ projectId, videoId: videoId! }) },
+  // Video note writes (#964)
+  { tool: "create_video_note", setup: videoVersionSetup, args: ({ projectId, assetId }) => ({ projectId, assetId: assetId!, visibility: "public", body: "Parity note", startTimecode: "0:01" }) },
+  { tool: "reply_to_video_note", setup: videoNoteSetup, args: ({ projectId, noteId }) => ({ projectId, noteId: noteId!, body: "Parity reply" }) },
+  { tool: "edit_video_note", setup: videoNoteSetup, args: ({ projectId, noteId }) => ({ projectId, noteId: noteId!, expectedRevision: 1, body: "Parity edit" }) },
+  { tool: "delete_video_note", setup: videoNoteSetup, args: ({ projectId, noteId }) => ({ projectId, noteId: noteId!, expectedRevision: 1 }) },
+  { tool: "set_video_note_resolution", setup: videoNoteSetup, args: ({ projectId, noteId }) => ({ projectId, noteId: noteId!, resolved: true }) },
   // Review links (#966): helpers are function declarations at the end of this file.
   { tool: "create_review_link", setup: reviewLinkVideoSetup, args: ({ projectId, videoId }) => ({ projectId, videoIds: [videoId!], label: "Parity link", passcode: "parity-pass" }) },
   { tool: "update_review_link", setup: reviewLinkSetup, args: ({ projectId, linkId }) => ({ projectId, linkId: linkId!, label: "Edited link" }) },
@@ -208,6 +277,8 @@ const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "replace_review_link", setup: reviewLinkSetup, args: ({ projectId, linkId }) => ({ projectId, linkId: linkId!, confirm: true }) },
   { tool: "delete_review_link", setup: revokedReviewLinkSetup, args: ({ projectId, linkId }) => ({ projectId, linkId: linkId!, confirm: true }) },
   { tool: "end_review_link_guest_sessions", setup: deliveryReviewLinkSetup, args: ({ projectId, linkId }) => ({ projectId, linkId: linkId!, confirm: true }) },
+  { tool: "publish_delivery", stage: "edited_review", setup: publishSetup, args: ({ projectId, assetId, confirmToken }) => ({ projectId, assetIds: [assetId!], confirm: true, confirmToken: confirmToken! }) }, // #968
+  { tool: "set_delivery_page_enabled", stage: "edited_review", setup: deliveryPageSetup, args: ({ projectId }) => ({ projectId, enabled: false }) }, // #968
   // Release (#967): helpers are function declarations at the end of this file.
   { tool: "release_video_version", setup: approvedVersionSetup, args: ({ projectId, assetId, revision }) => ({ projectId, assetId: assetId!, approvalRevision: Number(revision), confirm: true }) },
   { tool: "withdraw_video_release", setup: releasedVersionSetup, args: ({ projectId, assetId }) => ({ projectId, assetId: assetId!, confirm: true }) },
@@ -215,6 +286,13 @@ const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "admin_archive_social_overlay", setup: overlaySetup, args: ({ overlayId }) => ({ id: overlayId!, expectedRevision: 1 }) }, // #970
   { tool: "admin_unarchive_social_overlay", setup: archivedOverlaySetup, args: ({ overlayId }) => ({ id: overlayId!, expectedRevision: 1 }) }, // #970
   { tool: "set_project_social_overlays", setup: projectOverlaySetup, args: ({ projectId, overlayId, revision }) => ({ projectId, overlayIds: [overlayId!], expectedRevision: revision! }) }, // #970
+  // #969: premium is seeded on, so each premium call unmarks (an unpublished item) and writes its row.
+  { tool: "set_video_premium", setup: premiumVideoSetup, args: ({ projectId, videoId }) => ({ projectId, videoId: videoId!, premium: false }) },
+  { tool: "set_delivery_video_premium", setup: premiumVideoSetup, args: ({ projectId, videoId }) => ({ projectId, videoId: videoId!, premium: false }) },
+  { tool: "set_asset_premium", setup: premiumPhotoSetup, args: ({ projectId, assetId }) => ({ projectId, assetId: assetId!, premium: false }) },
+  { tool: "set_video_premium_unlock", setup: unlockSetup("set_video_premium_unlock", premiumVideoSetup), args: ({ projectId, videoId, confirmToken }) => ({ projectId, videoId: videoId!, unlocked: true, confirm: true, confirmToken: confirmToken! }) },
+  { tool: "set_delivery_video_premium_unlock", setup: unlockSetup("set_delivery_video_premium_unlock", premiumVideoSetup), args: ({ projectId, videoId, confirmToken }) => ({ projectId, videoId: videoId!, unlocked: true, confirm: true, confirmToken: confirmToken! }) },
+  { tool: "set_asset_premium_unlock", setup: unlockSetup("set_asset_premium_unlock", premiumPhotoSetup), args: ({ projectId, assetId, confirmToken }) => ({ projectId, assetId: assetId!, unlocked: true, confirm: true, confirmToken: confirmToken! }) },
 ];
 
 /** Write tools whose route writes no audit_log or activity row at all (so there is nothing to stamp), each with the reason. */
@@ -267,11 +345,15 @@ beforeAll(async () => {
   await executeSql(__PORTAL_SEED_SQL__);
   const now = Date.now();
   await database.DB.prepare("INSERT OR IGNORE INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Parity Editor', 'parity-editor@example.test', 1, 'editor', 1, ?, ?)").bind(editorId, now, now).run();
+  await setVideoFlags("video_review", "video_review_all_projects", "video_review_trash", "video_review_notes"); // #965
   await database.DB.batch([
     database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'"),
     database.DB.prepare("INSERT INTO mcp_connections (id, user_id, client_id, client_name, redirect_host, scopes, authorization_epoch, created_at) VALUES ('conn-parity', ?, 'client-1', 'Parity Client', 'client.example.test', '[\"write\"]', 0, ?)").bind(adminId, now),
     database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_by, updated_at) VALUES ('mcp_access', 1, NULL, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1").bind(now),
+    // #969: the Video review `delivery` part and the Client Delivery gate, which the premium routes check.
+    ...["video_review", "video_review_all_projects", "video_review_delivery", "client_delivery", "client_delivery_all_projects"].map((key) => database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_by, updated_at) VALUES (?, 1, NULL, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1").bind(key, now)),
   ]);
+  await setVideoFlags("video_review", "video_review_all_projects", "video_review_notes", "video_review_markup"); // #964
 });
 
 describe("every row an MCP write creates carries provenance", () => {
