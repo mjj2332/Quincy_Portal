@@ -177,6 +177,25 @@ const videoNoteSetup = async (projectId: string) => {
   const created = JSON.parse(await callTool("create_video_note", { projectId, assetId, visibility: "internal", body: "Seed", startFrame: 1 })) as { thread: { id: string } };
   return { assetId, noteId: created.thread.id };
 };
+/** Client Delivery (#968): the Project's gate opened and one current edited photo; Publish's first call returns the token the second needs. */
+const openDeliveryPhoto = async (projectId: string) => {
+  const now = Date.now(); const collectionId = crypto.randomUUID(); const assetId = crypto.randomUUID();
+  await insert("INSERT INTO feature_flags (key, enabled, updated_at) VALUES ('client_delivery', 1, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1", now);
+  await insert("INSERT INTO feature_flags (key, enabled, updated_at) VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1", `client_delivery_pilot:${projectId}`, now);
+  await insert("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'edited', 'empty', 0, ?, ?)", collectionId, projectId, now, now);
+  await insert("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, version, publish_status, created_at, updated_at) VALUES (?, ?, 'photo', ?, 'parity.jpg', 10, 'upload', 1, 'ready', ?, ?)", assetId, collectionId, `parity/${assetId}`, now, now);
+  return assetId;
+};
+const publishSetup = async (projectId: string) => {
+  const assetId = await openDeliveryPhoto(projectId);
+  const first = await callTool("publish_delivery", { projectId, assetIds: [assetId] });
+  return { assetId, confirmToken: /"confirmToken":\s*"([^"]+)"/.exec(first)![1]! };
+};
+const deliveryPageSetup = async (projectId: string) => {
+  await openDeliveryPhoto(projectId);
+  await insert("INSERT INTO delivery_pages (project_id, slug, enabled, latest_set_number, created_at, updated_at) VALUES (?, ?, 1, 1, ?, ?)", projectId, `parity-${projectId.slice(0, 8)}`, Date.now(), Date.now());
+  return {};
+};
 
 const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "admin_reset_dropbox_monitor", args: () => ({ scope: "raw" }) },
@@ -258,6 +277,8 @@ const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "replace_review_link", setup: reviewLinkSetup, args: ({ projectId, linkId }) => ({ projectId, linkId: linkId!, confirm: true }) },
   { tool: "delete_review_link", setup: revokedReviewLinkSetup, args: ({ projectId, linkId }) => ({ projectId, linkId: linkId!, confirm: true }) },
   { tool: "end_review_link_guest_sessions", setup: deliveryReviewLinkSetup, args: ({ projectId, linkId }) => ({ projectId, linkId: linkId!, confirm: true }) },
+  { tool: "publish_delivery", stage: "edited_review", setup: publishSetup, args: ({ projectId, assetId, confirmToken }) => ({ projectId, assetIds: [assetId!], confirm: true, confirmToken: confirmToken! }) }, // #968
+  { tool: "set_delivery_page_enabled", stage: "edited_review", setup: deliveryPageSetup, args: ({ projectId }) => ({ projectId, enabled: false }) }, // #968
   { tool: "admin_update_social_overlay", setup: overlaySetup, args: ({ overlayId }) => ({ id: overlayId!, name: "Parity renamed", expectedRevision: 1 }) }, // #970
   { tool: "admin_archive_social_overlay", setup: overlaySetup, args: ({ overlayId }) => ({ id: overlayId!, expectedRevision: 1 }) }, // #970
   { tool: "admin_unarchive_social_overlay", setup: archivedOverlaySetup, args: ({ overlayId }) => ({ id: overlayId!, expectedRevision: 1 }) }, // #970

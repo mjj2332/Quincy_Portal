@@ -68,6 +68,9 @@ const GET_TEMPLATES = [
   "/api/projects/:projectId/videos/:videoId/removal-impact",
   // Review links (#966)
   "/api/projects/:projectId/review-links",
+  // Client Delivery reads (#968)
+  "/api/projects/:projectId/delivery",
+  "/api/projects/:projectId/delivery/candidates",
   // Social overlays (#970): the Admin library and a Project's selection
   "/api/admin/social-overlays",
   "/api/projects/:projectId/social-overlays",
@@ -146,6 +149,9 @@ const WRITE_ROUTES = [
   ["POST", "/api/projects/:projectId/review-links/:linkId/replace"],
   ["DELETE", "/api/projects/:projectId/review-links/:linkId"],
   ["POST", "/api/projects/:projectId/review-links/:linkId/end-sessions"],
+  // Client Delivery (#968): Preview is a read-scope tool on a POST that writes nothing; Publish only through the confirm round trip in `tools/delivery.ts`.
+  ["POST", "/api/projects/:projectId/delivery/preview"],
+  ["POST", "/api/projects/:projectId/delivery/publish"],
   // A Project's Social overlay selection (#970)
   ["PUT", "/api/projects/:projectId/social-overlays"],
   // Premium and Unlock (#969): Video review, Delivery tab, photos and documents
@@ -192,6 +198,8 @@ const ADMIN_ROUTES = [
   ["POST", "/api/integrations/dropbox/editor-folders/inspect"],
   // Project delete: only through the confirm round trip in `tools/admin-writes.ts`.
   ["DELETE", "/api/projects/:projectId"],
+  // Delivery page on/off (#968): `switchDeliveryPage`, Admin only.
+  ["PUT", "/api/projects/:projectId/delivery/page"],
   // Social overlays (#970): rename, archive, unarchive. Create and image replace are uploads and stay out.
   ["PATCH", "/api/admin/social-overlays/:id"],
   ["POST", "/api/admin/social-overlays/:id/archive"],
