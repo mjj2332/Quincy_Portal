@@ -64,10 +64,10 @@ With every scope granted, the tool count by role is:
 
 | Role | Tools visible |
 |---|---|
-| Admin | 109 |
+| Admin | 118 |
 | Photographer | 39 |
-| Editor | 56 |
-| External editor | 47 |
+| Editor | 65 |
+| External editor | 49 |
 
 Admin-only tools (every `admin_*` tool and `delete_project`) never appear for the other roles. An
 External editor additionally has no notice board and no selection or download-selection tools.
@@ -75,7 +75,7 @@ External editor additionally has no notice board and no selection or download-se
 ## Tool reference
 
 Generated from the tool definitions in `portal/workers/app/src/mcp/tools/` (registry plus the
-whiteboard tools): **109 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
+whiteboard tools): **118 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
 the role capability. **Destructive** is the `destructiveHint` the client sees; every `admin`-scope tool is
 destructive. `destructiveHint` is advice to the client, not enforcement: the server-side confirm round
 trips below are what enforce.
@@ -267,6 +267,38 @@ Subtask reminder emails, digest cadence, whether the digest includes Project act
 they cannot reach anyone else's row. A change is audited as `notification.preference.update` with the usual
 `via: "mcp"` marker.
 
+### Video and Version management (9) (#965)
+
+Admins and Editors see all nine; an External editor (on assigned Projects) sees the two Version writes; a
+Photographer sees none. They answer 404 while video review is off for the Project (the Trash tools also need the
+`trash` part), as the routes do.
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `set_version_review_status` | write | `annotateVideo` | no |
+| `rename_video_version` | write | `uploadVideo` | no |
+| `list_video_trash` | read | `manageVideoTrash` | no |
+| `get_version_removal_impact` | read | `manageVideoTrash` | no |
+| `get_video_removal_impact` | read | `manageVideoTrash` | no |
+| `remove_video_version` | write | `manageVideoTrash` | yes |
+| `delete_video` | write | `manageVideoTrash` | yes |
+| `restore_video_version` | write | `manageVideoTrash` | no |
+| `restore_video` | write | `manageVideoTrash` | no |
+
+- **Review status** is `in_review` or `approved_internal`. Setting `approved_internal` is the internal approval
+  decision and needs `approveVideoInternal` (Admin and Editor); an External editor can set `in_review` only, and the
+  route answers 403 otherwise. `expectedStatus` is the status the client read: a changed one is 409
+  `review_status_conflict`, and a Version that is no longer the latest is 409 `not_latest_version`. The Client
+  approval decisions and Release belong to the release tools, not here.
+- **Rename** changes a Version's file name (`.mp4` or `.mov`; `.mov` is stored as `.mp4`).
+- **Delete and remove do not confirm.** They move the Video or Version to the Video Trash, and Restore brings it back
+  (for the retention period shown by `list_video_trash`), so they carry `destructiveHint` instead. Read the impact
+  first (`get_version_removal_impact`, `get_video_removal_impact`) and pass it as `expected`; if the Video or Version
+  changed since, the route answers 409 `impact_changed` with the fresh impact and nothing is removed. Removing the last
+  Version needs `removeVideo: true` (409 `last_version` otherwise); a Video published in Client Delivery or with an
+  upload in progress is refused. Restoring a Version whose Video is in Trash is 409 `video_in_trash`: restore the Video
+  first.
+- Every write is audited as through MCP (`via: "mcp"`).
 ### Social overlays (6) (#970)
 
 | Tool | Scope | Needs | Destructive |
@@ -373,6 +405,7 @@ comment a client reads could try to talk it into it):
 - **Upload.** Multi-GB multipart transfers do not fit a tool call. `place_media` and the link-preview
   tools only reference things already in the Portal or a public URL.
 - Restore a whiteboard version.
+- Set a Version's poster (#965). The poster route takes a raw JPEG body, which is an upload.
 - Create a Social overlay or replace its image (a multipart PNG upload, #970).
 
 Only routes in the allowlist (`portal/workers/app/src/mcp/route-allowlist.ts`) can be dispatched.
