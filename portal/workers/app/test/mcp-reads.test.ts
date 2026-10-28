@@ -94,6 +94,7 @@ const ADMIN_NAMES = [
   "admin_list_users", "admin_tonomo_health", "admin_list_webhook_events", "admin_get_webhook_event", "admin_list_dead_letters",
   "admin_list_notification_deliveries", "admin_list_agencies", "admin_list_agency_contacts", "admin_list_stages", "admin_get_attention", "admin_list_project_jobs",
   "admin_preview_editor_folders", "admin_inspect_dropbox_monitor",
+  "admin_list_integrations", "admin_get_autohdr_status", // #973
   "admin_list_social_overlays", // #970
 ];
 /** Admin-scope writes (#709): listed only to an admin whose grant holds `admin`; mcp-admin.test.ts owns their detail. */

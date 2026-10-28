@@ -51,6 +51,12 @@ const ADMIN_TOOLS: Record<string, { method: string; template: string; capability
   admin_acknowledge_orphan_file_report: { method: "POST", template: "/api/admin/attention/orphan-uploads/:watchId/acknowledge", capability: "adminBackend" },
   admin_delete_asset: { method: "DELETE", template: "/api/assets/:assetId", capability: "adminBackend" },
   set_delivery_page_enabled: { method: "PUT", template: "/api/projects/:projectId/delivery/page", capability: "switchDeliveryPage" }, // #968
+  // #973: the remaining admin writes (their behaviour is in mcp-admin-more.test.ts)
+  admin_sync_delivery_review_links: { method: "POST", template: "/api/admin/delivery-review-links/sync", capability: "adminBackend" },
+  admin_reprobe_video_versions: { method: "POST", template: "/api/admin/video-versions/reprobe", capability: "adminBackend" },
+  admin_set_project_cover: { method: "POST", template: "/api/projects/:projectId/cover", capability: "editProject" },
+  admin_add_project_photographer: { method: "PUT", template: "/api/projects/:projectId/photographers/:userId", capability: "editProject" },
+  admin_remove_project_photographer: { method: "DELETE", template: "/api/projects/:projectId/photographers/:userId", capability: "editProject" },
   // Social overlays (#970)
   admin_update_social_overlay: { method: "PATCH", template: "/api/admin/social-overlays/:id", capability: "adminBackend" },
   admin_archive_social_overlay: { method: "POST", template: "/api/admin/social-overlays/:id/archive", capability: "adminBackend" },

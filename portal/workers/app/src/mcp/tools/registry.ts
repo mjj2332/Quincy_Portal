@@ -11,6 +11,7 @@ import { WHITEBOARD_TOOLS } from "./whiteboard";
 import { ADMIN_WRITE_TOOLS } from "./admin-writes";
 import { VIDEO_READ_TOOLS } from "./video-reads"; // #963
 import { PLANNING_TOOLS } from "./planning"; // #971
+import { ADMIN_MORE_TOOLS } from "./admin-more"; // #973
 import { VIDEO_WRITE_TOOLS } from "./video-writes"; // #965
 import { VIDEO_NOTE_TOOLS } from "./video-notes"; // #964
 import { REVIEW_LINK_TOOLS } from "./review-links"; // #966
@@ -35,6 +36,7 @@ export const MCP_TOOLS: readonly McpTool[] = [
   ...ADMIN_WRITE_TOOLS,
   ...VIDEO_READ_TOOLS, // #963
   ...PLANNING_TOOLS, // #971
+  ...ADMIN_MORE_TOOLS, // #973
   ...VIDEO_WRITE_TOOLS, // #965
   ...VIDEO_NOTE_TOOLS, // #964
   ...REVIEW_LINK_TOOLS, // #966

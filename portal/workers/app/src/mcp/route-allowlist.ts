@@ -62,6 +62,9 @@ const GET_TEMPLATES = [
   "/api/production-calendar",
   "/api/production-gantt",
   "/api/notification-preferences",
+  // Remaining admin reads (#973)
+  "/api/integrations",
+  "/api/projects/:projectId/autohdr-status",
   // Video Trash reads and removal impact (#965)
   "/api/projects/:projectId/video-trash",
   "/api/projects/:projectId/video-versions/:assetId/removal-impact",
@@ -200,6 +203,12 @@ const ADMIN_ROUTES = [
   ["DELETE", "/api/projects/:projectId"],
   // Delivery page on/off (#968): `switchDeliveryPage`, Admin only.
   ["PUT", "/api/projects/:projectId/delivery/page"],
+  // Remaining admin writes (#973)
+  ["POST", "/api/admin/delivery-review-links/sync"],
+  ["POST", "/api/admin/video-versions/reprobe"],
+  ["POST", "/api/projects/:projectId/cover"],
+  ["PUT", "/api/projects/:projectId/photographers/:userId"],
+  ["DELETE", "/api/projects/:projectId/photographers/:userId"],
   // Social overlays (#970): rename, archive, unarchive. Create and image replace are uploads and stay out.
   ["PATCH", "/api/admin/social-overlays/:id"],
   ["POST", "/api/admin/social-overlays/:id/archive"],
