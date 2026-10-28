@@ -6,9 +6,10 @@ import { MCP_TOOLS, toolsFor } from "../src/mcp/tools/registry";
 import { COLLAB_WRITE_TOOLS } from "../src/mcp/tools/collab-writes";
 import { WHITEBOARD_TOOLS } from "../src/mcp/tools/whiteboard";
 import { WRITE_TOOLS as CORE_WRITE_TOOLS } from "../src/mcp/tools/writes";
+import { PLANNING_TOOLS } from "../src/mcp/tools/planning";
 import { mcpHarness } from "./mcp-oauth-support";
 
-const WRITE_TOOLS = [...CORE_WRITE_TOOLS, ...COLLAB_WRITE_TOOLS, ...WHITEBOARD_TOOLS.filter((tool) => tool.scope === "write")];
+const WRITE_TOOLS = [...CORE_WRITE_TOOLS, ...COLLAB_WRITE_TOOLS, ...WHITEBOARD_TOOLS.filter((tool) => tool.scope === "write"), ...PLANNING_TOOLS.filter((tool) => tool.annotations.readOnlyHint === false)]; // #971
 
 declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL__: string;
 const testEnv = env as unknown as Env;
@@ -31,6 +32,7 @@ const READ_NAMES = [
   "get_project_subtasks", "get_project_links", "list_people_for_filters", "list_project_comments", "get_project_activity", "get_collaboration_summary",
   "list_project_assets", "list_asset_annotations", "list_notifications", "list_notice_board",
   "get_asset_download_url", "get_selection_download_url", "get_project_whiteboard", "list_whiteboard_versions",
+  "get_production_calendar", "get_production_gantt", "get_notification_preferences", // #971
 ];
 const WRITE_NAMES = WRITE_TOOLS.map((tool) => tool.name);
 const ADMIN_NAMES = [
@@ -70,7 +72,7 @@ describe("tools/list follows the role and the granted scopes", () => {
     expect(editor.filter((n) => n.startsWith("admin_"))).toEqual([]);
     expect(photographer.filter((n) => n.startsWith("admin_"))).toEqual([]);
     expect(editor).toEqual(READ_NAMES.filter((n) => n !== "list_project_assignment_candidates").sort());
-    expect(photographer).toEqual(READ_NAMES.filter((n) => !["list_project_assignment_candidates", "get_project_links", "get_selection_download_url"].includes(n)).sort());
+    expect(photographer).toEqual(READ_NAMES.filter((n) => !["list_project_assignment_candidates", "get_project_links", "get_selection_download_url", "get_production_calendar", "get_production_gantt"].includes(n)).sort());
   });
   it("external_editor sees only the subset its routes serve", async () => {
     expect(await names("external")).toEqual(READ_NAMES.filter((n) => !["list_project_assignment_candidates", "list_notice_board", "get_selection_download_url"].includes(n)).sort());

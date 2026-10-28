@@ -9,12 +9,15 @@ import { COLLAB_WRITE_TOOLS } from "./collab-writes";
 import { DOWNLOAD_TOOLS } from "./downloads";
 import { WHITEBOARD_TOOLS } from "./whiteboard";
 import { ADMIN_WRITE_TOOLS } from "./admin-writes";
+import { PLANNING_TOOLS } from "./planning";
 
 export type { McpTool, McpToolContext, McpToolResult } from "./define";
 
 const getMe = readTool({ name: "get_me", template: "/api/me", description: "The Portal staff member this connection acts as: their profile, role and capabilities." });
 
-export const MCP_TOOLS: readonly McpTool[] = [getMe, ...READ_TOOLS, ...ADMIN_READ_TOOLS, ...WRITE_TOOLS, ...COLLAB_WRITE_TOOLS, ...DOWNLOAD_TOOLS, ...WHITEBOARD_TOOLS, ...ADMIN_WRITE_TOOLS];
+export const MCP_TOOLS: readonly McpTool[] = [getMe, ...READ_TOOLS, ...ADMIN_READ_TOOLS, ...WRITE_TOOLS, ...COLLAB_WRITE_TOOLS, ...DOWNLOAD_TOOLS, ...WHITEBOARD_TOOLS, ...ADMIN_WRITE_TOOLS,
+  ...PLANNING_TOOLS, // #971
+];
 
 /** A tool's input as the strict object its callers are held to: unknown arguments are an error. */
 export const strictInput = (tool: McpTool) => z.object(tool.inputSchema).strict();

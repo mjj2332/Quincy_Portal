@@ -27,6 +27,7 @@ const WRITE_NAMES = [
   "add_project_comment", "edit_project_comment", "delete_project_comment",
   "add_video_link", "update_video_link", "reorder_video_link", "remove_video_link",
   "mark_notification_read", "mark_all_notifications_read",
+  "update_notification_preferences", // #971
 ];
 const DESTRUCTIVE = ["remove_project_editor", "delete_subtask", "delete_project_comment", "remove_video_link"];
 const ADMIN_ONLY = ["create_project", "update_project_details", "set_project_priority", "set_project_deadline", "add_project_editor", "remove_project_editor", "archive_project", "restore_project"];

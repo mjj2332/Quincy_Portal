@@ -53,6 +53,10 @@ const GET_TEMPLATES = [
   "/api/integrations/dropbox/monitors/:scope",
   // Signed downloads (#707): the asset tool's visibility check, and the redemption of an asset URL.
   "/media/asset/:assetId/:variant",
+  // Planning reads and own notification preferences (#971)
+  "/api/production-calendar",
+  "/api/production-gantt",
+  "/api/notification-preferences",
 ] as const;
 
 /** Reached only by redeeming a signed download URL (#707): no tool owns it, `mcp/downloads.ts` dispatches to it. */
@@ -100,6 +104,8 @@ const WRITE_ROUTES = [
   ["POST", "/api/projects/:projectId/whiteboard/server-edits"],
   // Signed downloads (#707): get_selection_download_url creates the zip ticket. It is a read-scope tool; the ticket is the only thing written.
   ["POST", "/api/projects/:projectId/download-selection"],
+  // Own notification preferences (#971)
+  ["PATCH", "/api/notification-preferences"],
 ] as const;
 
 /**

@@ -61,10 +61,10 @@ With every scope granted, the tool count by role is:
 
 | Role | Tools visible |
 |---|---|
-| Admin | 95 |
-| Photographer | 37 |
-| Editor | 46 |
-| External editor | 38 |
+| Admin | 99 |
+| Photographer | 39 |
+| Editor | 50 |
+| External editor | 42 |
 
 Admin-only tools (every `admin_*` tool and `delete_project`) never appear for the other roles. An
 External editor additionally has no notice board and no selection or download-selection tools.
@@ -72,7 +72,7 @@ External editor additionally has no notice board and no selection or download-se
 ## Tool reference
 
 Generated from the tool definitions in `portal/workers/app/src/mcp/tools/` (registry plus the
-whiteboard tools): **95 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
+whiteboard tools): **99 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
 the role capability. **Destructive** is the `destructiveHint` the client sees; every `admin`-scope tool is
 destructive. `destructiveHint` is advice to the client, not enforcement: the server-side confirm round
 trips below are what enforce.
@@ -218,6 +218,26 @@ Tool names use Portal terms. There is no tool for uploads.
 | `admin_delete_asset` | admin | `adminBackend` | yes |
 | `admin_inspect_editor_folder` | admin | `manageIntegrations` | no |
 | `delete_project` | admin | `adminBackend` | yes |
+
+### Planning and notification preferences (4) (#971)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `get_production_calendar` | read | `viewProductionCalendar` | no |
+| `get_production_gantt` | read | `viewProductionCalendar` | no |
+| `get_notification_preferences` | read | any role | no |
+| `update_notification_preferences` | write | any role | no |
+
+The Calendar and the Gantt are the same routes the Calendar and Gantt screens use, so they return the same data and
+the same refusals. Photographers do not hold `viewProductionCalendar` and are not offered them; an External editor
+sees only the Projects assigned to them. `get_production_calendar` takes a `start` (inclusive) and `end` (exclusive)
+of at most 42 days, plus optional filters. `get_production_gantt` pages Projects with `cursor` and a Project's
+Subtasks with `childrenOf`. The `archived` filter is admin only.
+
+The two notification preference tools read and change the signed-in staff member's own preferences (Deadline and
+Subtask reminder emails, digest cadence, whether the digest includes Project activity). They take no user id, so
+they cannot reach anyone else's row. A change is audited as `notification.preference.update` with the usual
+`via: "mcp"` marker.
 
 ## Confirm round trips
 
