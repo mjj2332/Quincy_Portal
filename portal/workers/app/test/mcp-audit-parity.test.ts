@@ -108,6 +108,25 @@ const openDeadLetterSetup = async (projectId: string) => ({ deadLetterId: (await
 const poisonSetup = async () => ({ eventId: (await seedPoisonEvent(database.DB)).eventId });
 const orphanSetup = async (projectId: string) => ({ watchId: (await seedOrphanReport(database.DB, projectId)).watchId });
 const plainAssetSetup = async (projectId: string) => ({ assetId: (await seedAsset(database.DB, projectId)).assetId });
+/** Social overlays (#970): a library row; for the Project's selection the Video review gate is opened for that Project. */
+const overlaySetup = async () => {
+  const overlayId = crypto.randomUUID(); const now = Date.now();
+  await insert("INSERT INTO social_overlays (id, name, platform_label, image_key, width, height, bytes, is_default, created_by, updated_by, created_at, updated_at) VALUES (?, ?, 'Platform', ?, 1080, 1920, 100, 0, ?, ?, ?, ?)", overlayId, `Parity ${overlayId}`, `social-overlays/${overlayId}/${crypto.randomUUID()}.png`, adminId, adminId, now, now);
+  return { overlayId };
+};
+const archivedOverlaySetup = async () => {
+  const { overlayId } = await overlaySetup();
+  await insert("UPDATE social_overlays SET archived_at = ?, archived_by = ? WHERE id = ?", Date.now(), adminId, overlayId);
+  return { overlayId };
+};
+const projectOverlaySetup = async (projectId: string) => {
+  const now = Date.now();
+  await insert("INSERT INTO feature_flags (key, enabled, updated_at) VALUES ('video_review', 1, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1", now);
+  await insert("INSERT INTO feature_flags (key, enabled, updated_at) VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1", `video_review_pilot:${projectId}`, now);
+  const { overlayId } = await overlaySetup();
+  const state = JSON.parse(await callTool("get_project_social_overlays", { projectId })) as { revision: string };
+  return { overlayId, revision: state.revision };
+};
 /** The first delete_project call returns the token the second one needs. */
 const deleteSetup = async (projectId: string) => {
   const first = await callTool("delete_project", { projectId });
@@ -176,6 +195,10 @@ const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "request_project_link_preview", stage: "edited_review", args: ({ projectId }) => ({ projectId, url: "https://example.com/parity-preview" }) },
   { tool: "request_notice_link_preview", args: () => ({ url: "https://example.com/parity-notice-preview" }) },
   { tool: "edit_project_whiteboard", stage: "edited_review", args: ({ projectId }) => ({ projectId, expectedGeneration: 1, edits: [{ op: "add_text", x: 0, y: 0, text: "Parity whiteboard" }] }) },  { tool: "update_notification_preferences", args: () => ({ emailDigestCadence: "daily" }) }, // #971
+  { tool: "admin_update_social_overlay", setup: overlaySetup, args: ({ overlayId }) => ({ id: overlayId!, name: "Parity renamed", expectedRevision: 1 }) }, // #970
+  { tool: "admin_archive_social_overlay", setup: overlaySetup, args: ({ overlayId }) => ({ id: overlayId!, expectedRevision: 1 }) }, // #970
+  { tool: "admin_unarchive_social_overlay", setup: archivedOverlaySetup, args: ({ overlayId }) => ({ id: overlayId!, expectedRevision: 1 }) }, // #970
+  { tool: "set_project_social_overlays", setup: projectOverlaySetup, args: ({ projectId, overlayId, revision }) => ({ projectId, overlayIds: [overlayId!], expectedRevision: revision! }) }, // #970
 ];
 
 /** Write tools whose route writes no audit_log or activity row at all (so there is nothing to stamp), each with the reason. */
