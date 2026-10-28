@@ -13,6 +13,7 @@ import { REVIEW_LINK_TOOLS } from "../src/mcp/tools/review-links";
 import { DELIVERY_TOOLS } from "../src/mcp/tools/delivery";
 import { SOCIAL_OVERLAY_TOOLS } from "../src/mcp/tools/social-overlays";
 import { PREMIUM_TOOLS } from "../src/mcp/tools/premium"; // #969
+import { RELEASE_TOOLS } from "../src/mcp/tools/release"; // #967
 import { mcpHarness } from "./mcp-oauth-support";
 
 /** Every `write`-scope tool, one module per line: a new write module appends its own line (commented with its ticket). */
@@ -27,6 +28,7 @@ const WRITE_TOOLS = [
   ...DELIVERY_TOOLS, // #968
   ...SOCIAL_OVERLAY_TOOLS, // #970
   ...PREMIUM_TOOLS, // #969
+  ...RELEASE_TOOLS, // #967
 ].filter((tool) => tool.scope === "write");
 
 declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL__: string;
@@ -66,6 +68,7 @@ const READ_NAMES = [
   ...DELIVERY_READ_NAMES, // #968
   "get_project_social_overlays", // #970
   ...VIDEO_DOWNLOAD_NAMES, // #972
+  "list_video_decisions", // #967
 ];
 /** The read tools each non-admin role does not see (its routes refuse it), one group per line, appended the same way. */
 const HIDDEN_FROM: Record<"editor" | "photographer" | "external", readonly string[]> = {
@@ -81,6 +84,7 @@ const HIDDEN_FROM: Record<"editor" | "photographer" | "external", readonly strin
     ...DELIVERY_READ_NAMES, // #968
     "get_project_social_overlays", // #970
     ...VIDEO_DOWNLOAD_NAMES, // #972
+    "list_video_decisions", // #967
   ],
   external: [
     "list_project_assignment_candidates", "list_notice_board", "get_selection_download_url",

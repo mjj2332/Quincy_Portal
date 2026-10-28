@@ -64,10 +64,10 @@ With every scope granted, the tool count by role is:
 
 | Role | Tools visible |
 |---|---|
-| Admin | 153 |
+| Admin | 156 |
 | Photographer | 39 |
-| Editor | 92 |
-| External editor | 66 |
+| Editor | 95 |
+| External editor | 67 |
 
 Admin-only tools (every `admin_*` tool, `delete_project` and `set_delivery_page_enabled`) never appear for the other roles. An
 External editor additionally has no notice board and no selection or download-selection tools.
@@ -75,7 +75,7 @@ External editor additionally has no notice board and no selection or download-se
 ## Tool reference
 
 Generated from the tool definitions in `portal/workers/app/src/mcp/tools/` (registry plus the
-whiteboard tools): **153 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
+whiteboard tools): **156 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
 the role capability. **Destructive** is the `destructiveHint` the client sees; every `admin`-scope tool is
 destructive. `destructiveHint` is advice to the client, not enforcement: the server-side confirm round
 trips below are what enforce.
@@ -488,6 +488,35 @@ need the `admin` scope and are destructive; the reads are `read` scope like the 
   that divergence is recorded in the audit.
 - `admin_list_integrations` never returns credentials. Connecting Dropbox stays in the browser.
 
+### Release (3) (#967)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `list_video_decisions` | read | `shareVideo` | no |
+| `release_video_version` | write | `releaseVideo` | no (confirm first) |
+| `withdraw_video_release` | write | `releaseVideo` | yes (confirm first) |
+
+A **Release** is staff's explicit act of making one approved Version downloadable on the Review links that grant it;
+a client's approval alone never releases anything. These are the routes behind the Video review approval panel, so
+they answer 404 while approvals (the `delivery` part of Video review) are off for the Project, and an archived Project
+refuses Release and withdraw (`project_archived`). Admins and Editors see all three; an External editor sees only the
+decisions read, on assigned Projects. A Photographer sees none.
+
+- `list_video_decisions` returns every Version of a Video, newest first, with its Client approval decisions (oldest
+  first: `approved` or `changes_requested`, a `revision`, the Review link a guest decided on) and its live `release`
+  (null when not released or withdrawn). Each decision says who made it with `actorKind` (`guest` or `staff`). **A
+  guest's name and note are only inside `untrustedGuestText`**, never plain fields; everything else is the route's
+  JSON.
+- `release_video_version` takes the `approvalRevision`: the `revision` of the approval the user saw. The route refuses
+  when a newer decision landed (`release_stale`, with the current revision), when that revision is not an approval
+  (`not_approved`), and when the Version is already released (`already_released`). On success the Version's original
+  file is downloadable to guests on every live Review link that grants it with downloads allowed, and those links'
+  subscribers are told.
+- `withdraw_video_release` ends the Release: guests can no longer download that Version on Review links (a published
+  Delivery page still delivers what it published). `no_live_release` when there is none.
+- **Release and withdraw ask first**: see [Confirm round trips](#confirm-round-trips).
+- Both are audited (`video_version.release`, `video_version.release_withdraw`) with the usual `via: "mcp"` marker.
+
 ## Confirm round trips
 
 Some actions need the person's say-so first. The tool refuses to act on the first call and the client
@@ -511,6 +540,11 @@ must ask the user, then call again.
   are signed out) and sends nothing to the Portal. The client relays that to the user and, on agreement,
   calls again with `confirm: true`. There is no token: each call names the link, and the route refuses
   what it would refuse in the browser (the Delivery review link, an unrevoked link to delete).
+- **Release (#967).** `release_video_version` and `withdraw_video_release` act at once in the routes, so the
+  tool asks first: without `confirm: true` it returns `Confirmation required` naming the live Review links (label,
+  Version and Video title) on which the Version becomes, or stops being, downloadable, and writes nothing. The client
+  relays that to the user and, on agreement, calls again with `confirm: true`. There is no token; the
+  `approvalRevision` is the fence, so a decision that lands in between makes the Release refuse (`release_stale`).
 
 - **Unlock** (`set_video_premium_unlock`, `set_delivery_video_premium_unlock`, `set_asset_premium_unlock` with
   `unlocked: true`). The first call unlocks nothing: it returns a summary of what becomes viewable and downloadable
