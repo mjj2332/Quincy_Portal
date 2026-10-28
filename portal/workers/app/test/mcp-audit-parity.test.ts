@@ -176,6 +176,21 @@ const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "request_project_link_preview", stage: "edited_review", args: ({ projectId }) => ({ projectId, url: "https://example.com/parity-preview" }) },
   { tool: "request_notice_link_preview", args: () => ({ url: "https://example.com/parity-notice-preview" }) },
   { tool: "edit_project_whiteboard", stage: "edited_review", args: ({ projectId }) => ({ projectId, expectedGeneration: 1, edits: [{ op: "add_text", x: 0, y: 0, text: "Parity whiteboard" }] }) },  { tool: "update_notification_preferences", args: () => ({ emailDigestCadence: "daily" }) }, // #971
+  { tool: "admin_sync_delivery_review_links", args: () => ({ cursor: "ffffffff-ffff-4fff-bfff-ffffffffffff" }) }, // #973
+  { tool: "admin_reprobe_video_versions", args: () => ({ dryRun: false, limit: 1 }) }, // #973
+  { tool: "admin_set_project_cover", args: ({ projectId }) => ({ projectId, assetId: null }) }, // #973
+  // #973: a Photographer user (and, for the removal, their membership) seeded inline so this block stays append-only.
+  { tool: "admin_add_project_photographer", setup: async () => {
+    const userId = crypto.randomUUID(); const now = Date.now();
+    await insert("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Parity Photographer', ?, 1, 'photographer', 1, ?, ?)", userId, `${userId}@example.test`, now, now);
+    return { userId };
+  }, args: ({ projectId, userId }) => ({ projectId, userId: userId! }) },
+  { tool: "admin_remove_project_photographer", setup: async (projectId) => {
+    const userId = crypto.randomUUID(); const membershipCycle = crypto.randomUUID(); const now = Date.now();
+    await insert("INSERT INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Parity Photographer', ?, 1, 'photographer', 1, ?, ?)", userId, `${userId}@example.test`, now, now);
+    await insert("INSERT INTO project_members (id, project_id, user_id, role_on_project, created_at) VALUES (?, ?, ?, 'photographer', ?)", membershipCycle, projectId, userId, now);
+    return { userId, membershipCycle };
+  }, args: ({ projectId, userId, membershipCycle }) => ({ projectId, userId: userId!, membershipCycle: membershipCycle! }) },
 ];
 
 /** Write tools whose route writes no audit_log or activity row at all (so there is nothing to stamp), each with the reason. */

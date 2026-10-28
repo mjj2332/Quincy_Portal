@@ -64,7 +64,7 @@ With every scope granted, the tool count by role is:
 
 | Role | Tools visible |
 |---|---|
-| Admin | 103 |
+| Admin | 110 |
 | Photographer | 39 |
 | Editor | 54 |
 | External editor | 46 |
@@ -75,7 +75,7 @@ External editor additionally has no notice board and no selection or download-se
 ## Tool reference
 
 Generated from the tool definitions in `portal/workers/app/src/mcp/tools/` (registry plus the
-whiteboard tools): **103 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
+whiteboard tools): **110 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
 the role capability. **Destructive** is the `destructiveHint` the client sees; every `admin`-scope tool is
 destructive. `destructiveHint` is advice to the client, not enforcement: the server-side confirm round
 trips below are what enforce.
@@ -267,6 +267,34 @@ Subtask reminder emails, digest cadence, whether the digest includes Project act
 they cannot reach anyone else's row. A change is audited as `notification.preference.update` with the usual
 `via: "mcp"` marker.
 
+### Remaining admin tools (7) (#973)
+
+The admin routes the #973 audit (`docs/plans/959-admin-mcp-audit.md`) found with no tool. Admin only. The writes
+need the `admin` scope and are destructive; the reads are `read` scope like the other admin reads.
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `admin_sync_delivery_review_links` | admin | `adminBackend` | yes |
+| `admin_reprobe_video_versions` | admin | `adminBackend` | yes |
+| `admin_set_project_cover` | admin | `editProject` | yes |
+| `admin_add_project_photographer` | admin | `editProject` | yes |
+| `admin_remove_project_photographer` | admin | `editProject` | yes |
+| `admin_list_integrations` | read | `manageIntegrations` | no |
+| `admin_get_autohdr_status` | read | `adminBackend` | no |
+
+- **Delivery review-link sync** and **video reprobe** are the operator backfills, one page per call with a
+  `nextCursor`. Run `dryRun: true` first: the sync's dry run counts what it would create, and the reprobe's
+  `dryRun` defaults to `true` (as on the route) and writes nothing, audit included. Each real run writes one summary
+  audit row (`admin.delivery_review_backfill`, `admin.video_probe_backfill`) marked via MCP.
+- **Photographer assignment** mirrors `add_project_editor` / `remove_project_editor` on the Photographer route:
+  removing someone who holds Subtasks returns `Confirmation required` first (the route's own check); call again
+  with `confirm: true` and `confirmedAssignmentCount`.
+- **`admin_set_project_cover` and the Photographer tools** are `admin` scope, as ADR 0026 decision 2 asks of an
+  Admin-only capability (`editProject`). The older tools on Admin-only capabilities (`create_project`, `update_project_details`, `set_project_priority`,
+  `set_project_deadline`, the Editor tools, `archive_project`, `restore_project`) stay `write` by owner decision;
+  that divergence is recorded in the audit.
+- `admin_list_integrations` never returns credentials. Connecting Dropbox stays in the browser.
+
 ## Confirm round trips
 
 Some actions need the person's say-so first. The tool refuses to act on the first call and the client
@@ -352,6 +380,7 @@ comment a client reads could try to talk it into it):
 - **Upload.** Multi-GB multipart transfers do not fit a tool call. `place_media` and the link-preview
   tools only reference things already in the Portal or a public URL.
 - Restore a whiteboard version.
+- Connect Dropbox: its OAuth handshake runs in the browser (#973 audit).
 
 Only routes in the allowlist (`portal/workers/app/src/mcp/route-allowlist.ts`) can be dispatched.
 `test/mcp-never-list.test.ts` fails the build if a route from this list is ever added to it.

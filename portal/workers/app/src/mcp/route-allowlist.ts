@@ -62,6 +62,9 @@ const GET_TEMPLATES = [
   "/api/production-calendar",
   "/api/production-gantt",
   "/api/notification-preferences",
+  // Remaining admin reads (#973)
+  "/api/integrations",
+  "/api/projects/:projectId/autohdr-status",
 ] as const;
 
 /** Reached only by redeeming a signed download URL (#707): no tool owns it, `mcp/downloads.ts` dispatches to it. */
@@ -148,6 +151,12 @@ const ADMIN_ROUTES = [
   ["POST", "/api/integrations/dropbox/editor-folders/inspect"],
   // Project delete: only through the confirm round trip in `tools/admin-writes.ts`.
   ["DELETE", "/api/projects/:projectId"],
+  // Remaining admin writes (#973)
+  ["POST", "/api/admin/delivery-review-links/sync"],
+  ["POST", "/api/admin/video-versions/reprobe"],
+  ["POST", "/api/projects/:projectId/cover"],
+  ["PUT", "/api/projects/:projectId/photographers/:userId"],
+  ["DELETE", "/api/projects/:projectId/photographers/:userId"],
 ] as const;
 
 export const MCP_ALLOWED_ROUTES: readonly { method: string; template: string; pattern: RegExp }[] = [
