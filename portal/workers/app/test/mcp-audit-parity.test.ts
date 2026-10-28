@@ -135,6 +135,24 @@ const deleteSetup = async (projectId: string) => {
   const first = await callTool("delete_project", { projectId });
   return { confirmToken: /"confirmToken":\s*"([^"]+)"/.exec(first)![1]! };
 };
+/** Premium and Unlock (#969): a Video (no Version needed) and a photo, both unpublished and Premium; the Unlock setup takes the first call's token. */
+const premiumVideoSetup = async (projectId: string) => {
+  const collectionId = crypto.randomUUID(); const videoId = crypto.randomUUID(); const now = Date.now();
+  await insert("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'video', 'empty', 0, ?, ?)", collectionId, projectId, now, now);
+  await insert("INSERT INTO videos (id, project_id, collection_id, title, premium, position, created_by, created_at, updated_at) VALUES (?, ?, ?, 'Parity film', 1, 0, ?, ?, ?)", videoId, projectId, collectionId, adminId, now, now);
+  return { videoId };
+};
+const premiumPhotoSetup = async (projectId: string) => {
+  const collectionId = crypto.randomUUID(); const assetId = crypto.randomUUID(); const now = Date.now();
+  await insert("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'edited', 'empty', 0, ?, ?)", collectionId, projectId, now, now);
+  await insert("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, version, delivery_premium, publish_status, created_at, updated_at) VALUES (?, ?, 'photo', ?, 'p.jpg', 10, 'upload', 1, 1, 'ready', ?, ?)", assetId, collectionId, `parity/${assetId}.jpg`, now, now);
+  return { assetId };
+};
+const unlockSetup = (tool: string, seed: (projectId: string) => Promise<Record<string, string>>) => async (projectId: string) => {
+  const ids = await seed(projectId);
+  const first = await callTool(tool, { projectId, ...ids, unlocked: true });
+  return { ...ids, confirmToken: /"confirmToken":\s*"([^"]+)"/.exec(first)![1]! };
+};
 const editorCandidate = {
   projectId: "00000000-0000-4000-8000-000000000001", connectionId: "dbx-1", expectedShootDate: "2037-01-02", expectedRawFolderPath: null, expectedRawFolderLink: null,
   rootPath: "/Editors/Parity", rootFolderId: "id:root",
@@ -259,6 +277,13 @@ const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "admin_archive_social_overlay", setup: overlaySetup, args: ({ overlayId }) => ({ id: overlayId!, expectedRevision: 1 }) }, // #970
   { tool: "admin_unarchive_social_overlay", setup: archivedOverlaySetup, args: ({ overlayId }) => ({ id: overlayId!, expectedRevision: 1 }) }, // #970
   { tool: "set_project_social_overlays", setup: projectOverlaySetup, args: ({ projectId, overlayId, revision }) => ({ projectId, overlayIds: [overlayId!], expectedRevision: revision! }) }, // #970
+  // #969: premium is seeded on, so each premium call unmarks (an unpublished item) and writes its row.
+  { tool: "set_video_premium", setup: premiumVideoSetup, args: ({ projectId, videoId }) => ({ projectId, videoId: videoId!, premium: false }) },
+  { tool: "set_delivery_video_premium", setup: premiumVideoSetup, args: ({ projectId, videoId }) => ({ projectId, videoId: videoId!, premium: false }) },
+  { tool: "set_asset_premium", setup: premiumPhotoSetup, args: ({ projectId, assetId }) => ({ projectId, assetId: assetId!, premium: false }) },
+  { tool: "set_video_premium_unlock", setup: unlockSetup("set_video_premium_unlock", premiumVideoSetup), args: ({ projectId, videoId, confirmToken }) => ({ projectId, videoId: videoId!, unlocked: true, confirm: true, confirmToken: confirmToken! }) },
+  { tool: "set_delivery_video_premium_unlock", setup: unlockSetup("set_delivery_video_premium_unlock", premiumVideoSetup), args: ({ projectId, videoId, confirmToken }) => ({ projectId, videoId: videoId!, unlocked: true, confirm: true, confirmToken: confirmToken! }) },
+  { tool: "set_asset_premium_unlock", setup: unlockSetup("set_asset_premium_unlock", premiumPhotoSetup), args: ({ projectId, assetId, confirmToken }) => ({ projectId, assetId: assetId!, unlocked: true, confirm: true, confirmToken: confirmToken! }) },
 ];
 
 /** Write tools whose route writes no audit_log or activity row at all (so there is nothing to stamp), each with the reason. */
@@ -316,6 +341,8 @@ beforeAll(async () => {
     database.DB.prepare("UPDATE feature_flags SET enabled = 1 WHERE key = 'tb5a_board_contract_enabled'"),
     database.DB.prepare("INSERT INTO mcp_connections (id, user_id, client_id, client_name, redirect_host, scopes, authorization_epoch, created_at) VALUES ('conn-parity', ?, 'client-1', 'Parity Client', 'client.example.test', '[\"write\"]', 0, ?)").bind(adminId, now),
     database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_by, updated_at) VALUES ('mcp_access', 1, NULL, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1").bind(now),
+    // #969: the Video review `delivery` part and the Client Delivery gate, which the premium routes check.
+    ...["video_review", "video_review_all_projects", "video_review_delivery", "client_delivery", "client_delivery_all_projects"].map((key) => database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_by, updated_at) VALUES (?, 1, NULL, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1").bind(key, now)),
   ]);
   await setVideoFlags("video_review", "video_review_all_projects", "video_review_notes", "video_review_markup"); // #964
 });

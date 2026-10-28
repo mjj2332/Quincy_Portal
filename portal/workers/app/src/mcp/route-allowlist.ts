@@ -151,6 +151,13 @@ const WRITE_ROUTES = [
   ["POST", "/api/projects/:projectId/review-links/:linkId/end-sessions"],
   // A Project's Social overlay selection (#970)
   ["PUT", "/api/projects/:projectId/social-overlays"],
+  // Premium and Unlock (#969): Video review, Delivery tab, photos and documents
+  ["PUT", "/api/projects/:projectId/videos/:videoId/premium"],
+  ["PUT", "/api/projects/:projectId/videos/:videoId/premium-unlock"],
+  ["PUT", "/api/projects/:projectId/delivery/videos/:videoId/premium"],
+  ["PUT", "/api/projects/:projectId/delivery/videos/:videoId/premium-unlock"],
+  ["PUT", "/api/projects/:projectId/assets/:assetId/delivery-premium"],
+  ["PUT", "/api/projects/:projectId/assets/:assetId/delivery-premium-unlock"],
 ] as const;
 
 /**

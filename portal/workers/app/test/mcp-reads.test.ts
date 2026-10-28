@@ -11,6 +11,7 @@ import { VIDEO_WRITE_TOOLS } from "../src/mcp/tools/video-writes";
 import { VIDEO_NOTE_TOOLS } from "../src/mcp/tools/video-notes"; // #964
 import { REVIEW_LINK_TOOLS } from "../src/mcp/tools/review-links";
 import { SOCIAL_OVERLAY_TOOLS } from "../src/mcp/tools/social-overlays";
+import { PREMIUM_TOOLS } from "../src/mcp/tools/premium"; // #969
 import { mcpHarness } from "./mcp-oauth-support";
 
 /** Every `write`-scope tool, one module per line: a new write module appends its own line (commented with its ticket). */
@@ -23,6 +24,7 @@ const WRITE_TOOLS = [
   ...VIDEO_NOTE_TOOLS, // #964
   ...REVIEW_LINK_TOOLS, // #966
   ...SOCIAL_OVERLAY_TOOLS, // #970
+  ...PREMIUM_TOOLS, // #969
 ].filter((tool) => tool.scope === "write");
 
 declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL__: string;

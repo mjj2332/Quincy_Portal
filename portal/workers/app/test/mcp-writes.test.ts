@@ -9,6 +9,7 @@ import { VIDEO_WRITE_TOOLS } from "../src/mcp/tools/video-writes";
 import { VIDEO_NOTE_TOOLS } from "../src/mcp/tools/video-notes"; // #964
 import { REVIEW_LINK_TOOLS } from "../src/mcp/tools/review-links";
 import { SOCIAL_OVERLAY_TOOLS } from "../src/mcp/tools/social-overlays";
+import { PREMIUM_TOOLS } from "../src/mcp/tools/premium"; // #969
 import { mcpHarness } from "./mcp-oauth-support";
 
 declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL__: string;
@@ -43,6 +44,7 @@ const WRITE_SCOPE_NAMES = [
   ...writeScopeNames(VIDEO_NOTE_TOOLS), // #964
   ...writeScopeNames(REVIEW_LINK_TOOLS), // #966
   ...writeScopeNames(SOCIAL_OVERLAY_TOOLS), // #970
+  ...writeScopeNames(PREMIUM_TOOLS), // #969
 ];
 const DESTRUCTIVE = ["remove_project_editor", "delete_subtask", "delete_project_comment", "remove_video_link"];
 const ADMIN_ONLY = ["create_project", "update_project_details", "set_project_priority", "set_project_deadline", "add_project_editor", "remove_project_editor", "archive_project", "restore_project"];
