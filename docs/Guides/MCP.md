@@ -64,6 +64,10 @@ With every scope granted, the tool count by role is:
 
 | Role | Tools visible |
 |---|---|
+| Admin | 146 |
+| Photographer | 39 |
+| Editor | 92 |
+| External editor | 66 |
 
 Admin-only tools (every `admin_*` tool, `delete_project` and `set_delivery_page_enabled`) never appear for the other roles. An
 External editor additionally has no notice board and no selection or download-selection tools.
@@ -71,6 +75,7 @@ External editor additionally has no notice board and no selection or download-se
 ## Tool reference
 
 Generated from the tool definitions in `portal/workers/app/src/mcp/tools/` (registry plus the
+whiteboard tools): **146 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
 the role capability. **Destructive** is the `destructiveHint` the client sees; every `admin`-scope tool is
 destructive. `destructiveHint` is advice to the client, not enforcement: the server-side confirm round
 trips below are what enforce.
