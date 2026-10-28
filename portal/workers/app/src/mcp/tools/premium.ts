@@ -2,6 +2,7 @@ import { z } from "zod";
 import { VIDEO_PAYMENT_REF_MAX, type Capability } from "@quincy/shared";
 import { findVideo, videoPublished } from "../../lib/video-approval";
 import { findPremiumAsset } from "../../lib/asset-premium";
+import { LIVE_VIDEO } from "../../lib/video-live-sql";
 import { text, writeTool, type McpTool, type McpToolContext } from "./define";
 import { confirmInput, requireConfirm, signedConfirm } from "./confirm";
 
@@ -41,7 +42,7 @@ const VIDEO: Item = {
   read: async (ctx, project, id) => {
     const video = await findVideo(ctx.env.DB, project, id);
     if (!video) return null;
-    const title = (await ctx.env.DB.prepare("SELECT title FROM videos WHERE id = ?1").bind(id).first<{ title: string | null }>())?.title ?? "";
+    const title = (await ctx.env.DB.prepare(`SELECT v.title FROM videos v WHERE v.id = ?1 AND ${LIVE_VIDEO("v")}`).bind(id).first<{ title: string | null }>())?.title ?? "";
     return { kind: "video", id, label: title, premium: video.premium, unlocked: video.unlocked, paymentRef: video.paymentRef, onPublishedPage: await videoPublished(ctx.env.DB, id) };
   },
 };
