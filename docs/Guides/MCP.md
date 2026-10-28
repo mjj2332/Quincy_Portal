@@ -64,18 +64,18 @@ With every scope granted, the tool count by role is:
 
 | Role | Tools visible |
 |---|---|
-| Admin | 103 |
+| Admin | 108 |
 | Photographer | 39 |
-| Editor | 54 |
+| Editor | 58 |
 | External editor | 46 |
 
-Admin-only tools (every `admin_*` tool and `delete_project`) never appear for the other roles. An
+Admin-only tools (every `admin_*` tool, `delete_project` and `set_delivery_page_enabled`) never appear for the other roles. An
 External editor additionally has no notice board and no selection or download-selection tools.
 
 ## Tool reference
 
 Generated from the tool definitions in `portal/workers/app/src/mcp/tools/` (registry plus the
-whiteboard tools): **103 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
+whiteboard tools): **108 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
 the role capability. **Destructive** is the `destructiveHint` the client sees; every `admin`-scope tool is
 destructive. `destructiveHint` is advice to the client, not enforcement: the server-side confirm round
 trips below are what enforce.
@@ -267,6 +267,25 @@ Subtask reminder emails, digest cadence, whether the digest includes Project act
 they cannot reach anyone else's row. A change is audited as `notification.preference.update` with the usual
 `via: "mcp"` marker.
 
+### Client Delivery page and Publish (5) (#968)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `get_delivery_page` | read | `viewClientPreview` | no |
+| `list_delivery_candidates` | read | `viewClientPreview` | no |
+| `preview_delivery` | read | `viewClientPreview` | no |
+| `publish_delivery` | write | `publish` | no |
+| `set_delivery_page_enabled` | admin | `switchDeliveryPage` | yes |
+
+Admins and Editors (on Projects assigned to them) see the reads and Publish; Photographers and External
+editors see none. All of them answer 404 while Client Delivery is off for the Project, as the routes do.
+`get_delivery_page` returns the page (address, on or off, latest set number), the latest Published set
+with the Asset behind each item, and the page as the client sees it. `list_delivery_candidates` lists
+what Publish would accept now, in page order. `preview_delivery` builds the page a selection would make
+and publishes nothing (it is a POST route that writes nothing); its item handles are throwaway and differ
+on every call. `publish_delivery` is a confirm round trip (below). Switching the page on or off is
+Admin-only and needs the `admin` scope; it is audited as `delivery.page_on` / `delivery.page_off`.
+
 ## Confirm round trips
 
 Some actions need the person's say-so first. The tool refuses to act on the first call and the client
@@ -284,6 +303,18 @@ must ask the user, then call again.
   Project and that Connected app only: a token issued for one action (delete, Publish, Unlock) is refused
   by every other. The server recomputes the summary on the second call and **refuses if the Project
   changed in between**; the client has to ask again.
+- **`publish_delivery`** (#968, write scope, `publish`). The first call publishes nothing: it returns a
+  summary of exactly what the next Published set will contain (each item by Asset id with its kind,
+  label, film title, locked and premium state, in page order; the cover; the set number; whether this is
+  the first Publish, which creates the page and moves the Project to Delivered) and a `confirmToken`
+  (action `publish`, 5 minutes, that Project and that Connected app). The client shows the user the
+  summary and, on agreement, calls again with the same arguments plus `confirm: true` and the token. The
+  server rebuilds the summary and refuses if the page (a new set, the page switched on or off) or the
+  selection changed. The summary never includes Preview's random item handles or URLs, so an unchanged
+  page always confirms. The confirmed call then runs the Publish route with the page's set as
+  `expectedLatestSet`, so a Publish that lands in between is still refused by the route as `stale_set`;
+  an archived Project is refused as `project_archived`. Its operation id comes from the token, so a
+  retried confirmed call cannot publish a second set.
 
 ## Signed downloads
 

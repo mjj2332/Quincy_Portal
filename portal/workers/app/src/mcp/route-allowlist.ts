@@ -62,6 +62,9 @@ const GET_TEMPLATES = [
   "/api/production-calendar",
   "/api/production-gantt",
   "/api/notification-preferences",
+  // Client Delivery reads (#968)
+  "/api/projects/:projectId/delivery",
+  "/api/projects/:projectId/delivery/candidates",
 ] as const;
 
 /** Reached only by redeeming a signed download URL (#707): no tool owns it, `mcp/downloads.ts` dispatches to it. */
@@ -111,6 +114,9 @@ const WRITE_ROUTES = [
   ["POST", "/api/projects/:projectId/download-selection"],
   // Own notification preferences (#971)
   ["PATCH", "/api/notification-preferences"],
+  // Client Delivery (#968): Preview is a read-scope tool on a POST that writes nothing; Publish only through the confirm round trip in `tools/delivery.ts`.
+  ["POST", "/api/projects/:projectId/delivery/preview"],
+  ["POST", "/api/projects/:projectId/delivery/publish"],
 ] as const;
 
 /**
@@ -148,6 +154,8 @@ const ADMIN_ROUTES = [
   ["POST", "/api/integrations/dropbox/editor-folders/inspect"],
   // Project delete: only through the confirm round trip in `tools/admin-writes.ts`.
   ["DELETE", "/api/projects/:projectId"],
+  // Delivery page on/off (#968): `switchDeliveryPage`, Admin only.
+  ["PUT", "/api/projects/:projectId/delivery/page"],
 ] as const;
 
 export const MCP_ALLOWED_ROUTES: readonly { method: string; template: string; pattern: RegExp }[] = [

@@ -119,6 +119,26 @@ const editorCandidate = {
   inputRoots: [{ path: "/Editors/Parity/Input", section: null, folderId: "id:in" }], outputRoots: [{ path: "/Editors/Parity/Output", section: null, folderId: "id:out" }],
 };
 
+/** Client Delivery (#968): the Project's gate opened and one current edited photo; Publish's first call returns the token the second needs. */
+const openDeliveryPhoto = async (projectId: string) => {
+  const now = Date.now(); const collectionId = crypto.randomUUID(); const assetId = crypto.randomUUID();
+  await insert("INSERT INTO feature_flags (key, enabled, updated_at) VALUES ('client_delivery', 1, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1", now);
+  await insert("INSERT INTO feature_flags (key, enabled, updated_at) VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1", `client_delivery_pilot:${projectId}`, now);
+  await insert("INSERT INTO collections (id, project_id, kind, status, received_count, created_at, updated_at) VALUES (?, ?, 'edited', 'empty', 0, ?, ?)", collectionId, projectId, now, now);
+  await insert("INSERT INTO assets (id, collection_id, kind, r2_key, original_filename, bytes, source, version, publish_status, created_at, updated_at) VALUES (?, ?, 'photo', ?, 'parity.jpg', 10, 'upload', 1, 'ready', ?, ?)", assetId, collectionId, `parity/${assetId}`, now, now);
+  return assetId;
+};
+const publishSetup = async (projectId: string) => {
+  const assetId = await openDeliveryPhoto(projectId);
+  const first = await callTool("publish_delivery", { projectId, assetIds: [assetId] });
+  return { assetId, confirmToken: /"confirmToken":\s*"([^"]+)"/.exec(first)![1]! };
+};
+const deliveryPageSetup = async (projectId: string) => {
+  await openDeliveryPhoto(projectId);
+  await insert("INSERT INTO delivery_pages (project_id, slug, enabled, latest_set_number, created_at, updated_at) VALUES (?, ?, 1, 1, ?, ?)", projectId, `parity-${projectId.slice(0, 8)}`, Date.now(), Date.now());
+  return {};
+};
+
 const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "admin_reset_dropbox_monitor", args: () => ({ scope: "raw" }) },
   { tool: "admin_link_editor_folder", args: () => ({ reviewed: true, candidate: editorCandidate }) },
@@ -176,6 +196,8 @@ const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "request_project_link_preview", stage: "edited_review", args: ({ projectId }) => ({ projectId, url: "https://example.com/parity-preview" }) },
   { tool: "request_notice_link_preview", args: () => ({ url: "https://example.com/parity-notice-preview" }) },
   { tool: "edit_project_whiteboard", stage: "edited_review", args: ({ projectId }) => ({ projectId, expectedGeneration: 1, edits: [{ op: "add_text", x: 0, y: 0, text: "Parity whiteboard" }] }) },  { tool: "update_notification_preferences", args: () => ({ emailDigestCadence: "daily" }) }, // #971
+  { tool: "publish_delivery", stage: "edited_review", setup: publishSetup, args: ({ projectId, assetId, confirmToken }) => ({ projectId, assetIds: [assetId!], confirm: true, confirmToken: confirmToken! }) }, // #968
+  { tool: "set_delivery_page_enabled", stage: "edited_review", setup: deliveryPageSetup, args: ({ projectId }) => ({ projectId, enabled: false }) }, // #968
 ];
 
 /** Write tools whose route writes no audit_log or activity row at all (so there is nothing to stamp), each with the reason. */

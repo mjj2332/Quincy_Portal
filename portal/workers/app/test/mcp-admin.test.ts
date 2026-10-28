@@ -50,6 +50,7 @@ const ADMIN_TOOLS: Record<string, { method: string; template: string; capability
   admin_discard_webhook_event: { method: "POST", template: "/api/admin/webhook-events/:eventId/discard", capability: "adminBackend" },
   admin_acknowledge_orphan_file_report: { method: "POST", template: "/api/admin/attention/orphan-uploads/:watchId/acknowledge", capability: "adminBackend" },
   admin_delete_asset: { method: "DELETE", template: "/api/assets/:assetId", capability: "adminBackend" },
+  set_delivery_page_enabled: { method: "PUT", template: "/api/projects/:projectId/delivery/page", capability: "switchDeliveryPage" }, // #968
 };
 /** The one admin-scope tool that only reads (a POST so that its body can carry a path): readOnlyHint, not destructive. */
 const ADMIN_SCOPE_READS: Record<string, { method: string; template: string; capability: string }> = {

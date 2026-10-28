@@ -5,6 +5,7 @@ import { MCP_ALLOWED_ROUTES, REDEMPTION_ONLY_ROUTES, isAllowedMcpRoute } from ".
 import { MCP_TOOLS, strictInput, toolsFor } from "../src/mcp/tools/registry";
 import { COLLAB_WRITE_TOOLS } from "../src/mcp/tools/collab-writes";
 import { WHITEBOARD_TOOLS } from "../src/mcp/tools/whiteboard";
+import { DELIVERY_TOOLS } from "../src/mcp/tools/delivery";
 import { mcpHarness } from "./mcp-oauth-support";
 
 declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL__: string;
@@ -35,6 +36,7 @@ const WRITE_SCOPE_NAMES = [
   ...WRITE_NAMES,
   ...writeScopeNames(COLLAB_WRITE_TOOLS),
   ...writeScopeNames(WHITEBOARD_TOOLS),
+  ...writeScopeNames(DELIVERY_TOOLS), // #968
 ];
 const DESTRUCTIVE = ["remove_project_editor", "delete_subtask", "delete_project_comment", "remove_video_link"];
 const ADMIN_ONLY = ["create_project", "update_project_details", "set_project_priority", "set_project_deadline", "add_project_editor", "remove_project_editor", "archive_project", "restore_project"];
