@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { ReviewLinkListResponse, VideoDecisionEvent, VideoDecisionsResponse } from "@quincy/shared";
-import { jsonResult, readTool, writeTool, type McpTool, type McpToolResult } from "./define";
-import { confirmInput, requireConfirm, withoutConfirm } from "./confirm";
+import { confirmationRequired, jsonResult, readTool, writeTool, type McpTool, type McpToolResult } from "./define";
+import { confirmInput, withoutConfirm } from "./confirm";
 import { untrustedGuestText, type AuthorKind } from "./video-format";
 
 /**
@@ -12,7 +12,7 @@ import { untrustedGuestText, type AuthorKind } from "./video-format";
  *   (see `../instructions.ts`) and each event says who decided with `actorKind`.
  * - `release_video_version` / `withdraw_video_release` (`releaseVideo`): the routes act at once, so the tool refuses without `confirm: true`
  *   and dispatches no write until then. The reason names the live Review links on which the Version becomes (or stops being) downloadable,
- *   read from `list_review_links`'s route; when that read is refused (Review links off) the reason says so in general terms.
+ *   read from `list_review_links`'s route; when that read is refused (Review links off) the reason says the links could not be read.
  */
 
 const projectId = z.string().uuid().describe("The Project's id.");
@@ -72,6 +72,8 @@ async function downloadableOn(read: (path: string) => Promise<Response>, project
 }
 
 const where = (links: string[]) => links.join(", ");
+/** Leads the reason when the links read was refused (Review links off for the Project), so the user knows the links are not named. */
+const UNREADABLE = "could not read Review links to name them";
 
 const releaseVideoVersion = writeTool({
   name: "release_video_version",
@@ -88,12 +90,11 @@ const releaseVideoVersion = writeTool({
   run: async (send, input, read) => {
     if (input.confirm !== true) {
       const links = await downloadableOn(read, String(input.projectId), String(input.assetId));
-      const reason = links === null
-        ? "releasing makes this Version's original file downloadable to guests on every live Review link that grants it with downloads allowed"
+      return confirmationRequired(links === null
+        ? `${UNREADABLE}; releasing makes this Version's original file downloadable to guests on every live Review link that grants it with downloads allowed`
         : links.length === 0
           ? "releasing this Version lets guests download its original file; no live Review link grants it with downloads allowed today, so it becomes downloadable on any link that does later"
-          : `releasing makes this Version's original file downloadable to guests on ${links.length === 1 ? "the Review link" : "the Review links"} ${where(links)}, and their subscribers are told`;
-      return requireConfirm(input, reason)!;
+          : `releasing makes this Version's original file downloadable to guests on ${links.length === 1 ? "the Review link" : "the Review links"} ${where(links)}, and their subscribers are told`);
     }
     // The route's body is `{ approvalRevision }` (strict): the path ids and `confirm` stay out.
     const { projectId: _project, assetId: _asset, ...body } = withoutConfirm(input);
@@ -113,10 +114,11 @@ const withdrawVideoRelease = writeTool({
   run: async (send, input, read): Promise<McpToolResult> => {
     if (input.confirm !== true) {
       const links = await downloadableOn(read, String(input.projectId), String(input.assetId));
-      const reason = links === null || links.length === 0
-        ? "withdrawing the Release stops guests downloading this Version's original file on every Review link that grants it"
-        : `withdrawing the Release stops guests downloading this Version's original file on ${links.length === 1 ? "the Review link" : "the Review links"} ${where(links)}`;
-      return requireConfirm(input, reason)!;
+      return confirmationRequired(links === null
+        ? `${UNREADABLE}; withdrawing the Release stops guests downloading this Version's original file on every Review link that grants it`
+        : links.length === 0
+          ? "withdrawing the Release stops guests downloading this Version's original file on every Review link that grants it"
+          : `withdrawing the Release stops guests downloading this Version's original file on ${links.length === 1 ? "the Review link" : "the Review links"} ${where(links)}`);
     }
     return jsonResult(await send());
   },

@@ -1,15 +1,18 @@
 import { z } from "zod";
 import {
   REVIEW_LINK_LABEL_MAX, REVIEW_LINK_MAX_GRANTS_PER_VIDEO, REVIEW_LINK_MAX_VIDEOS, REVIEW_LINK_PASSCODE_MAX, REVIEW_LINK_PASSCODE_MIN,
+  type ReviewLinkDto,
 } from "@quincy/shared";
 import { jsonResult, readTool, writeTool, type McpTool } from "./define";
 import { confirmInput, requireConfirm } from "./confirm";
+import { untrustedGuestText } from "./video-format";
 
 /**
  * Review links (#966, spec #959). Every tool needs `shareVideo`, the capability the routes check (Admin, Editor, External editor; a
  * Photographer sees none), and the routes' own Project visibility keeps an External editor to assigned Projects (#834). One tool, one
  * allowlisted route; the route does the gate, the archived refusal, the Delivery review link's refusals and the audit.
- * The DTO carries `hasPasscode`, never the passcode, and `url` (the address) while the link is not revoked.
+ * The DTO carries `hasPasscode`, never the passcode, and `url` (the address) while the link is not revoked. A verified guest's display
+ * name is guest-written, so it reaches the client only inside `untrustedGuestText` (see `../instructions.ts`), as notes and decisions do.
  * Revoke, Replace, Delete and End guest sessions have no confirmation step in the route, so the tool refuses without `confirm: true`
  * and dispatches nothing until then.
  */
@@ -146,7 +149,37 @@ const endReviewLinkGuestSessions = confirmedLinkAction({
   reason: "this signs every guest out of the Delivery review link; they have to open it again",
 });
 
+type McpVerifiedGuest = Omit<ReviewLinkDto["activity"]["verifiedGuests"][number], "name"> & { untrustedGuestText: string };
+
+/** A link as the tools return it: the route's DTO, except that each verified guest's display name (guest-written) is only inside `untrustedGuestText`. */
+export function formatReviewLink(link: ReviewLinkDto) {
+  return {
+    ...link,
+    activity: {
+      ...link.activity,
+      verifiedGuests: link.activity.verifiedGuests.map(({ name, ...rest }): McpVerifiedGuest => ({ ...rest, untrustedGuestText: untrustedGuestText({ name }) })),
+    },
+  };
+}
+
+/**
+ * Every Review link tool's success JSON carries the link DTO (`{ links }` from the list, `{ link }` and maybe `url` from the rest), so each
+ * result goes through `formatReviewLink`. Anything else (an error, 'Confirmation required', a 204's "OK") passes through unchanged.
+ */
+const withGuestNamesWrapped = (tool: McpTool): McpTool => ({
+  ...tool,
+  call: async (ctx, input) => {
+    const result = await tool.call(ctx, input);
+    if (result.isError) return result;
+    let body: { links?: ReviewLinkDto[]; link?: ReviewLinkDto } & Record<string, unknown>;
+    try { body = JSON.parse(result.content[0]!.text) as typeof body; } catch { return result; }
+    if (!body || typeof body !== "object" || (!Array.isArray(body.links) && !body.link)) return result;
+    const shaped = { ...body, ...(Array.isArray(body.links) ? { links: body.links.map(formatReviewLink) } : {}), ...(body.link ? { link: formatReviewLink(body.link) } : {}) };
+    return { content: [{ type: "text", text: JSON.stringify(shaped) }] };
+  },
+});
+
 export const REVIEW_LINK_TOOLS: readonly McpTool[] = [
   listReviewLinks, createReviewLink, updateReviewLink, addReviewLinkVideo, removeReviewLinkVideo, setReviewLinkGrants,
   revokeReviewLink, replaceReviewLink, deleteReviewLink, endReviewLinkGuestSessions,
-];
+].map(withGuestNamesWrapped);

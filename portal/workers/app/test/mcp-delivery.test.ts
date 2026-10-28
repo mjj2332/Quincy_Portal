@@ -244,9 +244,21 @@ describe("publish_delivery: the summary-and-token round trip", () => {
     expect(await setCount(projectId)).toBe(0);
   });
 
-  it("an archived Project refuses Publish with project_archived", async () => {
+  it("an archived Project refuses the first call with the route's project_archived, minting no token", async () => {
     const { projectId, photos } = await openProject({ archived: true });
-    const token = tokenFrom(textOf(await call("admin", "publish_delivery", { projectId, assetIds: photos })));
+    const first = await call("admin", "publish_delivery", { projectId, assetIds: photos });
+    expect(first.result?.isError).toBe(true);
+    const cookie = await cookieSend("admin", "POST", d(projectId, "/publish"), { assetIds: photos, coverAssetId: null, expectedLatestSet: null, operationId: "cookie-archived-check" });
+    expect(cookie.status).toBe(409);
+    expect(textOf(first)).toBe(`HTTP 409: ${await cookie.text()}`);
+    expect(textOf(first)).not.toMatch(/confirmToken/);
+    expect(await setCount(projectId)).toBe(0);
+  });
+
+  it("an archived Project refuses a confirmed call too, even with a validly signed token", async () => {
+    const { projectId, photos } = await openProject({ archived: true });
+    const exp = Math.floor(Date.now() / 1000) + 60;
+    const token = await signConfirmToken(SECRET, { action: "publish", connectionId: tokens.admin!.connectionId, projectId, summaryHash: "0".repeat(64), exp });
     const outcome = await call("admin", "publish_delivery", { projectId, assetIds: photos, confirm: true, confirmToken: token });
     expect(outcome.result?.isError).toBe(true);
     expect(textOf(outcome)).toMatch(/^HTTP 409: .*project_archived/s);

@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { VIDEO_PAYMENT_REF_MAX, type Capability } from "@quincy/shared";
-import { CONFIRM_TTL_SECONDS, sha256Hex, signConfirmToken, verifyConfirmToken } from "../confirm-token";
 import { findVideo, videoPublished } from "../../lib/video-approval";
 import { findPremiumAsset } from "../../lib/asset-premium";
-import { confirmationRequired, writeTool, type McpTool, type McpToolContext, type McpToolResult } from "./define";
+import { text, writeTool, type McpTool, type McpToolContext } from "./define";
+import { confirmInput, requireConfirm, signedConfirm } from "./confirm";
 
 /**
  * Premium and Unlock (#969), for a Video from the Video review routes and from the Delivery tab's routes, and for a photo or document.
@@ -23,22 +23,21 @@ import { confirmationRequired, writeTool, type McpTool, type McpToolContext, typ
 const projectId = z.string().uuid().describe("The Project's id.");
 const videoId = z.string().uuid().describe("The Video's id (`id` in list_project_videos).");
 const assetId = z.string().uuid().describe("The photo's or document's Asset id (from list_project_assets).");
-const confirm = z.boolean().optional().describe("Only after the user has agreed to what a previous call returned as 'Confirmation required'. Never set it on the first call.");
 const premium = z.boolean().describe("true marks it Premium (a paid extra, locked on the Client Delivery page until Unlocked); false unmarks it.");
 const unlocked = z.boolean().describe("true Unlocks it (two steps, see the description); false Re-locks it.");
 const paymentRef = z.string().trim().min(1).max(VIDEO_PAYMENT_REF_MAX).optional().describe("Optional payment reference recorded with an Unlock.");
 const confirmToken = z.string().optional().describe("The confirmToken the first Unlock call returned. Required with confirm: true when unlocking.");
 
 const UNLOCK_ACTION = "unlock";
-const text = (message: string, isError = false): McpToolResult => ({ content: [{ type: "text", text: message }], ...(isError ? { isError: true as const } : {}) });
 
 /** What an item looks like right now, read from D1 with the routes' own lookups. Null when it is not an item of this Project. */
 type ItemState = { kind: string; id: string; label: string; premium: boolean; unlocked: boolean; paymentRef: string | null; onPublishedPage: boolean };
-type Item = { noun: string; key: "videoId" | "assetId"; read: (ctx: McpToolContext, project: string, id: string) => Promise<ItemState | null> };
+type Item = { noun: string; key: "videoId" | "assetId"; idInput: z.ZodTypeAny; read: (ctx: McpToolContext, project: string, id: string) => Promise<ItemState | null> };
 
 const VIDEO: Item = {
   noun: "Video",
   key: "videoId",
+  idInput: videoId,
   read: async (ctx, project, id) => {
     const video = await findVideo(ctx.env.DB, project, id);
     if (!video) return null;
@@ -49,6 +48,7 @@ const VIDEO: Item = {
 const ASSET: Item = {
   noun: "Asset",
   key: "assetId",
+  idInput: assetId,
   read: async (ctx, project, id) => {
     const asset = await findPremiumAsset(ctx.env.DB, project, id);
     if (!asset) return null;
@@ -60,17 +60,17 @@ const ASSET: Item = {
 function premiumTool(def: { name: string; description: string; template: string; capability: Capability; item: Item }): McpTool {
   const base = writeTool({
     name: def.name, description: def.description, method: "PUT", template: def.template, capability: def.capability, idempotent: true,
-    inputSchema: { projectId, [def.item.key]: def.item.key === "videoId" ? videoId : assetId, premium, confirm },
+    inputSchema: { projectId, [def.item.key]: def.item.idInput, premium, confirm: confirmInput },
   });
   return {
     ...base,
     call: async (ctx, input) => {
       const project = String(input.projectId); const id = String(input[def.item.key]);
-      if (input.premium === true && input.confirm !== true) {
+      if (input.premium === true) {
         const state = await def.item.read(ctx, project, id);
-        if (state && !state.premium && state.onPublishedPage) {
-          return confirmationRequired(`this ${def.item.noun} is already on a published Client Delivery page, so once marked Premium it stays premium for good: it can then only be Unlocked or Re-locked, never unmarked, and the client sees it locked until it is Unlocked`);
-        }
+        const late = state !== null && !state.premium && state.onPublishedPage;
+        const refused = late ? requireConfirm(input, `this ${def.item.noun} is already on a published Client Delivery page, so once marked Premium it stays premium for good: it can then only be Unlocked or Re-locked, never unmarked, and the client sees it locked until it is Unlocked`) : null;
+        if (refused) return refused;
       }
       return base.call(ctx, { projectId: project, [def.item.key]: id, premium: input.premium });
     },
@@ -83,7 +83,7 @@ const canonical = (state: ItemState, ref: string | null) => JSON.stringify([stat
 function unlockTool(def: { name: string; description: string; template: string; capability: Capability; item: Item }): McpTool {
   const base = writeTool({
     name: def.name, description: def.description, method: "PUT", template: def.template, capability: def.capability, idempotent: true,
-    inputSchema: { projectId, [def.item.key]: def.item.key === "videoId" ? videoId : assetId, unlocked, paymentRef, confirm, confirmToken },
+    inputSchema: { projectId, [def.item.key]: def.item.idInput, unlocked, paymentRef, confirm: confirmInput, confirmToken },
   });
   return {
     ...base,
@@ -93,39 +93,24 @@ function unlockTool(def: { name: string; description: string; template: string; 
       const forward = () => base.call(ctx, { projectId: project, [def.item.key]: id, unlocked: input.unlocked, ...(ref !== null && input.unlocked === true ? { paymentRef: ref } : {}) });
       if (input.unlocked !== true) return forward();
 
-      const secret = ctx.env.MCP_DOWNLOAD_SECRET;
-      if (!secret) return text("Unlock is not configured on this server.", true);
-      const token = typeof input.confirmToken === "string" ? input.confirmToken : "";
-      if (input.confirm === true && token === "") return text(`confirmToken is required with confirm: true. Call ${def.name} with unlocked: true first, show the user the summary, then pass the token it returns.`, true);
-
-      const state = await def.item.read(ctx, project, id);
-      if (!state) return text(`${def.item.noun} not found in this Project.`, true);
-      const summaryHash = await sha256Hex(canonical(state, ref));
-      const now = Math.floor(Date.now() / 1000);
-      const scope = { action: UNLOCK_ACTION, connectionId: ctx.principal.connectionId, projectId: project };
-
-      if (input.confirm !== true) {
-        const exp = now + CONFIRM_TTL_SECONDS;
-        const summary = {
-          confirmToken: await signConfirmToken(secret, { ...scope, summaryHash, exp }),
-          expiresAt: new Date(exp * 1000).toISOString(),
-          willBecomeViewableAndDownloadableInFull: { kind: state.kind, id: state.id, label: state.label, premium: state.premium, unlocked: state.unlocked, onPublishedPage: state.onPublishedPage },
-          paymentRef: ref,
-          effect: "The client can view and download it in full on the Client Delivery page, without the Premium lock, until it is Re-locked.",
-        };
-        return text(`Confirmation required: Unlocking "${state.label}" makes it viewable and downloadable in full by the client. Show the user this summary, and only if they agree call ${def.name} again with confirm: true and this confirmToken.\n${JSON.stringify(summary, null, 2)}`);
-      }
-
-      const verdict = await verifyConfirmToken(secret, token, scope, now);
-      if (!verdict.ok) {
-        return text(verdict.reason === "expired"
-          ? `That confirmToken has expired. Call ${def.name} again without confirm for a new summary and token.`
-          : `That confirmToken is not valid for this Project and connection. Call ${def.name} again without confirm to get one.`, true);
-      }
-      if (verdict.summaryHash !== summaryHash) {
-        return text(`The ${def.item.noun} changed; re-confirm. What would be unlocked is no longer what the user was shown. Call ${def.name} again without confirm, show the new summary, and ask again.`, true);
-      }
-      return forward();
+      return signedConfirm<ItemState>(ctx, input, {
+        action: UNLOCK_ACTION, tool: def.name, projectId: project, feature: "Unlock",
+        firstCall: "with unlocked: true", again: "without confirm", changed: { what: def.item.noun, verb: "unlocked" },
+        summarize: async () => {
+          const state = await def.item.read(ctx, project, id);
+          return state ? { ok: true, summary: state, canonical: canonical(state, ref) } : { ok: false, result: text(`${def.item.noun} not found in this Project.`, true) };
+        },
+        propose: (state, token) => {
+          const summary = {
+            ...token,
+            willBecomeViewableAndDownloadableInFull: { kind: state.kind, id: state.id, label: state.label, premium: state.premium, unlocked: state.unlocked, onPublishedPage: state.onPublishedPage },
+            paymentRef: ref,
+            effect: "The client can view and download it in full on the Client Delivery page, without the Premium lock, until it is Re-locked.",
+          };
+          return text(`Confirmation required: Unlocking "${state.label}" makes it viewable and downloadable in full by the client. Show the user this summary, and only if they agree call ${def.name} again with confirm: true and this confirmToken.\n${JSON.stringify(summary, null, 2)}`);
+        },
+        act: forward,
+      });
     },
   };
 }

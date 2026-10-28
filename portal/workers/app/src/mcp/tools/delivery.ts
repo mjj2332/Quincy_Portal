@@ -1,8 +1,11 @@
 import { z } from "zod";
 import { DELIVERY_SELECTION_MAX, type DeliveryPageDto, type DeliveryState } from "@quincy/shared";
-import { CONFIRM_TTL_SECONDS, sha256Hex, signConfirmToken, verifyConfirmToken } from "../confirm-token";
+import { sha256Hex } from "../confirm-token";
 import { dispatchToApi } from "../dispatch";
-import { jsonResult, readTool, writeTool, type McpTool, type McpToolContext, type McpToolResult } from "./define";
+import { projectIsArchived } from "../../lib/project-archive";
+import { PUBLISH_ARCHIVED_BODY } from "../../routes/delivery";
+import { jsonResult, readTool, text, writeTool, type McpTool, type McpToolContext, type McpToolResult } from "./define";
+import { signedConfirm } from "./confirm";
 
 /**
  * Client Delivery page and Publish (#968, spec #959). Every tool dispatches to the Delivery routes the staff Delivery tab uses, so the
@@ -26,7 +29,6 @@ const DELIVERY = "/api/projects/:projectId/delivery";
 const PREVIEW = "/api/projects/:projectId/delivery/preview";
 const PUBLISH = "/api/projects/:projectId/delivery/publish";
 const pathOf = (template: string, project: string) => template.replace(":projectId", encodeURIComponent(project));
-const text = (message: string, isError = false): McpToolResult => ({ content: [{ type: "text", text: message }], ...(isError ? { isError: true as const } : {}) });
 const previewOf = (ctx: McpToolContext, project: string, body: { assetIds: string[]; coverAssetId: string | null }) =>
   dispatchToApi(ctx.fetchApp, ctx.env, ctx.executionCtx, ctx.principal, { method: "POST", path: pathOf(PREVIEW, project), body });
 
@@ -74,6 +76,9 @@ type SummaryRead = { ok: true; summary: PublishSummary } | { ok: false; result: 
 async function readPublishSummary(ctx: McpToolContext, project: string, selection: string[], cover: string | null): Promise<SummaryRead> {
   const stateResponse = await dispatchToApi(ctx.fetchApp, ctx.env, ctx.executionCtx, ctx.principal, { method: "GET", path: pathOf(DELIVERY, project) });
   if (!stateResponse.ok) return { ok: false, result: await jsonResult(stateResponse) };
+  // The page read has passed the gate and the Project visibility; an archived Project is refused here, as the Publish route refuses it,
+  // so the first call mints no token for a Publish the route would never accept.
+  if (await projectIsArchived(ctx.env, project)) return { ok: false, result: text(`HTTP 409: ${JSON.stringify(PUBLISH_ARCHIVED_BODY)}`, true) };
   const state = (await stateResponse.json()) as DeliveryState;
   const previewResponse = await previewOf(ctx, project, { assetIds: selection, coverAssetId: cover });
   if (!previewResponse.ok) return { ok: false, result: await jsonResult(previewResponse) };
@@ -110,52 +115,34 @@ const publishDelivery: McpTool = {
     const project = String(input.projectId);
     const selection = input.assetIds as string[];
     const cover = (input.coverAssetId as string | null | undefined) ?? null;
-    const secret = ctx.env.MCP_DOWNLOAD_SECRET;
-    if (!secret) return text("Publish is not configured on this server.", true);
-    const confirmToken = typeof input.confirmToken === "string" ? input.confirmToken : "";
-    if (input.confirm === true && confirmToken === "") return text("confirmToken is required with confirm: true. Call publish_delivery without confirm first, show the user the summary, then pass the token it returns.", true);
-
-    const read = await readPublishSummary(ctx, project, selection, cover);
-    if (!read.ok) return read.result;
-    const { summary } = read;
-    const summaryHash = await sha256Hex(JSON.stringify(summary));
-    const now = Math.floor(Date.now() / 1000);
-    const scope = { action: "publish", connectionId: ctx.principal.connectionId, projectId: project };
-
-    if (input.confirm !== true) {
-      const exp = now + CONFIRM_TTL_SECONDS;
-      const token = await signConfirmToken(secret, { ...scope, summaryHash, exp });
-      const lockedCount = summary.nextSet.items.filter((item) => item.locked).length;
-      const willPublish = {
-        confirmToken: token,
-        expiresAt: new Date(exp * 1000).toISOString(),
-        project: { id: project, street: summary.project.street },
-        page: summary.page,
-        firstPublish: summary.page === null,
-        nextSet: { ...summary.nextSet, itemCount: summary.nextSet.items.length, lockedCount },
-        consequences: summary.page === null
-          ? "The first Publish creates the client's Delivery page and moves the Project to Delivered, which notifies the team."
-          : `Set ${summary.nextSet.setNumber} replaces set ${summary.page.latestSetNumber} as what the client sees${summary.page.enabled ? "" : " (the page is currently switched off, so the client sees nothing until an Admin switches it on)"}.`,
-      };
-      return text(`Confirmation required: publishing shows these ${summary.nextSet.items.length} item(s) to the client on "${summary.project.street}". Show the user what the next set will contain, and only if they agree call publish_delivery again with the same arguments, confirm: true and this confirmToken.\n${JSON.stringify(willPublish, null, 2)}`);
-    }
-
-    const verdict = await verifyConfirmToken(secret, confirmToken, scope, now);
-    if (!verdict.ok) {
-      return text(verdict.reason === "expired"
-        ? "That confirmToken has expired. Call publish_delivery again without confirm for a new summary and token."
-        : "That confirmToken is not valid for this Project and connection. Call publish_delivery again without confirm to get one.", true);
-    }
-    if (verdict.summaryHash !== summaryHash) {
-      return text("The Delivery page or the selection changed; re-confirm. What would be published is no longer what the user was shown. Call publish_delivery again without confirm, show the new summary, and ask again.", true);
-    }
-    // The operation id is derived from the token, so a retried confirmed call is the route's replay, never a second set.
-    const operationId = `mcp-${(await sha256Hex(confirmToken)).slice(0, 48)}`;
-    return jsonResult(await dispatchToApi(ctx.fetchApp, ctx.env, ctx.executionCtx, ctx.principal, {
-      method: "POST",
-      path: pathOf(PUBLISH, project),
-      body: { assetIds: selection, coverAssetId: cover, expectedLatestSet: summary.page?.latestSetNumber ?? null, operationId },
-    }));
+    return signedConfirm<PublishSummary>(ctx, input, {
+      action: "publish", tool: "publish_delivery", projectId: project, feature: "Publish",
+      firstCall: "without confirm", again: "without confirm", changed: { what: "Delivery page or the selection", verb: "published" },
+      summarize: async () => { const read = await readPublishSummary(ctx, project, selection, cover); return read.ok ? { ok: true, summary: read.summary, canonical: JSON.stringify(read.summary) } : read; },
+      propose: (summary, token) => {
+        const lockedCount = summary.nextSet.items.filter((item) => item.locked).length;
+        const willPublish = {
+          ...token,
+          project: { id: project, street: summary.project.street },
+          page: summary.page,
+          firstPublish: summary.page === null,
+          nextSet: { ...summary.nextSet, itemCount: summary.nextSet.items.length, lockedCount },
+          consequences: summary.page === null
+            ? "The first Publish creates the client's Delivery page and moves the Project to Delivered, which notifies the team."
+            : `Set ${summary.nextSet.setNumber} replaces set ${summary.page.latestSetNumber} as what the client sees${summary.page.enabled ? "" : " (the page is currently switched off, so the client sees nothing until an Admin switches it on)"}.`,
+        };
+        return text(`Confirmation required: publishing shows these ${summary.nextSet.items.length} item(s) to the client on "${summary.project.street}". Show the user what the next set will contain, and only if they agree call publish_delivery again with the same arguments, confirm: true and this confirmToken.\n${JSON.stringify(willPublish, null, 2)}`);
+      },
+      act: async (summary, confirmToken) => {
+        // The operation id is derived from the token, so a retried confirmed call is the route's replay, never a second set.
+        const operationId = `mcp-${(await sha256Hex(confirmToken)).slice(0, 48)}`;
+        return jsonResult(await dispatchToApi(ctx.fetchApp, ctx.env, ctx.executionCtx, ctx.principal, {
+          method: "POST",
+          path: pathOf(PUBLISH, project),
+          body: { assetIds: selection, coverAssetId: cover, expectedLatestSet: summary.page?.latestSetNumber ?? null, operationId },
+        }));
+      },
+    });
   },
 };
 

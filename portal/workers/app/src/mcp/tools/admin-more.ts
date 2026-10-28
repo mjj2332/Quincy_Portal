@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { confirmationRequired, jsonResult, readTool, writeTool, type McpTool } from "./define";
+import { readTool, writeTool, type McpTool } from "./define";
+import { confirmInput, removeProjectMember } from "./confirm";
 
 /**
  * The remaining admin tools (#973, spec #959, ADR 0026): the admin routes that an audit against the route allowlist found with no
@@ -45,24 +46,11 @@ const writes: McpTool[] = [
     inputSchema: {
       projectId, userId: z.string().uuid().describe("The Photographer's user id."),
       membershipCycle: z.string().uuid().describe("The membership's id, from get_project (members)."),
-      confirm: z.boolean().optional().describe("Only after the user has agreed to the reason a previous call returned as 'Confirmation required'. Never set it on the first call."),
+      confirm: confirmInput,
       confirmedAssignmentCount: z.number().int().nonnegative().optional().describe("With confirm: true, the number of Subtask assignments the confirmation message said will be cleared."),
     },
     // The same two-step as remove_project_editor: the route's own 422 is the confirmation, relayed rather than an error.
-    run: async (send, input) => {
-      const count = typeof input.confirmedAssignmentCount === "number" ? input.confirmedAssignmentCount : 0;
-      const response = await send(input.confirm === true
-        ? { membershipCycle: input.membershipCycle, clearSubtaskAssignments: count > 0, confirmedAssignmentCount: count, confirmAccessLoss: true }
-        : { membershipCycle: input.membershipCycle, clearSubtaskAssignments: false, confirmedAssignmentCount: 0 });
-      if (response.status === 422) {
-        const body = await response.clone().json().catch(() => null) as { code?: string; message?: string; error?: string; assignmentCount?: number } | null;
-        if (body?.code === "subtask_assignment_confirmation_required") {
-          const assignments = typeof body.assignmentCount === "number" && body.assignmentCount > 0 ? ` Pass confirmedAssignmentCount: ${body.assignmentCount} with it.` : "";
-          return { content: [{ type: "text", text: `${confirmationRequired(String(body.message ?? body.error ?? "the route needs confirmation")).content[0]!.text}${assignments}` }] };
-        }
-      }
-      return jsonResult(response);
-    },
+    run: removeProjectMember,
   }),
 ];
 

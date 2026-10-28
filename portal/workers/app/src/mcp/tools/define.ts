@@ -29,10 +29,13 @@ export type McpTool = {
 
 /** The route's JSON as text; a non-2xx becomes `isError` carrying the status and the route's error body. A 2xx with no body (a 204) reads as "OK". */
 export async function jsonResult(response: Response): Promise<McpToolResult> {
-  const text = await response.text();
-  if (response.ok) return { content: [{ type: "text", text: text === "" ? `OK (HTTP ${response.status})` : text }] };
-  return { content: [{ type: "text", text: `HTTP ${response.status}: ${text}` }], isError: true };
+  const body = await response.text();
+  if (response.ok) return { content: [{ type: "text", text: body === "" ? `OK (HTTP ${response.status})` : body }] };
+  return { content: [{ type: "text", text: `HTTP ${response.status}: ${body}` }], isError: true };
 }
+
+/** A tool's own message as its result; `isError` when the tool refuses. */
+export const text = (message: string, isError = false): McpToolResult => ({ content: [{ type: "text", text: message }], ...(isError ? { isError: true as const } : {}) });
 
 const PARAM = /:([A-Za-z]+)/g;
 

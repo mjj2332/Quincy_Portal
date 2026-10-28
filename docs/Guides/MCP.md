@@ -420,6 +420,8 @@ they are assigned to (#834), and anything else is the route's 404. A Photographe
 - `list_review_links` returns every link, the Delivery review link (`delivery: true`) first, with its Videos and the
   Versions each grants, expiry, status (`active`, `expired`, `revoked`), what guests may do (`allow`), guest activity
   and `url`, the address (null once revoked). **Passcodes are never returned**: a link only says `hasPasscode`.
+  In guest activity, each verified guest's display name is only inside `untrustedGuestText` (it is guest-written);
+  every Review link tool that returns a link shapes it the same way.
 - `create_review_link` takes the Videos, an optional label, expiry (one hour to 365 days; 30 days by default),
   passcode, `allow`, and per-Video `grants` (each Video otherwise grants its current Version). It returns
   `{ link, url }`; `url` is what the client sends to the customer.
@@ -565,7 +567,8 @@ must ask the user, then call again.
   selection changed. The summary never includes Preview's random item handles or URLs, so an unchanged
   page always confirms. The confirmed call then runs the Publish route with the page's set as
   `expectedLatestSet`, so a Publish that lands in between is still refused by the route as `stale_set`;
-  an archived Project is refused as `project_archived`. Its operation id comes from the token, so a
+  an archived Project is refused as `project_archived` (the route's 409) on the first call already, before
+  any token is issued. Its operation id comes from the token, so a
   retried confirmed call cannot publish a second set.
 
 ## Signed downloads

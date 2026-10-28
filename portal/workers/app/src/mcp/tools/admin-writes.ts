@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { dispatchToApi } from "../dispatch";
-import { CONFIRM_TTL_SECONDS, sha256Hex, signConfirmToken, verifyConfirmToken } from "../confirm-token";
-import { jsonResult, writeTool, type McpTool, type McpToolContext, type McpToolResult } from "./define";
+import { jsonResult, text, writeTool, type McpTool, type McpToolContext, type McpToolResult } from "./define";
+import { signedConfirm } from "./confirm";
 
 /**
  * Admin-scope write tools (#709, plan #699 ticket 9). Each one dispatches to exactly one allowlisted route, is visible only to a role
@@ -209,7 +209,6 @@ type AssetStates = Record<(typeof ASSET_STATES)[number], number>;
 type Summary = { street: string; orderId: string | null; collections: Record<string, { assets: number; states: AssetStates; received: number }>; comments: number; subtasks: number };
 type Read = { ok: true; summary: Summary } | { ok: false; result: McpToolResult };
 
-const text = (message: string, isError = false): McpToolResult => ({ content: [{ type: "text", text: message }], ...(isError ? { isError: true as const } : {}) });
 const asRecord = (value: unknown): Record<string, unknown> => value && typeof value === "object" ? value as Record<string, unknown> : {};
 
 /**
@@ -263,48 +262,29 @@ const deleteProject: McpTool = {
   },
   call: async (ctx, input) => {
     const id = String(input.projectId);
-    const secret = ctx.env.MCP_DOWNLOAD_SECRET;
-    if (!secret) return text("Project delete is not configured on this server.", true);
-    const confirmToken = typeof input.confirmToken === "string" ? input.confirmToken : "";
-    if (input.confirm === true && confirmToken === "") return text("confirmToken is required with confirm: true. Call delete_project with just projectId first, show the user the summary, then pass the token it returns.", true);
-
-    const read = await readSummary(ctx, id);
-    if (!read.ok) return read.result;
-    const summaryHash = await sha256Hex(canonicalSummary(read.summary));
-    const now = Math.floor(Date.now() / 1000);
-
-    if (input.confirm !== true) {
-      const exp = now + CONFIRM_TTL_SECONDS;
-      const token = await signConfirmToken(secret, { action: "delete_project", connectionId: ctx.principal.connectionId, projectId: id, summaryHash, exp });
-      const { summary } = read;
-      const destroyed = {
-        confirmToken: token,
-        expiresAt: new Date(exp * 1000).toISOString(),
-        project: { id, street: summary.street },
-        willBeDestroyed: {
-          assetsByCollection: Object.fromEntries(Object.entries(summary.collections).map(([kind, counts]) => [kind, counts.assets])),
-          assetStatesByCollection: Object.fromEntries(Object.entries(summary.collections).map(([kind, counts]) => [kind, counts.states])),
-          assetsNote: "Every asset row is counted: current, superseded versions, and pending or failed edits.",
-          comments: summary.comments,
-          subtasks: summary.subtasks,
-          whiteboard: "the Project whiteboard and its saved versions",
-          other: "the Project's files in storage, links, activity and notifications",
-        },
-        tonomoOrder: summary.orderId ? `Tonomo order ${summary.orderId} is tombstoned, so a resend of that order will not recreate the Project` : "no Tonomo order id on this Project",
-      };
-      return text(`Confirmation required: deleting "${summary.street}" is permanent and cannot be undone. Show the user what will be destroyed, and only if they agree call delete_project again with confirm: true and this confirmToken.\n${JSON.stringify(destroyed, null, 2)}`);
-    }
-
-    const verdict = await verifyConfirmToken(secret, confirmToken, { action: "delete_project", connectionId: ctx.principal.connectionId, projectId: id }, now);
-    if (!verdict.ok) {
-      return text(verdict.reason === "expired"
-        ? "That confirmToken has expired. Call delete_project again with just projectId for a new summary and token."
-        : "That confirmToken is not valid for this Project and connection. Call delete_project again with just projectId to get one.", true);
-    }
-    if (verdict.summaryHash !== summaryHash) {
-      return text("The Project changed; re-confirm. What would be destroyed is no longer what the user was shown. Call delete_project again with just projectId, show the new summary, and ask again.", true);
-    }
-    return jsonResult(await dispatchToApi(ctx.fetchApp, ctx.env, ctx.executionCtx, ctx.principal, { method: "DELETE", path: `/api/projects/${encodeURIComponent(id)}` }));
+    return signedConfirm<Summary>(ctx, input, {
+      action: "delete_project", tool: "delete_project", projectId: id, feature: "Project delete",
+      firstCall: "with just projectId", again: "with just projectId", changed: { what: "Project", verb: "destroyed" },
+      summarize: async () => { const read = await readSummary(ctx, id); return read.ok ? { ok: true, summary: read.summary, canonical: canonicalSummary(read.summary) } : read; },
+      propose: (summary, token) => {
+        const destroyed = {
+          ...token,
+          project: { id, street: summary.street },
+          willBeDestroyed: {
+            assetsByCollection: Object.fromEntries(Object.entries(summary.collections).map(([kind, counts]) => [kind, counts.assets])),
+            assetStatesByCollection: Object.fromEntries(Object.entries(summary.collections).map(([kind, counts]) => [kind, counts.states])),
+            assetsNote: "Every asset row is counted: current, superseded versions, and pending or failed edits.",
+            comments: summary.comments,
+            subtasks: summary.subtasks,
+            whiteboard: "the Project whiteboard and its saved versions",
+            other: "the Project's files in storage, links, activity and notifications",
+          },
+          tonomoOrder: summary.orderId ? `Tonomo order ${summary.orderId} is tombstoned, so a resend of that order will not recreate the Project` : "no Tonomo order id on this Project",
+        };
+        return text(`Confirmation required: deleting "${summary.street}" is permanent and cannot be undone. Show the user what will be destroyed, and only if they agree call delete_project again with confirm: true and this confirmToken.\n${JSON.stringify(destroyed, null, 2)}`);
+      },
+      act: async () => jsonResult(await dispatchToApi(ctx.fetchApp, ctx.env, ctx.executionCtx, ctx.principal, { method: "DELETE", path: `/api/projects/${encodeURIComponent(id)}` })),
+    });
   },
 };
 

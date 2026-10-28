@@ -25,7 +25,9 @@ const uuid = z.string().uuid();
 export const deliveryRoutes = new Hono<AppEnv>();
 
 type Ctx = Context<AppEnv>;
-const archivedResponse = (c: Ctx) => c.json({ error: "Archived projects are read-only; nothing can be published.", code: "project_archived" }, 409);
+/** Publish's archived refusal (409). Exported so `publish_delivery` (MCP) refuses its first call with the same body. */
+export const PUBLISH_ARCHIVED_BODY = { error: "Archived projects are read-only; nothing can be published.", code: "project_archived" } as const;
+const archivedResponse = (c: Ctx) => c.json(PUBLISH_ARCHIVED_BODY, 409);
 
 /** Gate, capability, access and (for Publish) archived. Returns the refusal, or null to carry on. */
 export async function admitDelivery(c: Ctx, projectId: string, capability: Capability, refuseArchived: boolean): Promise<Response | null> {

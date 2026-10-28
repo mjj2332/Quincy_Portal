@@ -174,6 +174,26 @@ describe("withdraw changes nothing without confirm: true, and withdraws with it"
   });
 });
 
+describe("when the Review links cannot be read, the reason says so (review fix T7)", () => {
+  it("release and withdraw both name the failed read and change nothing", async () => {
+    const film = await approvedFilm({ title: "Links unreadable", label: "Hidden family" });
+    await setVideoFlags(["video_review_links", false]);
+    try {
+      expect((await h.asCookie("admin", `/api/projects/${project}/review-links`)).status).toBe(404);
+      const release = await call("admin", "release_video_version", { projectId: project, assetId: film.assetId, approvalRevision: film.revision });
+      expect(release.result?.isError).toBeUndefined();
+      expect(text(release)).toMatch(/^Confirmation required: could not read Review links.*releasing makes this Version's original file downloadable/);
+      const withdraw = await call("admin", "withdraw_video_release", { projectId: project, assetId: film.assetId });
+      expect(withdraw.result?.isError).toBeUndefined();
+      expect(text(withdraw)).toMatch(/^Confirmation required: could not read Review links.*withdrawing the Release stops guests downloading/);
+      expect(text(release)).not.toContain("Hidden family");
+      expect(await liveRelease(film.assetId)).toBeNull();
+    } finally {
+      await setVideoFlags("video_review_links");
+    }
+  });
+});
+
 describe("audit: Release and withdraw are marked as through MCP", () => {
   it("both rows carry via mcp, the client and the connection", async () => {
     const film = await approvedFilm({ title: "Audited" });
