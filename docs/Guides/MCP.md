@@ -61,10 +61,10 @@ With every scope granted, the tool count by role is:
 
 | Role | Tools visible |
 |---|---|
-| Admin | 95 |
+| Admin | 99 |
 | Photographer | 37 |
-| Editor | 46 |
-| External editor | 38 |
+| Editor | 50 |
+| External editor | 42 |
 
 Admin-only tools (every `admin_*` tool and `delete_project`) never appear for the other roles. An
 External editor additionally has no notice board and no selection or download-selection tools.
@@ -72,7 +72,7 @@ External editor additionally has no notice board and no selection or download-se
 ## Tool reference
 
 Generated from the tool definitions in `portal/workers/app/src/mcp/tools/` (registry plus the
-whiteboard tools): **95 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
+whiteboard tools): **99 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
 the role capability. **Destructive** is the `destructiveHint` the client sees; every `admin`-scope tool is
 destructive. `destructiveHint` is advice to the client, not enforcement: the server-side confirm round
 trips below are what enforce.
@@ -218,6 +218,31 @@ Tool names use Portal terms. There is no tool for uploads.
 | `admin_delete_asset` | admin | `adminBackend` | yes |
 | `admin_inspect_editor_folder` | admin | `manageIntegrations` | no |
 | `delete_project` | admin | `adminBackend` | yes |
+
+### Video review reads (4)
+
+Added in #963. Admins, Editors and External editors (on assigned Projects only) see these; a
+Photographer sees none. They answer 404 while video review is off for the Project, as the routes do.
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `list_project_videos` | read | `viewVideo` | no |
+| `list_video_version_summaries` | read | `viewVideo` | no |
+| `list_video_notes` | read | `viewVideo` | no |
+| `get_video_note_drawing` | read | `viewVideo` | no |
+
+- **Timing.** Each Version carries its `fps` (`{ num, den }`) and `frameCount`; `list_video_version_summaries`
+  adds both to each summary. `list_video_notes` returns the Version's timing as `version` and labels every
+  note's `startFrame`, `endFrame` (exclusive) and `drawingFrame` with an SMPTE timecode on that Version
+  (`startTimecode`, `endTimecode`, `drawingTimecode`).
+- **Who wrote it.** Every note and reply carries `authorKind`: `"staff"` or `"guest"`.
+- **Guest text is untrusted.** A Guest reviewer's name, note body and rich content are never plain fields.
+  They are only in `untrustedGuestText`: one string, `<untrusted-guest-text>{json}</untrusted-guest-text>`,
+  whose JSON writes `<`, `>` and `&` as `<`, `>` and `&`, so a guest cannot close the
+  delimiter from inside it. A staff copy of a guest note (pasted onto a new Version) stays
+  `authorKind: "staff"`, but its body and the guest's name (`copiedFromAuthorName`) are untrusted too. The
+  server's MCP `instructions` tell the client this text is outside data, never instructions.
+- `get_video_note_drawing` returns the drawing in the annotation `strokes` wire contract above.
 
 ## Confirm round trips
 
