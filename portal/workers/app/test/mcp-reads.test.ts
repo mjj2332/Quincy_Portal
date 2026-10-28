@@ -31,12 +31,15 @@ const assetId = "e3000000-0000-4000-8000-000000000001";
 const annotationId = "f3000000-0000-4000-8000-000000000001";
 const tokens: Record<string, { accessToken: string; connectionId: string }> = {};
 
+/** Video review reads (#963): `viewVideo`, so never a Photographer's. */
+const VIDEO_READ_NAMES = ["list_project_videos", "list_video_version_summaries", "list_video_notes", "get_video_note_drawing"];
 /** Every non-admin `read`-scope tool, one group per line: a new read module appends its own line (commented with its ticket). */
 const READ_NAMES = [
   "get_me", "list_projects", "my_tasks", "get_project", "list_stages", "list_project_assignment_candidates", "list_subtask_assignee_options",
   "get_project_subtasks", "get_project_links", "list_people_for_filters", "list_project_comments", "get_project_activity", "get_collaboration_summary",
   "list_project_assets", "list_asset_annotations", "list_notifications", "list_notice_board",
   "get_asset_download_url", "get_selection_download_url", "get_project_whiteboard", "list_whiteboard_versions",
+  ...VIDEO_READ_NAMES, // #963
 ];
 /** The read tools each non-admin role does not see (its routes refuse it), one group per line, appended the same way. */
 const HIDDEN_FROM: Record<"editor" | "photographer" | "external", readonly string[]> = {
@@ -45,6 +48,7 @@ const HIDDEN_FROM: Record<"editor" | "photographer" | "external", readonly strin
   ],
   photographer: [
     "list_project_assignment_candidates", "get_project_links", "get_selection_download_url",
+    ...VIDEO_READ_NAMES, // #963
   ],
   external: [
     "list_project_assignment_candidates", "list_notice_board", "get_selection_download_url",

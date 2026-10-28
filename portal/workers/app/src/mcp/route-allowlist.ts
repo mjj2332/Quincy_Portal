@@ -53,6 +53,11 @@ const GET_TEMPLATES = [
   "/api/integrations/dropbox/monitors/:scope",
   // Signed downloads (#707): the asset tool's visibility check, and the redemption of an asset URL.
   "/media/asset/:assetId/:variant",
+  // Video review reads (#963)
+  "/api/projects/:projectId/videos",
+  "/api/projects/:projectId/videos/:videoId/version-summaries",
+  "/api/projects/:projectId/video-versions/:assetId/notes",
+  "/api/projects/:projectId/video-notes/:noteId/markup",
 ] as const;
 
 /** Reached only by redeeming a signed download URL (#707): no tool owns it, `mcp/downloads.ts` dispatches to it. */
