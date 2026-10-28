@@ -71,3 +71,7 @@ The decision stands as written. Where the build differs from the text above (ope
   arrow with a pinned segment (`pinned_elbow_arrow`).
 - **`delete_project`** needs the Project archived first, and its confirm token is an HMAC (5 minutes,
   per Project and connection) over a hash of the summary, so a changed Project is refused.
+- **`admin` lifetime superseded (ADR 0026, #962).** Decision 3's "no refresh" no longer holds: `admin`
+  access tokens still last 15 minutes, but refresh tokens now rotate until 8 hours after consent, after
+  which refresh is refused and the Admin consents again. The consent time is carried on the grant
+  (`consentedAt`); revoke, an epoch bump and the `mcp_access` flag still cut refresh at once.

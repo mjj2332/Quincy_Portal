@@ -6,14 +6,20 @@ import type { Env } from "../env";
 export type McpScope = "read" | "write" | "admin";
 export const MCP_SCOPES: readonly McpScope[] = ["read", "write", "admin"];
 
-/** What the grant props carry (set at consent, read back at every token exchange and /mcp call). */
-export type McpGrantProps = { userId: string; connectionId: string; authorizationEpoch: number; clientName: string };
+/**
+ * What the grant props carry (set at consent, read back at every token exchange and /mcp call).
+ * `consentedAt` (ms, #962) starts the `admin` scope's 8-hour refresh cap. It is optional because grants
+ * minted before it lack it; requiring it would kill every live `read`/`write` grant.
+ */
+export type McpGrantProps = { userId: string; connectionId: string; authorizationEpoch: number; clientName: string; consentedAt?: number };
 
 export function parseGrantProps(value: unknown): McpGrantProps | null {
   if (!value || typeof value !== "object") return null;
   const v = value as Record<string, unknown>;
   if (typeof v.userId !== "string" || typeof v.connectionId !== "string" || typeof v.clientName !== "string" || typeof v.authorizationEpoch !== "number") return null;
-  return { userId: v.userId, connectionId: v.connectionId, authorizationEpoch: v.authorizationEpoch, clientName: v.clientName };
+  const props: McpGrantProps = { userId: v.userId, connectionId: v.connectionId, authorizationEpoch: v.authorizationEpoch, clientName: v.clientName };
+  if (typeof v.consentedAt === "number" && Number.isSafeInteger(v.consentedAt)) props.consentedAt = v.consentedAt;
+  return props;
 }
 
 export type McpAuthority = { user: { id: string; email: string; name: string; role: string }; connectionScopes: McpScope[] };
