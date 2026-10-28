@@ -8,7 +8,7 @@ import { jsonResult, writeTool, type McpTool, type McpToolContext, type McpToolR
  * holding the route's own capability AND a connection holding the `admin` grant, and is marked `destructiveHint` (the factory forces
  * it for `scope: "admin"`). The route does everything it does for the cookie UI: permission check, audit, activity, background hand-off.
  *
- * Never here, under any scope (see `mcp-admin.test.ts`): user role or active changes and provisioning, feature flags and `*-settings`
+ * Never here, under any scope (see `mcp-never-list.test.ts`): user role or active changes and provisioning, feature flags and `*-settings`
  * toggles, Connected apps, impersonation, uploads, Dropbox OAuth, and `/api/auth/*` or `/oauth/*`.
  */
 
@@ -275,7 +275,7 @@ const deleteProject: McpTool = {
 
     if (input.confirm !== true) {
       const exp = now + CONFIRM_TTL_SECONDS;
-      const token = await signConfirmToken(secret, { connectionId: ctx.principal.connectionId, projectId: id, summaryHash, exp });
+      const token = await signConfirmToken(secret, { action: "delete_project", connectionId: ctx.principal.connectionId, projectId: id, summaryHash, exp });
       const { summary } = read;
       const destroyed = {
         confirmToken: token,
@@ -295,7 +295,7 @@ const deleteProject: McpTool = {
       return text(`Confirmation required: deleting "${summary.street}" is permanent and cannot be undone. Show the user what will be destroyed, and only if they agree call delete_project again with confirm: true and this confirmToken.\n${JSON.stringify(destroyed, null, 2)}`);
     }
 
-    const verdict = await verifyConfirmToken(secret, confirmToken, { connectionId: ctx.principal.connectionId, projectId: id }, now);
+    const verdict = await verifyConfirmToken(secret, confirmToken, { action: "delete_project", connectionId: ctx.principal.connectionId, projectId: id }, now);
     if (!verdict.ok) {
       return text(verdict.reason === "expired"
         ? "That confirmToken has expired. Call delete_project again with just projectId for a new summary and token."

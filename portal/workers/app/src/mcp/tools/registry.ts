@@ -14,7 +14,17 @@ export type { McpTool, McpToolContext, McpToolResult } from "./define";
 
 const getMe = readTool({ name: "get_me", template: "/api/me", description: "The Portal staff member this connection acts as: their profile, role and capabilities." });
 
-export const MCP_TOOLS: readonly McpTool[] = [getMe, ...READ_TOOLS, ...ADMIN_READ_TOOLS, ...WRITE_TOOLS, ...COLLAB_WRITE_TOOLS, ...DOWNLOAD_TOOLS, ...WHITEBOARD_TOOLS, ...ADMIN_WRITE_TOOLS];
+/** One module per group, one spread per line: a new group appends its own line (commented with its ticket). */
+export const MCP_TOOLS: readonly McpTool[] = [
+  getMe,
+  ...READ_TOOLS,
+  ...ADMIN_READ_TOOLS,
+  ...WRITE_TOOLS,
+  ...COLLAB_WRITE_TOOLS,
+  ...DOWNLOAD_TOOLS,
+  ...WHITEBOARD_TOOLS,
+  ...ADMIN_WRITE_TOOLS,
+];
 
 /** A tool's input as the strict object its callers are held to: unknown arguments are an error. */
 export const strictInput = (tool: McpTool) => z.object(tool.inputSchema).strict();
