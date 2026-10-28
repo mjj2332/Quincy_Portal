@@ -66,6 +66,8 @@ const GET_TEMPLATES = [
   "/api/projects/:projectId/video-trash",
   "/api/projects/:projectId/video-versions/:assetId/removal-impact",
   "/api/projects/:projectId/videos/:videoId/removal-impact",
+  // Review links (#966)
+  "/api/projects/:projectId/review-links",
   // Social overlays (#970): the Admin library and a Project's selection
   "/api/admin/social-overlays",
   "/api/projects/:projectId/social-overlays",
@@ -134,6 +136,16 @@ const WRITE_ROUTES = [
   ["PATCH", "/api/projects/:projectId/video-notes/:noteId"],
   ["DELETE", "/api/projects/:projectId/video-notes/:noteId"],
   ["PUT", "/api/projects/:projectId/video-notes/:noteId/resolution"],
+  // Review links (#966): create, edit, Videos and grants, and the four confirm-first actions
+  ["POST", "/api/projects/:projectId/review-links"],
+  ["PATCH", "/api/projects/:projectId/review-links/:linkId"],
+  ["POST", "/api/projects/:projectId/review-links/:linkId/videos"],
+  ["DELETE", "/api/projects/:projectId/review-links/:linkId/videos/:videoId"],
+  ["PUT", "/api/projects/:projectId/review-links/:linkId/videos/:videoId/grants"],
+  ["POST", "/api/projects/:projectId/review-links/:linkId/revoke"],
+  ["POST", "/api/projects/:projectId/review-links/:linkId/replace"],
+  ["DELETE", "/api/projects/:projectId/review-links/:linkId"],
+  ["POST", "/api/projects/:projectId/review-links/:linkId/end-sessions"],
   // A Project's Social overlay selection (#970)
   ["PUT", "/api/projects/:projectId/social-overlays"],
 ] as const;

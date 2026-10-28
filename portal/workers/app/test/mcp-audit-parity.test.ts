@@ -7,6 +7,8 @@ import type { McpFetchApp } from "../src/mcp/dispatch";
 import { MCP_TOOLS } from "../src/mcp/tools/registry";
 import { seedVideoVersion, setVideoFlags } from "./video-review-support";
 import { seedAsset, seedCoverage, seedDelivery, seedOpenDeadLetter, seedOrphanReport, seedPoisonEvent } from "./mcp-admin-fixtures";
+import { seedGuestLink } from "./guest-support"; // #966
+import { ids as fixtureIds } from "./embedded-media-support"; // #966
 
 /**
  * Audit parity (#704, extended by #705): every write tool the MCP door lists must stamp provenance on every audit_log and
@@ -228,6 +230,16 @@ const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "edit_video_note", setup: videoNoteSetup, args: ({ projectId, noteId }) => ({ projectId, noteId: noteId!, expectedRevision: 1, body: "Parity edit" }) },
   { tool: "delete_video_note", setup: videoNoteSetup, args: ({ projectId, noteId }) => ({ projectId, noteId: noteId!, expectedRevision: 1 }) },
   { tool: "set_video_note_resolution", setup: videoNoteSetup, args: ({ projectId, noteId }) => ({ projectId, noteId: noteId!, resolved: true }) },
+  // Review links (#966): helpers are function declarations at the end of this file.
+  { tool: "create_review_link", setup: reviewLinkVideoSetup, args: ({ projectId, videoId }) => ({ projectId, videoIds: [videoId!], label: "Parity link", passcode: "parity-pass" }) },
+  { tool: "update_review_link", setup: reviewLinkSetup, args: ({ projectId, linkId }) => ({ projectId, linkId: linkId!, label: "Edited link" }) },
+  { tool: "add_review_link_video", setup: reviewLinkSecondVideoSetup, args: ({ projectId, linkId, otherVideoId, otherAssetId }) => ({ projectId, linkId: linkId!, videoId: otherVideoId!, assetIds: [otherAssetId!] }) },
+  { tool: "remove_review_link_video", setup: reviewLinkSetup, args: ({ projectId, linkId, videoId }) => ({ projectId, linkId: linkId!, videoId: videoId! }) },
+  { tool: "set_review_link_grants", setup: reviewLinkSetup, args: ({ projectId, linkId, videoId, assetId }) => ({ projectId, linkId: linkId!, videoId: videoId!, assetIds: [assetId!] }) },
+  { tool: "revoke_review_link", setup: reviewLinkSetup, args: ({ projectId, linkId }) => ({ projectId, linkId: linkId!, confirm: true }) },
+  { tool: "replace_review_link", setup: reviewLinkSetup, args: ({ projectId, linkId }) => ({ projectId, linkId: linkId!, confirm: true }) },
+  { tool: "delete_review_link", setup: revokedReviewLinkSetup, args: ({ projectId, linkId }) => ({ projectId, linkId: linkId!, confirm: true }) },
+  { tool: "end_review_link_guest_sessions", setup: deliveryReviewLinkSetup, args: ({ projectId, linkId }) => ({ projectId, linkId: linkId!, confirm: true }) },
   { tool: "admin_update_social_overlay", setup: overlaySetup, args: ({ overlayId }) => ({ id: overlayId!, name: "Parity renamed", expectedRevision: 1 }) }, // #970
   { tool: "admin_archive_social_overlay", setup: overlaySetup, args: ({ overlayId }) => ({ id: overlayId!, expectedRevision: 1 }) }, // #970
   { tool: "admin_unarchive_social_overlay", setup: archivedOverlaySetup, args: ({ overlayId }) => ({ id: overlayId!, expectedRevision: 1 }) }, // #970
@@ -329,3 +341,33 @@ describe("every row an MCP write creates carries provenance", () => {
     expect([...seen].sort()).toEqual(EXCEPTIONS.map((exception) => exception.action).sort());
   });
 });
+
+/** Review links (#966): the Project's video review gate with the links part, and one committed Version. */
+async function reviewLinkVideoSetup(projectId: string) {
+  await setVideoFlags("video_review", "video_review_links", `video_review_pilot:${projectId}`);
+  const version = await seedVideoVersion({ projectId, uploader: adminId });
+  return { videoId: version.videoId, assetId: version.assetId };
+}
+async function reviewLinkSetup(projectId: string) {
+  const video = await reviewLinkVideoSetup(projectId);
+  const created = JSON.parse(await callTool("create_review_link", { projectId, videoIds: [video.videoId] })) as { link: { id: string } };
+  return { ...video, linkId: created.link.id };
+}
+async function reviewLinkSecondVideoSetup(projectId: string) {
+  const link = await reviewLinkSetup(projectId);
+  const other = await seedVideoVersion({ projectId, uploader: adminId, title: "Second cut" });
+  return { ...link, otherVideoId: other.videoId, otherAssetId: other.assetId };
+}
+async function revokedReviewLinkSetup(projectId: string) {
+  const link = await reviewLinkSetup(projectId);
+  await callTool("revoke_review_link", { projectId, linkId: link.linkId, confirm: true });
+  return link;
+}
+/** The Delivery review link (End guest sessions' only target). Its seed names the embedded-media fixture's member as creator, so that user is added here. */
+async function deliveryReviewLinkSetup(projectId: string) {
+  await setVideoFlags("video_review", `video_review_pilot:${projectId}`);
+  const now = Date.now();
+  await database.DB.prepare("INSERT OR IGNORE INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Fixture Member', 'fixture-member@example.test', 1, 'editor', 1, ?, ?)").bind(fixtureIds.member, now, now).run();
+  const link = await seedGuestLink({ projectId, deliveryReview: true });
+  return { linkId: link.id };
+}

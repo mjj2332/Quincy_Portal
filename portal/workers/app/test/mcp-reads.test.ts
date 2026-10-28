@@ -9,6 +9,7 @@ import { WRITE_TOOLS as CORE_WRITE_TOOLS } from "../src/mcp/tools/writes";
 import { PLANNING_TOOLS } from "../src/mcp/tools/planning";
 import { VIDEO_WRITE_TOOLS } from "../src/mcp/tools/video-writes";
 import { VIDEO_NOTE_TOOLS } from "../src/mcp/tools/video-notes"; // #964
+import { REVIEW_LINK_TOOLS } from "../src/mcp/tools/review-links";
 import { SOCIAL_OVERLAY_TOOLS } from "../src/mcp/tools/social-overlays";
 import { mcpHarness } from "./mcp-oauth-support";
 
@@ -20,6 +21,7 @@ const WRITE_TOOLS = [
   ...PLANNING_TOOLS, // #971
   ...VIDEO_WRITE_TOOLS, // #965
   ...VIDEO_NOTE_TOOLS, // #964
+  ...REVIEW_LINK_TOOLS, // #966
   ...SOCIAL_OVERLAY_TOOLS, // #970
 ].filter((tool) => tool.scope === "write");
 
@@ -54,6 +56,7 @@ const READ_NAMES = [
   ...VIDEO_READ_NAMES, // #963
   "get_production_calendar", "get_production_gantt", "get_notification_preferences", // #971
   ...VIDEO_TRASH_READ_NAMES, // #965
+  "list_review_links", // #966
   "get_project_social_overlays", // #970
   ...VIDEO_DOWNLOAD_NAMES, // #972
 ];
@@ -67,6 +70,7 @@ const HIDDEN_FROM: Record<"editor" | "photographer" | "external", readonly strin
     ...VIDEO_READ_NAMES, // #963
     "get_production_calendar", "get_production_gantt", // #971
     ...VIDEO_TRASH_READ_NAMES, // #965
+    "list_review_links", // #966
     "get_project_social_overlays", // #970
     ...VIDEO_DOWNLOAD_NAMES, // #972
   ],

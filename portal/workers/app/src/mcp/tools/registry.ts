@@ -13,6 +13,7 @@ import { VIDEO_READ_TOOLS } from "./video-reads"; // #963
 import { PLANNING_TOOLS } from "./planning"; // #971
 import { VIDEO_WRITE_TOOLS } from "./video-writes"; // #965
 import { VIDEO_NOTE_TOOLS } from "./video-notes"; // #964
+import { REVIEW_LINK_TOOLS } from "./review-links"; // #966
 import { SOCIAL_OVERLAY_TOOLS } from "./social-overlays"; // #970
 import { VIDEO_DOWNLOAD_TOOLS } from "./video-downloads"; // #972
 
@@ -34,6 +35,7 @@ export const MCP_TOOLS: readonly McpTool[] = [
   ...PLANNING_TOOLS, // #971
   ...VIDEO_WRITE_TOOLS, // #965
   ...VIDEO_NOTE_TOOLS, // #964
+  ...REVIEW_LINK_TOOLS, // #966
   ...SOCIAL_OVERLAY_TOOLS, // #970
   ...VIDEO_DOWNLOAD_TOOLS, // #972
 ];

@@ -373,6 +373,44 @@ Admins, Editors and External editors (on assigned Projects only) see these; a Ph
 - The link always serves the whole file: a `Range` header is not passed on, so a resumed fetch starts again and is
   audited again.
 
+### Review links (10) (#966)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `list_review_links` | read | `shareVideo` | no |
+| `create_review_link` | write | `shareVideo` | no |
+| `update_review_link` | write | `shareVideo` | no |
+| `add_review_link_video` | write | `shareVideo` | no |
+| `remove_review_link_video` | write | `shareVideo` | yes |
+| `set_review_link_grants` | write | `shareVideo` | no |
+| `revoke_review_link` | write | `shareVideo` | yes (confirm first) |
+| `replace_review_link` | write | `shareVideo` | yes (confirm first) |
+| `delete_review_link` | write | `shareVideo` | yes (confirm first) |
+| `end_review_link_guest_sessions` | write | `shareVideo` | yes (confirm first) |
+
+The same routes as the Review links panel, so the same refusals: 404 while Review links are off for the Project,
+409 `project_archived` on an archived Project (Revoke, Delete and End guest sessions are still allowed there, as in
+the browser). Admins, Editors and External editors see them; an External editor reaches links only on the Projects
+they are assigned to (#834), and anything else is the route's 404. A Photographer sees none.
+
+- `list_review_links` returns every link, the Delivery review link (`delivery: true`) first, with its Videos and the
+  Versions each grants, expiry, status (`active`, `expired`, `revoked`), what guests may do (`allow`), guest activity
+  and `url`, the address (null once revoked). **Passcodes are never returned**: a link only says `hasPasscode`.
+- `create_review_link` takes the Videos, an optional label, expiry (one hour to 365 days; 30 days by default),
+  passcode, `allow`, and per-Video `grants` (each Video otherwise grants its current Version). It returns
+  `{ link, url }`; `url` is what the client sends to the customer.
+- `update_review_link`, `add_review_link_video`, `remove_review_link_video` and `set_review_link_grants` change a live
+  link. A revoked link and the Delivery review link refuse them (`link_revoked`, `delivery_review_managed`).
+- **Revoke, Replace, Delete and End guest sessions** ask first: see [Confirm round trips](#confirm-round-trips).
+  Revoke stops the address for good and ends the link's guest sessions; Replace issues a new `url` and ends the old
+  one's sessions (refused on an expired link); Delete removes a revoked link from the list (an unrevoked one is
+  refused with `link_not_revoked`).
+- **The Delivery review link** is managed by the Delivery page. Revoke and Delete on it are refused with
+  `delivery_review_managed`, as in the browser. End guest sessions is the one change allowed there, and the only
+  link it works on: on an ordinary link it answers 404 (use Replace or Revoke to sign its guests out).
+- Every change is audited (`review_link.*`) with the usual `via: "mcp"` marker. No audit row carries the passcode or
+  the address.
+
 ## Confirm round trips
 
 Some actions need the person's say-so first. The tool refuses to act on the first call and the client
@@ -390,6 +428,12 @@ must ask the user, then call again.
   Project and that Connected app only: a token issued for one action (delete, Publish, Unlock) is refused
   by every other. The server recomputes the summary on the second call and **refuses if the Project
   changed in between**; the client has to ask again.
+- **Review links (#966).** `revoke_review_link`, `replace_review_link`, `delete_review_link` and
+  `end_review_link_guest_sessions` act at once in the routes, so the tool itself asks first: without
+  `confirm: true` it returns `Confirmation required` with what the action does (guests lose the address or
+  are signed out) and sends nothing to the Portal. The client relays that to the user and, on agreement,
+  calls again with `confirm: true`. There is no token: each call names the link, and the route refuses
+  what it would refuse in the browser (the Delivery review link, an unrevoked link to delete).
 
 ## Signed downloads
 
