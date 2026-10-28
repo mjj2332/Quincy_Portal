@@ -64,10 +64,10 @@ With every scope granted, the tool count by role is:
 
 | Role | Tools visible |
 |---|---|
-| Admin | 127 |
+| Admin | 142 |
 | Photographer | 39 |
-| Editor | 67 |
-| External editor | 51 |
+| Editor | 82 |
+| External editor | 66 |
 
 Admin-only tools (every `admin_*` tool and `delete_project`) never appear for the other roles. An
 External editor additionally has no notice board and no selection or download-selection tools.
@@ -75,7 +75,7 @@ External editor additionally has no notice board and no selection or download-se
 ## Tool reference
 
 Generated from the tool definitions in `portal/workers/app/src/mcp/tools/` (registry plus the
-whiteboard tools): **127 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
+whiteboard tools): **142 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
 the role capability. **Destructive** is the `destructiveHint` the client sees; every `admin`-scope tool is
 destructive. `destructiveHint` is advice to the client, not enforcement: the server-side confirm round
 trips below are what enforce.
@@ -299,6 +299,41 @@ Photographer sees none. They answer 404 while video review is off for the Projec
   upload in progress is refused. Restoring a Version whose Video is in Trash is 409 `video_in_trash`: restore the Video
   first.
 - Every write is audited as through MCP (`via: "mcp"`).
+
+### Video note writes (5) (#964)
+
+Admins, Editors and External editors (on assigned Projects only) see these with the `write` scope; a
+Photographer sees none. They answer 404 while video notes are off for the Project (and while markup is off,
+for a call that carries a drawing), as the routes do.
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `create_video_note` | write | `annotateVideo` | no |
+| `reply_to_video_note` | write | `annotateVideo` | no |
+| `edit_video_note` | write | `annotateVideo` | no |
+| `delete_video_note` | write | `annotateVideo` | yes |
+| `set_video_note_resolution` | write | `annotateVideo` | no |
+
+- **Frames or a timecode.** Each moment (`start`, `end`, `drawing`) is given as a frame (`startFrame`,
+  `endFrame` exclusive, `drawingFrame`) or as a timecode (`startTimecode`, `endTimecode`, `drawingTimecode`),
+  never both. A timecode is SMPTE on that Version (`HH:MM:SS:FF`, `;` for drop-frame, start timecode
+  included, as `list_video_notes` labels notes) or elapsed time from the start (`0:42`, `1:02:03.5`). The tool
+  reads the Version's timing, resolves the timecode to the nearest frame and sends frames; frames are sent
+  unchanged. The result is the thread plus `resolved`: per moment given, the `frame` used, its SMPTE
+  `timecode`, and `fromTimecode` when it came from one. `edit_video_note` needs `assetId` (the note's Version)
+  with a timecode.
+- **Visibility is required** on create, with no default, and cannot change afterwards: `public` is seen by
+  Guest reviewers on a Review link, `internal` by staff only. A reply takes its note's visibility.
+- **Drawings** use the annotation `strokes` wire contract above with the video limits (hex colour, width 1 to
+  24), and `drawingFrame` must be the note's frame or inside its range. `markup: null` on edit removes one; a
+  note with a drawing cannot be moved.
+- **Route errors pass through unchanged**: `frame_out_of_range` (with the Version's `frameCount`),
+  `drawing_frame_outside`, `note_conflict` (a stale `expectedRevision`; its thread is shaped like every other,
+  guest text untrusted), `markup_locks_frames`, `project_archived`.
+- **Author-only.** Editing or deleting someone else's note or reply is refused (HTTP 403), for Admins too.
+  Resolving and reopening are not author-only. Every write is audited (`video_note.*`) with the `via: "mcp"`
+  marker and notifies staff exactly as the browser does.
+
 ### Social overlays (6) (#970)
 
 | Tool | Scope | Needs | Destructive |
@@ -342,6 +377,44 @@ Admins, Editors and External editors (on assigned Projects only) see these; a Ph
   `via: "mcp"`, plus `mcp_download.redeem`.
 - The link always serves the whole file: a `Range` header is not passed on, so a resumed fetch starts again and is
   audited again.
+
+### Review links (10) (#966)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `list_review_links` | read | `shareVideo` | no |
+| `create_review_link` | write | `shareVideo` | no |
+| `update_review_link` | write | `shareVideo` | no |
+| `add_review_link_video` | write | `shareVideo` | no |
+| `remove_review_link_video` | write | `shareVideo` | yes |
+| `set_review_link_grants` | write | `shareVideo` | no |
+| `revoke_review_link` | write | `shareVideo` | yes (confirm first) |
+| `replace_review_link` | write | `shareVideo` | yes (confirm first) |
+| `delete_review_link` | write | `shareVideo` | yes (confirm first) |
+| `end_review_link_guest_sessions` | write | `shareVideo` | yes (confirm first) |
+
+The same routes as the Review links panel, so the same refusals: 404 while Review links are off for the Project,
+409 `project_archived` on an archived Project (Revoke, Delete and End guest sessions are still allowed there, as in
+the browser). Admins, Editors and External editors see them; an External editor reaches links only on the Projects
+they are assigned to (#834), and anything else is the route's 404. A Photographer sees none.
+
+- `list_review_links` returns every link, the Delivery review link (`delivery: true`) first, with its Videos and the
+  Versions each grants, expiry, status (`active`, `expired`, `revoked`), what guests may do (`allow`), guest activity
+  and `url`, the address (null once revoked). **Passcodes are never returned**: a link only says `hasPasscode`.
+- `create_review_link` takes the Videos, an optional label, expiry (one hour to 365 days; 30 days by default),
+  passcode, `allow`, and per-Video `grants` (each Video otherwise grants its current Version). It returns
+  `{ link, url }`; `url` is what the client sends to the customer.
+- `update_review_link`, `add_review_link_video`, `remove_review_link_video` and `set_review_link_grants` change a live
+  link. A revoked link and the Delivery review link refuse them (`link_revoked`, `delivery_review_managed`).
+- **Revoke, Replace, Delete and End guest sessions** ask first: see [Confirm round trips](#confirm-round-trips).
+  Revoke stops the address for good and ends the link's guest sessions; Replace issues a new `url` and ends the old
+  one's sessions (refused on an expired link); Delete removes a revoked link from the list (an unrevoked one is
+  refused with `link_not_revoked`).
+- **The Delivery review link** is managed by the Delivery page. Revoke and Delete on it are refused with
+  `delivery_review_managed`, as in the browser. End guest sessions is the one change allowed there, and the only
+  link it works on: on an ordinary link it answers 404 (use Replace or Revoke to sign its guests out).
+- Every change is audited (`review_link.*`) with the usual `via: "mcp"` marker. No audit row carries the passcode or
+  the address.
 
 ### Remaining admin tools (7) (#973)
 
@@ -388,6 +461,12 @@ must ask the user, then call again.
   Project and that Connected app only: a token issued for one action (delete, Publish, Unlock) is refused
   by every other. The server recomputes the summary on the second call and **refuses if the Project
   changed in between**; the client has to ask again.
+- **Review links (#966).** `revoke_review_link`, `replace_review_link`, `delete_review_link` and
+  `end_review_link_guest_sessions` act at once in the routes, so the tool itself asks first: without
+  `confirm: true` it returns `Confirmation required` with what the action does (guests lose the address or
+  are signed out) and sends nothing to the Portal. The client relays that to the user and, on agreement,
+  calls again with `confirm: true`. There is no token: each call names the link, and the route refuses
+  what it would refuse in the browser (the Delivery review link, an unrevoked link to delete).
 
 ## Signed downloads
 
