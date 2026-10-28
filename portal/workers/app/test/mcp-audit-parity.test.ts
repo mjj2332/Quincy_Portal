@@ -6,6 +6,7 @@ import type { McpPrincipal } from "../src/lib/mcp-dispatch-context";
 import type { McpFetchApp } from "../src/mcp/dispatch";
 import { MCP_TOOLS } from "../src/mcp/tools/registry";
 import { seedAsset, seedCoverage, seedDelivery, seedOpenDeadLetter, seedOrphanReport, seedPoisonEvent } from "./mcp-admin-fixtures";
+import { seedVideoVersion, setVideoFlags } from "./video-review-support"; // #964
 
 /**
  * Audit parity (#704, extended by #705): every write tool the MCP door lists must stamp provenance on every audit_log and
@@ -119,6 +120,14 @@ const editorCandidate = {
   inputRoots: [{ path: "/Editors/Parity/Input", section: null, folderId: "id:in" }], outputRoots: [{ path: "/Editors/Parity/Output", section: null, folderId: "id:out" }],
 };
 
+/** Video note writes (#964): a live Version on the call's Project, and a note on it written through the tool. */
+const videoVersionSetup = async (projectId: string) => ({ assetId: (await seedVideoVersion({ projectId, uploader: adminId })).assetId });
+const videoNoteSetup = async (projectId: string) => {
+  const { assetId } = await videoVersionSetup(projectId);
+  const created = JSON.parse(await callTool("create_video_note", { projectId, assetId, visibility: "internal", body: "Seed", startFrame: 1 })) as { thread: { id: string } };
+  return { assetId, noteId: created.thread.id };
+};
+
 const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "admin_reset_dropbox_monitor", args: () => ({ scope: "raw" }) },
   { tool: "admin_link_editor_folder", args: () => ({ reviewed: true, candidate: editorCandidate }) },
@@ -176,6 +185,12 @@ const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "request_project_link_preview", stage: "edited_review", args: ({ projectId }) => ({ projectId, url: "https://example.com/parity-preview" }) },
   { tool: "request_notice_link_preview", args: () => ({ url: "https://example.com/parity-notice-preview" }) },
   { tool: "edit_project_whiteboard", stage: "edited_review", args: ({ projectId }) => ({ projectId, expectedGeneration: 1, edits: [{ op: "add_text", x: 0, y: 0, text: "Parity whiteboard" }] }) },  { tool: "update_notification_preferences", args: () => ({ emailDigestCadence: "daily" }) }, // #971
+  // Video note writes (#964)
+  { tool: "create_video_note", setup: videoVersionSetup, args: ({ projectId, assetId }) => ({ projectId, assetId: assetId!, visibility: "public", body: "Parity note", startTimecode: "0:01" }) },
+  { tool: "reply_to_video_note", setup: videoNoteSetup, args: ({ projectId, noteId }) => ({ projectId, noteId: noteId!, body: "Parity reply" }) },
+  { tool: "edit_video_note", setup: videoNoteSetup, args: ({ projectId, noteId }) => ({ projectId, noteId: noteId!, expectedRevision: 1, body: "Parity edit" }) },
+  { tool: "delete_video_note", setup: videoNoteSetup, args: ({ projectId, noteId }) => ({ projectId, noteId: noteId!, expectedRevision: 1 }) },
+  { tool: "set_video_note_resolution", setup: videoNoteSetup, args: ({ projectId, noteId }) => ({ projectId, noteId: noteId!, resolved: true }) },
 ];
 
 /** Write tools whose route writes no audit_log or activity row at all (so there is nothing to stamp), each with the reason. */
@@ -233,6 +248,7 @@ beforeAll(async () => {
     database.DB.prepare("INSERT INTO mcp_connections (id, user_id, client_id, client_name, redirect_host, scopes, authorization_epoch, created_at) VALUES ('conn-parity', ?, 'client-1', 'Parity Client', 'client.example.test', '[\"write\"]', 0, ?)").bind(adminId, now),
     database.DB.prepare("INSERT INTO feature_flags (key, enabled, updated_by, updated_at) VALUES ('mcp_access', 1, NULL, ?) ON CONFLICT(key) DO UPDATE SET enabled = 1").bind(now),
   ]);
+  await setVideoFlags("video_review", "video_review_all_projects", "video_review_notes", "video_review_markup"); // #964
 });
 
 describe("every row an MCP write creates carries provenance", () => {

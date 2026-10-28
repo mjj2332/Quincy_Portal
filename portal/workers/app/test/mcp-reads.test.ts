@@ -7,6 +7,7 @@ import { COLLAB_WRITE_TOOLS } from "../src/mcp/tools/collab-writes";
 import { WHITEBOARD_TOOLS } from "../src/mcp/tools/whiteboard";
 import { WRITE_TOOLS as CORE_WRITE_TOOLS } from "../src/mcp/tools/writes";
 import { PLANNING_TOOLS } from "../src/mcp/tools/planning";
+import { VIDEO_NOTE_TOOLS } from "../src/mcp/tools/video-notes"; // #964
 import { mcpHarness } from "./mcp-oauth-support";
 
 /** Every `write`-scope tool, one module per line: a new write module appends its own line (commented with its ticket). */
@@ -15,6 +16,7 @@ const WRITE_TOOLS = [
   ...COLLAB_WRITE_TOOLS,
   ...WHITEBOARD_TOOLS,
   ...PLANNING_TOOLS, // #971
+  ...VIDEO_NOTE_TOOLS, // #964
 ].filter((tool) => tool.scope === "write");
 
 declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL__: string;

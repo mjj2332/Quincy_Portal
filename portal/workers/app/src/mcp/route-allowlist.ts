@@ -111,6 +111,12 @@ const WRITE_ROUTES = [
   ["POST", "/api/projects/:projectId/download-selection"],
   // Own notification preferences (#971)
   ["PATCH", "/api/notification-preferences"],
+  // Video note writes (#964)
+  ["POST", "/api/projects/:projectId/video-versions/:assetId/notes"],
+  ["POST", "/api/projects/:projectId/video-notes/:noteId/replies"],
+  ["PATCH", "/api/projects/:projectId/video-notes/:noteId"],
+  ["DELETE", "/api/projects/:projectId/video-notes/:noteId"],
+  ["PUT", "/api/projects/:projectId/video-notes/:noteId/resolution"],
 ] as const;
 
 /**

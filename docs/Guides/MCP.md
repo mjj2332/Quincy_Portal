@@ -64,10 +64,10 @@ With every scope granted, the tool count by role is:
 
 | Role | Tools visible |
 |---|---|
-| Admin | 103 |
+| Admin | 108 |
 | Photographer | 39 |
-| Editor | 54 |
-| External editor | 46 |
+| Editor | 59 |
+| External editor | 51 |
 
 Admin-only tools (every `admin_*` tool and `delete_project`) never appear for the other roles. An
 External editor additionally has no notice board and no selection or download-selection tools.
@@ -75,7 +75,7 @@ External editor additionally has no notice board and no selection or download-se
 ## Tool reference
 
 Generated from the tool definitions in `portal/workers/app/src/mcp/tools/` (registry plus the
-whiteboard tools): **103 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
+whiteboard tools): **108 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
 the role capability. **Destructive** is the `destructiveHint` the client sees; every `admin`-scope tool is
 destructive. `destructiveHint` is advice to the client, not enforcement: the server-side confirm round
 trips below are what enforce.
@@ -266,6 +266,40 @@ The two notification preference tools read and change the signed-in staff member
 Subtask reminder emails, digest cadence, whether the digest includes Project activity). They take no user id, so
 they cannot reach anyone else's row. A change is audited as `notification.preference.update` with the usual
 `via: "mcp"` marker.
+
+### Video note writes (5) (#964)
+
+Admins, Editors and External editors (on assigned Projects only) see these with the `write` scope; a
+Photographer sees none. They answer 404 while video notes are off for the Project (and while markup is off,
+for a call that carries a drawing), as the routes do.
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `create_video_note` | write | `annotateVideo` | no |
+| `reply_to_video_note` | write | `annotateVideo` | no |
+| `edit_video_note` | write | `annotateVideo` | no |
+| `delete_video_note` | write | `annotateVideo` | yes |
+| `set_video_note_resolution` | write | `annotateVideo` | no |
+
+- **Frames or a timecode.** Each moment (`start`, `end`, `drawing`) is given as a frame (`startFrame`,
+  `endFrame` exclusive, `drawingFrame`) or as a timecode (`startTimecode`, `endTimecode`, `drawingTimecode`),
+  never both. A timecode is SMPTE on that Version (`HH:MM:SS:FF`, `;` for drop-frame, start timecode
+  included, as `list_video_notes` labels notes) or elapsed time from the start (`0:42`, `1:02:03.5`). The tool
+  reads the Version's timing, resolves the timecode to the nearest frame and sends frames; frames are sent
+  unchanged. The result is the thread plus `resolved`: per moment given, the `frame` used, its SMPTE
+  `timecode`, and `fromTimecode` when it came from one. `edit_video_note` needs `assetId` (the note's Version)
+  with a timecode.
+- **Visibility is required** on create, with no default, and cannot change afterwards: `public` is seen by
+  Guest reviewers on a Review link, `internal` by staff only. A reply takes its note's visibility.
+- **Drawings** use the annotation `strokes` wire contract above with the video limits (hex colour, width 1 to
+  24), and `drawingFrame` must be the note's frame or inside its range. `markup: null` on edit removes one; a
+  note with a drawing cannot be moved.
+- **Route errors pass through unchanged**: `frame_out_of_range` (with the Version's `frameCount`),
+  `drawing_frame_outside`, `note_conflict` (a stale `expectedRevision`; its thread is shaped like every other,
+  guest text untrusted), `markup_locks_frames`, `project_archived`.
+- **Author-only.** Editing or deleting someone else's note or reply is refused (HTTP 403), for Admins too.
+  Resolving and reopening are not author-only. Every write is audited (`video_note.*`) with the `via: "mcp"`
+  marker and notifies staff exactly as the browser does.
 
 ## Confirm round trips
 
