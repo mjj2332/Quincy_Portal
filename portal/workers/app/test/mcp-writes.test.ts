@@ -5,6 +5,7 @@ import { MCP_ALLOWED_ROUTES, REDEMPTION_ONLY_ROUTES, isAllowedMcpRoute } from ".
 import { MCP_TOOLS, strictInput, toolsFor } from "../src/mcp/tools/registry";
 import { COLLAB_WRITE_TOOLS } from "../src/mcp/tools/collab-writes";
 import { WHITEBOARD_TOOLS } from "../src/mcp/tools/whiteboard";
+import { SOCIAL_OVERLAY_TOOLS } from "../src/mcp/tools/social-overlays";
 import { PREMIUM_TOOLS } from "../src/mcp/tools/premium"; // #969
 import { mcpHarness } from "./mcp-oauth-support";
 
@@ -36,6 +37,7 @@ const WRITE_SCOPE_NAMES = [
   ...WRITE_NAMES,
   ...writeScopeNames(COLLAB_WRITE_TOOLS),
   ...writeScopeNames(WHITEBOARD_TOOLS),
+  ...writeScopeNames(SOCIAL_OVERLAY_TOOLS), // #970
   ...writeScopeNames(PREMIUM_TOOLS), // #969
 ];
 const DESTRUCTIVE = ["remove_project_editor", "delete_subtask", "delete_project_comment", "remove_video_link"];
