@@ -232,8 +232,9 @@ must ask the user, then call again.
 - **`delete_project`** (admin scope, and the Project must be archived first). The first call deletes
   nothing: it returns a summary of what would be destroyed (photos by Collection and state, comments,
   Subtasks) and a `confirmToken`. The client shows the user that summary, and only on agreement calls
-  again with `confirm: true` and the token. The token is good for 5 minutes, for that Project and that
-  Connected app only. The server recomputes the summary on the second call and **refuses if the Project
+  again with `confirm: true` and the token. The token is good for 5 minutes, for that action, that
+  Project and that Connected app only: a token issued for one action (delete, Publish, Unlock) is refused
+  by every other. The server recomputes the summary on the second call and **refuses if the Project
   changed in between**; the client has to ask again.
 
 ## Signed downloads
@@ -297,7 +298,7 @@ These are never exposed, so an AI client cannot loosen the controls that bound i
 comment a client reads could try to talk it into it):
 
 - Change any user's role or active status.
-- Change feature flags, including `mcp_access` and impersonation.
+- Read or change feature flags, including `mcp_access` and impersonation.
 - Revoke Connected apps.
 - Start impersonation.
 - **Upload.** Multi-GB multipart transfers do not fit a tool call. `place_media` and the link-preview
@@ -305,6 +306,7 @@ comment a client reads could try to talk it into it):
 - Restore a whiteboard version.
 
 Only routes in the allowlist (`portal/workers/app/src/mcp/route-allowlist.ts`) can be dispatched.
+`test/mcp-never-list.test.ts` fails the build if a route from this list is ever added to it.
 
 ## Controls
 

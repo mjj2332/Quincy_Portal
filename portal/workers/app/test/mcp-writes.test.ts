@@ -28,6 +28,13 @@ const WRITE_NAMES = [
   "add_video_link", "update_video_link", "reorder_video_link", "remove_video_link",
   "mark_notification_read", "mark_all_notifications_read",
 ];
+/** Every `write`-scope tool an admin lists, one module per line: a new write module appends its own line (commented with its ticket). */
+const writeScopeNames = (tools: readonly { name: string; scope: string }[]) => tools.filter((tool) => tool.scope === "write").map((tool) => tool.name);
+const WRITE_SCOPE_NAMES = [
+  ...WRITE_NAMES,
+  ...writeScopeNames(COLLAB_WRITE_TOOLS),
+  ...writeScopeNames(WHITEBOARD_TOOLS),
+];
 const DESTRUCTIVE = ["remove_project_editor", "delete_subtask", "delete_project_comment", "remove_video_link"];
 const ADMIN_ONLY = ["create_project", "update_project_details", "set_project_priority", "set_project_deadline", "add_project_editor", "remove_project_editor", "archive_project", "restore_project"];
 const VIDEO = ["add_video_link", "update_video_link", "reorder_video_link", "remove_video_link"];
@@ -110,7 +117,7 @@ describe("tools/list follows the grant and the role", () => {
     const list = await h.toolsList(tokens.adminReadOnly!.accessToken);
     expect(list.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
     expect(toolsFor("admin", ["read"]).some((tool) => WRITE_NAMES.includes(tool.name))).toBe(false);
-    expect(toolsFor("admin", ["write"]).map((tool) => tool.name).sort()).toEqual([...WRITE_NAMES, ...COLLAB_WRITE_TOOLS.map((tool) => tool.name), ...WHITEBOARD_TOOLS.filter((tool) => tool.scope === "write").map((tool) => tool.name)].sort());
+    expect(toolsFor("admin", ["write"]).map((tool) => tool.name).sort()).toEqual([...WRITE_SCOPE_NAMES].sort());
   });
   it("admin sees every write tool", async () => { expect(await names("admin")).toEqual([...WRITE_NAMES].sort()); });
   it("editor: no create, details, priority, Deadline, team or archive tools", async () => {

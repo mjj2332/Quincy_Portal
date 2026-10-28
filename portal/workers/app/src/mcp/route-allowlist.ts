@@ -6,7 +6,7 @@
  */
 const ID = "[A-Za-z0-9_-]+";
 
-function patternFor(template: string): RegExp {
+export function patternFor(template: string): RegExp {
   const body = template.split("/").map((segment) => segment.startsWith(":") ? ID : segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("/");
   return new RegExp(`^${body}$`);
 }
@@ -105,7 +105,7 @@ const WRITE_ROUTES = [
 /**
  * Admin-scope writes (#709). Each is one `admin` tool's one route; none is reachable with a `write` grant. The never-list
  * (users, flags and *-settings, Connected apps, impersonation, uploads, OAuth and /api/auth) can appear nowhere in this file:
- * `mcp-admin.test.ts` walks every entry against a denylist.
+ * `mcp-never-list.test.ts` walks every entry against the never-list.
  */
 const ADMIN_ROUTES = [
   ["POST", "/api/integrations/dropbox/monitors/:scope/reset"],
