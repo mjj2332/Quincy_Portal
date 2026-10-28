@@ -51,6 +51,10 @@ const ADMIN_TOOLS: Record<string, { method: string; template: string; capability
   admin_acknowledge_orphan_file_report: { method: "POST", template: "/api/admin/attention/orphan-uploads/:watchId/acknowledge", capability: "adminBackend" },
   admin_delete_asset: { method: "DELETE", template: "/api/assets/:assetId", capability: "adminBackend" },
   set_delivery_page_enabled: { method: "PUT", template: "/api/projects/:projectId/delivery/page", capability: "switchDeliveryPage" }, // #968
+  // Social overlays (#970)
+  admin_update_social_overlay: { method: "PATCH", template: "/api/admin/social-overlays/:id", capability: "adminBackend" },
+  admin_archive_social_overlay: { method: "POST", template: "/api/admin/social-overlays/:id/archive", capability: "adminBackend" },
+  admin_unarchive_social_overlay: { method: "POST", template: "/api/admin/social-overlays/:id/unarchive", capability: "adminBackend" },
 };
 /** The one admin-scope tool that only reads (a POST so that its body can carry a path): readOnlyHint, not destructive. */
 const ADMIN_SCOPE_READS: Record<string, { method: string; template: string; capability: string }> = {

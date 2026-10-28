@@ -65,6 +65,9 @@ const GET_TEMPLATES = [
   // Client Delivery reads (#968)
   "/api/projects/:projectId/delivery",
   "/api/projects/:projectId/delivery/candidates",
+  // Social overlays (#970): the Admin library and a Project's selection
+  "/api/admin/social-overlays",
+  "/api/projects/:projectId/social-overlays",
 ] as const;
 
 /** Reached only by redeeming a signed download URL (#707): no tool owns it, `mcp/downloads.ts` dispatches to it. */
@@ -117,6 +120,8 @@ const WRITE_ROUTES = [
   // Client Delivery (#968): Preview is a read-scope tool on a POST that writes nothing; Publish only through the confirm round trip in `tools/delivery.ts`.
   ["POST", "/api/projects/:projectId/delivery/preview"],
   ["POST", "/api/projects/:projectId/delivery/publish"],
+  // A Project's Social overlay selection (#970)
+  ["PUT", "/api/projects/:projectId/social-overlays"],
 ] as const;
 
 /**
@@ -156,6 +161,10 @@ const ADMIN_ROUTES = [
   ["DELETE", "/api/projects/:projectId"],
   // Delivery page on/off (#968): `switchDeliveryPage`, Admin only.
   ["PUT", "/api/projects/:projectId/delivery/page"],
+  // Social overlays (#970): rename, archive, unarchive. Create and image replace are uploads and stay out.
+  ["PATCH", "/api/admin/social-overlays/:id"],
+  ["POST", "/api/admin/social-overlays/:id/archive"],
+  ["POST", "/api/admin/social-overlays/:id/unarchive"],
 ] as const;
 
 export const MCP_ALLOWED_ROUTES: readonly { method: string; template: string; pattern: RegExp }[] = [
