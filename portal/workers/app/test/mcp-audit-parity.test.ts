@@ -208,6 +208,9 @@ const WRITE_CALLS: readonly WriteCall[] = [
   { tool: "replace_review_link", setup: reviewLinkSetup, args: ({ projectId, linkId }) => ({ projectId, linkId: linkId!, confirm: true }) },
   { tool: "delete_review_link", setup: revokedReviewLinkSetup, args: ({ projectId, linkId }) => ({ projectId, linkId: linkId!, confirm: true }) },
   { tool: "end_review_link_guest_sessions", setup: deliveryReviewLinkSetup, args: ({ projectId, linkId }) => ({ projectId, linkId: linkId!, confirm: true }) },
+  // Release (#967): helpers are function declarations at the end of this file.
+  { tool: "release_video_version", setup: approvedVersionSetup, args: ({ projectId, assetId, revision }) => ({ projectId, assetId: assetId!, approvalRevision: Number(revision), confirm: true }) },
+  { tool: "withdraw_video_release", setup: releasedVersionSetup, args: ({ projectId, assetId }) => ({ projectId, assetId: assetId!, confirm: true }) },
   { tool: "admin_update_social_overlay", setup: overlaySetup, args: ({ overlayId }) => ({ id: overlayId!, name: "Parity renamed", expectedRevision: 1 }) }, // #970
   { tool: "admin_archive_social_overlay", setup: overlaySetup, args: ({ overlayId }) => ({ id: overlayId!, expectedRevision: 1 }) }, // #970
   { tool: "admin_unarchive_social_overlay", setup: archivedOverlaySetup, args: ({ overlayId }) => ({ id: overlayId!, expectedRevision: 1 }) }, // #970
@@ -336,4 +339,18 @@ async function deliveryReviewLinkSetup(projectId: string) {
   await database.DB.prepare("INSERT OR IGNORE INTO user (id, name, email, email_verified, role, active, created_at, updated_at) VALUES (?, 'Fixture Member', 'fixture-member@example.test', 1, 'editor', 1, ?, ?)").bind(fixtureIds.member, now, now).run();
   const link = await seedGuestLink({ projectId, deliveryReview: true });
   return { linkId: link.id };
+}
+
+/** Release (#967): the Project's video review gate with the delivery part, and a Version the client approved (recorded by staff, revision 1). */
+async function approvedVersionSetup(projectId: string) {
+  await setVideoFlags("video_review", "video_review_delivery", `video_review_pilot:${projectId}`);
+  const version = await seedVideoVersion({ projectId, uploader: adminId });
+  await database.DB.prepare("INSERT INTO video_approval_events (id, project_id, video_id, asset_id, link_id, revision, decision, note, actor_guest_id, actor_user_id, created_at) VALUES (?, ?, ?, ?, NULL, 1, 'approved', NULL, NULL, ?, ?)")
+    .bind(crypto.randomUUID(), projectId, version.videoId, version.assetId, adminId, Date.now()).run();
+  return { videoId: version.videoId, assetId: version.assetId, revision: "1" };
+}
+async function releasedVersionSetup(projectId: string) {
+  const approved = await approvedVersionSetup(projectId);
+  await callTool("release_video_version", { projectId, assetId: approved.assetId, approvalRevision: 1, confirm: true });
+  return approved;
 }

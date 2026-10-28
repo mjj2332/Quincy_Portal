@@ -67,6 +67,8 @@ const GET_TEMPLATES = [
   // Social overlays (#970): the Admin library and a Project's selection
   "/api/admin/social-overlays",
   "/api/projects/:projectId/social-overlays",
+  // A Video's Client approval decisions (#967)
+  "/api/projects/:projectId/videos/:videoId/decisions",
 ] as const;
 
 /** Reached only by redeeming a signed download URL (#707): no tool owns it, `mcp/downloads.ts` dispatches to it. */
@@ -128,6 +130,9 @@ const WRITE_ROUTES = [
   ["POST", "/api/projects/:projectId/review-links/:linkId/end-sessions"],
   // A Project's Social overlay selection (#970)
   ["PUT", "/api/projects/:projectId/social-overlays"],
+  // Release and withdraw a Version's Release (#967), both confirm-first
+  ["POST", "/api/projects/:projectId/video-versions/:assetId/release"],
+  ["DELETE", "/api/projects/:projectId/video-versions/:assetId/release"],
 ] as const;
 
 /**

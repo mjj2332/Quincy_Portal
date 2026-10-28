@@ -9,6 +9,7 @@ import { WRITE_TOOLS as CORE_WRITE_TOOLS } from "../src/mcp/tools/writes";
 import { PLANNING_TOOLS } from "../src/mcp/tools/planning";
 import { REVIEW_LINK_TOOLS } from "../src/mcp/tools/review-links";
 import { SOCIAL_OVERLAY_TOOLS } from "../src/mcp/tools/social-overlays";
+import { RELEASE_TOOLS } from "../src/mcp/tools/release"; // #967
 import { mcpHarness } from "./mcp-oauth-support";
 
 /** Every `write`-scope tool, one module per line: a new write module appends its own line (commented with its ticket). */
@@ -19,6 +20,7 @@ const WRITE_TOOLS = [
   ...PLANNING_TOOLS, // #971
   ...REVIEW_LINK_TOOLS, // #966
   ...SOCIAL_OVERLAY_TOOLS, // #970
+  ...RELEASE_TOOLS, // #967
 ].filter((tool) => tool.scope === "write");
 
 declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL__: string;
@@ -49,6 +51,7 @@ const READ_NAMES = [
   "get_production_calendar", "get_production_gantt", "get_notification_preferences", // #971
   "list_review_links", // #966
   "get_project_social_overlays", // #970
+  "list_video_decisions", // #967
 ];
 /** The read tools each non-admin role does not see (its routes refuse it), one group per line, appended the same way. */
 const HIDDEN_FROM: Record<"editor" | "photographer" | "external", readonly string[]> = {
@@ -61,6 +64,7 @@ const HIDDEN_FROM: Record<"editor" | "photographer" | "external", readonly strin
     "get_production_calendar", "get_production_gantt", // #971
     "list_review_links", // #966
     "get_project_social_overlays", // #970
+    "list_video_decisions", // #967
   ],
   external: [
     "list_project_assignment_candidates", "list_notice_board", "get_selection_download_url",
