@@ -411,6 +411,31 @@ they are assigned to (#834), and anything else is the route's 404. A Photographe
 - Every change is audited (`review_link.*`) with the usual `via: "mcp"` marker. No audit row carries the passcode or
   the address.
 
+### Premium and Unlock (6) (#969)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `set_video_premium` | write | `manageVideoPremium` | no |
+| `set_video_premium_unlock` | write | `manageVideoPremium` | no |
+| `set_delivery_video_premium` | write | `manageVideoPremium` | no |
+| `set_delivery_video_premium_unlock` | write | `manageVideoPremium` | no |
+| `set_asset_premium` | write | `manageExtras` | no |
+| `set_asset_premium_unlock` | write | `manageExtras` | no |
+
+Admins and Editors see these; Photographers and External editors do not. A Video has the same pair of tools
+twice because it has two routes: `set_video_premium*` are the Video review routes (open while the Video review
+`delivery` part is on), `set_delivery_video_premium*` the Delivery tab's (open while Client Delivery is on). Both
+run the same handlers. `set_asset_premium*` cover a photo, a Floorplan PDF or a Copy document.
+
+- **Unmark** (`premium: false`) is refused with `premium_published` once the item has been on a published Client
+  Delivery page, as in the browser.
+- **Late Premium.** Marking an item that is already on a published page (it then stays premium for good) returns
+  `Confirmation required` and changes nothing; it acts only when called again with `confirm: true`.
+- **Unlock** (`unlocked: true`) is a confirm-token round trip, see below. **Re-lock** (`unlocked: false`) is one step.
+
+Each change is audited (`video.premium_set`, `video.premium_unlock`, `video.premium_relock`, `asset.delivery_premium_set`,
+`asset.premium_unlock`, `asset.premium_relock`) with the usual `via: "mcp"` marker.
+
 ## Confirm round trips
 
 Some actions need the person's say-so first. The tool refuses to act on the first call and the client
@@ -434,6 +459,15 @@ must ask the user, then call again.
   are signed out) and sends nothing to the Portal. The client relays that to the user and, on agreement,
   calls again with `confirm: true`. There is no token: each call names the link, and the route refuses
   what it would refuse in the browser (the Delivery review link, an unrevoked link to delete).
+
+- **Unlock** (`set_video_premium_unlock`, `set_delivery_video_premium_unlock`, `set_asset_premium_unlock` with
+  `unlocked: true`). The first call unlocks nothing: it returns a summary of what becomes viewable and downloadable
+  in full by the client (the item, its Premium, Unlock and published state, and the payment reference) and a
+  `confirmToken` for the action `unlock`. Only the second call, with the same arguments plus `confirm: true` and the
+  token, unlocks. As for delete, the token is good for 5 minutes, that Project and that Connected app; a changed
+  item or payment reference is refused with "re-confirm".
+- **Late Premium** (`set_video_premium`, `set_delivery_video_premium`, `set_asset_premium` with `premium: true`
+  on an item already on a published page) returns `Confirmation required` and acts only on `confirm: true`.
 
 ## Signed downloads
 
