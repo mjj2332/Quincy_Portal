@@ -64,10 +64,10 @@ With every scope granted, the tool count by role is:
 
 | Role | Tools visible |
 |---|---|
-| Admin | 112 |
+| Admin | 118 |
 | Photographer | 39 |
-| Editor | 63 |
-| External editor | 48 |
+| Editor | 65 |
+| External editor | 49 |
 
 Admin-only tools (every `admin_*` tool and `delete_project`) never appear for the other roles. An
 External editor additionally has no notice board and no selection or download-selection tools.
@@ -75,7 +75,7 @@ External editor additionally has no notice board and no selection or download-se
 ## Tool reference
 
 Generated from the tool definitions in `portal/workers/app/src/mcp/tools/` (registry plus the
-whiteboard tools): **112 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
+whiteboard tools): **118 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
 the role capability. **Destructive** is the `destructiveHint` the client sees; every `admin`-scope tool is
 destructive. `destructiveHint` is advice to the client, not enforcement: the server-side confirm round
 trips below are what enforce.
@@ -299,6 +299,26 @@ Photographer sees none. They answer 404 while video review is off for the Projec
   upload in progress is refused. Restoring a Version whose Video is in Trash is 409 `video_in_trash`: restore the Video
   first.
 - Every write is audited as through MCP (`via: "mcp"`).
+### Social overlays (6) (#970)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `admin_list_social_overlays` | read | `adminBackend` | no |
+| `admin_update_social_overlay` | admin | `adminBackend` | yes |
+| `admin_archive_social_overlay` | admin | `adminBackend` | yes |
+| `admin_unarchive_social_overlay` | admin | `adminBackend` | yes |
+| `get_project_social_overlays` | read | `viewVideo` | no |
+| `set_project_social_overlays` | write | `chooseSocialOverlays` | no |
+
+The Admin tools manage the agency's overlay library: list it, rename an overlay or change its platform label,
+archive it and bring it back. They need the `admin` scope and are hidden from every other role. Each change names
+the overlay `revision` from the list; a stale one answers `overlay_conflict`. Archiving the Default overlay is
+refused by the route (`default_overlay`). The Project tools are the Project's overlay picker: `get_project_social_overlays`
+returns what the Project can offer, what it does offer and a `revision`; `set_project_social_overlays` replaces the
+selection and needs that revision (`social_overlays_conflict` returns the current state). They answer 404 while Video
+review is off for the Project, and an archived Project is read-only. Changes are audited as `social_overlay.*` and
+`project.social_overlays.*` with the usual `via: "mcp"` marker. Creating an overlay and replacing its image are
+uploads, so there is no tool for them.
 
 ## Confirm round trips
 
@@ -386,6 +406,7 @@ comment a client reads could try to talk it into it):
   tools only reference things already in the Portal or a public URL.
 - Restore a whiteboard version.
 - Set a Version's poster (#965). The poster route takes a raw JPEG body, which is an upload.
+- Create a Social overlay or replace its image (a multipart PNG upload, #970).
 
 Only routes in the allowlist (`portal/workers/app/src/mcp/route-allowlist.ts`) can be dispatched.
 `test/mcp-never-list.test.ts` fails the build if a route from this list is ever added to it.

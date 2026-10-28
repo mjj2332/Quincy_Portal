@@ -66,6 +66,9 @@ const GET_TEMPLATES = [
   "/api/projects/:projectId/video-trash",
   "/api/projects/:projectId/video-versions/:assetId/removal-impact",
   "/api/projects/:projectId/videos/:videoId/removal-impact",
+  // Social overlays (#970): the Admin library and a Project's selection
+  "/api/admin/social-overlays",
+  "/api/projects/:projectId/social-overlays",
 ] as const;
 
 /** Reached only by redeeming a signed download URL (#707): no tool owns it, `mcp/downloads.ts` dispatches to it. */
@@ -122,6 +125,8 @@ const WRITE_ROUTES = [
   ["POST", "/api/projects/:projectId/videos/:videoId/remove"],
   ["POST", "/api/projects/:projectId/video-versions/:assetId/restore"],
   ["POST", "/api/projects/:projectId/videos/:videoId/restore"],
+  // A Project's Social overlay selection (#970)
+  ["PUT", "/api/projects/:projectId/social-overlays"],
 ] as const;
 
 /**
@@ -159,6 +164,10 @@ const ADMIN_ROUTES = [
   ["POST", "/api/integrations/dropbox/editor-folders/inspect"],
   // Project delete: only through the confirm round trip in `tools/admin-writes.ts`.
   ["DELETE", "/api/projects/:projectId"],
+  // Social overlays (#970): rename, archive, unarchive. Create and image replace are uploads and stay out.
+  ["PATCH", "/api/admin/social-overlays/:id"],
+  ["POST", "/api/admin/social-overlays/:id/archive"],
+  ["POST", "/api/admin/social-overlays/:id/unarchive"],
 ] as const;
 
 export const MCP_ALLOWED_ROUTES: readonly { method: string; template: string; pattern: RegExp }[] = [
