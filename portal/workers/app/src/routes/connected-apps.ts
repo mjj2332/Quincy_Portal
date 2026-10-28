@@ -82,7 +82,8 @@ connectedAppsRoutes.post("/connected-apps/consent/:handle", terminalRoute("/conn
       request: approved.request, userId: user.id, metadata: { clientId }, scope: granted,
       // Never let the library sweep this user+client: a concurrent consent's newer grant would die with it.
       revokeExistingGrants: false,
-      props: { userId: user.id, connectionId, authorizationEpoch: user.authorizationEpoch, clientName: stored.clientName },
+      // `consentedAt` starts the admin scope's 8-hour refresh cap (#962).
+      props: { userId: user.id, connectionId, authorizationEpoch: user.authorizationEpoch, clientName: stored.clientName, consentedAt: now },
     });
     await revokeInLibrary(c.env, superseded.results);
     return respond({ redirectTo }, approved.headers);

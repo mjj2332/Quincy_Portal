@@ -1,8 +1,10 @@
 import { env, SELF as workerSelf } from "cloudflare:test";
 import { makeSignature } from "better-auth/crypto";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { GrantType, OAuthError, type TokenExchangeCallbackOptions } from "@cloudflare/workers-oauth-provider";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAuth } from "../src/auth";
 import type { Env } from "../src/env";
+import { tokenExchangeRules } from "../src/mcp/oauth-server";
 
 declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL__: string;
 const testEnv = env as unknown as Env;
@@ -145,7 +147,7 @@ describe("full flow", () => {
     expect((await workerSelf.fetch(`${ORIGIN}/api/projects`, { method: "POST", headers: { ...json, authorization: `Bearer ${tokens.access_token}` }, body: "{}" })).status).toBe(403);
   });
 
-  it("an editor sees get_me only for its own role; read grant refreshes, admin grant does not", async () => {
+  it("an editor sees get_me only for its own role; read grant refreshes, admin grant gets a 15-minute token that refreshes", async () => {
     const editor = await connect("read", "editor");
     const call = await (await rpc(editor.tokens.access_token, "tools/call", { name: "get_me", arguments: {} })).json() as { result: { content: { text: string }[] } };
     expect(JSON.parse(call.result.content[0]!.text).user.id).toBe(editorId);
@@ -155,7 +157,7 @@ describe("full flow", () => {
     expect(refreshed.status).toBe(200);
     const admin = await connect("read write admin", "admin");
     expect(admin.tokens.expires_in).toBe(900);
-    expect(admin.tokens.refresh_token).toBeUndefined();
+    expect(admin.tokens.refresh_token).toBeTypeOf("string");
   });
 
   it("a write-only tool listing follows the granted scopes", async () => {
@@ -171,22 +173,26 @@ describe("revocation", () => {
     ["deactivated", (_id, userId) => DB.prepare("UPDATE user SET active = 0 WHERE id = ?").bind(userId).run()],
     ["epoch bump", (_id, userId) => DB.prepare("UPDATE user SET authorization_epoch = authorization_epoch + 1 WHERE id = ?").bind(userId).run()],
   ];
-  for (const [name, mutate] of cases) {
-    it(`${name}: next /mcp is 401 and refresh is invalid_grant`, async () => {
-      const { client_id, tokens } = await connect("read", "editor");
-      expect((await rpc(tokens.access_token, "tools/list")).status).toBe(200);
-      const row = await DB.prepare("SELECT id FROM mcp_connections WHERE client_id = ?").bind(client_id).first<{ id: string }>();
-      await mutate(row!.id, editorId);
-      expect((await rpc(tokens.access_token, "tools/list")).status).toBe(401);
-      const refresh = await tokenReq({ grant_type: "refresh_token", refresh_token: tokens.refresh_token!, client_id });
-      expect(refresh.json.error).toBe("invalid_grant");
+  // An admin grant now refreshes too (#962): the same live checks must cut it, refresh included.
+  const grants: [string, string, string][] = [["read", "editor", editorId], ["read write admin", "admin", adminId]];
+  for (const [scope, who, userId] of grants) {
+    for (const [name, mutate] of cases) {
+      it(`${name} (${scope}): next /mcp is 401 and refresh is invalid_grant`, async () => {
+        const { client_id, tokens } = await connect(scope, who);
+        expect((await rpc(tokens.access_token, "tools/list")).status).toBe(200);
+        const row = await DB.prepare("SELECT id FROM mcp_connections WHERE client_id = ?").bind(client_id).first<{ id: string }>();
+        await mutate(row!.id, userId);
+        expect((await rpc(tokens.access_token, "tools/list")).status).toBe(401);
+        const refresh = await tokenReq({ grant_type: "refresh_token", refresh_token: tokens.refresh_token!, client_id });
+        expect(refresh.json.error).toBe("invalid_grant");
+      });
+    }
+    it(`the flag going off makes refresh temporarily_unavailable (${scope})`, async () => {
+      const { client_id, tokens } = await connect(scope, who);
+      await setFlag(false);
+      expect((await tokenReq({ grant_type: "refresh_token", refresh_token: tokens.refresh_token!, client_id })).json.error).toBe("temporarily_unavailable");
     });
   }
-  it("the flag going off makes refresh temporarily_unavailable", async () => {
-    const { client_id, tokens } = await connect("read", "editor");
-    await setFlag(false);
-    expect((await tokenReq({ grant_type: "refresh_token", refresh_token: tokens.refresh_token!, client_id })).json.error).toBe("temporarily_unavailable");
-  });
   it("re-consent marks the old row superseded", async () => {
     const first = await connect("read", "editor");
     const a = await authorize(first.client_id, "read");
@@ -197,6 +203,79 @@ describe("revocation", () => {
     expect(rows.results[0]).toMatchObject({ revoke_reason: "superseded" });
     expect(rows.results[0]!.revoked_at).not.toBeNull();
     expect(rows.results[1]!.revoked_at).toBeNull();
+  });
+});
+
+describe("admin refresh: 8 hours from consent (#962)", () => {
+  const HOUR = 3_600_000;
+  const at = (ms: number) => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(ms); };
+  const refresh = (refresh_token: string, client_id: string) => tokenReq({ grant_type: "refresh_token", refresh_token, client_id });
+  const toolNames = async (token: string) => ((await (await rpc(token, "tools/list")).json()) as { result: { tools: { name: string }[] } }).result.tools.map((x) => x.name);
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("refreshes and rotates before 8 hours, keeps the admin tools, and the cap never slides", async () => {
+    const consented = Date.now();
+    const { client_id, tokens } = await connect("read write admin", "admin");
+    expect(tokens.expires_in).toBe(900);
+
+    at(consented + HOUR);
+    const first = await refresh(tokens.refresh_token!, client_id);
+    expect(first.status).toBe(200);
+    expect(first.json.expires_in).toBe(900);
+    expect(first.json.refresh_token).toBeTypeOf("string");
+    expect(first.json.refresh_token).not.toBe(tokens.refresh_token);
+    const names = await toolNames(first.json.access_token as string);
+    expect(names).toContain("delete_project");
+    const me = await (await rpc(first.json.access_token as string, "tools/call", { name: "get_me", arguments: {} })).json() as { result: { content: { text: string }[] } };
+    expect(JSON.parse(me.result.content[0]!.text).user).toMatchObject({ id: adminId, role: "admin" });
+
+    // Two minutes before the cap: still refreshes, but the access token is clamped to what is left.
+    at(consented + 8 * HOUR - 2 * 60_000);
+    const late = await refresh(first.json.refresh_token as string, client_id);
+    expect(late.status).toBe(200);
+    expect(late.json.expires_in as number).toBeLessThanOrEqual(120);
+    expect(await toolNames(late.json.access_token as string)).toContain("delete_project");
+
+    // Past the cap: refused although the last refresh was minutes ago (a sliding idle TTL would allow it).
+    at(consented + 8 * HOUR + 60_000);
+    const refused = await refresh(late.json.refresh_token as string, client_id);
+    expect(refused.status).toBe(400);
+    expect(refused.json.error).toBe("invalid_grant");
+  });
+
+  it("after 8 hours the client must consent again, and the new consent refreshes", async () => {
+    const consented = Date.now();
+    const { client_id, tokens } = await connect("read write admin", "admin");
+    at(consented + 8 * HOUR + 60_000);
+    expect((await refresh(tokens.refresh_token!, client_id)).json.error).toBe("invalid_grant");
+    vi.useRealTimers();
+    const again = await connect("read write admin", "admin");
+    expect(again.tokens.refresh_token).toBeTypeOf("string");
+    expect((await refresh(again.tokens.refresh_token!, again.client_id)).status).toBe(200);
+  });
+
+  it("read and write grants keep 1-hour tokens and 30-day refresh past 8 hours", async () => {
+    const consented = Date.now();
+    const { client_id, tokens } = await connect("read write", "admin");
+    expect(tokens.expires_in).toBe(3600);
+    at(consented + 8 * HOUR + 60_000);
+    const later = await refresh(tokens.refresh_token!, client_id);
+    expect(later.status).toBe(200);
+    expect(later.json.expires_in).toBe(3600);
+    expect(await toolNames(later.json.access_token as string)).not.toContain("delete_project");
+  });
+
+  it("an admin grant without a consent time is refused on refresh and gets no refresh token at code exchange", async () => {
+    const { client_id } = await connect("read write admin", "admin");
+    const row = await DB.prepare("SELECT id FROM mcp_connections WHERE client_id = ?").bind(client_id).first<{ id: string }>();
+    const options = (grantType: GrantType) => ({
+      grantType, clientId: client_id, userId: adminId, grantId: "g", scope: ["read", "write", "admin"], requestedScope: ["read", "write", "admin"], resource: RESOURCE,
+      props: { userId: adminId, connectionId: row!.id, authorizationEpoch: 0, clientName: "Test Client" }, env: testEnv,
+    }) as unknown as TokenExchangeCallbackOptions<Env>;
+    const refused = await tokenExchangeRules(options(GrantType.REFRESH_TOKEN)).then(() => null, (error: unknown) => error);
+    expect(refused).toBeInstanceOf(OAuthError);
+    expect((refused as OAuthError).code).toBe("invalid_grant");
+    expect(await tokenExchangeRules(options(GrantType.AUTHORIZATION_CODE))).toEqual({ accessTokenTTL: 900, refreshTokenTTL: 0 });
   });
 });
 

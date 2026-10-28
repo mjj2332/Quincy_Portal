@@ -46,10 +46,13 @@ as `superseded`).
 |---|---|---|---|
 | `read` | every read tool, including the signed download links | 1 hour | rotating; lapses after 30 days unused |
 | `write` | non-admin writes | 1 hour | rotating; lapses after 30 days unused |
-| `admin` | `delete_project` and the other admin-scope tools | 15 minutes | none |
+| `admin` | `delete_project` and the other admin-scope tools | 15 minutes | rotating; refused 8 hours after consent |
 
-A grant that includes `admin` gets the 15-minute token and **no refresh**: the client has to send you
-through consent again. Scopes are explicit; `admin` does not imply `write`.
+A grant that includes `admin` gets the 15-minute token and a rotating refresh token, but only until
+**8 hours after you consented** (ADR 0026): past that, refresh is refused and the client has to send you
+through consent again. Refreshing never extends the 8 hours, and near the end the access token is cut
+short to the time left. Revoking the app, a role change or deactivation, and the `mcp_access` flag
+still cut it off at once, refresh included. Scopes are explicit; `admin` does not imply `write`.
 
 ## What a client can see: tool visibility
 
@@ -348,7 +351,7 @@ redemption re-checks the grant.
 ## If something looks wrong
 
 - **Client says "unauthorized" / reconnect loop.** The flag is off, the app was revoked, the user's role
-  changed (epoch bump), or an admin-scope token (15 minutes) expired. Reconnect through consent.
+  changed (epoch bump), or an admin-scope grant passed its 8 hours from consent. Reconnect through consent.
 - **A tool the client expects is missing.** Scope not granted, or the role lacks the capability. Compare
   with the table above.
 - **`rate limit` errors.** Back off for about a minute.

@@ -185,9 +185,10 @@ describe("the admin scope: grants, lifetimes and visibility", () => {
     for (const name of ADMIN_SCOPE_NAMES) expect(after, name).not.toContain(name);
   });
 
-  it("admin grants live 15 minutes with no refresh; other grants live an hour and refresh", () => {
+  // The 8-hour refresh cap itself is exercised through the token endpoint in mcp-auth.test.ts (#962).
+  it("admin grants live 15 minutes and refresh; other grants live an hour and refresh", () => {
     expect(tokens.adminFull!.expiresIn).toBe(900);
-    expect(tokens.adminFull!.refreshToken).toBeUndefined();
+    expect(tokens.adminFull!.refreshToken).toBeTypeOf("string");
     expect(tokens.adminRW!.expiresIn).toBe(3600);
     expect(tokens.adminRW!.refreshToken).toBeTypeOf("string");
   });
