@@ -7,6 +7,7 @@ import { COLLAB_WRITE_TOOLS } from "../src/mcp/tools/collab-writes";
 import { WHITEBOARD_TOOLS } from "../src/mcp/tools/whiteboard";
 import { WRITE_TOOLS as CORE_WRITE_TOOLS } from "../src/mcp/tools/writes";
 import { PLANNING_TOOLS } from "../src/mcp/tools/planning";
+import { SOCIAL_OVERLAY_TOOLS } from "../src/mcp/tools/social-overlays";
 import { mcpHarness } from "./mcp-oauth-support";
 
 /** Every `write`-scope tool, one module per line: a new write module appends its own line (commented with its ticket). */
@@ -15,6 +16,7 @@ const WRITE_TOOLS = [
   ...COLLAB_WRITE_TOOLS,
   ...WHITEBOARD_TOOLS,
   ...PLANNING_TOOLS, // #971
+  ...SOCIAL_OVERLAY_TOOLS, // #970
 ].filter((tool) => tool.scope === "write");
 
 declare const __PORTAL_MIGRATION_SQL__: string; declare const __PORTAL_SEED_SQL__: string;
@@ -45,6 +47,7 @@ const READ_NAMES = [
   "get_asset_download_url", "get_selection_download_url", "get_project_whiteboard", "list_whiteboard_versions",
   ...VIDEO_READ_NAMES, // #963
   "get_production_calendar", "get_production_gantt", "get_notification_preferences", // #971
+  "get_project_social_overlays", // #970
   ...VIDEO_DOWNLOAD_NAMES, // #972
 ];
 /** The read tools each non-admin role does not see (its routes refuse it), one group per line, appended the same way. */
@@ -56,6 +59,7 @@ const HIDDEN_FROM: Record<"editor" | "photographer" | "external", readonly strin
     "list_project_assignment_candidates", "get_project_links", "get_selection_download_url",
     ...VIDEO_READ_NAMES, // #963
     "get_production_calendar", "get_production_gantt", // #971
+    "get_project_social_overlays", // #970
     ...VIDEO_DOWNLOAD_NAMES, // #972
   ],
   external: [
@@ -68,6 +72,7 @@ const ADMIN_NAMES = [
   "admin_list_users", "admin_tonomo_health", "admin_list_webhook_events", "admin_get_webhook_event", "admin_list_dead_letters",
   "admin_list_notification_deliveries", "admin_list_agencies", "admin_list_agency_contacts", "admin_list_stages", "admin_get_attention", "admin_list_project_jobs",
   "admin_preview_editor_folders", "admin_inspect_dropbox_monitor",
+  "admin_list_social_overlays", // #970
 ];
 /** Admin-scope writes (#709): listed only to an admin whose grant holds `admin`; mcp-admin.test.ts owns their detail. */
 const ADMIN_WRITE_NAMES = MCP_TOOLS.filter((tool) => tool.scope === "admin").map((tool) => tool.name);
