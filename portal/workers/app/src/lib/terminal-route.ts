@@ -349,6 +349,8 @@ const PROJECT_SECURITY_ROUTE_CLASSIFICATION_SEED = [
   { method: "ALL", path: "/mcp/", class: "bearer-protocol" },
   { method: "GET", path: "/dl/asset/:assetId/:variant", class: "bearer-protocol" },
   { method: "GET", path: "/dl/zip/:projectId/:ticket", class: "bearer-protocol" },
+  { method: "GET", path: "/dl/video-version/:projectId/:assetId", class: "bearer-protocol" }, // #972
+  { method: "GET", path: "/dl/marker-export/:projectId/:assetId/:format/:includeInternal/:status", class: "bearer-protocol" }, // #972
   { method: "ALL", path: "/dl", class: "terminal-fallback" },
   { method: "ALL", path: "/dl/*", class: "terminal-fallback" },
   { method: "ALL", path: "/api", class: "terminal-fallback" },

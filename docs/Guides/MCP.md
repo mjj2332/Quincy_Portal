@@ -64,10 +64,10 @@ With every scope granted, the tool count by role is:
 
 | Role | Tools visible |
 |---|---|
-| Admin | 110 |
+| Admin | 127 |
 | Photographer | 39 |
-| Editor | 54 |
-| External editor | 46 |
+| Editor | 67 |
+| External editor | 51 |
 
 Admin-only tools (every `admin_*` tool and `delete_project`) never appear for the other roles. An
 External editor additionally has no notice board and no selection or download-selection tools.
@@ -75,7 +75,7 @@ External editor additionally has no notice board and no selection or download-se
 ## Tool reference
 
 Generated from the tool definitions in `portal/workers/app/src/mcp/tools/` (registry plus the
-whiteboard tools): **110 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
+whiteboard tools): **127 tools** in total. **Scope** is the OAuth scope a Connected app needs. **Needs** is
 the role capability. **Destructive** is the `destructiveHint` the client sees; every `admin`-scope tool is
 destructive. `destructiveHint` is advice to the client, not enforcement: the server-side confirm round
 trips below are what enforce.
@@ -267,6 +267,82 @@ Subtask reminder emails, digest cadence, whether the digest includes Project act
 they cannot reach anyone else's row. A change is audited as `notification.preference.update` with the usual
 `via: "mcp"` marker.
 
+### Video and Version management (9) (#965)
+
+Admins and Editors see all nine; an External editor (on assigned Projects) sees the two Version writes; a
+Photographer sees none. They answer 404 while video review is off for the Project (the Trash tools also need the
+`trash` part), as the routes do.
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `set_version_review_status` | write | `annotateVideo` | no |
+| `rename_video_version` | write | `uploadVideo` | no |
+| `list_video_trash` | read | `manageVideoTrash` | no |
+| `get_version_removal_impact` | read | `manageVideoTrash` | no |
+| `get_video_removal_impact` | read | `manageVideoTrash` | no |
+| `remove_video_version` | write | `manageVideoTrash` | yes |
+| `delete_video` | write | `manageVideoTrash` | yes |
+| `restore_video_version` | write | `manageVideoTrash` | no |
+| `restore_video` | write | `manageVideoTrash` | no |
+
+- **Review status** is `in_review` or `approved_internal`. Setting `approved_internal` is the internal approval
+  decision and needs `approveVideoInternal` (Admin and Editor); an External editor can set `in_review` only, and the
+  route answers 403 otherwise. `expectedStatus` is the status the client read: a changed one is 409
+  `review_status_conflict`, and a Version that is no longer the latest is 409 `not_latest_version`. The Client
+  approval decisions and Release belong to the release tools, not here.
+- **Rename** changes a Version's file name (`.mp4` or `.mov`; `.mov` is stored as `.mp4`).
+- **Delete and remove do not confirm.** They move the Video or Version to the Video Trash, and Restore brings it back
+  (for the retention period shown by `list_video_trash`), so they carry `destructiveHint` instead. Read the impact
+  first (`get_version_removal_impact`, `get_video_removal_impact`) and pass it as `expected`; if the Video or Version
+  changed since, the route answers 409 `impact_changed` with the fresh impact and nothing is removed. Removing the last
+  Version needs `removeVideo: true` (409 `last_version` otherwise); a Video published in Client Delivery or with an
+  upload in progress is refused. Restoring a Version whose Video is in Trash is 409 `video_in_trash`: restore the Video
+  first.
+- Every write is audited as through MCP (`via: "mcp"`).
+### Social overlays (6) (#970)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `admin_list_social_overlays` | read | `adminBackend` | no |
+| `admin_update_social_overlay` | admin | `adminBackend` | yes |
+| `admin_archive_social_overlay` | admin | `adminBackend` | yes |
+| `admin_unarchive_social_overlay` | admin | `adminBackend` | yes |
+| `get_project_social_overlays` | read | `viewVideo` | no |
+| `set_project_social_overlays` | write | `chooseSocialOverlays` | no |
+
+The Admin tools manage the agency's overlay library: list it, rename an overlay or change its platform label,
+archive it and bring it back. They need the `admin` scope and are hidden from every other role. Each change names
+the overlay `revision` from the list; a stale one answers `overlay_conflict`. Archiving the Default overlay is
+refused by the route (`default_overlay`). The Project tools are the Project's overlay picker: `get_project_social_overlays`
+returns what the Project can offer, what it does offer and a `revision`; `set_project_social_overlays` replaces the
+selection and needs that revision (`social_overlays_conflict` returns the current state). They answer 404 while Video
+review is off for the Project, and an archived Project is read-only. Changes are audited as `social_overlay.*` and
+`project.social_overlays.*` with the usual `via: "mcp"` marker. Creating an overlay and replacing its image are
+uploads, so there is no tool for them.
+
+### Video downloads (2) (#972)
+
+| Tool | Scope | Needs | Destructive |
+|---|---|---|---|
+| `get_video_version_download_url` | read | `downloadVideo` | no |
+| `get_marker_export_download_url` | read | `viewVideo` | no |
+
+Admins, Editors and External editors (on assigned Projects only) see these; a Photographer sees neither. Both return
+`{ url, expiresAt }`, a signed link under the rules in "Signed downloads" below.
+
+- `get_video_version_download_url` takes a `projectId` and a Version's `assetId` (from `list_project_videos`). The link
+  serves the Version's original file with the same name and headers as the browser's Download. Any live Version
+  downloads, superseded or unreleased included. It answers 404 while the video review `download` part is off.
+- `get_marker_export_download_url` takes the same ids, a `format` (`edl` for a DaVinci Resolve marker EDL, `fcpxml`),
+  and optionally `includeInternal` (default false) and `status` (`all`, `open` or `resolved`; default `all`). The
+  link serves the same file the browser's Marker export does. A note outside the Version's frames, or an EDL over 999
+  markers, is refused when the link is requested (`HTTP 422`). It answers 404 while the `notes` or `export` part is off.
+- Requesting a link downloads nothing: the tool checks access with a `HEAD` of the route, which writes no audit row.
+  Each **redemption** is the download: audited as `video_version.download` (or `video_note.export`) with
+  `via: "mcp"`, plus `mcp_download.redeem`.
+- The link always serves the whole file: a `Range` header is not passed on, so a resumed fetch starts again and is
+  audited again.
+
 ### Remaining admin tools (7) (#973)
 
 The admin routes the #973 audit (`docs/plans/959-admin-mcp-audit.md`) found with no tool. Admin only. The writes
@@ -318,7 +394,8 @@ must ask the user, then call again.
 `get_asset_download_url` and `get_selection_download_url` return `{ url, expiresAt }`. The link is a
 bearer: whoever holds it can fetch the file until it expires, so do not paste it elsewhere.
 
-- Valid for **15 minutes**, scoped to one asset or one zip ticket, and audited as a download via MCP.
+- Valid for **15 minutes**, scoped to one asset, one zip ticket, one Video Version, or one Marker export
+  of a Version (its format and options are part of the link; #972), and audited as a download via MCP.
 - Redeeming it re-checks the live grant (flag on, Connected app not revoked, user active, epoch
   unchanged, `read` scope still held), so revoking an app kills links already handed out.
 - **Stored renditions only.** If the requested rendition has not been generated yet, the link answers
@@ -381,6 +458,8 @@ comment a client reads could try to talk it into it):
   tools only reference things already in the Portal or a public URL.
 - Restore a whiteboard version.
 - Connect Dropbox: its OAuth handshake runs in the browser (#973 audit).
+- Set a Version's poster (#965). The poster route takes a raw JPEG body, which is an upload.
+- Create a Social overlay or replace its image (a multipart PNG upload, #970).
 
 Only routes in the allowlist (`portal/workers/app/src/mcp/route-allowlist.ts`) can be dispatched.
 `test/mcp-never-list.test.ts` fails the build if a route from this list is ever added to it.

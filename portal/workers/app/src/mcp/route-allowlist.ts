@@ -65,11 +65,21 @@ const GET_TEMPLATES = [
   // Remaining admin reads (#973)
   "/api/integrations",
   "/api/projects/:projectId/autohdr-status",
+  // Video Trash reads and removal impact (#965)
+  "/api/projects/:projectId/video-trash",
+  "/api/projects/:projectId/video-versions/:assetId/removal-impact",
+  "/api/projects/:projectId/videos/:videoId/removal-impact",
+  // Social overlays (#970): the Admin library and a Project's selection
+  "/api/admin/social-overlays",
+  "/api/projects/:projectId/social-overlays",
 ] as const;
 
 /** Reached only by redeeming a signed download URL (#707): no tool owns it, `mcp/downloads.ts` dispatches to it. */
 export const REDEMPTION_ONLY_ROUTES = [
   ["GET", "/api/projects/:projectId/download-selection/:ticket/archive.zip"],
+  // Staff video downloads (#972): a GET here is the audited download or export itself, so only a redemption makes one.
+  ["GET", "/api/projects/:projectId/video-versions/:assetId/download"],
+  ["GET", "/api/projects/:projectId/video-versions/:assetId/marker-export"],
 ] as const;
 
 /** Writes (#705 core, #706 collaboration). Each is one tool's one route; `mcp-writes.test.ts` checks the pairing both ways. */
@@ -114,6 +124,15 @@ const WRITE_ROUTES = [
   ["POST", "/api/projects/:projectId/download-selection"],
   // Own notification preferences (#971)
   ["PATCH", "/api/notification-preferences"],
+  // Video and Version management (#965). No poster route: it is a raw JPEG upload.
+  ["PUT", "/api/projects/:projectId/video-versions/:assetId/review-status"],
+  ["PUT", "/api/projects/:projectId/video-versions/:assetId/file-name"],
+  ["POST", "/api/projects/:projectId/video-versions/:assetId/remove"],
+  ["POST", "/api/projects/:projectId/videos/:videoId/remove"],
+  ["POST", "/api/projects/:projectId/video-versions/:assetId/restore"],
+  ["POST", "/api/projects/:projectId/videos/:videoId/restore"],
+  // A Project's Social overlay selection (#970)
+  ["PUT", "/api/projects/:projectId/social-overlays"],
 ] as const;
 
 /**
@@ -157,6 +176,19 @@ const ADMIN_ROUTES = [
   ["POST", "/api/projects/:projectId/cover"],
   ["PUT", "/api/projects/:projectId/photographers/:userId"],
   ["DELETE", "/api/projects/:projectId/photographers/:userId"],
+  // Social overlays (#970): rename, archive, unarchive. Create and image replace are uploads and stay out.
+  ["PATCH", "/api/admin/social-overlays/:id"],
+  ["POST", "/api/admin/social-overlays/:id/archive"],
+  ["POST", "/api/admin/social-overlays/:id/unarchive"],
+] as const;
+
+/**
+ * HEAD probes (#972): the video download tools prove access with a HEAD, which runs the route's whole admission and writes no audit row.
+ * Each is one `*_download_url` tool's route.
+ */
+const PROBE_ROUTES = [
+  ["HEAD", "/api/projects/:projectId/video-versions/:assetId/download"],
+  ["HEAD", "/api/projects/:projectId/video-versions/:assetId/marker-export"],
 ] as const;
 
 export const MCP_ALLOWED_ROUTES: readonly { method: string; template: string; pattern: RegExp }[] = [
@@ -164,6 +196,7 @@ export const MCP_ALLOWED_ROUTES: readonly { method: string; template: string; pa
   ...WRITE_ROUTES.map(([method, template]) => ({ method, template, pattern: patternFor(template) })),
   ...ADMIN_ROUTES.map(([method, template]) => ({ method, template, pattern: patternFor(template) })),
   ...REDEMPTION_ONLY_ROUTES.map(([method, template]) => ({ method, template, pattern: patternFor(template) })),
+  ...PROBE_ROUTES.map(([method, template]) => ({ method, template, pattern: patternFor(template) })), // #972
 ];
 
 export function isAllowedMcpRoute(method: string, path: string): boolean {

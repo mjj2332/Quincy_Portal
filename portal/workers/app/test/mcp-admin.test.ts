@@ -56,6 +56,10 @@ const ADMIN_TOOLS: Record<string, { method: string; template: string; capability
   admin_set_project_cover: { method: "POST", template: "/api/projects/:projectId/cover", capability: "editProject" },
   admin_add_project_photographer: { method: "PUT", template: "/api/projects/:projectId/photographers/:userId", capability: "editProject" },
   admin_remove_project_photographer: { method: "DELETE", template: "/api/projects/:projectId/photographers/:userId", capability: "editProject" },
+  // Social overlays (#970)
+  admin_update_social_overlay: { method: "PATCH", template: "/api/admin/social-overlays/:id", capability: "adminBackend" },
+  admin_archive_social_overlay: { method: "POST", template: "/api/admin/social-overlays/:id/archive", capability: "adminBackend" },
+  admin_unarchive_social_overlay: { method: "POST", template: "/api/admin/social-overlays/:id/unarchive", capability: "adminBackend" },
 };
 /** The one admin-scope tool that only reads (a POST so that its body can carry a path): readOnlyHint, not destructive. */
 const ADMIN_SCOPE_READS: Record<string, { method: string; template: string; capability: string }> = {
