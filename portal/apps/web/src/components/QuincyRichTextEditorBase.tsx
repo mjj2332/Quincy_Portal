@@ -35,7 +35,7 @@ import { EmbeddedImage as EmbeddedImageThumb } from "./quincy/EmbeddedImage";
 import { EmbeddedVideo as EmbeddedVideoThumb } from "./quincy/EmbeddedVideo";
 import { Spinner } from "./reui/spinner";
 import { AttachmentThumb, FILE_CHIP, FILE_CHIP_META, FILE_CHIP_THUMB, FileChipName, fileSize } from "./quincy/AttachmentChip";
-import { RichTextFormatBubble, showRichTextFormatBubble } from "./reui/rich-text-editor/rich-text-format-bubble";
+import { RichTextFormatBubble, richTextBubbleRoot, showRichTextFormatBubble } from "./reui/rich-text-editor/rich-text-format-bubble";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -875,8 +875,8 @@ export function QuincyRichTextEditorBase({
   const off = (can: boolean) => disabled || !can;
   // The note box's bubbles dock on the host's phone layout (frame P2), else below 721px.
   const docked = bubbleDocked ?? phone;
-  // A bubble mounts outside the box's scrolling text, which would clip it: at the surface scope, as the format bubble does.
-  const bubbleRoot = () => (editor.view.dom.closest("[data-surface]") as HTMLElement | null) ?? document.body;
+  // A bubble mounts outside the box's scrolling text, which would clip it: where the format bubble does.
+  const bubbleRoot = () => richTextBubbleRoot(editor);
 
   // Built once and placed in one of two homes: the field's own toolbar row (the default), or the host's element (`toolbarContainer`).
   const toolbar = <RichTextToolbar aria-label="Formatting" className="w-full min-w-0 gap-[var(--space-2)]">
