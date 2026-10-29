@@ -15,7 +15,9 @@
 //    the editor's field.
 // 5. `appendTo`: the bubble mounts at the nearest `data-surface` scope rather than beside the editor. The note box's
 //    text region scrolls, which would clip it, and the scope gives it the viewer's dark popover roles (ADR 0024,
-//    owner decision D5: C3 and P2 draw a light bubble, the build keeps the viewer's).
+//    owner decision D5: C3 and P2 draw a light bubble, the build keeps the viewer's). With no scope it mounts in the
+//    dialog that holds the editor (the Project sheet's Collaboration tab): on `document.body` the sheet, at --z-dialog,
+//    covered the bubble's --z-popover. `document.body` is the last resort. `richTextBubbleRoot` is that order.
 // 6. A click inside the bubble stops there. React carries it through the menu's portal to whatever renders the
 //    editor, and a note card seeks on click (docs/lessons.md "A portaled menu's click bubbles to the card that
 //    renders it (#901)").
@@ -50,6 +52,12 @@ const FORMAT_BUBBLE_KEY = "richTextFormatBubble"
 const FLOATING_OPTIONS = { placement: "top", offset: 8 } as const
 // Docked, it keeps to the box's top edge: flipping it under the box would put it over the keyboard.
 const DOCKED_OPTIONS = { placement: "top-start", offset: 8, flip: false } as const
+
+/** Where a bubble mounts: the surface scope, else the dialog that holds the editor, else `document.body` (edit 5). */
+export function richTextBubbleRoot(editor: Editor): HTMLElement {
+  const dom = editor.view.dom
+  return (dom.closest("[data-surface]") as HTMLElement | null) ?? (dom.closest("[role='dialog']") as HTMLElement | null) ?? document.body
+}
 
 /** Shows the format bubble now, for a link edit that starts from the keyboard. */
 export function showRichTextFormatBubble(editor: Editor) {
@@ -124,10 +132,7 @@ export function RichTextFormatBubble({
     return { getBoundingClientRect: () => anchor.getBoundingClientRect(), getClientRects: () => [anchor.getBoundingClientRect()], contextElement: anchor }
   }, [editor])
 
-  const appendTo = useCallback(
-    () => (editor.view.dom.closest("[data-surface]") as HTMLElement | null) ?? document.body,
-    [editor]
-  )
+  const appendTo = useCallback(() => richTextBubbleRoot(editor), [editor])
 
   const options = useMemo(() => (docked ? DOCKED_OPTIONS : FLOATING_OPTIONS), [docked])
   const off = (can: boolean) => disabled || !can

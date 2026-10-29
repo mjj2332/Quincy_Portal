@@ -37,9 +37,10 @@ let handle: RichTextEditorHandle | null = null;
 let phone = false;
 const onSubmit = vi.fn();
 
-function Harness({ initial = empty(), strip, docked }: { initial?: RichTextDoc; strip?: HTMLElement | null; docked?: boolean }) {
+function Harness({ initial = empty(), strip, docked, scope = "surface" }: { initial?: RichTextDoc; strip?: HTMLElement | null; docked?: boolean; scope?: "surface" | "dialog" }) {
   const [value, setValue] = useState(initial);
-  return <div data-surface="inverse">
+  const scopeProps = scope === "surface" ? { "data-surface": "inverse" } : { role: "dialog" };
+  return <div {...scopeProps}>
     <QuincyRichTextEditor
       ref={(next) => { handle = next; }}
       preset="note" value={value} onChange={(next) => { latest = next; setValue(next); }} limit={10_000} loadMentionables={async () => []}
@@ -222,6 +223,12 @@ describe("the formatting bubble (C3, P2)", () => {
     const host = mount(<Harness initial={text("Swap this window")} />); await settle();
     await select(host, "this");
     expect(bubble()!.closest('[data-surface="inverse"]')).not.toBeNull();
+  });
+
+  it("mounts inside the dialog that holds the editor when there is no surface scope, so the dialog does not cover it (the Project sheet)", async () => {
+    const host = mount(<Harness initial={text("Swap this window")} scope="dialog" />); await settle();
+    await select(host, "this");
+    expect(bubble()!.closest('[role="dialog"]')).not.toBeNull();
   });
 
   it("floats over the selection on a desktop and docks to the box's top edge on a phone", async () => {
