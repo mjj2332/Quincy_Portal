@@ -6488,3 +6488,10 @@ Tags: rich-text, focus-overlays, qa-browser
 - **Rule.** A Tiptap bubble's `appendTo` is `richTextBubbleRoot(editor)` (`rich-text-format-bubble.tsx`): the surface scope, else the dialog that holds the editor, else `body`. Never fall straight back to `body` from inside an overlay; a popover portaled to `body` below `--z-dialog` is invisible in every dialog.
 - **Test traps.** happy-dom does no stacking, so "the bubble exists" passes while it is covered; assert where it mounts. In a real browser, `document.elementFromPoint` at the bubble's rect names what is on top.
 - **Gate.** `QuincyRichTextEditor-note.dom.test.tsx` ("mounts inside the dialog that holds the editor when there is no surface scope").
+
+## A local .dev.vars leaks into the Worker test suite
+Tags: testing-guards, workers-runtime, auth
+
+- **What bit.** `npm run verify` failed locally at `vitest:worker-app` with ~200 guest tests throwing `no session`, while CI stayed green. `@cloudflare/vitest-plugin` builds the test Worker from `wrangler.jsonc`, and wrangler always merges a gitignored `.dev.vars` over its `vars` (there is no opt-out). A developer's `APP_ORIGIN=http://localhost:…` made `isLocalDev` true, so the guest cookie was set without its `__Secure-` prefix and the test helper `sessionCookie` never found it.
+- **Rule.** Both worker-app Vitest configs spread `committedVars()` (`workers/app/vitest.committed-vars.ts`, the parsed `vars` of `wrangler.jsonc`) into `miniflare.bindings`, which win over wrangler-derived values. A new `vars` entry is pinned automatically; a test that needs a different value sets it after the spread.
+- **Test traps.** A suite that passes in CI and a fresh worktree but fails in the main checkout points at gitignored local files (`.dev.vars`, `.env*`, `.wrangler/state`). Reproduce with a throwaway file of your own values, never by reading the real one.
