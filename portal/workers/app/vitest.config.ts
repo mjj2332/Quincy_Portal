@@ -2,6 +2,7 @@ import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+import { committedVars } from "./vitest.committed-vars.ts";
 import { requireExecutedTests } from "../../packages/shared/src/testing/require-executed-tests.ts";
 import { HOOK_TIMEOUT_MS, TEST_TIMEOUT_MS } from "../../packages/shared/src/testing/vitest-timeouts.ts";
 
@@ -33,6 +34,7 @@ export default defineConfig({
       wrangler: { configPath: "./wrangler.jsonc" },
       miniflare: {
         bindings: {
+          ...committedVars(),
           TRANSFORM_SOURCE_SECRET: "test-transform-source-secret-32-bytes",
           MCP_DOWNLOAD_SECRET: "test-mcp-download-secret-32-bytes!!",
           // Primary suite is production-shaped: direct browser PUTs must not leak here.
