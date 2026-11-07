@@ -128,13 +128,15 @@ describe("downloads", () => {
     expect(links.map((a) => a.getAttribute("href"))).toEqual([downloadUrl(1)]);
     expect(links.every((a) => a.hasAttribute("download"))).toBe(true);
   });
-  it("never links a download for the locked item, and keeps Download all in the hero, not the Premium panel", async () => {
+  it("never links a download for the locked item, and keeps Download all on the Gallery tab, not the Premium panel", async () => {
     await open();
     await click(tab("Premium"));
     const lockedTile = document.querySelector(`[data-handle="${handle(2)}"]`)!;
     expect(lockedTile.querySelectorAll("a")).toHaveLength(0);
     expect(document.querySelector('[data-testid="delivery-panel-premium"]')!.textContent).not.toMatch(/download all/i);
-    expect(document.querySelector('[data-testid="delivery-hero"]')!.textContent).toMatch(/download all/i);
+    expect(document.querySelector('[data-testid="delivery-panel-premium"] [data-testid="delivery-download-all"]')).toBeNull();
+    await click(tab("Gallery"));
+    expect(document.querySelector('[data-testid="delivery-panel-photos"] [data-testid="delivery-download-all"]')).not.toBeNull();
     expect(calls.map((call) => call.url)).toEqual([BASE]);
   });
 });

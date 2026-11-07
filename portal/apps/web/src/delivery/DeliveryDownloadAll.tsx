@@ -40,7 +40,7 @@ export function DeliveryDownloadAll({ api, onGone }: { api: Pick<DeliveryApi, "z
   const close = useCallback(() => { setOpen(false); }, []);
   const gone = useCallback(() => { setOpen(false); onGone(); }, [onGone]);
   return <>
-    <Button type="button" variant="default" size="lg" data-testid="delivery-download-all" className={TOUCH} onClick={() => { setSize("web"); setOpening((n) => n + 1); setOpen(true); }}><DownloadIcon aria-hidden="true" />Download all</Button>
+    <Button type="button" variant="default" data-testid="delivery-download-all" className={TOUCH} onClick={() => { setSize("web"); setOpening((n) => n + 1); setOpen(true); }}><DownloadIcon aria-hidden="true" />Download all photos</Button>
     <Dialog open={open} onOpenChange={(next) => { if (!next) close(); }}>
       {/* #907: below 520px of height (the same threshold as `POPUP_SHORT_QUERY`) the pinned header, radios and footer left the zip body ~3px. There the dialog itself is the one scroller and the
           body stops scrolling (`flex-none`), never a scroller nested in a shrinking window (lesson "A nested scroller taller than its host's window traps the wheel (#686)").

@@ -513,11 +513,11 @@ describe("film tiles (#882)", () => {
     const summary = document.getElementById(openOf(1).getAttribute("aria-describedby")!)!;
     expect(summary.textContent).toBe("v3, 1:02, 2 open notes on v3");
   });
-  it("names a film by its own title (#882): the tile, the unlock control, the menu and the Download link, and a long title truncates; a page from an older Worker (no title) keeps the label", async () => {
+  it("names a film by its own title (#882): the tile, the unlock control, the menu and the Download link, and a long title wraps onto more lines rather than truncating; a page from an older Worker (no title) keeps the label", async () => {
     const long = "A very long film title ".repeat(12).trim();
     await showFilms([film(1, { review: { url: REVIEW }, title: "Harbour View Walkthrough" }), film(2, { review: { url: REVIEW }, title: long }), film(3, { review: { url: REVIEW } })]);
     expect(openOf(1).textContent).toBe("Harbour View Walkthrough");
-    expect(openOf(2).textContent).toBe(long); expect(openOf(2).querySelector("span")!.className).toContain("truncate");
+    expect(openOf(2).textContent).toBe(long); const title = openOf(2).querySelector("span")!.className; expect(title).toContain("whitespace-normal"); expect(title).not.toContain("truncate");
     expect(openOf(3).textContent).toBe("Video 03");
     const trigger = tileOf(1).querySelector<HTMLElement>('[data-testid="delivery-film-menu"]')!;
     expect(trigger.getAttribute("aria-label")).toBe("Actions for Harbour View Walkthrough");
@@ -1148,16 +1148,19 @@ describe("download all", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(byTestId("delivery-panel-photos")!.querySelector('a[href*="zip"], a[href*="all"]')).toBeNull();
   });
-  it("renders whatever slice 7 passes in the slot inside the hero, as its action", async () => {
-    await show(page([photo(1)]), { downloadAllSlot: <span data-testid="slot">Download all</span> });
-    expect(byTestId("delivery-hero")!.contains(byTestId("slot"))).toBe(true);
+  it("renders the slot at the head of the Gallery tab, not in the hero: it downloads photos only", async () => {
+    await show(page([photo(1), film(2)]), { downloadAllSlot: <span data-testid="slot">Download all</span> });
+    expect(byTestId("delivery-hero")!.contains(byTestId("slot"))).toBe(false);
+    expect(byTestId("delivery-panel-photos")!.contains(byTestId("slot"))).toBe(true);
+    await click(tab("Film"));
+    expect(byTestId("slot")).toBeNull();
   });
-  it("keeps the slot in the hero on every tab, including a page with no Gallery tab", async () => {
+  it("heads the Premium tab with the slot when the page has no Gallery tab", async () => {
     await show(page([photo(1, { premium: true }), film(2)]), { downloadAllSlot: <span data-testid="slot">Download all</span> });
     expect(tabNames()).toEqual(["Film", "Premium"]);
-    expect(byTestId("delivery-hero")!.contains(byTestId("slot"))).toBe(true);
+    expect(byTestId("slot")).toBeNull();
     await click(tab("Premium"));
-    expect(byTestId("delivery-hero")!.contains(byTestId("slot"))).toBe(true);
+    expect(byTestId("delivery-panel-premium")!.contains(byTestId("slot"))).toBe(true);
     expect(allByTestId("slot")).toHaveLength(1);
   });
 });
@@ -1168,11 +1171,11 @@ const tick = async (ms: number) => { await act(async () => { await vi.advanceTim
 const playToggle = () => [...byTestId("delivery-lightbox")!.querySelectorAll<HTMLElement>("button")].find((b) => /slideshow/i.test(b.textContent ?? ""))!;
 
 describe("hero action order", () => {
-  it("puts Download all first, then Slideshow, then Share (the prototype's order)", async () => {
+  it("puts Slideshow, then Share", async () => {
     await show(page([photo(1)]), { downloadAllSlot: <span data-testid="slot">Download all</span>, shareUrl: "https://quincy.example/d/x" });
-    const order = [byTestId("slot")!, byTestId("delivery-slideshow")!, byTestId("delivery-share")!];
+    const order = [byTestId("delivery-slideshow")!, byTestId("delivery-share")!];
     expect(order[0]!.compareDocumentPosition(order[1]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(order[1]!.compareDocumentPosition(order[2]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(byTestId("delivery-hero")!.contains(byTestId("slot"))).toBe(false);
   });
 });
 

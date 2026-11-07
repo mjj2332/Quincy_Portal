@@ -38,7 +38,7 @@ const pick = async (size: "web" | "full") => { await click(byTestId(`delivery-zi
 describe("opening", () => {
   it("renders only the button and fetches nothing until it is pressed", async () => {
     await show();
-    expect(byTestId("delivery-download-all")!.textContent).toBe("Download all");
+    expect(byTestId("delivery-download-all")!.textContent).toBe("Download all photos");
     expect(calls).toEqual([]);
     expect(byTestId("delivery-download-all-dialog")).toBeNull();
   });
