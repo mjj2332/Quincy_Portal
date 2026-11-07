@@ -46,7 +46,8 @@ export function FilmList({ items, hrefs, unlock, onRequestUnlock, pageSlug = nul
   const { listRef, openFilm, player } = usePlainPlayer(items);
   const [layout, setLayout] = useUiPref(DELIVERY_VIDEO_LAYOUT_KEY, normalizeVideoLayout);
   return <>
-    <div ref={listRef} className="grid gap-[var(--space-3)]">
+    {/* One `minmax(0,1fr)` track: an `auto` track sizes to its content's min-content, and a list row's unwrapped title made the whole list wider than a phone. */}
+    <div ref={listRef} className="grid grid-cols-[minmax(0,1fr)] gap-[var(--space-3)]">
       {/* #933 F12: one row for the label and the switch, so the switch never adds a row of its own under the label. */}
       <div data-testid="delivery-film-head" className={cn("flex items-center gap-[var(--space-3)]", label ? "justify-between" : "justify-end")}>
         {label}<VideoLayoutToggle value={layout} onChange={setLayout} />
@@ -58,7 +59,7 @@ export function FilmList({ items, hrefs, unlock, onRequestUnlock, pageSlug = nul
             {item.locked
               ? <LockedFilmTile name={name} state={unlockOf(unlock, item.handle)} onRequest={() => { onRequestUnlock(item.handle); }} />
               : <VideoTile
-                tone="paper" testId="delivery-film-tile" openTestId="delivery-film-open"
+                tone="paper" testId="delivery-film-tile" openTestId="delivery-film-open" wrapTitle
                 title={name} posterUrl={item.thumbUrl} version={item.version ?? null} durationMs={item.durationMs} openNotes={item.openNotes ?? null}
                 {...(item.review
                   ? { href: reviewAddress(item.review.url, pageSlug) }
@@ -199,7 +200,7 @@ export function usePlainPlayer(items: readonly DeliveryItemDto[]) {
 function LockedFilmTile({ name, state, onRequest }: { name: string; state: UnlockState; onRequest: () => void }) {
   const view = useUnlockView(state);
   return <VideoTile
-    tone="paper" locked testId="delivery-film-tile" openTestId="delivery-film-open"
+    tone="paper" locked testId="delivery-film-tile" openTestId="delivery-film-open" wrapTitle
     title={name} posterUrl={null} version={null} durationMs={null} openNotes={null}
     {...lockedFilmProps(view, name, onRequest)}
     menu={<PremiumBadge />}

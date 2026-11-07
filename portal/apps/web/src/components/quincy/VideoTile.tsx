@@ -53,25 +53,31 @@ export function videoTileSummary({ locked = false, version, durationMs, openNote
  * accessible name the title (or `openLabel`) and its description `describedBy` (the summary). Tile and row render this same control, so they cannot drift, and the raw `<button>`
  * stays here in `components/quincy/` (the UI primitive ratchet). `variant="row"` is the row's 14px type and stretched focus ring.
  */
-export function VideoOpenControl({ title, href, onOpen, openLabel, openDisabled = false, testId, dataVideoId, describedBy, variant = "tile", className }: VideoTileOpen & {
+export function VideoOpenControl({ title, href, onOpen, openLabel, openDisabled = false, testId, dataVideoId, describedBy, variant = "tile", wrap = false, className }: VideoTileOpen & {
   title: string; openLabel?: string | undefined; openDisabled?: boolean | undefined; testId: string; dataVideoId?: string | undefined;
   /** The id of the element whose text is the control's description (the summary). */ describedBy: string;
-  variant?: "tile" | "row"; className?: string;
+  variant?: "tile" | "row";
+  /** The title wraps onto as many lines as it needs instead of truncating (the client-facing Delivery tiles); nothing is cut, so the tooltip never shows. */
+  wrap?: boolean;
+  className?: string;
 }) {
   const base = variant === "row" ? OPEN_ROW : OPEN;
+  const text = wrap ? "min-w-0 whitespace-normal break-words" : "min-w-0 truncate";
   return <TruncatedTitleTip text={title}>
     {href !== undefined
-      ? <a href={href} data-testid={testId} data-video-id={dataVideoId} aria-describedby={describedBy} aria-label={openLabel} className={cn(base, "flex items-center no-underline", className)}><span data-title-text="" className="min-w-0 truncate">{title}</span></a>
+      ? <a href={href} data-testid={testId} data-video-id={dataVideoId} aria-describedby={describedBy} aria-label={openLabel} className={cn(base, "flex items-center no-underline", className)}><span data-title-text="" className={text}>{title}</span></a>
       : <button
         type="button" data-testid={testId} data-video-id={dataVideoId} data-title-text="" aria-describedby={describedBy} aria-label={openLabel} aria-disabled={openDisabled ? true : undefined}
         onClick={(event) => { if (!openDisabled) onOpen?.(event.currentTarget); }}
-        className={cn(base, "cursor-pointer truncate border-0 bg-transparent p-0 text-left aria-disabled:cursor-default", className)}
+        className={cn(base, text, "cursor-pointer border-0 bg-transparent p-0 text-left aria-disabled:cursor-default", className)}
       >{title}</button>}
   </TruncatedTitleTip>;
 }
 
-export function VideoTile({ title, posterUrl, version, durationMs, openNotes, href, onOpen, openLabel, openDisabled = false, tone = "ink", locked = false, status, linked, premium, select, menu, drop, footer, caption, testId = "video-tile", openTestId = "video-tile-open", dataVideoId }: VideoTileOpen & {
+export function VideoTile({ title, posterUrl, version, durationMs, openNotes, href, onOpen, openLabel, openDisabled = false, tone = "ink", locked = false, status, linked, premium, select, menu, drop, footer, caption, testId = "video-tile", openTestId = "video-tile-open", dataVideoId, wrapTitle = false }: VideoTileOpen & {
   title: string;
+  /** A long title wraps onto more lines instead of truncating (the Delivery page's Film tiles). */
+  wrapTitle?: boolean;
   posterUrl: string | null;
   /** Null where the page does not know or must not say (a locked film, or no review to open on the Delivery page): no chip, no words. */
   version: number | null;
@@ -141,10 +147,11 @@ export function VideoTile({ title, posterUrl, version, durationMs, openNotes, hr
       {select && <label className="absolute left-0 top-0 z-10 flex size-11 cursor-pointer items-center justify-center opacity-0 transition-opacity focus-within:opacity-100 group-hover/tile:opacity-100 group-data-[selected=true]/tile:opacity-100 pointer-coarse:opacity-100 max-[721px]:opacity-100">
         <Checkbox aria-label={`Select ${title}`} checked={select.selected} onChange={select.onToggle} className={TICK} />
       </label>}
-      <div className="flex items-center gap-[var(--space-2)] px-[var(--space-3)] py-[var(--space-2)]">
+      {/* A wrapped title keeps the "⋯" level with its first line, not centred on the whole block. */}
+      <div className={cn("flex gap-[var(--space-2)] px-[var(--space-3)] py-[var(--space-2)]", wrapTitle ? "items-start" : "items-center")}>
         {href !== undefined
-          ? <VideoOpenControl href={href} title={title} openLabel={openLabel} testId={openTestId} dataVideoId={dataVideoId} describedBy={summaryId} />
-          : <VideoOpenControl onOpen={onOpen} title={title} openLabel={openLabel} openDisabled={openDisabled} testId={openTestId} dataVideoId={dataVideoId} describedBy={summaryId} />}
+          ? <VideoOpenControl href={href} title={title} openLabel={openLabel} testId={openTestId} dataVideoId={dataVideoId} describedBy={summaryId} wrap={wrapTitle} />
+          : <VideoOpenControl onOpen={onOpen} title={title} openLabel={openLabel} openDisabled={openDisabled} testId={openTestId} dataVideoId={dataVideoId} describedBy={summaryId} wrap={wrapTitle} />}
         <span id={summaryId} className="sr-only">{summary}</span>
         {menu && <div className="relative z-10 shrink-0">{menu}</div>}
       </div>

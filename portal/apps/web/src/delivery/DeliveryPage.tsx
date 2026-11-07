@@ -42,7 +42,7 @@ export type DeliveryPageProps = {
   hrefs: DeliveryHrefs | null;
   onRequestUnlock: (handle: string) => void;
   unlockState: UnlockStates;
-  /** The hero's action (Download all). Nothing is rendered or requested without it. */
+  /** Download all photos, drawn at the head of the Gallery tab. Nothing is rendered or requested without it. */
   downloadAllSlot?: ReactNode;
   /** The page's own public address, for the hero's Share (#837). Absent in Preview, which is not published and has nothing to share. */
   shareUrl?: string;
@@ -60,7 +60,7 @@ function Hero({ dto, hero, action }: { dto: DeliveryPageDto; hero: DeliveryItemD
   const { eyebrow, agency, frames, films } = heroMetaOf(dto);
   const counts = [frames > 0 ? count(frames, "frame", "frames") : null, films > 0 ? count(films, "film", "films") : null].filter((part) => part !== null).join(" · ");
   const [failed, setFailed] = useState(false);
-  return <header data-testid="delivery-hero" data-surface="inverse" className="relative flex min-h-[min(78svh,880px)] items-end overflow-clip bg-background text-foreground @max-[721px]:min-h-[min(78svh,560px)]">
+  return <header data-testid="delivery-hero" data-surface="inverse" className="relative flex min-h-[min(56svh,600px)] items-end overflow-clip bg-background text-foreground @max-[721px]:min-h-[min(46svh,360px)]">
     {hero && hero.url !== null && !failed && <img
       data-testid="delivery-hero-photo" src={hero.url} alt={hero.label} fetchPriority="high" onError={() => { setFailed(true); }}
       srcSet={hero.thumbUrl ? `${hero.thumbUrl} ${RENDITION_SPECS.thumb.maxEdge}w, ${hero.url} ${DELIVERY_RENDITION_SPECS.delivery_web.maxEdge}w` : undefined}
@@ -69,7 +69,7 @@ function Hero({ dto, hero, action }: { dto: DeliveryPageDto; hero: DeliveryItemD
     <div data-testid="delivery-hero-credit" aria-hidden className="pointer-events-none absolute top-[var(--space-7)] right-[var(--space-7)] z-10 @max-[721px]:hidden">
       <img src="/brand/quincy-wordmark-white.png" alt="" className="h-[var(--space-5)] w-auto select-none" />
     </div>
-    <div className="relative z-10 mx-auto w-full max-w-[var(--container-page)] px-[var(--space-7)] pt-[var(--space-9)] pb-[var(--space-8)] @max-[721px]:px-[var(--space-4)] @max-[721px]:pt-[var(--space-7)] @max-[721px]:pb-[var(--space-6)]">
+    <div className="relative z-10 mx-auto w-full max-w-[var(--container-page)] px-[var(--space-7)] pt-[var(--space-8)] pb-[var(--space-7)] @max-[721px]:px-[var(--space-4)] @max-[721px]:pt-[var(--space-6)] @max-[721px]:pb-[var(--space-5)]">
       {eyebrow.length > 0 && <p data-testid="delivery-hero-eyebrow" className="m-0 mb-[var(--space-4)] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-widest)] text-on-inverse-muted">{eyebrow.join(" · ")}</p>}
       <h1 className="m-0 max-w-[14ch] [font:400_clamp(var(--text-3xl),6cqw,var(--text-5xl))/0.98_var(--font-display)] tracking-[var(--tracking-tightest)] text-balance">{street}</h1>
       {(agency !== null || counts !== "") && <p data-testid="delivery-hero-meta" className="m-0 mt-[var(--space-5)] flex flex-wrap items-center gap-[var(--space-4)] [font:var(--type-body-lg)]">
@@ -77,7 +77,7 @@ function Hero({ dto, hero, action }: { dto: DeliveryPageDto; hero: DeliveryItemD
         {agency !== null && counts !== "" && <span aria-hidden className="opacity-40">—</span>}
         {counts !== "" && <span className="text-on-inverse-muted">{counts}</span>}
       </p>}
-      {action !== undefined && action !== null && <div className="mt-[var(--space-7)] flex flex-wrap gap-[var(--space-3)]">{action}</div>}
+      {action !== undefined && action !== null && <div className="mt-[var(--space-6)] flex flex-wrap gap-[var(--space-3)] @max-[721px]:mt-[var(--space-5)]">{action}</div>}
     </div>
   </header>;
 }
@@ -89,7 +89,7 @@ function Groups({ items, props, onOpen, headings, compact }: { items: DeliveryIt
   const photos = of("photo"); const films = of("video"); const plans = of("floorplan"); const copy = of("copy");
   // `inRow`: the label shares a row with a control (the Film group's Layout switch, #933 F12), whose list keeps the gap below, so it brings no margin of its own.
   const heading = (text: string, n: number, inRow = false) => headings ? <h3 className={`m-0 ${inRow ? "" : "mb-[var(--space-3)] "}flex items-baseline gap-[var(--space-2)] [font:var(--type-eyebrow)] uppercase tracking-[var(--tracking-wide)] text-foreground-secondary`}>{text}<span className="tabular-nums">{n}</span></h3> : null;
-  return <div className="grid gap-[var(--space-6)]">
+  return <div className="grid grid-cols-[minmax(0,1fr)] gap-[var(--space-6)]">
     {photos.length > 0 && <section aria-label="Photos">{heading("Photos", photos.length)}<PhotoGrid items={photos} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} onOpen={onOpen} /></section>}
     {films.length > 0 && <section aria-label="Film"><FilmList items={films} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} pageSlug={props.pageSlug ?? null} compact={compact} label={heading("Film", films.length, true)} /></section>}
     {plans.length > 0 && <section aria-label="Floorplan">{heading("Floorplan", plans.length)}<DocRows items={plans} hrefs={hrefs} unlock={unlockState} onRequestUnlock={onRequestUnlock} label="Floorplan" /></section>}
@@ -113,9 +113,10 @@ function PremiumIntro({ items }: { items: DeliveryItemDto[] }) {
   </FramePanel></Frame>;
 }
 
-function Panel({ tab, props, onOpen, compact }: { tab: DeliveryTab; props: DeliveryPageProps; onOpen: OpenViewer; compact: boolean }) {
+function Panel({ tab, props, onOpen, compact, downloadAll }: { tab: DeliveryTab; props: DeliveryPageProps; onOpen: OpenViewer; compact: boolean; downloadAll: ReactNode }) {
   return <TabsContent value={tab.id} data-testid={`delivery-panel-${tab.id}`}>
     {tab.id === "premium" && <PremiumIntro items={tab.items} />}
+    {downloadAll !== null && downloadAll !== undefined && <div data-testid="delivery-download-head" className="mb-[var(--space-4)] flex justify-end">{downloadAll}</div>}
     <Groups items={tab.items} props={props} onOpen={onOpen} headings={tab.id === "premium"} compact={compact} />
   </TabsContent>;
 }
@@ -201,10 +202,12 @@ export function DeliveryPage(props: DeliveryPageProps) {
   const emptied = viewer !== null && viewerItems !== null && viewerItems.length === 0;
   useEffect(() => { if (emptied) setViewer(null); }, [emptied]);
   const { street } = dto.property;
-  const heroHasAction = slideshowItems.length > 0 || (props.downloadAllSlot !== undefined && props.downloadAllSlot !== null) || props.shareUrl !== undefined;
+  const heroHasAction = slideshowItems.length > 0 || props.shareUrl !== undefined;
+  // Download all zips the photos only, so it heads the Gallery tab, above the photos it downloads, rather than sitting in the hero beside the films and documents it leaves out.
+  // A page whose only photos are Premium extras has no Gallery tab: it heads the Premium tab instead.
+  const downloadTab: DeliveryTabId = tabs.some((tab) => tab.id === "photos") ? "photos" : "premium";
   return <article ref={page} aria-label={`Delivery: ${street}`} data-testid="delivery-page" className="@container w-full bg-background text-foreground">
     <Hero key={hero?.url ?? ""} dto={dto} hero={hero} action={heroHasAction ? <>
-      {props.downloadAllSlot}
       {slideshowItems.length > 0 && <Button type="button" variant="outline" size="lg" data-testid="delivery-slideshow" className={TOUCH} onClick={(event) => { startSlideshow(slideshowItems, 0, event.currentTarget); }}><PlayIcon aria-hidden />Slideshow</Button>}
       {props.shareUrl !== undefined && <DeliveryShareButton url={props.shareUrl} title={street} />}
     </> : undefined} />
@@ -223,7 +226,7 @@ export function DeliveryPage(props: DeliveryPageProps) {
           </div>
         </div>
         <div className="mx-auto w-full max-w-[var(--container-page)] p-[var(--space-7)] @max-[721px]:p-[var(--space-4)]">
-          {tabs.map((tab) => <Panel key={tab.id} tab={tab} props={props} onOpen={open} compact={compact} />)}
+          {tabs.map((tab) => <Panel key={tab.id} tab={tab} props={props} onOpen={open} compact={compact} downloadAll={tab.id === downloadTab ? props.downloadAllSlot : null} />)}
         </div>
       </Tabs>}
     <Footer street={street} />
