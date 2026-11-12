@@ -3,6 +3,7 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
   JOB_RETENTION_CANDIDATES_SQL,
+  JOB_RETENTION_DELETE_SQL,
   JOB_RETENTION_MS,
   JOB_RETENTION_PAGE,
   pruneJobHistory,
@@ -96,12 +97,17 @@ describe("pruneJobHistory", () => {
     expect(await ids()).toEqual(["only-p1", "only-p1-sync", "only-p2"]);
   });
 
-  it("never deletes both of two rows created in the same millisecond", async () => {
-    await seed({ id: "a", created: OLD, updated: OLD }, { id: "b", created: OLD, updated: OLD });
-    expect(await pruneJobHistory(DB, NOW)).toEqual({ deleted: 1 });
-    expect(await ids()).toEqual(["b"]);
+  it("keeps every row tied at the newest created_at (the reader orders by created_at only, so an id tie-break could delete its row)", async () => {
+    await seed({ id: "z", created: OLD, updated: OLD }, { id: "a", created: OLD, updated: OLD });
     expect(await pruneJobHistory(DB, NOW)).toEqual({ deleted: 0 });
-    expect(await ids()).toEqual(["b"]);
+    expect(await ids()).toEqual(["a", "z"]);
+  });
+
+  it("deletes both old twins once a strictly newer row exists", async () => {
+    await seed({ id: "z", created: OLD, updated: OLD }, { id: "a", created: OLD, updated: OLD });
+    await newest();
+    expect(await pruneJobHistory(DB, NOW)).toEqual({ deleted: 2 });
+    expect(await ids()).toEqual(["newest-p1-editor_reconcile"]);
   });
 
   it("keeps a row whose project_id is NULL", async () => {
@@ -192,4 +198,39 @@ describe("job retention candidate selection (rows read)", () => {
   });
 });
 
-const ROWS_READ_BOUND = 20_000;
+const ROWS_READ_BOUND = 5_000;
+
+describe("job retention with foreign keys on and a large reconciliation claims table", () => {
+  async function seedClaimsWorld() {
+    expect((await DB.prepare("PRAGMA foreign_keys").first<{ foreign_keys: number }>())!.foreign_keys).toBe(1);
+    // 4,000 other-kind jobs each owning a done reconciliation claim, then 600 deletable editor_reconcile rows and a newest sibling.
+    await DB.prepare(`WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 3999)
+      INSERT INTO jobs (id, kind, status, project_id, created_at, updated_at) SELECT 'owner-' || i, 'dropbox_sync', 'done', 'p1', ? + i, ? + i FROM n`).bind(OLD, OLD).run();
+    await DB.prepare(`WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 3999)
+      INSERT INTO raw_reconciliation_claims (id, project_id, owner_job_id, state, lease_expires_at, trigger, created_at, updated_at)
+      SELECT 'claim-' || i, 'p1', 'owner-' || i, 'done', ?, 'manual', ?, ? FROM n`).bind(NOW, NOW, NOW).run();
+    await DB.prepare(`WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 599)
+      INSERT INTO jobs (id, kind, status, project_id, created_at, updated_at) SELECT 'old-' || i, 'editor_reconcile', 'done', 'p1', ? + i, ? + i FROM n`).bind(OLD, OLD).run();
+    await newest();
+  }
+
+  it("probes each FK table through its job index, not a scan", async () => {
+    const lines = (await DB.prepare(`EXPLAIN QUERY PLAN ${JOB_RETENTION_CANDIDATES_SQL}`).bind(NOW - JOB_RETENTION_MS, JOB_RETENTION_PAGE).all<{ detail: string }>()).results.map((r) => r.detail);
+    const text = lines.join("\n");
+    expect(text).toMatch(/SEARCH r USING (COVERING )?INDEX autohdr_handoffs_job_idx \(job_id=\?\)/u);
+    expect(text).toMatch(/SEARCH r USING (COVERING )?INDEX autohdr_fetch_claims_job_idx \(job_id=\?\)/u);
+    expect(text).toMatch(/SEARCH r USING (COVERING )?INDEX raw_reconciliation_claims_owner_job_idx \(owner_job_id=\?\)/u);
+    expect(text).not.toMatch(/SCAN r/u);
+    expect(text, "newer-sibling probe is a created_at range, with no id tie-break").toMatch(/SEARCH n EXISTS USING (COVERING )?INDEX jobs_project_kind_created_idx \(project_id=\? AND kind=\? AND created_at>\?\)/u);
+  });
+
+  it("deletes a full 250-row page for a bounded number of rows read, FK enforcement included", async () => {
+    await seedClaimsWorld();
+    const result = await DB.prepare(JOB_RETENTION_DELETE_SQL).bind(NOW - JOB_RETENTION_MS, JOB_RETENTION_PAGE).run();
+    console.log("job-retention delete", { changes: result.meta.changes, rowsRead: result.meta.rows_read, rowsWritten: result.meta.rows_written });
+    expect(result.meta.changes).toBe(250);
+    expect(result.meta.rows_read).toBeLessThan(DELETE_ROWS_READ_BOUND);
+  });
+});
+
+const DELETE_ROWS_READ_BOUND = 5_000;

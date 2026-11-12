@@ -9,9 +9,16 @@
  * (project_id, status, kind, updated_at < cutoff), so it reads only rows already past the cutoff rather than every
  * `done` row. `projects` is the outer table because it is tiny; joining it also drops NULL project_id rows.
  *
- * The referencing tables have no index on their job column, so the FK guards are uncorrelated `NOT IN` lists
- * (each table is read once per run into a lookup, not once per candidate; the columns are NOT NULL, so NOT IN is
- * safe). They are defence in depth: today those FKs point at other kinds.
+ * Newest means strictly the greatest `created_at`: `latestEditorReconcile` orders by `created_at` alone, so every row tied
+ * at the maximum is kept and an id tie-break could never delete the row the reader returns.
+ *
+ * The three referencing tables are probed by correlated `NOT EXISTS` through the job indexes added in migration 0084
+ * (`autohdr_handoffs_job_idx`, `autohdr_fetch_claims_job_idx`, `raw_reconciliation_claims_owner_job_idx`); the same
+ * indexes make the foreign key check on each deleted row a seek instead of a scan. They are defence in depth: today those
+ * FKs point at other kinds.
+ *
+ * The only protected editor rows are the newest per (project, kind), bounded by the project count, so no cursor is needed
+ * and the hourly page of 250 outpaces the ~600 rows/day of growth.
  *
  * One atomic bounded statement per run, no drain loop. Every predicate lives in the candidate subquery, so a
  * protected row never takes a slot on the page ("A bounded page is only bounded if every row on it can move").
@@ -27,11 +34,10 @@ export const JOB_RETENTION_CANDIDATES_SQL = `SELECT j.id FROM projects p CROSS J
     AND j.status = 'done'
     AND j.kind IN ('editor_reconcile', 'editor_sync')
     AND j.updated_at < ?
-    AND EXISTS (SELECT 1 FROM jobs n WHERE n.project_id = j.project_id AND n.kind = j.kind
-      AND (n.created_at > j.created_at OR (n.created_at = j.created_at AND n.id > j.id)))
-    AND j.id NOT IN (SELECT job_id FROM autohdr_handoffs)
-    AND j.id NOT IN (SELECT job_id FROM autohdr_fetch_claims)
-    AND j.id NOT IN (SELECT owner_job_id FROM raw_reconciliation_claims)
+    AND EXISTS (SELECT 1 FROM jobs n WHERE n.project_id = j.project_id AND n.kind = j.kind AND n.created_at > j.created_at)
+    AND NOT EXISTS (SELECT 1 FROM autohdr_handoffs r WHERE r.job_id = j.id)
+    AND NOT EXISTS (SELECT 1 FROM autohdr_fetch_claims r WHERE r.job_id = j.id)
+    AND NOT EXISTS (SELECT 1 FROM raw_reconciliation_claims r WHERE r.owner_job_id = j.id)
   LIMIT ?`;
 
 export const JOB_RETENTION_DELETE_SQL = `DELETE FROM jobs WHERE id IN (${JOB_RETENTION_CANDIDATES_SQL})`;

@@ -119,8 +119,12 @@ hours sooner? That is only safe if the migration text is frozen from then on.
   - skip any row a FK references: `autohdr_handoffs.job_id`, `autohdr_fetch_claims.job_id`,
     `raw_reconciliation_claims.owner_job_id`;
   - keep `failed`/`stuck` rows as retry handles.
-- Mechanics: an indexed, bounded delete page in `job-retention.ts`, called once a day from the
-  hourly cron, capped per run, with no drain loop.
+- Mechanics: an indexed, bounded delete page in `job-retention.ts`, called on every hourly cron,
+  capped at 250 rows per run, with no drain loop. Hourly, not daily: one 250-row page a day could
+  never keep up with ~600 new rows a day.
+- FK enforcement is on in production, so deleting a `jobs` row checks every referencing table.
+  Migration 0084 indexes the three referencing columns so those checks, and the retention guards,
+  are index probes rather than scans.
 - Follow these lessons:
   - "A bounded page is only bounded if every row on it can move";
   - "Retention must key on the youngest thing that still needs the chain…".

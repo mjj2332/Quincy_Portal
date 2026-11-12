@@ -981,6 +981,7 @@ export const autoHdrHandoffs = sqliteTable(
     uniqueIndex("autohdr_handoffs_active_project_unique").on(t.projectId)
       .where(sql`${t.state} in ('starting', 'started', 'blocked')`),
     index("autohdr_handoffs_connection_idx").on(t.connectionId),
+    index("autohdr_handoffs_job_idx").on(t.jobId),
     check("autohdr_handoffs_editing_entry_board_revision_check", sql`${t.editingEntryBoardRevision} IS NULL OR (typeof(${t.editingEntryBoardRevision}) = 'integer' AND ${t.editingEntryBoardRevision} >= 0 AND ${t.editingEntryBoardRevision} <= 9007199254740991)`),
   ],
 );
@@ -1110,6 +1111,7 @@ export const autoHdrFetchClaims = sqliteTable(
     uniqueIndex("autohdr_fetch_claims_active_unique").on(t.projectId, t.mappingGeneration)
       .where(sql`${t.state} in ('starting', 'running')`),
     index("autohdr_fetch_claims_mapping_idx").on(t.mappingId),
+    index("autohdr_fetch_claims_job_idx").on(t.jobId),
   ],
 );
 
@@ -1129,6 +1131,7 @@ export const rawReconciliationClaims = sqliteTable(
   (t) => [
     uniqueIndex("raw_reconciliation_claims_active_unique").on(t.projectId)
       .where(sql`${t.state} = 'running'`),
+    index("raw_reconciliation_claims_owner_job_idx").on(t.ownerJobId),
   ],
 );
 
