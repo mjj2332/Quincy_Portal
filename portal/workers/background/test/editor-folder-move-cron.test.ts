@@ -9,6 +9,7 @@ import { getEditorFolderMapping } from "../src/editor-folders/mapping";
 import { JOB_STALE_MS, sweepEditorFolderOrphanUploads } from "../src/editor-folders/move";
 import type { JobStatus } from "../src/lib/jobs";
 import { MOVE_COMMIT_ATTEMPT_LIMIT } from "../src/editor-folders/move-note";
+import { editorInitialSyncRecoveryQuery, editorMoveRecoveryQuery } from "../src/editor-folders/recovery-queries";
 
 declare const __PORTAL_MIGRATION_SQL__: string;
 const database = env as unknown as { DB: D1Database };
@@ -251,5 +252,92 @@ describe("Minute cron: Editor folder move selection", () => {
     expect(await reconcileJobCount(abandonedRunning.projectId)).toBe(2);
     expect(await reconcileJobCount(abandonedQueued.projectId)).toBe(2);
     expect(await reconcileJobCount(oldButProgressing.projectId)).toBe(1);
+  });
+});
+
+describe("Editor folder recovery selects: throttle boundaries", () => {
+  // The two builders are the ones scheduled() runs. Mappings sort first (oldest updatedAt) so the bounded page always holds them.
+  const TEN_MINUTES = 10 * 60_000;
+  const TWENTY_MINUTES = 20 * 60_000;
+
+  async function driftedMapping(leaf: string): Promise<string> {
+    const { projectId } = await createMapping({ shootDate: "2027-01-15", mappingShootDate: "2026-10-02", leaf, updatedAt: 1 });
+    return projectId;
+  }
+  async function moveSelected(now: number): Promise<string[]> {
+    return (await editorMoveRecoveryQuery(db, now)).map((row) => row.projectId);
+  }
+  async function insertSyncJob(projectId: string, status: JobStatus, createdAt: number, updatedAt: number): Promise<void> {
+    await database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, created_at, updated_at) VALUES (?, 'editor_sync', ?, ?, ?, ?)")
+      .bind(crypto.randomUUID(), status, projectId, createdAt, updatedAt).run();
+  }
+
+  it("an in-flight reconcile throttles while updated_at is strictly inside JOB_STALE_MS, and stops at exactly JOB_STALE_MS", async () => {
+    const now = Date.now();
+    const justInside = await driftedMapping("stale-inside");
+    const exactly = await driftedMapping("stale-equal");
+    const justOutside = await driftedMapping("stale-outside");
+    // created_at is old, so only the in-flight clause can throttle.
+    for (const [projectId, updatedAt] of [[justInside, now - JOB_STALE_MS + 1], [exactly, now - JOB_STALE_MS], [justOutside, now - JOB_STALE_MS - 1]] as const) {
+      await insertReconcileJob(projectId, "running", now - 5 * JOB_STALE_MS, updatedAt);
+    }
+    const selected = await moveSelected(now);
+    expect(selected).not.toContain(justInside);
+    expect(selected).toContain(exactly);
+    expect(selected).toContain(justOutside);
+  });
+
+  it("a reconcile created within 10 minutes throttles, and one created exactly 10 minutes ago does not", async () => {
+    const now = Date.now();
+    const justInside = await driftedMapping("created-inside");
+    const exactly = await driftedMapping("created-equal");
+    const justOutside = await driftedMapping("created-outside");
+    for (const [projectId, createdAt] of [[justInside, now - TEN_MINUTES + 1], [exactly, now - TEN_MINUTES], [justOutside, now - TEN_MINUTES - 1]] as const) {
+      await insertReconcileJob(projectId, "done", createdAt, createdAt);
+    }
+    const selected = await moveSelected(now);
+    expect(selected).not.toContain(justInside);
+    expect(selected).toContain(exactly);
+    expect(selected).toContain(justOutside);
+  });
+
+  it("a recent done or failed or stuck reconcile still throttles, because the created_at clause ignores status", async () => {
+    const now = Date.now();
+    const projects = new Map<JobStatus, string>();
+    for (const status of ["done", "failed", "stuck"] as const) {
+      const projectId = await driftedMapping(`recent-${status}`);
+      projects.set(status, projectId);
+      await insertReconcileJob(projectId, status, now - 60_000, now - 60_000);
+    }
+    const selected = await moveSelected(now);
+    for (const projectId of projects.values()) expect(selected).not.toContain(projectId);
+  });
+
+  it("another job kind, or another Project's reconcile, never throttles", async () => {
+    const now = Date.now();
+    const target = await driftedMapping("other-kind");
+    const neighbour = await driftedMapping("neighbour");
+    await insertSyncJob(target, "running", now - 60_000, now - 60_000);
+    await insertReconcileJob(neighbour, "running", now - 60_000, now - 60_000);
+    const selected = await moveSelected(now);
+    expect(selected).toContain(target);
+    expect(selected).not.toContain(neighbour);
+  });
+
+  it("the initial-sync select throttles on a queued/running sync updated within 20 minutes, and stops at exactly 20", async () => {
+    const now = Date.now();
+    const justInside = (await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "sync-inside", updatedAt: 1 })).projectId;
+    const exactly = (await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "sync-equal", updatedAt: 1 })).projectId;
+    const justOutside = (await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "sync-outside", updatedAt: 1 })).projectId;
+    const finished = (await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "sync-done", updatedAt: 1 })).projectId;
+    await insertSyncJob(justInside, "queued", now - 5 * TWENTY_MINUTES, now - TWENTY_MINUTES + 1);
+    await insertSyncJob(exactly, "running", now - 5 * TWENTY_MINUTES, now - TWENTY_MINUTES);
+    await insertSyncJob(justOutside, "running", now - 5 * TWENTY_MINUTES, now - TWENTY_MINUTES - 1);
+    await insertSyncJob(finished, "done", now - 60_000, now - 60_000);
+    const selected = (await editorInitialSyncRecoveryQuery(db, now)).map((row) => row.projectId);
+    expect(selected).not.toContain(justInside);
+    expect(selected).toContain(exactly);
+    expect(selected).toContain(justOutside);
+    expect(selected).toContain(finished);
   });
 });

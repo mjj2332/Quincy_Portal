@@ -1553,6 +1553,8 @@ export const jobs = sqliteTable(
   (t) => [
     index("jobs_status_idx").on(t.status),
     index("jobs_correlation_idx").on(t.correlationId),
+    index("jobs_project_kind_created_idx").on(t.projectId, t.kind, t.createdAt),
+    index("jobs_project_status_kind_updated_idx").on(t.projectId, t.status, t.kind, t.updatedAt),
     uniqueIndex("jobs_manual_upload_publish_active_unique")
       .on(t.correlationId)
       .where(sql`${t.kind} in ('manual_edited_publish', 'manual_raw_publish') and ${t.status} in ('queued', 'running')`),
