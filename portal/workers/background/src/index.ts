@@ -11,6 +11,7 @@ import { withVia } from "./lib/via";
 import type { McpVia } from "./rpc-types";
 import { dbFor } from "./lib/db";
 import { createJob, setJobStatus } from "./lib/jobs";
+import { pruneJobHistory } from "./lib/job-retention";
 import type { DropboxSyncMessage, IngestMessage } from "./messages";
 import { generateRenditions } from "./renditions";
 import { processObjectCrc } from "./object-crc";
@@ -176,6 +177,13 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       } catch (error) {
         console.error("Editor reconciliation recovery failed", { error: error instanceof Error ? error.message : String(error) });
       }
+    }
+    try {
+      // Outside the Editor automation flag: retention is hygiene, not automation. One bounded page per hour.
+      const pruned = await pruneJobHistory(this.env.DB, controller.scheduledTime);
+      console.log("Job history retention", pruned);
+    } catch (error) {
+      console.error("Job history retention failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
     }
     try {
       await reconcileAwaitingRawProjects(this.env.DB, controller.scheduledTime, (projectId) => notifyProject(this.env, projectId, "raw_ready"));

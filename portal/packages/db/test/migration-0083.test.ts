@@ -48,7 +48,7 @@ describe("migration 0083 indexes jobs for the Editor folder recovery sweep", () 
     const entry = journal.entries.find((candidate) => candidate.tag === MIGRATION.replace(/\.sql$/, ""));
     expect(entry).toMatchObject({ idx: 83 });
     expect(entry!.when).toBeGreaterThan(Math.max(...journal.entries.filter((candidate) => candidate.idx < 83).map((candidate) => candidate.when)));
-    expect(journal.entries.at(-1)!.tag).toBe(MIGRATION.replace(/\.sql$/, ""));
+    expect(journal.entries.find((candidate) => candidate.idx === 84)).toBeDefined();
   });
 
   it("adds the two indexes with exact columns and keeps every existing jobs index", () => {
