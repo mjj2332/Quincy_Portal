@@ -5,7 +5,7 @@ import {
 import type { Env } from "./env";
 import { publishNotificationOutbox } from "@quincy/shared";
 
-export const PROJECT_DEADLINE_SCAN_LIMIT = 100;
+export const PROJECT_DEADLINE_SCAN_LIMIT = 250;
 
 type DueOccurrence = {
   id: string;

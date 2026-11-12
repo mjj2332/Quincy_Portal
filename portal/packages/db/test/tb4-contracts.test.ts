@@ -135,7 +135,7 @@ describe("TB4 implementation contracts", () => {
     expect(delivery).toContain("Delivery lease expired before an ambiguous email attempt.");
     expect(delivery).toContain("queue_published_at <= ? AND available_at <= ?");
     expect(delivery).toContain("LIMIT ${NOTIFICATION_RECOVERY_LIMIT}");
-    expect(delivery).toContain("export const NOTIFICATION_RECOVERY_LIMIT = 100");
+    expect(delivery).toContain("export const NOTIFICATION_RECOVERY_LIMIT = 200");
   });
 
   it("13. keeps Admin delivery views paginated, content-free, and acknowledgement-gated", () => {

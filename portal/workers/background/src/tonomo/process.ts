@@ -162,7 +162,7 @@ async function createProject(env: Env, order: TonomoOrder): Promise<string> {
     .map((offset) => (result[1 + offset]?.results as Array<{ id: string }> | undefined)?.[0]?.id)
     .filter((outboxId): outboxId is string => Boolean(outboxId));
   if (outboxIds.length) {
-    // The per-minute recoverNotificationOutbox republishes pending rows anyway, so a failed
+    // The 30-minute recoverNotificationOutbox republishes pending rows anyway, so a failed
     // publish here is logged, not retried inline.
     await publishNotificationOutbox(env.NOTIFICATION_QUEUE, env.DB, outboxIds).catch((error) =>
       console.error("Default editor outbox publication failed", { projectId: id, error: errorMessage(error) }));

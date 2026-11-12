@@ -38,7 +38,7 @@ export const MANUAL_PUBLISH_STALE_MS = 2 * 60 * 60 * 1000;
 const MANUAL_PUBLISH_JOB_KINDS = ["manual_edited_publish", "manual_raw_publish"] as const;
 type ManualPublishJobKind = (typeof MANUAL_PUBLISH_JOB_KINDS)[number];
 
-const MANUAL_PUBLISH_SWEEP_LIMIT = 25;
+const MANUAL_PUBLISH_SWEEP_LIMIT = 50;
 
 /**
  * Miniflare rethrows ANY `WorkflowInstance.status()` failure — including a genuinely missing

@@ -8,7 +8,8 @@ import { EDITOR_ROOT, editorDayFolderName, editorFolderPath, editorFolderPathKey
 import { getEditorFolderMapping, type EditorFolderMapping } from "../src/editor-folders/mapping";
 import { attemptEditorFolderMove, resumeEditorFolderMove, type EditorFolderMoveDependencies } from "../src/editor-folders/move";
 import { editorReconcileNote, reconcileEditorFolderOutcome } from "../src/editor-folders/scaffold";
-import QuincyBackground from "../src/index";
+import { enqueueEditorReconcile } from "../src/editor-folders/queue";
+import { editorMoveRecoveryQuery } from "../src/editor-folders/recovery-queries";
 import type { Env } from "../src/env";
 
 declare const __PORTAL_MIGRATION_SQL__: string;
@@ -260,10 +261,10 @@ describe("Editor folder move: hand-linked mapping", () => {
     const blocked = await auditRows("editor_folder.move.blocked", projectId);
     expect(blocked.results).toHaveLength(1);
 
-    // The cron selection (section E) must not re-enqueue for the same target date...
-    const worker = Object.create(QuincyBackground.prototype) as QuincyBackground;
-    Object.defineProperty(worker, "env", { value: { ...(env as unknown as Env), DROPBOX_EDITOR_AUTOMATION_ENABLED: "1" } });
-    await worker.scheduled({ cron: "* * * * *", scheduledTime: Date.now(), noRetry() {} } as ScheduledController);
+    // The cron selection (section E) must not re-enqueue for the same target date. Move recovery is run on its own: the hourly tick's rotating
+    // Editor page enqueues a pass for the Project regardless, which is not what this asserts.
+    const automation = { ...(env as unknown as Env), DROPBOX_EDITOR_AUTOMATION_ENABLED: "1" } as Env;
+    for (const row of await editorMoveRecoveryQuery(db, Date.now())) await enqueueEditorReconcile(automation, row.projectId);
     expect(await database.DB.prepare("SELECT count(*) AS n FROM jobs WHERE project_id = ? AND kind = 'editor_reconcile'").bind(projectId).first<{ n: number }>()).toEqual({ n: 0 });
 
     // ...but a genuinely new reschedule (a different target date) is retried.

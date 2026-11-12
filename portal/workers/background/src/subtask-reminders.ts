@@ -13,7 +13,7 @@ import { sqlUuidV4 } from "./project-deadline";
  * ledger rows, and otherwise supersedes an occurrence that can no longer fire. Who gets a reminder is decided here, at fire time,
  * from the assignee relation, so an assignment added before the fire time is covered and a removed one is not.
  */
-export const SUBTASK_REMINDER_SCAN_LIMIT = 100;
+export const SUBTASK_REMINDER_SCAN_LIMIT = 250;
 
 type DueSubtaskOccurrence = {
   id: string;

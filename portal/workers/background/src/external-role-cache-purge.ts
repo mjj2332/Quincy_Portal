@@ -2,8 +2,8 @@ import type { Env } from "./env";
 
 export const EXTERNAL_PROVISIONING_FROZEN_FLAG = "external_editor_provisioning_frozen";
 const MAX_PURGE_ATTEMPTS = 5;
-const PURGE_DEADLINE_MS = 30 * 60_000;
-const PURGE_RETRY_DELAY_MS = 60_000;
+const PURGE_DEADLINE_MS = 3 * 60 * 60_000;
+const PURGE_RETRY_DELAY_MS = 30 * 60_000;
 
 type PurgePayload = { userId: string; roleChangeAuditId: string; authorizationEpoch: number; attempts?: number; deadlineAt?: number; nextAttemptAt?: number };
 type PurgeJob = { id: string; retries: number; payloadJson: string | null };

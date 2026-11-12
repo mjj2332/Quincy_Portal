@@ -11,7 +11,7 @@
  *
  * This is the one genuinely dangerous state in the feature: the world has changed and the database
  * has not. Retrying is right for a transient D1 failure and wrong for a deterministic one — a
- * UNIQUE collision fails identically every minute, forever, while the project's Editor pipeline
+ * UNIQUE collision fails identically on every pass, forever, while the project's Editor pipeline
  * stays fenced and nobody is told. Past this limit the mapping stays `moving` (so the fence holds
  * and no sync runs against a path that no longer exists) but takeover stops, the note says plainly
  * that Dropbox and the database disagree, and an audit row records it for a human to find.

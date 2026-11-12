@@ -13,7 +13,7 @@ export function editorInitialSyncRecoveryQuery(db: Db, scheduledTime: number) {
     .innerJoin(projects, eq(projects.id, editorFolderMappings.projectId))
     .where(sql`${editorFolderMappings.state} = 'ready' AND ${editorFolderMappings.initialSyncCompletedAt} IS NULL AND ${projects.archivedAt} IS NULL
       AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.project_id = editor_folder_mappings.project_id AND j.kind = 'editor_sync' AND j.status IN ('queued','running') AND j.updated_at > ${scheduledTime - 20 * 60_000})`)
-    .orderBy(editorFolderMappings.updatedAt).limit(25);
+    .orderBy(editorFolderMappings.updatedAt).limit(50);
 }
 
 /**
@@ -64,5 +64,5 @@ export function editorMoveRecoveryQuery(db: Db, scheduledTime: number) {
         SELECT 1 FROM jobs j WHERE j.project_id = editor_folder_mappings.project_id AND j.kind = 'editor_reconcile'
           AND j.created_at > ${scheduledTime - 10 * 60_000}
       )`)
-    .orderBy(editorFolderMappings.updatedAt).limit(10);
+    .orderBy(editorFolderMappings.updatedAt).limit(50);
 }

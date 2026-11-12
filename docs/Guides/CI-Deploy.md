@@ -63,6 +63,8 @@ Version ID"` prints background, webhook-ingress, then app. Then check production
 Pages → the Worker → **Deployments**. A rollback holds only until the next deploy (a merge to
 `main` that touches `portal/`, or a manual **Run workflow**), so follow it with a revert PR or a fix.
 
+**Cron triggers on a rollback (unverified).** The background Worker's triggers are `["*/30 * * * *", "0 * * * *"]`. Whether `wrangler rollback` also reverts a Worker's cron triggers has not been verified (it cannot be tested locally). An older version that receives `*/30 * * * *` has no branch for it, logs "Ignored unknown Cron trigger" and silently stops the reminder scans and outbox recovery. So when rolling the background Worker back to a version from before the cadence change (`["0 * * * *", "* * * * *"]`), restore that trigger list first (edit `portal/workers/background/wrangler.jsonc`, or Cloudflare dashboard → Workers & Pages → the Worker → Settings → Triggers), then check the Triggers tab and the logs for "Ignored unknown Cron trigger"; do not assume the rollback moved the triggers.
+
 ### The Project whiteboard Durable Object (#498): a rollback floor
 
 The app Worker's first version with `ProjectWhiteboardDO` carries a Durable Object migration (tag `v1`

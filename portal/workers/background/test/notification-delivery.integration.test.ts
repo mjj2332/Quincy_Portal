@@ -7,6 +7,7 @@ import type { Env } from "../src/env";
 import {
   NOTIFICATION_DELIVERY_LEASE_MS,
   NOTIFICATION_QUEUE_STUCK_MS,
+  NOTIFICATION_RECOVERY_LIMIT,
   deliverBroadInApp,
   processNotificationDlqMessage,
   processNotificationMessage as processNotificationMessageReal,
@@ -727,14 +728,25 @@ describe("TB4 notification delivery Worker integration", () => {
     expect(await database.DB.prepare("SELECT status FROM notification_outbox WHERE id = ?").bind(alreadyUnknown.outboxId).first()).toEqual({ status: "completed" });
   });
 
+  it("recovers a full page of expired email attempts in one run: the ids bind as one JSON array, not one variable each (D1 allows 100)", async () => {
+    const fixtures = await Promise.all(Array.from({ length: 200 }, () => seedDelivery({ outboxStatus: "processing", leaseExpiresAt: Date.now() - 1, inAppStatus: "sent", emailStatus: "processing", ledgerAttempts: 1 })));
+    await recoverNotificationOutbox(deliveryEnv(), Date.now());
+    const ids = fixtures.map(({ outboxId }) => outboxId);
+    const unknown = await database.DB.prepare("SELECT count(*) AS count FROM notification_delivery_ledger WHERE channel = 'email' AND status = 'unknown' AND outbox_id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(ids)).first<{ count: number }>();
+    expect(unknown).toEqual({ count: 200 });
+    const completed = await database.DB.prepare("SELECT count(*) AS count FROM notification_outbox WHERE status = 'completed' AND id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(ids)).first<{ count: number }>();
+    expect(completed).toEqual({ count: 200 });
+    expect(NOTIFICATION_RECOVERY_LIMIT).toBe(200);
+  });
+
   it("publishes bounded pending/queued-stuck recovery work and converges duplicate Cron publication", async () => {
     const queueSend = vi.fn().mockResolvedValue(undefined);
     const recoveryEnv = deliveryEnv(undefined);
     recoveryEnv.NOTIFICATION_QUEUE = { send: queueSend };
-    const fixtures = await Promise.all(Array.from({ length: 101 }, () => seedDelivery({ emailStatus: "sent", inAppStatus: "sent" })));
+    const fixtures = await Promise.all(Array.from({ length: 201 }, () => seedDelivery({ emailStatus: "sent", inAppStatus: "sent" })));
     const recovered = await recoverNotificationOutbox(recoveryEnv, Date.now());
-    expect(recovered).toBe(100);
-    expect(queueSend).toHaveBeenCalledTimes(100);
+    expect(recovered).toBe(200);
+    expect(queueSend).toHaveBeenCalledTimes(200);
 
     const stuck = await seedDelivery({ outboxStatus: "queued", queuePublishedAt: Date.now() - NOTIFICATION_QUEUE_STUCK_MS - 1, availableAt: Date.now() - 1 });
     const terminal = await seedDelivery({ outboxStatus: "discarded", emailStatus: "discarded", inAppStatus: "discarded" });

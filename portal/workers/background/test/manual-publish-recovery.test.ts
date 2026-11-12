@@ -272,8 +272,8 @@ describe("sweepStuckManualPublishes", () => {
     await expect(auditRows("asset.manual_publish.failed", raced.assetId)).resolves.toMatchObject({ results: [] });
   });
 
-  it("checks at most 25 Workflow instances even when 30 jobs are aged", async () => {
-    for (let i = 0; i < 30; i += 1) {
+  it("checks at most 50 Workflow instances even when 55 jobs are aged", async () => {
+    for (let i = 0; i < 55; i += 1) {
       // eslint-disable-next-line no-await-in-loop
       await insertManualPublishFixture({ jobKind: "manual_edited_publish", assetPublishStatus: "pending", updatedAt: AGED_UPDATED_AT - i * 1000 });
     }
@@ -281,8 +281,8 @@ describe("sweepStuckManualPublishes", () => {
 
     const result = await sweepStuckManualPublishes(fakeWorkflow(get), NOW);
 
-    expect(result).toEqual({ scanned: 25, recovered: 0, skipped: 25 });
-    expect(get).toHaveBeenCalledTimes(25);
+    expect(result).toEqual({ scanned: 50, recovered: 0, skipped: 50 });
+    expect(get).toHaveBeenCalledTimes(50);
   });
 });
 
@@ -313,18 +313,18 @@ describe("manualPublishFailureStatements replay", () => {
 
 describe("sweepStuckManualPublishes page rotation", () => {
   it("eventually reaches a dead instance behind more than a page of aged live ones", async () => {
-    for (let i = 0; i < 30; i += 1) {
+    for (let i = 0; i < 60; i += 1) {
       // eslint-disable-next-line no-await-in-loop
       await insertManualPublishFixture({ jobKind: "manual_edited_publish", assetPublishStatus: "pending", updatedAt: AGED_UPDATED_AT - 10_000 - i * 1000 });
     }
     const dead = await insertManualPublishFixture({ jobKind: "manual_edited_publish", assetPublishStatus: "pending" });
     const get = async (id: string) => ({ status: async () => ({ status: id === dead.jobId ? "errored" : "running" }) });
 
-    // Each sweep leaves out 6 of 31 rows; the chance a given row is left out 20 times running is ~1e-14.
+    // Each sweep leaves out 11 of 61 rows; the chance a given row is left out 20 times running is ~1e-15.
     for (let sweep = 0; sweep < 20; sweep += 1) {
       // eslint-disable-next-line no-await-in-loop
       const result = await sweepStuckManualPublishes(fakeWorkflow(get), NOW + sweep * 60_000);
-      expect(result.scanned).toBe(25);
+      expect(result.scanned).toBe(50);
       if (result.recovered === 1) break;
     }
 

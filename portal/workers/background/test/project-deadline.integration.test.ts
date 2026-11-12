@@ -4,7 +4,7 @@ import { NOTIFICATION_OUTBOX_EVENT_TYPES } from "@quincy/shared";
 import type { Env } from "../src/env";
 import { processNotificationMessage, recoverNotificationOutbox } from "../src/notification-delivery";
 import { buildAutomaticDeadlineBundle } from "@quincy/db";
-import { fireProjectDeadlineOccurrence, scanProjectDeadlineOccurrences } from "../src/project-deadline";
+import { fireProjectDeadlineOccurrence, PROJECT_DEADLINE_SCAN_LIMIT, scanProjectDeadlineOccurrences } from "../src/project-deadline";
 import { commitShootDateChange } from "../src/projects/shoot-date";
 import { saveProjectDeadlineSchedule, suppressProjectDeadlineWork } from "../../app/src/lib/project-deadline";
 
@@ -274,6 +274,26 @@ describe("TB4B Deadline occurrence scan and delivery", () => {
     }
   });
 
+  it.each([
+    ["an off-grid reminder up to 30 minutes late is within the 35-minute target", 30, "Project Deadline in-app latency"],
+    ["a reminder more than 35 minutes late exceeds the target", 36, "Project Deadline in-app latency target exceeded"],
+  ])("%s", async (_name, lateMinutes, label) => {
+    const fireAt = Date.now() - lateMinutes * 60_000;
+    const fixture = await seedDue(fireAt);
+    await scanProjectDeadlineOccurrences(deliveryEnv(), fireAt);
+    const outbox = await database.DB.prepare("SELECT id FROM notification_outbox WHERE project_id = ?").bind(fixture.projectId).first<{ id: string }>();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await processNotificationMessage(deliveryEnv(), message(outbox!.id));
+      const seen = [...log.mock.calls, ...warn.mock.calls].map(([line]) => line).filter((line) => String(line).startsWith("Project Deadline in-app latency"));
+      expect(seen).toEqual([label]);
+    } finally {
+      log.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
   it("does not deliver a fired reminder after C1 is replaced by a distinct C2 cycle", async () => {
     const now = Date.now();
     const fixture = await seedDue(now);
@@ -358,5 +378,30 @@ describe("an Automatic Deadline move and the reminder scanner (#485)", () => {
     // The carried slot was never claimed by a scan: no fire audit exists for it, only for the v1 row that really fired.
     expect(await database.DB.prepare("SELECT count(*) AS n FROM audit_log WHERE action = 'project.deadline.occurrence_fired' AND target_id = ?").bind(carried.id).first()).toEqual({ n: 0 });
     expect(await database.DB.prepare("SELECT count(*) AS n FROM audit_log WHERE action = 'project.deadline.occurrence_fired' AND target_id = ?").bind(sent.id).first()).toEqual({ n: 1 });
+  });
+});
+
+/** The scan runs every 30 minutes with a page of 250: 30 shoots of 9 occurrences clear in two pages, and the 251st waits for the next tick. */
+describe("a Deadline scan page at the 30-minute cadence", () => {
+  it("fires 250 due occurrences in one tick and leaves the 251st for the next", async () => {
+    expect(PROJECT_DEADLINE_SCAN_LIMIT).toBe(250);
+    // Far in the past, so no fixture another test seeded at the wall clock is due at this scan time.
+    const base = 1_000_000_000_000;
+    const fixtures = [];
+    for (let index = 0; index < 251; index += 1) fixtures.push(await seedDue(base + index));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      const first = await scanProjectDeadlineOccurrences(deliveryEnv(), base + 1_000);
+      expect(first).toMatchObject({ scanned: 250, fired: 250, published: 250 });
+      expect(warn).toHaveBeenCalledWith("Project Deadline occurrence backlog limit reached", { limit: 250 });
+      // Oldest fire time first: the last-seeded occurrence is the one still waiting.
+      expect(await database.DB.prepare("SELECT status FROM project_deadline_occurrences WHERE id = ?").bind(fixtures[250]!.occurrenceId).first()).toEqual({ status: "pending" });
+      expect(await database.DB.prepare("SELECT status FROM project_deadline_occurrences WHERE id = ?").bind(fixtures[249]!.occurrenceId).first()).toEqual({ status: "fired" });
+      expect(await scanProjectDeadlineOccurrences(deliveryEnv(), base + 1_000)).toMatchObject({ scanned: 1, fired: 1, published: 1 });
+    } finally {
+      warn.mockRestore();
+      log.mockRestore();
+    }
   });
 });

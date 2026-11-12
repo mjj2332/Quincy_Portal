@@ -13,9 +13,9 @@ import { notifyProject } from "./notifications";
  * human import and AutoHDR finals converge on one guarded commit and one notification.
  */
 
-// One cron invocation shares a 1000-subrequest budget, and each move sends a notification and
-// email to every active admin and the Project's members, so the page stays small.
-export const EDITED_ARRIVAL_PAGE_SIZE = 25;
+// One cron invocation shares a 10,000-subrequest budget (Workers Paid), and each move sends a notification and
+// email to every active admin and the Project's members, so the page stays modest. 50 a half hour is well above arrival rates.
+export const EDITED_ARRIVAL_PAGE_SIZE = 50;
 
 type Candidate = { id: string; stageKey: StageKey; boardRevision: number; editedArrivedAt: number; attempts: number };
 export type EditedArrivalSummary = { scanned: number; moved: number; kept: number; cleared: number; failures: number };
