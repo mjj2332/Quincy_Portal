@@ -30,13 +30,20 @@ export function editorInitialSyncRecoveryQuery(db: Db, scheduledTime: number) {
  * `resumeEditorFolderMove` returns before writing anything and it would otherwise hold its
  * slot forever. A NULL expiry is a lease nobody can be holding, so it counts as expired.
  * A queued/running reconcile job only throttles while it is still making progress: one that
- * died mid-run would otherwise hide the project for good. Letting a second pass start
- * beside a slow-but-alive one is safe, since every move write is fenced on the lease token.
+ * died mid-run would otherwise hide the project for good.
  *
- * The throttle is two NOT EXISTS clauses rather than one with an OR, so each is a single index
- * SEARCH (jobs_project_status_kind_updated_idx for the in-flight clause, jobs_project_kind_created_idx
- * for the recent-creation clause). A single OR only avoids a table scan when sqlite_stat1 exists.
- * Both columns are NOT NULL, so the split is equivalent.
+ * An expired-lease mapping skips the in-flight clause (not the 10-minute recent-creation one).
+ * An orphaned job that keeps updated_at fresh would otherwise hide a lapsed lease for up to
+ * JOB_STALE_MS plus a sweep interval (a lease expiring 12:11 beside a job last updated 12:01 is
+ * excluded at 13:00 and 14:00 and taken over at 15:00, while Attention reports it overdue from
+ * 14:11, MOVE_OVERDUE_MS = 2 h). A second pass beside a live one is safe, since every move write
+ * is fenced on the lease token.
+ *
+ * The throttle is two NOT EXISTS clauses, each a single index SEARCH
+ * (jobs_project_status_kind_updated_idx for the in-flight clause, jobs_project_kind_created_idx
+ * for the recent-creation clause). The in-flight one is OR'd only with a predicate on the mapping
+ * row, never with another jobs predicate, so it stays a SEARCH (a single OR over jobs columns
+ * only avoids a table scan when sqlite_stat1 exists). Both columns are NOT NULL.
  */
 export function editorMoveRecoveryQuery(db: Db, scheduledTime: number) {
   return db.select({ projectId: editorFolderMappings.projectId }).from(editorFolderMappings)
@@ -56,9 +63,12 @@ export function editorMoveRecoveryQuery(db: Db, scheduledTime: number) {
           WHERE w.mapping_id = editor_folder_mappings.id AND w.status = 'watching' AND w.watch_until <= ${scheduledTime}
         )
       )
-      AND NOT EXISTS (
-        SELECT 1 FROM jobs j WHERE j.project_id = editor_folder_mappings.project_id AND j.kind = 'editor_reconcile'
-          AND j.status IN ('queued','running') AND j.updated_at > ${scheduledTime - JOB_STALE_MS}
+      AND (
+        (${editorFolderMappings.moveStatus} = 'moving' AND (${editorFolderMappings.moveExpiresAt} IS NULL OR ${editorFolderMappings.moveExpiresAt} < ${scheduledTime}))
+        OR NOT EXISTS (
+          SELECT 1 FROM jobs j WHERE j.project_id = editor_folder_mappings.project_id AND j.kind = 'editor_reconcile'
+            AND j.status IN ('queued','running') AND j.updated_at > ${scheduledTime - JOB_STALE_MS}
+        )
       )
       AND NOT EXISTS (
         SELECT 1 FROM jobs j WHERE j.project_id = editor_folder_mappings.project_id AND j.kind = 'editor_reconcile'

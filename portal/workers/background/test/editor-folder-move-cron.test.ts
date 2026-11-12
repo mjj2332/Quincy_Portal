@@ -193,6 +193,36 @@ describe("Hourly cron: Editor folder move selection", () => {
     expect(await reconcileJobCount(eligible.projectId)).toBe(2); // the old done job, plus a fresh enqueue
   });
 
+  it("selects an expired-lease mapping even with a queued/running reconcile job updated within JOB_STALE_MS (the lease is the stronger signal)", async () => {
+    const now = Date.now();
+    const queued = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "expired-lease-queued-job", moveStatus: "moving", moveExpiresAt: now - 1000 });
+    await insertReconcileJob(queued.projectId, "queued", now - 20 * 60_000, now - 20 * 60_000);
+    const running = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "expired-lease-running-job", moveStatus: "moving", moveExpiresAt: null });
+    await insertReconcileJob(running.projectId, "running", now - 30 * 60_000, now - 5 * 60_000);
+    await moveRecoveryTick(now);
+    expect(await reconcileJobCount(queued.projectId)).toBe(2);
+    expect(await reconcileJobCount(running.projectId)).toBe(2);
+  });
+
+  it("still throttles an expired-lease mapping whose reconcile job was created within 10 minutes", async () => {
+    const now = Date.now();
+    const { projectId } = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "expired-lease-fresh-job", moveStatus: "moving", moveExpiresAt: now - 1000 });
+    await insertReconcileJob(projectId, "running", now - 5 * 60_000, now - 60_000);
+    await moveRecoveryTick(now);
+    expect(await reconcileJobCount(projectId)).toBe(1);
+  });
+
+  it("still throttles a non-expired-lease drift mapping on a fresh in-flight job", async () => {
+    const now = Date.now();
+    const drift = await createMapping({ shootDate: "2027-01-15", mappingShootDate: "2026-10-02", leaf: "drift-in-flight" });
+    await insertReconcileJob(drift.projectId, "running", now - 20 * 60_000, now - 5 * 60_000);
+    const liveLease = await createMapping({ shootDate: "2027-01-15", mappingShootDate: "2026-10-02", leaf: "live-lease-in-flight", moveStatus: "moving", moveExpiresAt: now + 5 * 60_000 });
+    await insertReconcileJob(liveLease.projectId, "queued", now - 20 * 60_000, now - 5 * 60_000);
+    await moveRecoveryTick(now);
+    expect(await reconcileJobCount(drift.projectId)).toBe(1);
+    expect(await reconcileJobCount(liveLease.projectId)).toBe(1);
+  });
+
   it("bounds the selection to 50 per pass", async () => {
     const mappings = [];
     for (let i = 0; i < 51; i += 1) {
@@ -244,8 +274,9 @@ describe("Hourly cron: Editor folder move selection", () => {
     await insertReconcileJob(abandonedRunning.projectId, "running", now - JOB_STALE_MS - 60_000, now - JOB_STALE_MS - 1);
     const abandonedQueued = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "abandoned-queued", moveStatus: "moving", moveExpiresAt: now - 60_000 });
     await insertReconcileJob(abandonedQueued.projectId, "queued", now - JOB_STALE_MS - 1, now - JOB_STALE_MS - 1);
-    // Created long ago, but its status changed recently: a retried delivery that is still live.
-    const oldButProgressing = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "old-but-progressing", moveStatus: "moving", moveExpiresAt: now - 60_000 });
+    // Created long ago, but its status changed recently: a retried delivery that is still live. A drift mapping, not an expired lease:
+    // an expired lease skips the in-flight clause by design (see the test above).
+    const oldButProgressing = await createMapping({ shootDate: "2027-01-15", mappingShootDate: "2026-10-02", leaf: "old-but-progressing" });
     await insertReconcileJob(oldButProgressing.projectId, "running", now - 3 * JOB_STALE_MS, now - 5 * 60_000);
 
     await moveRecoveryTick(now);
