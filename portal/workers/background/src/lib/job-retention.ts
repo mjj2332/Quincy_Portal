@@ -18,7 +18,9 @@
  * FKs point at other kinds.
  *
  * The only protected editor rows are the newest per (project, kind), bounded by the project count, so no cursor is needed
- * and the hourly page of 250 outpaces the ~600 rows/day of growth.
+ * and the hourly page of 250 outpaces the ~600 rows/day of growth. A run that finds nothing still walks every project once
+ * (one covering-index row each, plus an empty range probe): ~460 rows at 133 projects, ~10k at 10,000. That linear cost was
+ * accepted over a persisted rotating cursor (Sol round 2 on PR 2): it stays far below the D1 allowance and adds no state.
  *
  * One atomic bounded statement per run, no drain loop. Every predicate lives in the candidate subquery, so a
  * protected row never takes a slot on the page ("A bounded page is only bounded if every row on it can move").
