@@ -31,8 +31,11 @@ Callers of the enqueue helpers are not listed; grep the helper name (`enqueueRen
 
 ## Cron
 
+Two triggers, `*/30 * * * *` and `0 * * * *`; the full job list per trigger is in `docs/maps/notifications.md` (Crons). The every-minute trigger is gone, so the sweeps below run at most hourly: a lost rendition send, a stale initial sync, an expired editor move lease (takeover up to about 70 minutes, still inside the 2-hour `MOVE_OVERDUE_MS`) and a dead manual publish (2 to 3 hours) are repaired more slowly than they were. A dead video upload keeps counting toward the 3-per-user cap and the archive 409 for up to 75 minutes instead of 16.
+
 | trigger | job | where |
 |---|---|---|
+| `0 * * * *` (hourly) | Recovery sweeps moved off the old minute tier, in order: `recoverEmbeddedRenditions` (50 `pending` HEIC rows a run), `sweepStuckManualPublishes` (50), `sweepExternalEditedUploads` and `sweepVideoUploads` (100 each), then the rotating Editor page, initial-sync recovery (50) and move recovery (50). | portal/workers/background/src/index.ts, `scheduled` |
 | `0 * * * *` (hourly) | Object CRC sweep (#802): up to 500 zip-eligible originals a run (RAW and published Edited photos, released live video Versions, and the photos of a Client Delivery page's current set with their current-spec `delivery_web` keys), newest first, with no `object_crc32` row and no live `object_crc32_work` row (a queued or running row is live until quiet for 10 minutes; `failed` is skipped). It inserts the work rows, then sends the start messages; a lost send is taken back by the next run. | `sweepObjectCrcs` portal/workers/background/src/object-crc-sweep.ts, called from `scheduled` portal/workers/background/src/index.ts, after the Video Trash purge |
 | `0 * * * *` (hourly) | Video Trash purge (#776 D): up to 25 due Versions or Videos a run, oldest `purge_at` first; each is one fenced D1 batch that queues the original and poster keys in `embedded_media_cleanup`, deletes the rows and writes a `video_version.purge` / `video.purge` audit row with a NULL actor. It runs before the daily embedded-media sweep, whose drain (03:00 Malaysia) deletes the objects after re-checking no live Version holds the key. | `purgeVideoTrash` portal/workers/background/src/video-trash-purge.ts, called from `scheduled` portal/workers/background/src/index.ts |
 

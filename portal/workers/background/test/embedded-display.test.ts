@@ -295,10 +295,10 @@ describe("the recovery cron", () => {
     expect(sent).toEqual([{ type: "embedded_display", mediaId: expired.id, generation: now - 30 * minute }, { type: "embedded_display", mediaId: attached.id, generation: now - 29 * minute }]);
   });
 
-  it("stays within ten rows a run, oldest first", async () => {
-    const seeded = []; for (let index = 0; index < 13; index += 1) seeded.push(await seed({ requestedAt: now - (60 - index) * minute }));
-    expect((await recoverEmbeddedRenditions(queueEnv(), now)).resent).toBe(10);
-    expect(sent).toEqual(seeded.slice(0, 10).map((item, index) => ({ type: "embedded_display", mediaId: item.id, generation: now - (60 - index) * minute })));
+  it("stays within fifty rows a run, oldest first", async () => {
+    const seeded = []; for (let index = 0; index < 55; index += 1) seeded.push(await seed({ requestedAt: now - (120 - index) * minute }));
+    expect((await recoverEmbeddedRenditions(queueEnv(), now)).resent).toBe(50);
+    expect(sent).toEqual(seeded.slice(0, 50).map((item, index) => ({ type: "embedded_display", mediaId: item.id, generation: now - (120 - index) * minute })));
   });
 
   it("fails a row past the attempt cap instead of re-sending it", async () => {

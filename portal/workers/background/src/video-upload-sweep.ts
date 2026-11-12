@@ -10,7 +10,7 @@ type SweepRow = { id: string; r2Key: string; uploadId: string | null; status: "p
  * `aborting` under the same predicate that selected it, then the multipart upload is aborted (an upload R2 no longer knows is as good as aborted),
  * the object is deleted, and only then is the row closed as `expired`. Once a row is `aborting` a completion's batch cannot commit, because every one of
  * its statements is fenced on `status = 'completing'`. It never recovers a stale `completing` upload: that would need a re-probe, and the uploader can
- * start again. A failed R2 call leaves the row `aborting` for the next minute. Uses the R2 binding, never S3 credentials.
+ * start again. A failed R2 call leaves the row `aborting` for the next hourly sweep. Uses the R2 binding, never S3 credentials.
  */
 export async function sweepVideoUploads(env: Pick<Env, "DB" | "MEDIA">, now = Date.now()): Promise<{ scanned: number; reclaimed: number }> {
   const staleBefore = now - VIDEO_UPLOAD_COMPLETION_LEASE_MS;

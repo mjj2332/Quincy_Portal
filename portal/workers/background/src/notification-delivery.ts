@@ -58,9 +58,9 @@ import { deliveryLockedSql } from "./delivery-lock-sql";
 
 export const NOTIFICATION_DELIVERY_LEASE_MS = 10 * 60_000;
 export const NOTIFICATION_QUEUE_STUCK_MS = 30 * 60_000;
-export const NOTIFICATION_RECOVERY_LIMIT = 100;
+export const NOTIFICATION_RECOVERY_LIMIT = 200;
 export const NOTIFICATION_QUEUE_MAX_DELAY_SECONDS = 12 * 60 * 60;
-export const PROJECT_DEADLINE_OPERATIONAL_TARGET_MS = 120_000;
+export const PROJECT_DEADLINE_OPERATIONAL_TARGET_MS = 35 * 60_000;
 /** #337: every Project notification email links to the Workspace tab its type maps to, through the
  * same `projectNotificationRoute` + `staffPathFor` the in-app list uses, so the two cannot drift.
  * (Persisted activity deep links are not rebuilt here -- see the broad-activity resolver.) */
@@ -2621,15 +2621,15 @@ export async function recoverNotificationOutbox(env: Env, scheduledTime: number)
   `).bind(now).all<{ outboxId: string }>();
   if (expiredEmail.results.length > 0) {
     const expiredEmailIds = expiredEmail.results.map(({ outboxId }) => outboxId);
-    const placeholders = expiredEmailIds.map(() => "?").join(", ");
+    // One JSON-array bind, not one variable per id: D1 allows 100 bound variables a statement, and this page is up to NOTIFICATION_RECOVERY_LIMIT ids.
     const recoveredEmail = await env.DB.prepare(`
       UPDATE notification_delivery_ledger
       SET status = 'unknown', last_error_code = 'email_acceptance_unknown', last_error = 'Email attempt lease expired after submission began.', updated_at = ?
       WHERE channel = 'email' AND status = 'processing'
         AND outbox_id IN (SELECT id FROM notification_outbox WHERE status = 'processing' AND lease_expires_at <= ?)
-        AND outbox_id IN (${placeholders})
+        AND outbox_id IN (SELECT value FROM json_each(?))
       RETURNING outbox_id AS outboxId
-    `).bind(now, now, ...expiredEmailIds).all<{ outboxId: string }>();
+    `).bind(now, now, JSON.stringify(expiredEmailIds)).all<{ outboxId: string }>();
     for (const { outboxId } of recoveredEmail.results) await mirrorEmailOutcome(env, outboxId, { emailError: "email_acceptance_unknown" });
   }
   await env.DB.prepare(`

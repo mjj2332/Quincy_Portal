@@ -112,7 +112,7 @@ export async function completeEmbeddedMedia(
     if (current.state !== "pending") return reply(409, { error: "This media is already in use", code: "media_not_uploading" });
   } else {
     await scope.audit("embedded_media.upload", mediaId, { projectId, bytes: row.bytes, contentType: row.contentType });
-    // Only the promotion winner sends, so a repeated or racing complete queues the conversion once. A lost send is re-sent by the minute cron.
+    // Only the promotion winner sends, so a repeated or racing complete queues the conversion once. A lost send is re-sent by the hourly cron.
     if (heic) await enqueueEmbeddedDisplaySafely(env, mediaId, "complete", promotedAt);
   }
   return completed("pending");

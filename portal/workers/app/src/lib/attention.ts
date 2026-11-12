@@ -12,7 +12,7 @@ import { EXTERNAL_PROVISIONING_FROZEN_FLAG } from "../../../background/src/exter
  */
 
 /** How long past its lease a `moving` row may sit before recovery is treated as not happening.
- * The cron retakes an expired lease within minutes, so two hours means something is stopping it. */
+ * The hourly cron retakes an expired lease within about 70 minutes (the lease, then the next :00 tick), so two hours means something is stopping it. */
 export const MOVE_OVERDUE_MS = 2 * 60 * 60 * 1000;
 const LIST_LIMIT = 200;
 

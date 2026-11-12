@@ -112,7 +112,7 @@ async function importFile(data: Fixture, hash: string, name?: string): Promise<v
 
 async function cron(atMs: number, flag = "1"): Promise<void> {
   vi.setSystemTime(atMs);
-  await new QuincyBackground({} as ExecutionContext, localEnv(flag)).scheduled({ cron: "* * * * *", scheduledTime: atMs, noRetry() {} } as ScheduledController);
+  await new QuincyBackground({} as ExecutionContext, localEnv(flag)).scheduled({ cron: "*/30 * * * *", scheduledTime: atMs, noRetry() {} } as ScheduledController);
 }
 
 const project = (id: string) => bindings.DB.prepare("SELECT stage_key AS stage, shoot_date AS shootDate, edited_arrived_at AS arrived FROM projects WHERE id = ?").bind(id).first<{ stage: string; shootDate: string | null; arrived: number | null }>();

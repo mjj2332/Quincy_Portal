@@ -79,30 +79,13 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
   }
 
   // Temporary safety net: retire only after Dropbox RAW automation has been verified live in a later deploy.
+  // Two triggers (workers/background/wrangler.jsonc): "*/30 * * * *" and "0 * * * *". At :00 they are two invocations, each with its own subrequest
+  // budget (10,000 on Workers Paid). Nothing in the Portal is real-time critical, so a reminder may fire up to 30 minutes late. Every write below is
+  // compare-and-set or lease fenced, so two crons at :00 add no hazard. docs/plans/cron-cadence-30m-hourly.md has the budget arithmetic.
   async scheduled(controller: ScheduledController): Promise<void> {
     // Warm the isolate-local variant memo before any scheduled handler can touch D1.
     if (this.env.DB) await boardSchemaVariant(this.env.DB);
-    if (controller.cron === "* * * * *") {
-      if (automationFlag(this.env.DROPBOX_EDITOR_AUTOMATION_ENABLED)) {
-        try {
-          const pending = await editorInitialSyncRecoveryQuery(dbFor(this.env), controller.scheduledTime);
-          for (const row of pending) {
-            await this.triggerEditorSync(row.projectId);
-            // Rotate attempted mappings behind unattempted ones; one permanently bad folder
-            // must not monopolize every bounded recovery page.
-            await dbFor(this.env).update(editorFolderMappings).set({ updatedAt: new Date(controller.scheduledTime) })
-              .where(and(eq(editorFolderMappings.projectId, row.projectId), eq(editorFolderMappings.state, "ready")));
-          }
-        } catch (error) {
-          console.error("Editor initial sync recovery failed", { error: error instanceof Error ? error.message : String(error) });
-        }
-        try {
-          const dueForMove = await editorMoveRecoveryQuery(dbFor(this.env), controller.scheduledTime);
-          for (const row of dueForMove) await enqueueEditorReconcile(this.env, row.projectId);
-        } catch (error) {
-          console.error("Editor folder move recovery failed", { error: error instanceof Error ? error.message : String(error) });
-        }
-      }
+    if (controller.cron === "*/30 * * * *") {
       try {
         const result = await scanProjectDeadlineOccurrences(this.env, controller.scheduledTime);
         console.log("Project Deadline occurrence scan", result);
@@ -116,40 +99,10 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
         console.error("Subtask reminder occurrence scan failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
       }
       try {
-        const recovered = await recoverNotificationOutbox(this.env, controller.scheduledTime);
-        console.log("Notification outbox recovery scan", { recovered });
-      } catch (error) {
-        console.error("Notification outbox recovery scan failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
-      }
-      try {
-        const swept = await sweepExternalEditedUploads(this.env, controller.scheduledTime);
-        console.log("External upload sweep", swept);
-      } catch (error) {
-        console.error("External upload sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
-      }
-      try {
-        const swept = await sweepVideoUploads(this.env, controller.scheduledTime);
-        if (swept.scanned) console.log("Video upload sweep", swept);
-      } catch (error) {
-        console.error("Video upload sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
-      }
-      try {
         const purged = await processExternalRoleCachePurges(this.env, controller.scheduledTime);
         if (purged) console.log("External role cache purge jobs", { purged });
       } catch (error) {
         console.error("External role cache purge failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
-      }
-      try {
-        const recoveredManualPublishes = await sweepStuckManualPublishes(this.env, controller.scheduledTime);
-        console.log("Manual publish stuck sweep", recoveredManualPublishes);
-      } catch (error) {
-        console.error("Manual publish stuck sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
-      }
-      try {
-        const recovered = await recoverEmbeddedRenditions(this.env, controller.scheduledTime);
-        if (recovered.resent || recovered.failed) console.log("Embedded display recovery", recovered);
-      } catch (error) {
-        console.error("Embedded display recovery failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
       }
       try {
         // Outside the Editor automation flag: a Portal Edited upload counts as an arrival too (#486).
@@ -157,11 +110,43 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       } catch (error) {
         console.error("Edited arrival reconciliation failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
       }
+      // Last of the tier, so a failed reminder send is retried within 30 minutes rather than ~90.
+      try {
+        const recovered = await recoverNotificationOutbox(this.env, controller.scheduledTime);
+        console.log("Notification outbox recovery scan", { recovered });
+      } catch (error) {
+        console.error("Notification outbox recovery scan failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+      }
       return;
     }
     if (controller.cron !== "0 * * * *") {
       console.warn("Ignored unknown Cron trigger", { cron: controller.cron });
       return;
+    }
+    // The recovery sweeps the old every-minute trigger ran: lost queue messages, stale uploads and dead Workflows are repaired within the hour.
+    try {
+      const recovered = await recoverEmbeddedRenditions(this.env, controller.scheduledTime);
+      if (recovered.resent || recovered.failed) console.log("Embedded display recovery", recovered);
+    } catch (error) {
+      console.error("Embedded display recovery failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+    }
+    try {
+      const recoveredManualPublishes = await sweepStuckManualPublishes(this.env, controller.scheduledTime);
+      console.log("Manual publish stuck sweep", recoveredManualPublishes);
+    } catch (error) {
+      console.error("Manual publish stuck sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+    }
+    try {
+      const swept = await sweepExternalEditedUploads(this.env, controller.scheduledTime);
+      console.log("External upload sweep", swept);
+    } catch (error) {
+      console.error("External upload sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+    }
+    try {
+      const swept = await sweepVideoUploads(this.env, controller.scheduledTime);
+      if (swept.scanned) console.log("Video upload sweep", swept);
+    } catch (error) {
+      console.error("Video upload sweep failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
     }
     if (automationFlag(this.env.DROPBOX_EDITOR_AUTOMATION_ENABLED)) {
       try {
@@ -177,13 +162,26 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       } catch (error) {
         console.error("Editor reconciliation recovery failed", { error: error instanceof Error ? error.message : String(error) });
       }
-    }
-    try {
-      // Outside the Editor automation flag: retention is hygiene, not automation. One bounded page per hour.
-      const pruned = await pruneJobHistory(this.env.DB, controller.scheduledTime);
-      console.log("Job history retention", pruned);
-    } catch (error) {
-      console.error("Job history retention failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+      // Initial-sync recovery, then move recovery, both after the rotating page above: a project the page just enqueued is then
+      // skipped by move recovery's 10-minute reconcile throttle.
+      try {
+        const pending = await editorInitialSyncRecoveryQuery(dbFor(this.env), controller.scheduledTime);
+        for (const row of pending) {
+          await this.triggerEditorSync(row.projectId);
+          // Rotate attempted mappings behind unattempted ones; one permanently bad folder
+          // must not monopolize every bounded recovery page.
+          await dbFor(this.env).update(editorFolderMappings).set({ updatedAt: new Date(controller.scheduledTime) })
+            .where(and(eq(editorFolderMappings.projectId, row.projectId), eq(editorFolderMappings.state, "ready")));
+        }
+      } catch (error) {
+        console.error("Editor initial sync recovery failed", { error: error instanceof Error ? error.message : String(error) });
+      }
+      try {
+        const dueForMove = await editorMoveRecoveryQuery(dbFor(this.env), controller.scheduledTime);
+        for (const row of dueForMove) await enqueueEditorReconcile(this.env, row.projectId);
+      } catch (error) {
+        console.error("Editor folder move recovery failed", { error: error instanceof Error ? error.message : String(error) });
+      }
     }
     try {
       await reconcileAwaitingRawProjects(this.env.DB, controller.scheduledTime, (projectId) => notifyProject(this.env, projectId, "raw_ready"));
@@ -235,6 +233,13 @@ export default class QuincyBackground extends WorkerEntrypoint<Env> {
       console.log("Notification pruning complete");
     } catch (error) {
       console.error("Notification pruning failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+    }
+    try {
+      // Outside the Editor automation flag: retention is hygiene, not automation. One bounded page per hour.
+      const pruned = await pruneJobHistory(this.env.DB, controller.scheduledTime);
+      console.log("Job history retention", pruned);
+    } catch (error) {
+      console.error("Job history retention failed", { error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
     }
     // Video Trash (#776 D): purge what has outlived its retention. Before the daily embedded-media sweep, so the keys it queues are drained in the same 03:00 run.
     try {

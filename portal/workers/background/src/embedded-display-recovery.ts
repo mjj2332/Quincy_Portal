@@ -4,13 +4,13 @@ import type { Env } from "./env";
 
 /** A message can legitimately wait behind an asset backlog (the queue runs one at a time), so a row is only called lost after this long. */
 export const EMBEDDED_DISPLAY_RECOVERY_AFTER_MS = 10 * 60 * 1000;
-const RECOVERY_LIMIT = 10;
+const RECOVERY_LIMIT = 50;
 
 type StaleRow = { id: string; attempts: number; requestedAt: number; resentAt: number | null };
 
 /**
- * Re-sends the conversion of a HEIC image whose queue message was lost (#495; queue sends fail as a group, see docs/lessons.md). Minute cron.
- * Picks at most ten `pending` rows whose last send (the request, or a later resend) is more than ten minutes old and whose lease is free or expired,
+ * Re-sends the conversion of a HEIC image whose queue message was lost (#495; queue sends fail as a group, see docs/lessons.md). Hourly cron.
+ * Picks at most fifty `pending` rows whose last send (the request, or a later resend) is more than ten minutes old and whose lease is free or expired,
  * oldest request first. The row's generation, `rendition_requested_at`, is never written here: only complete and a Retry start a new run, so a resend
  * can never invalidate the message already in flight behind a slow queue. Resend timing lives in `rendition_resent_at`.
  * Each row is stamped by one conditional UPDATE that rechecks status, generation, the previous resend stamp and a free lease (two overlapping runs send

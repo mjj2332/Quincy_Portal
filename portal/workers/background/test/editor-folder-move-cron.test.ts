@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { createDb } from "@quincy/db";
 import type { Env } from "../src/env";
-import QuincyBackground from "../src/index";
+import { enqueueEditorReconcile } from "../src/editor-folders/queue";
 import { editorFolderPath, editorFolderPathKey } from "../src/editor-folders/paths";
 import { getEditorFolderMapping } from "../src/editor-folders/mapping";
 import { JOB_STALE_MS, sweepEditorFolderOrphanUploads } from "../src/editor-folders/move";
@@ -27,14 +27,14 @@ async function executeSql(source: string) {
 
 beforeAll(() => executeSql(__PORTAL_MIGRATION_SQL__));
 
-function worker(): QuincyBackground {
-  const instance = Object.create(QuincyBackground.prototype) as QuincyBackground;
-  Object.defineProperty(instance, "env", { value: { ...(env as unknown as Env), DROPBOX_EDITOR_AUTOMATION_ENABLED: "1" } });
-  return instance;
-}
-
-function controller(scheduledTime: number): ScheduledController {
-  return { cron: "* * * * *", scheduledTime, noRetry() {} } as ScheduledController;
+/**
+ * Runs the move-recovery step of the hourly tick on its own (the selection builder and enqueue `scheduled()` runs). The whole tick also
+ * runs the rotating Editor page first, which enqueues a pass for every project on its page and so would mask what move recovery selects;
+ * `test/scheduled.test.ts` pins that order, and the 10-minute throttle below is what de-duplicates the two.
+ */
+async function moveRecoveryTick(scheduledTime: number): Promise<void> {
+  const automation = { ...(env as unknown as Env), DROPBOX_EDITOR_AUTOMATION_ENABLED: "1" } as Env;
+  for (const row of await editorMoveRecoveryQuery(db, scheduledTime)) await enqueueEditorReconcile(automation, row.projectId);
 }
 
 async function createMapping(input: {
@@ -94,42 +94,42 @@ async function reconcileJobCount(projectId: string): Promise<number> {
   return row!.n;
 }
 
-describe("Minute cron: Editor folder move selection", () => {
+describe("Hourly cron: Editor folder move selection", () => {
   it("selects a mapping whose move lease has expired", async () => {
     const { projectId } = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "expired-lease", moveStatus: "moving", moveExpiresAt: Date.now() - 1000 });
-    await worker().scheduled(controller(Date.now()));
+    await moveRecoveryTick(Date.now());
     expect(await reconcileJobCount(projectId)).toBe(1);
   });
 
   it("does not select a mapping whose move lease has not expired yet", async () => {
     const { projectId } = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "live-lease", moveStatus: "moving", moveExpiresAt: Date.now() + 60_000 });
-    await worker().scheduled(controller(Date.now()));
+    await moveRecoveryTick(Date.now());
     expect(await reconcileJobCount(projectId)).toBe(0);
   });
 
   it("selects a mapping whose Project shoot date has drifted from its own placement date", async () => {
     const { projectId } = await createMapping({ shootDate: "2027-01-15", mappingShootDate: "2026-10-02", leaf: "drifted" });
-    await worker().scheduled(controller(Date.now()));
+    await moveRecoveryTick(Date.now());
     expect(await reconcileJobCount(projectId)).toBe(1);
   });
 
   it("does not select a mapping with no drift, or one blocked for the exact date it is already blocked on", async () => {
     const noDrift = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "no-drift" });
     const sameBlock = await createMapping({ shootDate: "2027-01-15", mappingShootDate: "2026-10-02", leaf: "same-block", moveStatus: "blocked", moveTargetShootDate: "2027-01-15" });
-    await worker().scheduled(controller(Date.now()));
+    await moveRecoveryTick(Date.now());
     expect(await reconcileJobCount(noDrift.projectId)).toBe(0);
     expect(await reconcileJobCount(sameBlock.projectId)).toBe(0);
   });
 
   it("selects a blocked mapping once the Project has rescheduled to a different date than the block", async () => {
     const { projectId } = await createMapping({ shootDate: "2027-02-20", mappingShootDate: "2026-10-02", leaf: "reblock", moveStatus: "blocked", moveTargetShootDate: "2027-01-15" });
-    await worker().scheduled(controller(Date.now()));
+    await moveRecoveryTick(Date.now());
     expect(await reconcileJobCount(projectId)).toBe(1);
   });
 
   it("does not select an archived or delivered Project's drift", async () => {
     const { projectId } = await createMapping({ shootDate: "2027-01-15", mappingShootDate: "2026-10-02", leaf: "archived-drift", archived: true });
-    await worker().scheduled(controller(Date.now()));
+    await moveRecoveryTick(Date.now());
     expect(await reconcileJobCount(projectId)).toBe(0);
   });
 
@@ -140,7 +140,7 @@ describe("Minute cron: Editor folder move selection", () => {
     await insertWatch(due.mappingId, { watchUntil: Date.now() - 60_000 });
     await insertWatch(notYet.mappingId, { watchUntil: Date.now() + 25 * 60_000 });
     await insertWatch(found.mappingId, { watchUntil: Date.now() - 60_000, status: "found" });
-    await worker().scheduled(controller(Date.now()));
+    await moveRecoveryTick(Date.now());
     expect(await reconcileJobCount(due.projectId)).toBe(1);
     expect(await reconcileJobCount(notYet.projectId)).toBe(0);
     expect(await reconcileJobCount(found.projectId)).toBe(0);
@@ -152,7 +152,7 @@ describe("Minute cron: Editor folder move selection", () => {
     await database.DB.prepare("UPDATE projects SET stage_key = 'delivered' WHERE id = ?").bind(delivered.projectId).run();
     await insertWatch(archived.mappingId, { watchUntil: Date.now() - 60_000 });
     await insertWatch(delivered.mappingId, { watchUntil: Date.now() - 60_000 });
-    await worker().scheduled(controller(Date.now()));
+    await moveRecoveryTick(Date.now());
     expect(await reconcileJobCount(archived.projectId)).toBe(1);
     expect(await reconcileJobCount(delivered.projectId)).toBe(1);
   });
@@ -167,10 +167,10 @@ describe("Minute cron: Editor folder move selection", () => {
       getMetadata: async () => { throw new Error("Dropbox get_metadata failed (401): expired_access_token"); },
       listFolderRecursive: async () => { throw new Error("unexpected"); },
     } as never);
-    await worker().scheduled(controller(now.getTime()));
+    await moveRecoveryTick(now.getTime());
     expect(await reconcileJobCount(failing.projectId)).toBe(0);
     // Retried once the backoff is due.
-    await worker().scheduled(controller(now.getTime() + 30 * 60_000 + 11 * 60_000));
+    await moveRecoveryTick(now.getTime() + 30 * 60_000 + 11 * 60_000);
     expect(await reconcileJobCount(failing.projectId)).toBe(1);
   });
 
@@ -187,21 +187,51 @@ describe("Minute cron: Editor folder move selection", () => {
     await database.DB.prepare("INSERT INTO jobs (id, kind, status, project_id, created_at, updated_at) VALUES (?, 'editor_reconcile', 'done', ?, ?, ?)")
       .bind(crypto.randomUUID(), eligible.projectId, Date.now() - 20 * 60_000, Date.now() - 20 * 60_000).run();
 
-    await worker().scheduled(controller(Date.now()));
+    await moveRecoveryTick(Date.now());
     expect(await reconcileJobCount(running.projectId)).toBe(1); // the pre-existing job only, no new one
     expect(await reconcileJobCount(recentlyDone.projectId)).toBe(1); // throttled by recency alone, despite being done
     expect(await reconcileJobCount(eligible.projectId)).toBe(2); // the old done job, plus a fresh enqueue
   });
 
-  it("bounds the selection to 10 per pass", async () => {
+  it("selects an expired-lease mapping even with a queued/running reconcile job updated within JOB_STALE_MS (the lease is the stronger signal)", async () => {
+    const now = Date.now();
+    const queued = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "expired-lease-queued-job", moveStatus: "moving", moveExpiresAt: now - 1000 });
+    await insertReconcileJob(queued.projectId, "queued", now - 20 * 60_000, now - 20 * 60_000);
+    const running = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "expired-lease-running-job", moveStatus: "moving", moveExpiresAt: null });
+    await insertReconcileJob(running.projectId, "running", now - 30 * 60_000, now - 5 * 60_000);
+    await moveRecoveryTick(now);
+    expect(await reconcileJobCount(queued.projectId)).toBe(2);
+    expect(await reconcileJobCount(running.projectId)).toBe(2);
+  });
+
+  it("still throttles an expired-lease mapping whose reconcile job was created within 10 minutes", async () => {
+    const now = Date.now();
+    const { projectId } = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "expired-lease-fresh-job", moveStatus: "moving", moveExpiresAt: now - 1000 });
+    await insertReconcileJob(projectId, "running", now - 5 * 60_000, now - 60_000);
+    await moveRecoveryTick(now);
+    expect(await reconcileJobCount(projectId)).toBe(1);
+  });
+
+  it("still throttles a non-expired-lease drift mapping on a fresh in-flight job", async () => {
+    const now = Date.now();
+    const drift = await createMapping({ shootDate: "2027-01-15", mappingShootDate: "2026-10-02", leaf: "drift-in-flight" });
+    await insertReconcileJob(drift.projectId, "running", now - 20 * 60_000, now - 5 * 60_000);
+    const liveLease = await createMapping({ shootDate: "2027-01-15", mappingShootDate: "2026-10-02", leaf: "live-lease-in-flight", moveStatus: "moving", moveExpiresAt: now + 5 * 60_000 });
+    await insertReconcileJob(liveLease.projectId, "queued", now - 20 * 60_000, now - 5 * 60_000);
+    await moveRecoveryTick(now);
+    expect(await reconcileJobCount(drift.projectId)).toBe(1);
+    expect(await reconcileJobCount(liveLease.projectId)).toBe(1);
+  });
+
+  it("bounds the selection to 50 per pass", async () => {
     const mappings = [];
-    for (let i = 0; i < 11; i += 1) {
+    for (let i = 0; i < 51; i += 1) {
       mappings.push(await createMapping({ shootDate: "2027-01-15", mappingShootDate: "2026-10-02", leaf: `bounded-${i}`, updatedAt: Date.now() + i }));
     }
-    await worker().scheduled(controller(Date.now()));
+    await moveRecoveryTick(Date.now());
     let selected = 0;
     for (const mapping of mappings) selected += await reconcileJobCount(mapping.projectId);
-    expect(selected).toBe(10);
+    expect(selected).toBe(50);
   });
 
   it("never selects a commit-stuck mapping, so ten of them cannot starve a live expired lease (#194)", async () => {
@@ -217,7 +247,7 @@ describe("Minute cron: Editor folder move selection", () => {
       shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "behind-the-stuck", moveStatus: "moving",
       moveExpiresAt: now - 60_000, moveCommitAttempts: MOVE_COMMIT_ATTEMPT_LIMIT - 1, updatedAt: now,
     });
-    await worker().scheduled(controller(now));
+    await moveRecoveryTick(now);
     for (const mapping of stuck) expect(await reconcileJobCount(mapping.projectId)).toBe(0);
     expect(await reconcileJobCount(live.projectId)).toBe(1);
   });
@@ -228,13 +258,13 @@ describe("Minute cron: Editor folder move selection", () => {
       moveExpiresAt: Date.now() - 60_000, moveCommitAttempts: MOVE_COMMIT_ATTEMPT_LIMIT,
     });
     await insertWatch(mappingId, { watchUntil: Date.now() - 60_000 });
-    await worker().scheduled(controller(Date.now()));
+    await moveRecoveryTick(Date.now());
     expect(await reconcileJobCount(projectId)).toBe(0);
   });
 
   it("selects a moving mapping with no lease expiry, which no pass can be holding (#194)", async () => {
     const { projectId } = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "null-expiry", moveStatus: "moving", moveExpiresAt: null });
-    await worker().scheduled(controller(Date.now()));
+    await moveRecoveryTick(Date.now());
     expect(await reconcileJobCount(projectId)).toBe(1);
   });
 
@@ -244,11 +274,12 @@ describe("Minute cron: Editor folder move selection", () => {
     await insertReconcileJob(abandonedRunning.projectId, "running", now - JOB_STALE_MS - 60_000, now - JOB_STALE_MS - 1);
     const abandonedQueued = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "abandoned-queued", moveStatus: "moving", moveExpiresAt: now - 60_000 });
     await insertReconcileJob(abandonedQueued.projectId, "queued", now - JOB_STALE_MS - 1, now - JOB_STALE_MS - 1);
-    // Created long ago, but its status changed recently: a retried delivery that is still live.
-    const oldButProgressing = await createMapping({ shootDate: "2026-10-02", mappingShootDate: "2026-10-02", leaf: "old-but-progressing", moveStatus: "moving", moveExpiresAt: now - 60_000 });
+    // Created long ago, but its status changed recently: a retried delivery that is still live. A drift mapping, not an expired lease:
+    // an expired lease skips the in-flight clause by design (see the test above).
+    const oldButProgressing = await createMapping({ shootDate: "2027-01-15", mappingShootDate: "2026-10-02", leaf: "old-but-progressing" });
     await insertReconcileJob(oldButProgressing.projectId, "running", now - 3 * JOB_STALE_MS, now - 5 * 60_000);
 
-    await worker().scheduled(controller(now));
+    await moveRecoveryTick(now);
     expect(await reconcileJobCount(abandonedRunning.projectId)).toBe(2);
     expect(await reconcileJobCount(abandonedQueued.projectId)).toBe(2);
     expect(await reconcileJobCount(oldButProgressing.projectId)).toBe(1);

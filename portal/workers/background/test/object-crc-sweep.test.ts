@@ -171,10 +171,10 @@ describe("sweepObjectCrcs", () => {
 });
 
 describe("the hourly cron", () => {
-  it("runs the sweep on 0 * * * * and not on the minute cron", async () => {
+  it("runs the sweep on 0 * * * * and not on the half-hour cron", async () => {
     const raw = await asset({ collection: "raw" }); const queue = fakeQueue();
     const service = new QuincyBackground({} as ExecutionContext, { DB: database.DB, MEDIA: database.MEDIA, OBJECT_CRC_QUEUE: queue, APP_ORIGIN: "https://portal.test" } as never);
-    await service.scheduled({ cron: "* * * * *", scheduledTime: NOW } as never);
+    await service.scheduled({ cron: "*/30 * * * *", scheduledTime: NOW } as never);
     expect(queue.sent).toEqual([]);
     await service.scheduled({ cron: "0 * * * *", scheduledTime: NOW } as never);
     expect(keys(queue)).toEqual([raw.key]);

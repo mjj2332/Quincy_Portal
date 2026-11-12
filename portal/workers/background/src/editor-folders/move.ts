@@ -532,7 +532,7 @@ async function resolveClaimedMove(
       } else if (error instanceof DropboxRelocationRefusedError) {
         // Dropbox refused the relocation for a reason that is neither a conflict nor a missing
         // path — no write permission, quota, too many files. The tree has NOT moved, so this is a
-        // durable block an operator can see rather than a throw that only replays every minute.
+        // durable block an operator can see rather than a throw that only replays on every pass.
         return await blockByToken(env, db, mapping, "editor_folder_move_refused", `Dropbox refused to move the Editor root to ${target.targetPath}: ${errorMessage(error)}`, now);
       } else {
         throw error;

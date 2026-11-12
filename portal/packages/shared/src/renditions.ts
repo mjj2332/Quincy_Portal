@@ -38,7 +38,7 @@ export async function enqueueRenditionSafely(env: RenditionQueueEnv, assetId: st
   }
 }
 
-/** Hands a HEIC row to the rendition queue. Best effort like `enqueueRenditionSafely`: a lost send is repaired by the minute cron's recovery of stale `pending` rows. */
+/** Hands a HEIC row to the rendition queue. Best effort like `enqueueRenditionSafely`: a lost send is repaired by the hourly cron's recovery of stale `pending` rows. */
 export async function enqueueEmbeddedDisplaySafely(env: RenditionQueueEnv, mediaId: string, source: string, generation: number): Promise<boolean> {
   if (!renditionsEnabled(env)) return false;
   if (!env.RENDITION_QUEUE) {

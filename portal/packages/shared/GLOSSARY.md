@@ -216,7 +216,10 @@ A moment, counted back from a Subtask's due, when every Subtask assignee is remi
 is always one; up to 8 offsets in all. A new Subtask starts with "1 day before" and "Due now".
 One set per Subtask, shared by its assignees. Completing the Subtask or archiving its Project
 cancels the ones not yet sent. Reminders go to the assignees at the moment they fire, in-app
-always and by email unless the person turned Checklist item reminder emails off.
+always and by email unless the person turned Checklist item reminder emails off. Reminders are
+scanned every 30 minutes, so an off-grid one (a custom time) can arrive up to 30 minutes late, and
+an advance reminder under 30 minutes that falls off the grid is usually superseded before the scan
+fires it. "Due now" always arrives.
 _Avoid_: Alert, due-today notice
 
 ### The two star scales
